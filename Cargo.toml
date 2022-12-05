@@ -1,0 +1,20 @@
+[package]
+name = "mod_flatten"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "mod_flatten"
+path = "src/bin/main.rs"
+
+[dependencies]
+# tried to use noodles, but it wouldn't parse my BAMs!
+#noodles = { version = "0.31.1", features = ["bam", "sam"] }
+rust-htslib = "0.40.2"
+bio = "1.0.0"
+indexmap = "1.9.2"
+pulp = "0.10.3"
+clap = { version = "4.0.29", features = ["derive"]}
+indicatif = "0.17.1"
