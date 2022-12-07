@@ -10,7 +10,8 @@ use rust_htslib::bam::Read;
 
 use mod_flatten::errs::InputError;
 use mod_flatten::mod_bam::{
-    collapse_mod_probs, format_mm_ml_tag, get_mod_probs_for_query_positions, DeltaListConverter,
+    collapse_mod_probs, extract_mod_probs, format_mm_ml_tag, get_mod_probs_for_query_positions,
+    DeltaListConverter,
 };
 
 const MM_TAGS: [&str; 2] = ["MM", "Mm"];
@@ -160,10 +161,10 @@ fn main() -> Result<(), String> {
             }
 
             let (mm, ml) = tags.unwrap();
-            let probs_for_positions = get_mod_probs_for_query_positions(&mm, 'C', &ml, &converter)?;
-            let collaped_probs_for_positions =
+            let probs_for_positions = extract_mod_probs(&mm, &ml, canonical_base, &converter)?;
+            let collapsed_probs_for_positions =
                 collapse_mod_probs(probs_for_positions, mod_base_to_remove);
-            let (mm, ml) = format_mm_ml_tag(collaped_probs_for_positions, 'C', &converter);
+            let (mm, ml) = format_mm_ml_tag(collapsed_probs_for_positions, 'C', &converter);
 
             record
                 .remove_aux("MM".as_bytes())
