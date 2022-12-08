@@ -1,7 +1,3 @@
-use std::error::Error;
-use std::fmt::Formatter;
-use std::ptr::write;
-
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use rust_htslib::bam;
@@ -10,8 +6,7 @@ use rust_htslib::bam::Read;
 
 use mod_flatten::errs::InputError;
 use mod_flatten::mod_bam::{
-    collapse_mod_probs, extract_mod_probs, format_mm_ml_tag, get_mod_probs_for_query_positions,
-    DeltaListConverter,
+    collapse_mod_probs, extract_mod_probs, format_mm_ml_tag, DeltaListConverter,
 };
 
 const MM_TAGS: [&str; 2] = ["MM", "Mm"];
@@ -173,11 +168,11 @@ fn main() -> Result<(), String> {
                 .remove_aux("ML".as_bytes())
                 .expect("failed to remove ML tag");
             let mm = Aux::String(&mm);
-            let ml_arr: AuxArray<u16> = {
+            let ml_arr: AuxArray<u8> = {
                 let sl = &ml;
                 sl.into()
             };
-            let ml = Aux::ArrayU16(ml_arr);
+            let ml = Aux::ArrayU8(ml_arr);
             record
                 .push_aux("MM".as_bytes(), mm)
                 .expect("failed to add MM tag");

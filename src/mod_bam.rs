@@ -9,14 +9,6 @@ enum Strand {
 }
 
 impl Strand {
-    fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "+" => Some(Self::Positive),
-            "-" => Some(Self::Negative),
-            _ => None,
-        }
-    }
-
     fn parse_char(x: char) -> Result<Self, InputError> {
         match x {
             '+' => Ok(Self::Positive),
@@ -42,7 +34,7 @@ impl SkipMode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct BaseModProbs {
     mod_codes: IndexSet<char>,
     probs: Vec<f32>,
@@ -70,7 +62,7 @@ impl BaseModProbs {
             .mod_codes
             .iter()
             .zip(self.probs.iter())
-            .filter(|(mod_code, prob)| **mod_code != mod_to_collapse)
+            .filter(|(mod_code, _prob)| **mod_code != mod_to_collapse)
             .collect::<Vec<(&char, &f32)>>();
         let total_marginal_collapsed_prob =
             marginal_collapsed_prob.iter().map(|(_, p)| *p).sum::<f32>() + canonical_prob;
@@ -154,19 +146,12 @@ impl DeltaListConverter {
 }
 
 #[inline]
-fn qual_to_prob(qual: u16) -> f32 {
-    let q = qual as f32;
-    (q + 0.5f32) / 256f32
-}
-
-#[inline]
-fn prob_to_qual(prob: f32) -> u16 {
+fn prob_to_qual(prob: f32) -> u8 {
     if prob == 1.0f32 {
-        255u16
+        255u8
     } else {
         let p = prob * 256f32;
-        let q = p.floor() as u16;
-        assert!(q <= 255);
+        let q = p.floor() as u8;
         q
     }
 }
@@ -243,6 +228,14 @@ impl BaseModPositions {
             delta_list,
         })
     }
+
+    fn stride(&self) -> usize {
+        self.mod_base_codes.len()
+    }
+
+    fn size(&self) -> usize {
+        self.delta_list.len() * self.mod_base_codes.len()
+    }
 }
 
 fn combine_positions_to_probs(
@@ -291,22 +284,25 @@ fn get_base_mod_probs(
 ) -> Result<HashMap<usize, BaseModProbs>, InputError> {
     let positions = converter.to_positions(&base_mod_positions.delta_list);
     let probs = {
-        let mut probs = mod_quals[pointer..pointer + base_mod_positions.delta_list.len()]
+        let mut probs = mod_quals[pointer..pointer + base_mod_positions.size()]
             .iter()
             .map(|qual| *qual as f32)
             .collect::<Vec<f32>>();
         quals_to_probs(&mut probs);
         probs
     };
-    assert_eq!(probs.len(), positions.len());
 
     let mut positions_to_probs = HashMap::<usize, BaseModProbs>::new();
-    for mod_base_code in &base_mod_positions.mod_base_codes {
-        for (position, prob) in positions.iter().zip(&probs) {
-            if let Some(base_mod_probs) = positions_to_probs.get_mut(position) {
-                base_mod_probs.insert_base_mod_prob(*mod_base_code, *prob);
+    let stride = base_mod_positions.stride();
+    assert_eq!(probs.len() / stride, positions.len());
+    for (chunk, position) in probs.chunks(stride).zip(positions) {
+        assert_eq!(chunk.len(), stride);
+        for (i, mod_base_code) in base_mod_positions.mod_base_codes.iter().enumerate() {
+            let prob = chunk[i];
+            if let Some(base_mod_probs) = positions_to_probs.get_mut(&position) {
+                base_mod_probs.insert_base_mod_prob(*mod_base_code, prob);
             } else {
-                positions_to_probs.insert(*position, BaseModProbs::new(*mod_base_code, *prob));
+                positions_to_probs.insert(position, BaseModProbs::new(*mod_base_code, prob));
             }
         }
     }
@@ -314,83 +310,10 @@ fn get_base_mod_probs(
     Ok(positions_to_probs)
 }
 
-pub fn get_mod_probs_for_query_positions(
-    mm: &str,
-    canonical_base: char,
-    mod_quals: &[u16],
-    converter: &DeltaListConverter,
-) -> Result<HashMap<usize, BaseModProbs>, InputError> {
-    // todo move this outside this function. should handle the case where mods for another base
-    //  come first and the offset of mod_quals is already handled
-    let filtered_mod_positions = mm
-        .split(';')
-        .filter(|positions| positions.starts_with(canonical_base))
-        .collect::<Vec<&str>>();
-
-    let mut probs_for_positions = HashMap::<usize, BaseModProbs>::new();
-    let mut prob_array_idx = 0usize;
-    for mod_positions in filtered_mod_positions {
-        let mut parts = mod_positions.split(',');
-        let mut header = parts
-            .nth(0)
-            .ok_or(InputError::new(
-                "failed to get leader for base mod position line",
-            ))?
-            .chars();
-
-        let raw_stand = header
-            .nth(1)
-            .ok_or(InputError::new("failed to get strand"))?;
-
-        // TODO handle duplex
-        let _strand = Strand::parse_char(raw_stand);
-
-        let mut mod_base_codes = Vec::new();
-        let mut mode: Option<char> = None;
-
-        while let Some(c) = header.next() {
-            match c {
-                '?' | '.' => {
-                    mode = Some(c);
-                }
-                _ => mod_base_codes.push(c),
-            }
-        }
-
-        // taking the liberty to think that a read wouldn't be larger
-        // than 2**32 - 1 bases long
-        let delta_list = parts
-            .into_iter()
-            .map(|raw_pos| raw_pos.parse::<u32>())
-            .collect::<Result<Vec<u32>, _>>()
-            .map_err(|e| {
-                InputError::new(&format!("failed to parse position list, {}", e.to_string()))
-            })?;
-
-        let positions = converter.to_positions(&delta_list);
-        for mod_base in mod_base_codes {
-            for pos in &positions {
-                let qual = mod_quals[prob_array_idx];
-                let prob = qual_to_prob(qual);
-                if let Some(base_mod_probs) = probs_for_positions.get_mut(pos) {
-                    base_mod_probs.insert_base_mod_prob(mod_base, prob);
-                } else {
-                    probs_for_positions.insert(*pos, BaseModProbs::new(mod_base, prob));
-                }
-                // consume from the ML array
-                prob_array_idx += 1;
-            }
-        }
-    }
-
-    Ok(probs_for_positions)
-}
-
 pub fn collapse_mod_probs(
     positions_to_probs: HashMap<usize, BaseModProbs>,
     mod_base_to_remove: char,
 ) -> HashMap<usize, BaseModProbs> {
-    // let mut collapsed_probs = HashMap::new();
     positions_to_probs
         .into_iter()
         .map(|(pos, mod_base_probs)| (pos, mod_base_probs.collapse(mod_base_to_remove)))
@@ -401,7 +324,7 @@ pub fn format_mm_ml_tag(
     positions_to_probs: HashMap<usize, BaseModProbs>,
     canonical_base: char,
     converter: &DeltaListConverter,
-) -> (String, Vec<u16>) {
+) -> (String, Vec<u8>) {
     let mut mod_code_to_position = HashMap::new();
     for (position, mod_base_probs) in positions_to_probs {
         for (mod_base_code, mod_base_prob) in mod_base_probs
@@ -438,25 +361,94 @@ pub fn format_mm_ml_tag(
         let quals = positions_and_probs
             .iter()
             .map(|(_pos, prob)| prob_to_qual(*prob))
-            .collect::<Vec<u16>>();
+            .collect::<Vec<u8>>();
         ml_tag.extend(quals.into_iter());
     }
 
     (mm_tag, ml_tag)
 }
 
-// fn parse_mod_probs(record: &bam::Record) {
-//     let mm = record.aux("MM".as_bytes()).unwrap();
-//     let ml = record.aux("ML".as_bytes()).unwrap();
-//     dbg!(mm);
-//     dbg!(ml);
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_htslib::bam;
-    use rust_htslib::bam::{Read, Reader};
+
+    fn qual_to_prob(qual: u16) -> f32 {
+        let q = qual as f32;
+        (q + 0.5f32) / 256f32
+    }
+
+    // first implementation that does not account for multiple mods in the MM tag (i.e. C and A))
+    pub fn get_mod_probs_for_query_positions(
+        mm: &str,
+        canonical_base: char,
+        mod_quals: &[u16],
+        converter: &DeltaListConverter,
+    ) -> Result<HashMap<usize, BaseModProbs>, InputError> {
+        // todo move this outside this function. should handle the case where mods for another base
+        //  come first and the offset of mod_quals is already handled
+        let filtered_mod_positions = mm
+            .split(';')
+            .filter(|positions| positions.starts_with(canonical_base))
+            .collect::<Vec<&str>>();
+
+        let mut probs_for_positions = HashMap::<usize, BaseModProbs>::new();
+        let mut prob_array_idx = 0usize;
+        for mod_positions in filtered_mod_positions {
+            let mut parts = mod_positions.split(',');
+            let mut header = parts
+                .nth(0)
+                .ok_or(InputError::new(
+                    "failed to get leader for base mod position line",
+                ))?
+                .chars();
+
+            let raw_stand = header
+                .nth(1)
+                .ok_or(InputError::new("failed to get strand"))?;
+
+            // TODO handle duplex
+            let _strand = Strand::parse_char(raw_stand);
+
+            let mut mod_base_codes = Vec::new();
+            let mut _mode: Option<char> = None;
+
+            while let Some(c) = header.next() {
+                match c {
+                    '?' | '.' => {
+                        _mode = Some(c);
+                    }
+                    _ => mod_base_codes.push(c),
+                }
+            }
+
+            // taking the liberty to think that a read wouldn't be larger
+            // than 2**32 - 1 bases long
+            let delta_list = parts
+                .into_iter()
+                .map(|raw_pos| raw_pos.parse::<u32>())
+                .collect::<Result<Vec<u32>, _>>()
+                .map_err(|e| {
+                    InputError::new(&format!("failed to parse position list, {}", e.to_string()))
+                })?;
+
+            let positions = converter.to_positions(&delta_list);
+            for mod_base in mod_base_codes {
+                for pos in &positions {
+                    let qual = mod_quals[prob_array_idx];
+                    let prob = qual_to_prob(qual);
+                    if let Some(base_mod_probs) = probs_for_positions.get_mut(pos) {
+                        base_mod_probs.insert_base_mod_prob(mod_base, prob);
+                    } else {
+                        probs_for_positions.insert(*pos, BaseModProbs::new(mod_base, prob));
+                    }
+                    // consume from the ML array
+                    prob_array_idx += 1;
+                }
+            }
+        }
+
+        Ok(probs_for_positions)
+    }
 
     #[test]
     fn test_delta_list_to_positions() {
@@ -574,19 +566,52 @@ mod tests {
         assert_eq!(base_mod_positions, expected);
     }
 
-    #[test]
-    fn test_quals_to_probs() {
-        let mut quals = vec![100f32; 10_000];
-        let start_time = std::time::Instant::now();
-        let probs2 = quals_to_probs(&mut quals);
-        let elapsed = start_time.elapsed();
-        dbg!(elapsed);
+    // #[test]
+    // fn test_quals_to_probs() {
+    //     let mut quals = vec![100f32; 10_000];
+    //     let start_time = std::time::Instant::now();
+    //     let _probs2 = quals_to_probs(&mut quals);
+    //     let elapsed = start_time.elapsed();
+    //     dbg!(elapsed);
+    //
+    //     let quals = vec![100u16; 10_000];
+    //     let start_time = std::time::Instant::now();
+    //     let _probs1 = quals.iter().map(|q| qual_to_prob(*q)).collect::<Vec<_>>();
+    //     let elapsed = start_time.elapsed();
+    //     dbg!(elapsed);
+    // }
 
-        let quals = vec![100u16; 10_000];
-        let start_time = std::time::Instant::now();
-        let probs1 = quals.iter().map(|q| qual_to_prob(*q)).collect::<Vec<_>>();
-        let elapsed = start_time.elapsed();
-        dbg!(elapsed);
+    #[test]
+    fn test_get_base_mod_probs() {
+        let dna = "GATCGACTACGTCGA";
+        let tag = "C+hm?,0,1,0;";
+        let quals = vec![1, 200, 1, 200, 1, 200];
+        let canonical_base = 'C';
+        let converter = DeltaListConverter::new(dna, canonical_base);
+
+        let positions_to_probs =
+            extract_mod_probs(tag, &quals, canonical_base, &converter).unwrap();
+
+        assert_eq!(positions_to_probs.len(), 3);
+        let mut found_positions = Vec::new();
+        for (position, base_mod_probs) in positions_to_probs.iter() {
+            found_positions.push(position);
+            let quals = base_mod_probs
+                .probs
+                .iter()
+                .map(|p| prob_to_qual(*p))
+                .collect::<Vec<_>>();
+            assert_eq!(&quals, &[1, 200]);
+        }
+
+        let tag = "C+h?,0,1,0;C+m?,0,1,0;";
+        let quals = vec![1, 1, 1, 200, 200, 200];
+
+        let positions_to_probs_1 =
+            extract_mod_probs(tag, &quals, canonical_base, &converter).unwrap();
+        // dbg!(positions_to_probs, positions_to_probs_1);
+
+        assert_eq!(positions_to_probs, positions_to_probs_1);
     }
 
     #[test]
