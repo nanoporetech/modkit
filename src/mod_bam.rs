@@ -110,11 +110,15 @@ impl DeltaListConverter {
         Self { cumulative_counts }
     }
 
-    pub fn to_positions(&self, delta_list: &[u32]) -> Vec<usize> {
+    pub fn to_positions(&self, delta_list: &[u32]) -> Result<Vec<usize>, InputError> {
         let mut finger = 0usize;
         let mut n_skips = 0u32;
         let mut positions = Vec::with_capacity(delta_list.len());
         for d in delta_list {
+            if finger >= self.cumulative_counts.len() {
+                return Err(InputError::new("malformed MM delta list"));
+            }
+            assert!(finger < self.cumulative_counts.len());
             while self.cumulative_counts[finger] <= (*d + n_skips) {
                 finger += 1;
                 assert!(
@@ -129,7 +133,7 @@ impl DeltaListConverter {
             positions.push(finger);
             n_skips += d + 1;
         }
-        positions
+        Ok(positions)
     }
 
     pub fn to_delta_list(&self, positions: &[usize]) -> Vec<u32> {
@@ -282,7 +286,7 @@ fn get_base_mod_probs(
     pointer: usize,
     converter: &DeltaListConverter,
 ) -> Result<HashMap<usize, BaseModProbs>, InputError> {
-    let positions = converter.to_positions(&base_mod_positions.delta_list);
+    let positions = converter.to_positions(&base_mod_positions.delta_list)?;
     let probs = {
         let mut probs = mod_quals[pointer..pointer + base_mod_positions.size()]
             .iter()
@@ -431,7 +435,7 @@ mod tests {
                     InputError::new(&format!("failed to parse position list, {}", e.to_string()))
                 })?;
 
-            let positions = converter.to_positions(&delta_list);
+            let positions = converter.to_positions(&delta_list)?;
             for mod_base in mod_base_codes {
                 for pos in &positions {
                     let qual = mod_quals[prob_array_idx];
@@ -458,21 +462,21 @@ mod tests {
 
         let ds = [1, 1, 0];
         let expected = [2, 5, 8];
-        let obs = converter.to_positions(&ds);
+        let obs = converter.to_positions(&ds).unwrap();
         assert_eq!(&obs, &expected);
         let obs = converter.to_delta_list(&expected);
         assert_eq!(obs, &ds);
 
         let ds = [3, 0, 0];
         let expected = [5, 8, 11];
-        let obs = converter.to_positions(&ds);
+        let obs = converter.to_positions(&ds).unwrap();
         assert_eq!(&obs, &expected);
         let obs = converter.to_delta_list(&expected);
         assert_eq!(obs, &ds);
 
         let ds = [3, 1];
         let expected = [5, 11];
-        let obs = converter.to_positions(&ds);
+        let obs = converter.to_positions(&ds).unwrap();
         assert_eq!(&obs, &expected);
         let obs = converter.to_delta_list(&expected);
         assert_eq!(obs, &ds);
