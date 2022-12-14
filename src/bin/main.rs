@@ -48,7 +48,7 @@ type CliResult<T> = Result<T, RunError>;
 fn get_mm_tag(mm_aux: &Aux, tag_key: &str) -> Result<String, RunError> {
     match mm_aux {
         Aux::String(s) => Ok(s.to_string()),
-        _ => Err(RunError::new_input_error(&format!(
+        _ => Err(RunError::new_input_error(format!(
             "incorrect {} tag, should be string",
             tag_key
         ))),
@@ -58,7 +58,7 @@ fn get_mm_tag(mm_aux: &Aux, tag_key: &str) -> Result<String, RunError> {
 fn get_ml_tag(ml_aux: &Aux, tag_key: &str) -> CliResult<Vec<u16>> {
     match ml_aux {
         Aux::ArrayU8(arr) => Ok(arr.iter().map(|x| x as u16).collect()),
-        _ => Err(RunError::new_input_error(&format!(
+        _ => Err(RunError::new_input_error(format!(
             "invalid {} tag, expected array",
             tag_key
         ))),
@@ -121,7 +121,7 @@ fn flatten_mod_probs(
         record.seq().as_bytes()
     };
     let seq = String::from_utf8(raw_seq).map_err(|e| {
-        RunError::new_input_error(&format!("failed to convert sequence to string, {}", e))
+        RunError::new_input_error(format!("failed to convert sequence to string, {}", e))
     })?;
     if seq.len() == 0 {
         return Err(RunError::new_failed("seq is empty"));
@@ -137,13 +137,13 @@ fn flatten_mod_probs(
             }
             (Some(Ok(mm)), Some(Ok(ml))) => (mm, ml),
             (Some(Err(err)), _) => {
-                return Err(RunError::new_input_error(&format!(
+                return Err(RunError::new_input_error(format!(
                     "MM tag malformed {}",
                     err.to_string()
                 )));
             }
             (_, Some(Err(err))) => {
-                return Err(RunError::new_input_error(&format!(
+                return Err(RunError::new_input_error(format!(
                     "ML tag malformed {}",
                     err.to_string()
                 )));

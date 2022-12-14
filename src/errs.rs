@@ -42,16 +42,16 @@ pub enum RunError {
 }
 
 impl RunError {
-    pub fn new_input_error(reason: &str) -> Self {
-        Self::BadInput(InputError::new(reason))
+    pub fn new_input_error<T: Into<String>>(reason: T) -> Self {
+        Self::BadInput(InputError(reason.into()))
     }
 
-    pub fn new_skipped(reason: &str) -> Self {
-        Self::Skipped(reason.to_owned())
+    pub fn new_skipped<T: Into<String>>(reason: T) -> Self {
+        Self::Skipped(reason.into())
     }
 
-    pub fn new_failed(reason: &str) -> Self {
-        Self::Failed(reason.to_owned())
+    pub fn new_failed<T: Into<String>>(reason: T) -> Self {
+        Self::Failed(reason.into())
     }
 }
 
