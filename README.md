@@ -1,7 +1,7 @@
 # mod_flatten
 
 ```bash
-flattens N-way base-modification calls into N-1
+flattens N-way base-modification calls into N-1-way
 
 Usage: mod_flatten [OPTIONS] <IN_BAM> <OUT_BAM>
 
@@ -19,13 +19,15 @@ Options:
 
 ## Example
 ```bash
-cargo run --release -- tests/resources/ref_out_5mC_auto.bam flattened_5mC.bam
+cargo run --release -- tests/resources/input_5mC.bam flattened_5mC.bam
 
 # or if installed
 
-mod_flatten tests/resources/ref_out_5mC_auto.bam flattened_5mC.bam
+mod_flatten tests/resources/input_5mC.bam flattened_5mC.bam
 ```
 
 ## TODO
+- [ ] Don't remove sup/dup/secondary alignments
+- [ ] Handle removing mod-prob in ambiguous mode (`.`).
 - [ ] C-API
 - [ ] python lib
