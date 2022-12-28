@@ -4,13 +4,14 @@ use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
-use mod_flatten::errs::{InputError, RunError};
-use mod_flatten::mod_bam::{
-    collapse_mod_probs, extract_mod_probs, format_mm_ml_tag, DeltaListConverter,
+use mod_kit::errs::{InputError, RunError};
+use mod_kit::mod_bam::{
+    base_mod_probs_from_record, collapse_mod_probs, extract_mod_probs, format_mm_ml_tag,
+    DeltaListConverter,
 };
 
-const MM_TAGS: [&str; 2] = ["MM", "Mm"];
-const ML_TAGS: [&str; 2] = ["ML", "Ml"];
+// const MM_TAGS: [&str; 2] = ["MM", "Mm"];
+// const ML_TAGS: [&str; 2] = ["ML", "Ml"];
 
 #[derive(Parser)]
 #[command(about = "flattens multi-way base-modification calls into one", long_about = None)]
@@ -45,44 +46,44 @@ struct Cli {
 
 type CliResult<T> = Result<T, RunError>;
 
-fn get_mm_tag(mm_aux: &Aux, tag_key: &str) -> Result<String, RunError> {
-    match mm_aux {
-        Aux::String(s) => Ok(s.to_string()),
-        _ => Err(RunError::new_input_error(format!(
-            "incorrect {} tag, should be string",
-            tag_key
-        ))),
-    }
-}
+// fn get_mm_tag(mm_aux: &Aux, tag_key: &str) -> Result<String, RunError> {
+//     match mm_aux {
+//         Aux::String(s) => Ok(s.to_string()),
+//         _ => Err(RunError::new_input_error(format!(
+//             "incorrect {} tag, should be string",
+//             tag_key
+//         ))),
+//     }
+// }
+//
+// fn get_ml_tag(ml_aux: &Aux, tag_key: &str) -> CliResult<Vec<u16>> {
+//     match ml_aux {
+//         Aux::ArrayU8(arr) => Ok(arr.iter().map(|x| x as u16).collect()),
+//         _ => Err(RunError::new_input_error(format!(
+//             "invalid {} tag, expected array",
+//             tag_key
+//         ))),
+//     }
+// }
 
-fn get_ml_tag(ml_aux: &Aux, tag_key: &str) -> CliResult<Vec<u16>> {
-    match ml_aux {
-        Aux::ArrayU8(arr) => Ok(arr.iter().map(|x| x as u16).collect()),
-        _ => Err(RunError::new_input_error(format!(
-            "invalid {} tag, expected array",
-            tag_key
-        ))),
-    }
-}
-
-/// tag keys should be the new then old tags, for example ["MM", "Mm"].
-fn get_tag<T>(
-    record: &bam::Record,
-    tag_keys: &[&str; 2],
-    parser: &dyn Fn(&Aux, &str) -> CliResult<T>,
-) -> Option<CliResult<T>> {
-    let tag_new = record.aux(tag_keys[0].as_bytes());
-    let tag_old = record.aux(tag_keys[1].as_bytes());
-
-    let tag = match (tag_new, tag_old) {
-        (Ok(aux), _) => Some((aux, tag_keys[0])),
-        (Err(_), Ok(aux)) => Some((aux, tag_keys[1])),
-        _ => None,
-    };
-
-    tag.map(|(aux, t)| parser(&aux, t))
-}
-
+// /// tag keys should be the new then old tags, for example ["MM", "Mm"].
+// fn get_tag<T>(
+//     record: &bam::Record,
+//     tag_keys: &[&str; 2],
+//     parser: &dyn Fn(&Aux, &str) -> CliResult<T>,
+// ) -> Option<CliResult<T>> {
+//     let tag_new = record.aux(tag_keys[0].as_bytes());
+//     let tag_old = record.aux(tag_keys[1].as_bytes());
+//
+//     let tag = match (tag_new, tag_old) {
+//         (Ok(aux), _) => Some((aux, tag_keys[0])),
+//         (Err(_), Ok(aux)) => Some((aux, tag_keys[1])),
+//         _ => None,
+//     };
+//
+//     tag.map(|(aux, t)| parser(&aux, t))
+// }
+//
 pub(crate) fn get_spinner() -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -115,43 +116,22 @@ fn flatten_mod_probs(
         return Err(RunError::new_failed("seq is zero length"));
     }
 
-    let raw_seq = if record.is_reverse() {
-        bio::alphabets::dna::revcomp(record.seq().as_bytes())
-    } else {
-        record.seq().as_bytes()
-    };
-    let seq = String::from_utf8(raw_seq).map_err(|e| {
-        RunError::new_input_error(format!("failed to convert sequence to string, {}", e))
-    })?;
-    if seq.len() == 0 {
-        return Err(RunError::new_failed("seq is empty"));
-    }
-
-    let converter = DeltaListConverter::new(&seq, canonical_base);
-    let (mm, ml) = {
-        let mm = get_tag::<String>(&record, &MM_TAGS, &get_mm_tag);
-        let ml = get_tag::<Vec<u16>>(&record, &ML_TAGS, &get_ml_tag);
-        match (mm, ml) {
-            (None, _) | (_, None) => {
-                return Err(RunError::new_skipped("no mod tags"));
-            }
-            (Some(Ok(mm)), Some(Ok(ml))) => (mm, ml),
-            (Some(Err(err)), _) => {
-                return Err(RunError::new_input_error(format!(
-                    "MM tag malformed {}",
-                    err.to_string()
-                )));
-            }
-            (_, Some(Err(err))) => {
-                return Err(RunError::new_input_error(format!(
-                    "ML tag malformed {}",
-                    err.to_string()
-                )));
-            }
-        }
-    };
-    let probs_for_positions = extract_mod_probs(&mm, &ml, canonical_base, &converter)
-        .map_err(|input_err| RunError::BadInput(input_err))?;
+    let converter = DeltaListConverter::new_from_record(&record, canonical_base)?;
+    //
+    // let raw_seq = if record.is_reverse() {
+    //     bio::alphabets::dna::revcomp(record.seq().as_bytes())
+    // } else {
+    //     record.seq().as_bytes()
+    // };
+    // let seq = String::from_utf8(raw_seq).map_err(|e| {
+    //     RunError::new_input_error(format!("failed to convert sequence to string, {}", e))
+    // })?;
+    // if seq.len() == 0 {
+    //     return Err(RunError::new_failed("seq is empty"));
+    // }
+    //
+    // let converter = DeltaListConverter::new(&seq, canonical_base);
+    let probs_for_positions = base_mod_probs_from_record(&record, &converter, canonical_base)?;
     let collapsed_probs_for_positions = collapse_mod_probs(probs_for_positions, mod_base_to_remove);
     let (mm, ml) = format_mm_ml_tag(collapsed_probs_for_positions, canonical_base, &converter);
 

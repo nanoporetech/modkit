@@ -1,22 +1,13 @@
-use crate::errs::InputError;
+use crate::errs::{InputError, RunError};
+use crate::util;
+use crate::util::{get_tag, Strand};
 use indexmap::{indexset, IndexSet};
+use rust_htslib::bam;
+use rust_htslib::bam::record::Aux;
 use std::collections::HashMap;
 
-#[derive(Debug, PartialEq, Eq)]
-enum Strand {
-    Positive,
-    Negative,
-}
-
-impl Strand {
-    fn parse_char(x: char) -> Result<Self, InputError> {
-        match x {
-            '+' => Ok(Self::Positive),
-            '-' => Ok(Self::Negative),
-            _ => Err(format!("failed to parse strand {}", x).into()),
-        }
-    }
-}
+const MM_TAGS: [&str; 2] = ["MM", "Mm"];
+const ML_TAGS: [&str; 2] = ["ML", "Ml"];
 
 #[derive(Debug, Eq, PartialEq)]
 enum SkipMode {
@@ -32,6 +23,11 @@ impl SkipMode {
             _ => Err(InputError::new(&format!("unknown mode {}", raw_mode))),
         }
     }
+}
+
+pub enum BaseModCall {
+    Canonical(f32),
+    Modified(f32, char),
 }
 
 #[derive(Debug, PartialEq)]
@@ -54,6 +50,28 @@ impl BaseModProbs {
             self.mod_codes.insert(mod_code);
             self.probs.push(prob);
         }
+    }
+
+    pub fn base_mod_call(&self) -> BaseModCall {
+        let canonical_prob = self.canonical_prob();
+        let max_mod_prob = self
+            .probs
+            .iter()
+            .zip(self.mod_codes.iter())
+            .max_by(|(p, _), (q, _)| p.partial_cmp(q).unwrap());
+        if let Some((mod_prob, mod_code)) = max_mod_prob {
+            if *mod_prob > canonical_prob {
+                BaseModCall::Modified(*mod_prob, *mod_code)
+            } else {
+                BaseModCall::Canonical(canonical_prob)
+            }
+        } else {
+            BaseModCall::Canonical(canonical_prob)
+        }
+    }
+
+    pub fn canonical_prob(&self) -> f32 {
+        1f32 - self.probs.iter().sum::<f32>()
     }
 
     fn collapse(self, mod_to_collapse: char) -> BaseModProbs {
@@ -95,6 +113,12 @@ pub struct DeltaListConverter {
 }
 
 impl DeltaListConverter {
+    pub fn new_from_record(record: &bam::Record, canonical_base: char) -> Result<Self, RunError> {
+        let seq = util::get_forward_sequence(&record)?;
+
+        Ok(Self::new(&seq, canonical_base))
+    }
+
     pub fn new(read_sequence: &str, base: char) -> Self {
         let cumulative_counts = read_sequence
             .chars()
@@ -255,12 +279,15 @@ fn combine_positions_to_probs(
     }
 }
 
+/// Mapping of _forward sequence_ position to `BaseModProbs`.
+pub type SeqPosBaseModProbs = HashMap<usize, BaseModProbs>;
+
 pub fn extract_mod_probs(
     raw_mm: &str,
     mod_quals: &[u16],
     canonical_base: char,
     converter: &DeltaListConverter,
-) -> Result<HashMap<usize, BaseModProbs>, InputError> {
+) -> Result<SeqPosBaseModProbs, InputError> {
     let splited = raw_mm.split(";");
     let mut positions_to_probs = HashMap::new();
     let mut pointer = 0usize;
@@ -315,9 +342,9 @@ fn get_base_mod_probs(
 }
 
 pub fn collapse_mod_probs(
-    positions_to_probs: HashMap<usize, BaseModProbs>,
+    positions_to_probs: SeqPosBaseModProbs,
     mod_base_to_remove: char,
-) -> HashMap<usize, BaseModProbs> {
+) -> SeqPosBaseModProbs {
     positions_to_probs
         .into_iter()
         .map(|(pos, mod_base_probs)| (pos, mod_base_probs.collapse(mod_base_to_remove)))
@@ -372,8 +399,72 @@ pub fn format_mm_ml_tag(
     (mm_tag, ml_tag)
 }
 
+/// tag keys should be the new then old tags, for example ["MM", "Mm"].
+fn parse_mm_tag(mm_aux: &Aux, tag_key: &str) -> Result<String, RunError> {
+    match mm_aux {
+        Aux::String(s) => Ok(s.to_string()),
+        _ => Err(RunError::new_input_error(format!(
+            "incorrect {} tag, should be string",
+            tag_key
+        ))),
+    }
+}
+
+/// tag keys should be the new then old tags, for example ["ML", "Ml"].
+fn parse_ml_tag(ml_aux: &Aux, tag_key: &str) -> Result<Vec<u16>, RunError> {
+    match ml_aux {
+        Aux::ArrayU8(arr) => Ok(arr.iter().map(|x| x as u16).collect()),
+        _ => Err(RunError::new_input_error(format!(
+            "invalid {} tag, expected array",
+            tag_key
+        ))),
+    }
+}
+
+pub fn get_mm_tag_from_record(record: &bam::Record) -> Option<Result<String, RunError>> {
+    get_tag::<String>(&record, &MM_TAGS, &parse_mm_tag)
+}
+
+pub fn get_ml_tag_from_record(record: &bam::Record) -> Option<Result<Vec<u16>, RunError>> {
+    get_tag::<Vec<u16>>(&record, &ML_TAGS, &parse_ml_tag)
+}
+
+pub fn base_mod_probs_from_record(
+    record: &bam::Record,
+    converter: &DeltaListConverter,
+    canonical_base: char,
+) -> Result<SeqPosBaseModProbs, RunError> {
+    // TODO could make this inspect the canonical bases from the MM tag and not
+    //  require the `canonical_base` argument
+    let (mm, ml) = {
+        let mm = get_mm_tag_from_record(record);
+        let ml = get_ml_tag_from_record(record);
+        match (mm, ml) {
+            (None, _) | (_, None) => {
+                return Err(RunError::new_skipped("no mod tags"));
+            }
+            (Some(Ok(mm)), Some(Ok(ml))) => (mm, ml),
+            (Some(Err(err)), _) => {
+                return Err(RunError::new_input_error(format!(
+                    "MM tag malformed {}",
+                    err.to_string()
+                )));
+            }
+            (_, Some(Err(err))) => {
+                return Err(RunError::new_input_error(format!(
+                    "ML tag malformed {}",
+                    err.to_string()
+                )));
+            }
+        }
+    };
+
+    extract_mod_probs(&mm, &ml, canonical_base, &converter)
+        .map_err(|input_err| RunError::BadInput(input_err))
+}
+
 #[cfg(test)]
-mod tests {
+mod mod_bam_tests {
     use super::*;
 
     fn qual_to_prob(qual: u16) -> f32 {
@@ -489,7 +580,7 @@ mod tests {
             probs: vec![0.05273438, 0.03320312],
         };
         let collapsed = mod_base_probs.collapse('h');
-        assert_eq!(collapsed.probs, vec![0.035051543,]);
+        assert_eq!(collapsed.probs, vec![0.035051543]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
 
@@ -552,7 +643,7 @@ mod tests {
 
         let (mm, ml) = format_mm_ml_tag(positions_and_probs, 'C', &converter);
         assert_eq!(mm, "C+m?,1,1,0;");
-        assert_eq!(ml, vec![25, 230, 51,]);
+        assert_eq!(ml, vec![25, 230, 51]);
     }
 
     #[test]
