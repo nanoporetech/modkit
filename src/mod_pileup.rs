@@ -202,6 +202,21 @@ pub struct ModBasePileup {
     features: FeatureVector,
 }
 
+impl ModBasePileup {
+    pub fn decode(self, mod_base_code: &dyn ModBaseCode, sep: char) -> Option<String> {
+        let mut decoded = String::new();
+        for counts in self.features.iter_counts(mod_base_code) {
+            let row = format!("{}{sep}{}{sep}\n", self.chrom_name, counts.position);
+            decoded.push_str(&row);
+        }
+        if decoded.is_empty() {
+            None
+        } else {
+            Some(decoded)
+        }
+    }
+}
+
 pub struct ModBasePileupProcessor<T: AsRef<Path>> {
     bam_fp: T,
     fasta_fp: T,
@@ -243,10 +258,10 @@ impl<T: AsRef<Path>> ModBasePileupProcessor<T> {
         let header = bam_reader.header().to_owned();
         let mut fasta_reader = FastaReader::from_path(&self.fasta_fp).unwrap();
         let ref_name = String::from_utf8(header.tid2name(self.chrom_tid as u32).to_vec()).unwrap();
-        eprintln!(
-            "> processing {ref_name}:{}-{}",
-            self.start_pos, self.end_pos
-        );
+        // eprintln!(
+        //     "> processing {ref_name}:{}-{}",
+        //     self.start_pos, self.end_pos
+        // );
 
         let reference_seq = fasta_reader
             .fetch_seq_string(

@@ -8,6 +8,9 @@ edition = "2021"
 [[bin]]
 name = "mod_flatten"
 path = "src/bin/main.rs"
+[[bin]]
+name = "bamtobed"
+path = "src/bin/bamtobed.rs"
 
 [lib]
 path = "src/lib.rs"
@@ -23,6 +26,9 @@ pulp = "0.10.3"
 clap = { version = "4.0.29", features = ["derive"]}
 indicatif = "0.17.1"
 itertools = "0.10.5"
+rayon = "1.6.1"
+crossbeam = "0.8.2"
+crossbeam-channel = "0.5.6"
 
 [dev-dependencies]
 lazy_static = "1.4.0"

@@ -10,6 +10,7 @@ pub trait ModBaseCode {
     fn raw_mod_codes(&self) -> &'static [char];
 }
 
+#[derive(Copy, Clone)]
 pub struct CytosineModBaseCode;
 const CYTOSINE_MODBASE_CODES: [char; 5] = ['C', 'c', 'f', 'h', 'm'];
 impl ModBaseCode for CytosineModBaseCode {
@@ -33,6 +34,7 @@ impl ModBaseCode for CytosineModBaseCode {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct HydroxyMethylCytosineCode;
 const HMC_MODBASE_CODE_SUBSET: [char; 2] = ['h', 'm'];
 impl ModBaseCode for HydroxyMethylCytosineCode {
@@ -57,8 +59,8 @@ pub trait ModificationMotif {
     // todo? would maybe be better API to have this return an iterator
     fn find_matches(&self, seq: &str) -> VecDeque<(usize, util::Strand)>;
     fn canonical_base(&self) -> char;
-    fn len(&self) -> usize;
-    fn required_overlap(&self) -> usize {
+    fn len(&self) -> u32;
+    fn required_overlap(&self) -> u32 {
         let base = self.len() / 2;
         base + (self.len() % 2)
     }
@@ -85,7 +87,7 @@ impl ModificationMotif for CpGModificationMotif {
     fn canonical_base(&self) -> char {
         'C'
     }
-    fn len(&self) -> usize {
+    fn len(&self) -> u32 {
         2
     }
 }
@@ -111,7 +113,7 @@ impl ModificationMotif for CHHModificationMotif {
     fn canonical_base(&self) -> char {
         'C'
     }
-    fn len(&self) -> usize {
+    fn len(&self) -> u32 {
         3
     }
 }
@@ -162,8 +164,10 @@ mod mod_base_code_tests {
         let motif = CpGModificationMotif;
         let seq = "ACGCGTTT".chars().collect::<Vec<_>>();
         let chunk_size = 4;
-        let mut intervals = IntervalChunks::new(seq.len(), chunk_size, motif.required_overlap());
+        let mut intervals =
+            IntervalChunks::new(seq.len() as u32, chunk_size, motif.required_overlap());
         let (start, end) = intervals.next().unwrap();
+        let (start, end) = (start as usize, end as usize);
         let sub_seq = &seq[start..end].iter().collect::<String>();
         assert_eq!(sub_seq, "ACGC");
         let motif_positions = motif.find_matches(sub_seq).into_iter().collect::<Vec<_>>();
@@ -173,6 +177,7 @@ mod mod_base_code_tests {
         );
 
         let (start, end) = intervals.next().unwrap();
+        let (start, end) = (start as usize, end as usize);
         let sub_seq = &seq[start..end].iter().collect::<String>();
         assert_eq!(sub_seq, "CGTT");
         let motif_positions = motif.find_matches(sub_seq).into_iter().collect::<Vec<_>>();
@@ -184,14 +189,17 @@ mod mod_base_code_tests {
         let motif = CHHModificationMotif;
         assert_eq!(motif.required_overlap(), 2);
         let seq = "AACCATT".chars().collect::<Vec<_>>();
-        let mut intervals = IntervalChunks::new(seq.len(), chunk_size, motif.required_overlap());
+        let mut intervals =
+            IntervalChunks::new(seq.len() as u32, chunk_size, motif.required_overlap());
         let (start, end) = intervals.next().unwrap();
+        let (start, end) = (start as usize, end as usize);
         let sub_seq = &seq[start..end].iter().collect::<String>();
         assert_eq!(sub_seq, "AACC");
         let motif_positions = motif.find_matches(sub_seq).into_iter().collect::<Vec<_>>();
         assert_eq!(motif_positions, vec![]);
 
         let (start, end) = intervals.next().unwrap();
+        let (start, end) = (start as usize, end as usize);
         let sub_seq = &seq[start..end].iter().collect::<String>();
         assert_eq!(sub_seq, "CCAT");
         let motif_positions = motif.find_matches(sub_seq).into_iter().collect::<Vec<_>>();
