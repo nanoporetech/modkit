@@ -137,4 +137,10 @@ impl Strand {
             _ => Err(format!("failed to parse strand {}", x).into()),
         }
     }
+    pub fn to_char(&self) -> char {
+        match self {
+            Strand::Positive => '+',
+            Strand::Negative => '-',
+        }
+    }
 }

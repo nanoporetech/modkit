@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::marker::PhantomData;
 use std::path::Path;
@@ -45,6 +46,42 @@ pub struct PileupFeatureCounts {
     n_nocall: u16,
 }
 
+impl PileupFeatureCounts {
+    fn calc_total_modified_count(&self) -> u16 {
+        self.n_modified.values().sum::<u16>()
+    }
+
+    pub(crate) fn coverage(&self) -> u16 {
+        let n_modified = self.calc_total_modified_count();
+        n_modified + self.n_canonical + self.n_filtered + self.n_substitution + self.n_delete
+    }
+
+    pub(crate) fn percent_modified(&self, mod_code: char) -> f32 {
+        let n_modified = self.calc_n_modified(mod_code);
+        let n_modified = n_modified as f32;
+        let denom = self.n_canonical as f32 + self.calc_total_modified_count() as f32;
+        let percent_mod = 100f32 * (n_modified / denom);
+        percent_mod
+    }
+
+    pub(crate) fn calc_n_modified(&self, mod_code: char) -> u16 {
+        *self.n_modified.get(&mod_code).unwrap_or(&0u16)
+    }
+
+    pub(crate) fn score(&self, mod_code: char) -> u32 {
+        let n_modified = self.calc_n_modified(mod_code);
+        let base_score_numerator = n_modified + self.n_canonical;
+        let base_score_denominator =
+            n_modified + self.n_canonical + self.n_substitution + self.n_delete + self.n_filtered;
+        let score = base_score_numerator as f32 / base_score_denominator as f32;
+        if score.is_nan() {
+            0u32
+        } else {
+            (1000f32 * score).floor() as u32
+        }
+    }
+}
+
 struct FeatureVector {
     matrix: Vec<u16>,
     positions: Vec<Option<(u32, util::Strand)>>,
@@ -76,6 +113,10 @@ impl FeatureVector {
         }
     }
 
+    fn init_position(&mut self, idx: usize, strand: util::Strand, position: u32) {
+        self.positions[idx] = Some((position, strand));
+    }
+
     fn add_feature_to_position(
         &mut self,
         idx: usize,
@@ -85,7 +126,12 @@ impl FeatureVector {
         mod_base_code: &dyn ModBaseCode,
     ) {
         assert!(idx < self.positions.len());
-        self.positions[idx] = Some((position, strand));
+        if self.positions[idx].is_none() {
+            self.positions[idx] = Some((position, strand));
+        } else {
+            assert_eq!(self.positions[idx], Some((position, strand)));
+        }
+
         let offset = idx * self.feature_size + self.feature_index(&feature, mod_base_code);
         assert!(offset < self.matrix.len());
         self.matrix[offset] += 1;
@@ -127,6 +173,11 @@ impl FeatureVector {
     }
 }
 
+enum MotifPileup {
+    CoveredMotif(bam::pileup::Pileup),
+    NoCoverage(u32),
+}
+
 struct MotifPileupIter<'a> {
     pileups: bam::pileup::Pileups<'a, bam::IndexedReader>,
     motif_positions: VecDeque<(usize, util::Strand)>,
@@ -157,42 +208,47 @@ impl<'a> MotifPileupIter<'a> {
             next_pos,
         }
     }
+
+    fn update_next_position(&mut self) {
+        self.next_pos = self
+            .motif_positions
+            .pop_front()
+            .map(|(pos, strand)| (pos as u32, strand));
+    }
 }
 
 impl<'a> Iterator for MotifPileupIter<'a> {
-    type Item = (util::Strand, bam::pileup::Pileup);
+    type Item = (util::Strand, MotifPileup);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((next_pos, strand)) = self.next_pos {
+            // dbg!(next_pos, strand);
             let mut pileup: Option<Self::Item> = None;
             while let Some(plp) = self.pileups.next().map(|res| res.unwrap()) {
                 // todo: document how end_pos works, [start_pos, end_pos)
-                if plp.pos() > self.end_pos {
-                    eprintln!(
-                        ">> warning, there might be a bug here... stopping at {}",
-                        self.end_pos
-                    );
+                let off_end = plp.pos() > self.end_pos;
+                if off_end {
                     return None;
                 }
-                if plp.pos() < next_pos {
-                    continue;
-                } else {
-                    assert_eq!(
-                        plp.pos(),
-                        next_pos,
-                        "bug: shouldn't skip over motif position {next_pos}"
-                    );
-                    pileup = Some((strand, plp));
-                    self.next_pos = self
-                        .motif_positions
-                        .pop_front()
-                        .map(|(pos, strand)| (pos as u32, strand));
-                    break;
+                match plp.pos().cmp(&next_pos) {
+                    Ordering::Equal => {
+                        pileup = Some((strand, MotifPileup::CoveredMotif(plp)));
+                        self.update_next_position();
+                        break;
+                    }
+                    Ordering::Less => continue,
+                    Ordering::Greater => {
+                        println!(">greater {next_pos}");
+                        pileup = Some((strand, MotifPileup::NoCoverage(next_pos)));
+                        self.update_next_position();
+                        break;
+                    }
                 }
             }
             return pileup;
+        } else {
+            None
         }
-        None
     }
 }
 
@@ -203,23 +259,49 @@ pub struct ModBasePileup {
 }
 
 impl ModBasePileup {
-    pub fn decode(self, mod_base_code: &dyn ModBaseCode, sep: char) -> Option<String> {
+    pub fn decode(self, mod_base_code: &dyn ModBaseCode, sep: char) -> Option<(String, u64)> {
         let mut decoded = String::new();
+        let mut n = 0u64;
         for counts in self.features.iter_counts(mod_base_code) {
-            let row = format!("{}{sep}{}{sep}\n", self.chrom_name, counts.position);
-            decoded.push_str(&row);
+            for raw_code in mod_base_code.raw_mod_codes() {
+                let row = format!(
+                    "\
+                {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}\
+                {sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}\
+                {sep}{}{sep}{}\n",
+                    self.chrom_name,                                      // 1
+                    counts.position,                                      // 2
+                    counts.position + 1,                                  // 3
+                    raw_code,                                             // 4
+                    counts.score(*raw_code),                              // 5
+                    counts.strand.to_char(),                              // 6
+                    counts.position,                                      // 7
+                    counts.position + 1,                                  // 8
+                    "0,0,0",                                              // 9
+                    counts.coverage(),                                    // 10
+                    format!("{:.2}", counts.percent_modified(*raw_code)), // 11
+                    counts.n_canonical,                                   // 12
+                    counts.calc_n_modified(*raw_code),                    // 13
+                    counts.n_filtered,                                    // 14
+                    counts.n_substitution,                                // 15
+                    counts.n_delete,                                      // 16
+                    counts.n_nocall,                                      // 17
+                );
+                decoded.push_str(&row);
+                n += 1;
+            }
         }
         if decoded.is_empty() {
+            assert_eq!(n, 0);
             None
         } else {
-            Some(decoded)
+            Some((decoded, n))
         }
     }
 }
 
 pub struct ModBasePileupProcessor<T: AsRef<Path>> {
     bam_fp: T,
-    fasta_fp: T,
     chrom_tid: u32,
     start_pos: u32,
     end_pos: u32,
@@ -227,20 +309,13 @@ pub struct ModBasePileupProcessor<T: AsRef<Path>> {
 }
 
 impl<T: AsRef<Path>> ModBasePileupProcessor<T> {
-    pub fn new(
-        bam_fp: T,
-        fasta_fp: T,
-        chrom_tid: u32,
-        start_pos: u32,
-        end_pos: u32,
-    ) -> Result<Self, String> {
+    pub fn new(bam_fp: T, chrom_tid: u32, start_pos: u32, end_pos: u32) -> Result<Self, String> {
         if end_pos <= start_pos {
             Err("end_pos needs to be larger (after) start_pos".to_owned())
         } else {
             let read_cache = ReadCache::new();
             Ok(Self {
                 bam_fp,
-                fasta_fp,
                 chrom_tid,
                 start_pos,
                 end_pos,
@@ -253,30 +328,34 @@ impl<T: AsRef<Path>> ModBasePileupProcessor<T> {
         &mut self,
         mod_base_code: &dyn ModBaseCode,
         modification_motif: &dyn ModificationMotif,
+        ref_name: &str,
+        ref_seq: &str,
     ) -> ModBasePileup {
         let mut bam_reader = IndexedBamReader::from_path(&self.bam_fp).unwrap();
-        let header = bam_reader.header().to_owned();
-        let mut fasta_reader = FastaReader::from_path(&self.fasta_fp).unwrap();
-        let ref_name = String::from_utf8(header.tid2name(self.chrom_tid as u32).to_vec()).unwrap();
+        // let header = bam_reader.header().to_owned();
+        // let mut fasta_reader = FastaReader::from_path(&self.fasta_fp).unwrap();
+        // let ref_name = String::from_utf8(header.tid2name(self.chrom_tid as u32).to_vec()).unwrap();
         // eprintln!(
         //     "> processing {ref_name}:{}-{}",
         //     self.start_pos, self.end_pos
         // );
 
-        let reference_seq = fasta_reader
-            .fetch_seq_string(
-                String::from_utf8_lossy(header.tid2name(self.chrom_tid as u32)),
-                self.start_pos as usize,
-                self.end_pos as usize,
-            )
-            .unwrap();
+        // let reference_seq = fasta_reader
+        //     .fetch_seq_string(
+        //         String::from_utf8_lossy(header.tid2name(self.chrom_tid as u32)),
+        //         self.start_pos as usize,
+        //         self.end_pos as usize,
+        //     )
+        //     .unwrap();
         let mut motif_positions = modification_motif
-            .find_matches(&reference_seq)
+            .find_matches(ref_seq)
             .into_iter()
             .map(|(pos, strand)| (pos + (self.start_pos as usize), strand))
             .collect::<VecDeque<(usize, util::Strand)>>();
 
-        let reference_seq = reference_seq.chars().collect::<Vec<char>>();
+        // dbg!(&motif_positions);
+
+        let reference_seq = ref_seq.chars().collect::<Vec<char>>();
         bam_reader
             .fetch(FetchDefinition::Region(
                 self.chrom_tid as i32,
@@ -286,76 +365,107 @@ impl<T: AsRef<Path>> ModBasePileupProcessor<T> {
             .unwrap();
 
         let mut features = FeatureVector::new(motif_positions.len(), mod_base_code);
+        if ref_name == "oligo_1512_adapters" {
+            eprintln!(
+                "> ref name {ref_name}, start={}, end={}",
+                self.start_pos, self.end_pos
+            );
+            for pos in motif_positions.iter() {
+                dbg!(pos);
+            }
+        }
         let pileup_iter = MotifPileupIter::new(
             bam_reader.pileup(),
             self.start_pos,
             self.end_pos,
             motif_positions,
         );
-        for (idx, (strand, pileup)) in pileup_iter.enumerate() {
-            let adjusted_pos = (pileup.pos() - self.start_pos) as usize;
-            assert_eq!(pileup.tid(), self.chrom_tid);
-            assert!(
-                pileup.pos() >= self.start_pos,
-                "pileup pos too small {}, {}",
-                pileup.pos(),
-                self.start_pos
-            );
-            assert!(
-                pileup.pos() < self.end_pos + 1,
-                "pileup pos too large {}, {}",
-                pileup.pos(),
-                self.end_pos
-            );
-            for alignment in pileup.alignments() {
-                // this is a hack because we only allow calling on the "top" a.k.a. the
-                // read strand, in duplex mode we'd have to remove this logic and account
-                // for the call in the get_mod_call method below
-                match (strand, alignment.record().is_reverse()) {
-                    (util::Strand::Positive, true) => {
-                        continue;
+        for (idx, (strand, motif_pileup)) in pileup_iter.enumerate() {
+            match motif_pileup {
+                MotifPileup::CoveredMotif(pileup) => {
+                    features.init_position(idx, strand, pileup.pos());
+                    println!(">pos {}", pileup.pos());
+                    let adjusted_pos = (pileup.pos() - self.start_pos) as usize;
+                    assert_eq!(pileup.tid(), self.chrom_tid);
+                    assert!(
+                        pileup.pos() >= self.start_pos,
+                        "pileup pos too small {}, {}",
+                        pileup.pos(),
+                        self.start_pos
+                    );
+                    assert!(
+                        pileup.pos() < self.end_pos + 1,
+                        "pileup pos too large {}, {}",
+                        pileup.pos(),
+                        self.end_pos
+                    );
+                    for alignment in pileup.alignments() {
+                        // this is a hack because we only allow calling on the "top" a.k.a. the
+                        // read strand, in duplex mode we'd have to remove this logic and account
+                        // for the call in the get_mod_call method below
+                        match (strand, alignment.record().is_reverse()) {
+                            (util::Strand::Positive, true) => {
+                                continue;
+                            }
+                            (util::Strand::Negative, false) => {
+                                continue;
+                            }
+                            _ => {}
+                        }
+                        let feature = if alignment.is_del() || alignment.is_refskip() {
+                            Feature::Delete
+                        } else {
+                            let record = alignment.record();
+                            // n.b. this can be the reverse sequence
+                            let read_base = record.seq()[alignment.qpos().unwrap()] as char;
+                            let ref_base = reference_seq[adjusted_pos];
+                            if read_base != ref_base {
+                                // println!(
+                                //     "> sub ref={} > read={} ({})",
+                                //     ref_base,
+                                //     read_base,
+                                //     alignment.qpos().unwrap()
+                                // );
+                                Feature::Substitution
+                            } else {
+                                self.read_cache
+                                    .get_mod_call(
+                                        // todo stand should be included here for duplex
+                                        &record,
+                                        pileup.pos(),
+                                        modification_motif.canonical_base(),
+                                        0.0f32,
+                                    )
+                                    // todo this should really be a switch based on the mod-calling mode,
+                                    //  for the typical `?` mode, when there is no modification call, we
+                                    //  do not default to canonical
+                                    .unwrap_or(Feature::NoCall)
+                            }
+                        };
+                        features.add_feature_to_position(
+                            idx,
+                            pileup.pos(),
+                            strand,
+                            feature,
+                            mod_base_code,
+                        );
                     }
-                    (util::Strand::Negative, false) => {
-                        continue;
-                    }
-                    _ => {}
                 }
-                let feature = if alignment.is_del() || alignment.is_refskip() {
-                    Feature::Delete
-                } else {
-                    let record = alignment.record();
-                    // n.b. this can be the reverse sequence
-                    let read_base = record.seq()[alignment.qpos().unwrap()] as char;
-                    let ref_base = reference_seq[adjusted_pos];
-                    if read_base != ref_base {
-                        // println!(
-                        //     "> sub ref={} > read={} ({})",
-                        //     ref_base,
-                        //     read_base,
-                        //     alignment.qpos().unwrap()
-                        // );
-                        Feature::Substitution
-                    } else {
-                        self.read_cache
-                            .get_mod_call(
-                                // todo stand should be included here for duplex
-                                &record,
-                                pileup.pos(),
-                                modification_motif.canonical_base(),
-                                0.0f32,
-                            )
-                            // todo this should really be a switch based on the mod-calling mode,
-                            //  for the typical `?` mode, when there is no modification call, we
-                            //  do not default to canonical
-                            .unwrap_or(Feature::NoCall)
-                    }
-                };
-                features.add_feature_to_position(idx, pileup.pos(), strand, feature, mod_base_code);
+                MotifPileup::NoCoverage(pos) => {
+                    println!("> no coverage {pos}");
+                    features.add_feature_to_position(
+                        idx,
+                        pos,
+                        strand,
+                        Feature::NoCall,
+                        mod_base_code,
+                    );
+                }
             }
         }
 
         ModBasePileup {
-            chrom_name: ref_name,
+            chrom_name: ref_name.to_owned(),
             start_pos: self.start_pos,
             features,
         }
@@ -445,6 +555,7 @@ impl ReadCache {
 mod mod_pileup_tests {
     use std::collections::HashMap;
 
+    use crate::interval_chunks::IntervalChunks;
     use rust_htslib::bam::{self, HeaderView, Read, Reader as BamReader};
     use rust_htslib::faidx::{self, Reader as FastaReader};
 
@@ -553,52 +664,153 @@ mod mod_pileup_tests {
 
     #[test]
     fn test_mod_pileup_processor() {
-        let code = &HydroxyMethylCytosineCode;
-        let mut processor = ModBasePileupProcessor::new(
-            "tests/resources/fwd_rev_modbase_records.sorted.bam",
-            "tests/resources/CGI_ladder_3.6kb_ref.fa",
-            0,
-            70,
-            95,
-        )
-        .unwrap();
-        let pileup = processor.process_region(code, &CpGModificationMotif);
-        let counts = pileup
-            .features
-            .iter_counts(code)
-            .map(|pileup| {
-                let key = (pileup.position, pileup.strand);
-                (key, pileup)
+        let bam_fp = "tests/resources/fwd_rev_modbase_records.sorted.bam";
+        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
+        let header = bam::Reader::from_path(bam_fp)
+            .map_err(|e| e.to_string())
+            .map(|reader| reader.header().to_owned())
+            .unwrap();
+        let tids = (0..header.target_count())
+            .map(|tid| {
+                let size = header.target_len(tid).unwrap() as u32;
+                let ref_name = String::from_utf8(header.tid2name(tid).to_vec()).unwrap();
+                (tid, size, ref_name)
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<Vec<(u32, u32, String)>>();
 
-        assert_eq!(counts.len(), 6);
-        let pileup = counts.get(&(72, Strand::Positive)).unwrap();
-        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
-        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-        assert_eq!(pileup.n_canonical, 0u16);
-        let pileup = counts.get(&(73, Strand::Negative)).unwrap();
-        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
-        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-        assert_eq!(pileup.n_canonical, 0u16);
-        let pileup = counts.get(&(90, Strand::Positive)).unwrap();
-        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
-        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-        assert_eq!(pileup.n_canonical, 0u16);
-        let pileup = counts.get(&(91, Strand::Negative)).unwrap();
-        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &0u16);
-        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-        assert_eq!(pileup.n_canonical, 0u16);
-        assert_eq!(pileup.n_nocall, 1u16);
-        let pileup = counts.get(&(93, Strand::Positive)).unwrap();
-        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
-        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-        assert_eq!(pileup.n_canonical, 0u16);
-        let pileup = counts.get(&(94, Strand::Negative)).unwrap();
-        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &0u16);
-        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-        assert_eq!(pileup.n_canonical, 0u16);
-        assert_eq!(pileup.n_nocall, 0u16);
-        assert_eq!(pileup.n_delete, 1u16);
+        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
+        let mut fasta_reader = faidx::Reader::from_path(fasta_fp).unwrap();
+        let reference_sequences = tids
+            .iter()
+            .map(|(tid, size, name)| {
+                let size = *size as usize;
+                let seq = fasta_reader.fetch_seq_string(name, 0, size).unwrap();
+                (name.to_string(), seq)
+            })
+            .collect::<HashMap<String, String>>();
+
+        let contig = "oligo_1512_adapters";
+        let dna = reference_sequences.get(contig).unwrap();
+        let motif = CpGModificationMotif;
+        let code = &HydroxyMethylCytosineCode;
+
+        let intervals = IntervalChunks::new(dna.len() as u32, 50, motif.required_overlap());
+        for (start, end) in intervals {
+            dbg!(start, end);
+            let mut processor = ModBasePileupProcessor::new(
+                "tests/resources/fwd_rev_modbase_records.sorted.bam",
+                0,
+                start,
+                end,
+            )
+            .unwrap();
+            let pileup = processor.process_region(code, &motif, contig, dna);
+            let counts = pileup
+                .features
+                .iter_counts(code)
+                .map(|pileup| {
+                    let key = (pileup.position, pileup.strand);
+                    (key, pileup)
+                })
+                .collect::<HashMap<_, _>>();
+        }
     }
+
+    #[test]
+    fn test_check_seq_bound() {
+        let bam_fp = "tests/resources/fwd_rev_modbase_records.sorted.bam";
+        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
+        let header = bam::Reader::from_path(bam_fp)
+            .map_err(|e| e.to_string())
+            .map(|reader| reader.header().to_owned())
+            .unwrap();
+        let tids = (0..header.target_count())
+            .map(|tid| {
+                let size = header.target_len(tid).unwrap() as u32;
+                let ref_name = String::from_utf8(header.tid2name(tid).to_vec()).unwrap();
+                (tid, size, ref_name)
+            })
+            .collect::<Vec<(u32, u32, String)>>();
+
+        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
+        let mut fasta_reader = faidx::Reader::from_path(fasta_fp).unwrap();
+        let reference_sequences = tids
+            .iter()
+            .map(|(tid, size, name)| {
+                let size = *size as usize;
+                let seq = fasta_reader.fetch_seq_string(name, 0, size).unwrap();
+                (name.to_string(), seq)
+            })
+            .collect::<HashMap<String, String>>();
+
+        let contig = "oligo_1512_adapters";
+        let dna = reference_sequences.get(contig).unwrap();
+        let start = 49;
+        let end = 99;
+        let slice_a = dna
+            .char_indices()
+            .filter_map(|(pos, nt)| {
+                if pos >= start && pos <= end {
+                    Some(nt)
+                } else {
+                    None
+                }
+            })
+            .collect::<String>();
+        let slice_b = fasta_reader.fetch_seq_string(contig, start, end).unwrap();
+        dbg!(&slice_a);
+        dbg!(&slice_b);
+        assert_eq!(slice_a, slice_b);
+    }
+
+    // #[test]
+    // fn test_mod_pileup_processor() {
+    //     let code = &HydroxyMethylCytosineCode;
+    //     let mut processor = ModBasePileupProcessor::new(
+    //         "tests/resources/fwd_rev_modbase_records.sorted.bam",
+    //         "tests/resources/CGI_ladder_3.6kb_ref.fa",
+    //         0,
+    //         70,
+    //         95,
+    //     )
+    //     .unwrap();
+    //     let pileup = processor.process_region(code, &CpGModificationMotif);
+    //     let counts = pileup
+    //         .features
+    //         .iter_counts(code)
+    //         .map(|pileup| {
+    //             let key = (pileup.position, pileup.strand);
+    //             (key, pileup)
+    //         })
+    //         .collect::<HashMap<_, _>>();
+    //
+    //     assert_eq!(counts.len(), 6);
+    //     let pileup = counts.get(&(72, Strand::Positive)).unwrap();
+    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
+    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+    //     assert_eq!(pileup.n_canonical, 0u16);
+    //     let pileup = counts.get(&(73, Strand::Negative)).unwrap();
+    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
+    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+    //     assert_eq!(pileup.n_canonical, 0u16);
+    //     let pileup = counts.get(&(90, Strand::Positive)).unwrap();
+    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
+    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+    //     assert_eq!(pileup.n_canonical, 0u16);
+    //     let pileup = counts.get(&(91, Strand::Negative)).unwrap();
+    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &0u16);
+    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+    //     assert_eq!(pileup.n_canonical, 0u16);
+    //     assert_eq!(pileup.n_nocall, 1u16);
+    //     let pileup = counts.get(&(93, Strand::Positive)).unwrap();
+    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
+    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+    //     assert_eq!(pileup.n_canonical, 0u16);
+    //     let pileup = counts.get(&(94, Strand::Negative)).unwrap();
+    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &0u16);
+    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+    //     assert_eq!(pileup.n_canonical, 0u16);
+    //     assert_eq!(pileup.n_nocall, 0u16);
+    //     assert_eq!(pileup.n_delete, 1u16);
+    // }
 }
