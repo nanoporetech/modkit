@@ -332,28 +332,11 @@ impl<T: AsRef<Path>> ModBasePileupProcessor<T> {
         ref_seq: &str,
     ) -> ModBasePileup {
         let mut bam_reader = IndexedBamReader::from_path(&self.bam_fp).unwrap();
-        // let header = bam_reader.header().to_owned();
-        // let mut fasta_reader = FastaReader::from_path(&self.fasta_fp).unwrap();
-        // let ref_name = String::from_utf8(header.tid2name(self.chrom_tid as u32).to_vec()).unwrap();
-        // eprintln!(
-        //     "> processing {ref_name}:{}-{}",
-        //     self.start_pos, self.end_pos
-        // );
-
-        // let reference_seq = fasta_reader
-        //     .fetch_seq_string(
-        //         String::from_utf8_lossy(header.tid2name(self.chrom_tid as u32)),
-        //         self.start_pos as usize,
-        //         self.end_pos as usize,
-        //     )
-        //     .unwrap();
         let mut motif_positions = modification_motif
             .find_matches(ref_seq)
             .into_iter()
             .map(|(pos, strand)| (pos + (self.start_pos as usize), strand))
             .collect::<VecDeque<(usize, util::Strand)>>();
-
-        // dbg!(&motif_positions);
 
         let reference_seq = ref_seq.chars().collect::<Vec<char>>();
         bam_reader
@@ -365,15 +348,16 @@ impl<T: AsRef<Path>> ModBasePileupProcessor<T> {
             .unwrap();
 
         let mut features = FeatureVector::new(motif_positions.len(), mod_base_code);
-        if ref_name == "oligo_1512_adapters" {
-            eprintln!(
-                "> ref name {ref_name}, start={}, end={}",
-                self.start_pos, self.end_pos
-            );
-            for pos in motif_positions.iter() {
-                dbg!(pos);
-            }
-        }
+        // todo log out where the motifs are
+        // if ref_name == "oligo_1512_adapters" {
+        //     eprintln!(
+        //         "> ref name {ref_name}, start={}, end={}",
+        //         self.start_pos, self.end_pos
+        //     );
+        //     for pos in motif_positions.iter() {
+        //         dbg!(pos);
+        //     }
+        // }
         let pileup_iter = MotifPileupIter::new(
             bam_reader.pileup(),
             self.start_pos,
@@ -384,7 +368,7 @@ impl<T: AsRef<Path>> ModBasePileupProcessor<T> {
             match motif_pileup {
                 MotifPileup::CoveredMotif(pileup) => {
                     features.init_position(idx, strand, pileup.pos());
-                    println!(">pos {}", pileup.pos());
+                    // println!(">pos {}", pileup.pos());
                     let adjusted_pos = (pileup.pos() - self.start_pos) as usize;
                     assert_eq!(pileup.tid(), self.chrom_tid);
                     assert!(
@@ -452,7 +436,7 @@ impl<T: AsRef<Path>> ModBasePileupProcessor<T> {
                     }
                 }
                 MotifPileup::NoCoverage(pos) => {
-                    println!("> no coverage {pos}");
+                    // println!("> no coverage {pos}");
                     features.add_feature_to_position(
                         idx,
                         pos,
@@ -571,6 +555,13 @@ mod mod_pileup_tests {
     use crate::util;
     use crate::util::Strand;
 
+    fn load_test_sequence(name: &str) -> String {
+        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
+        let mut fasta_reader = faidx::Reader::from_path(fasta_fp).unwrap();
+        let dna = fasta_reader.fetch_seq_string(name, 0, 156).unwrap();
+        dna
+    }
+
     fn tests_record(record: &bam::Record, fasta: &mut FastaReader, header: &HeaderView) {
         let query_name = String::from_utf8(record.qname().to_vec()).unwrap();
         let tid = {
@@ -663,154 +654,70 @@ mod mod_pileup_tests {
     }
 
     #[test]
-    fn test_mod_pileup_processor() {
-        let bam_fp = "tests/resources/fwd_rev_modbase_records.sorted.bam";
-        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
-        let header = bam::Reader::from_path(bam_fp)
-            .map_err(|e| e.to_string())
-            .map(|reader| reader.header().to_owned())
-            .unwrap();
-        let tids = (0..header.target_count())
-            .map(|tid| {
-                let size = header.target_len(tid).unwrap() as u32;
-                let ref_name = String::from_utf8(header.tid2name(tid).to_vec()).unwrap();
-                (tid, size, ref_name)
-            })
-            .collect::<Vec<(u32, u32, String)>>();
-
+    fn test_check_sequence_slicing_is_same_as_fetch() {
         let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
         let mut fasta_reader = faidx::Reader::from_path(fasta_fp).unwrap();
-        let reference_sequences = tids
-            .iter()
-            .map(|(tid, size, name)| {
-                let size = *size as usize;
-                let seq = fasta_reader.fetch_seq_string(name, 0, size).unwrap();
-                (name.to_string(), seq)
-            })
-            .collect::<HashMap<String, String>>();
-
-        let contig = "oligo_1512_adapters";
-        let dna = reference_sequences.get(contig).unwrap();
-        let motif = CpGModificationMotif;
-        let code = &HydroxyMethylCytosineCode;
-
-        let intervals = IntervalChunks::new(dna.len() as u32, 50, motif.required_overlap());
-        for (start, end) in intervals {
-            dbg!(start, end);
-            let mut processor = ModBasePileupProcessor::new(
-                "tests/resources/fwd_rev_modbase_records.sorted.bam",
-                0,
-                start,
-                end,
-            )
-            .unwrap();
-            let pileup = processor.process_region(code, &motif, contig, dna);
-            let counts = pileup
-                .features
-                .iter_counts(code)
-                .map(|pileup| {
-                    let key = (pileup.position, pileup.strand);
-                    (key, pileup)
-                })
-                .collect::<HashMap<_, _>>();
-        }
-    }
-
-    #[test]
-    fn test_check_seq_bound() {
-        let bam_fp = "tests/resources/fwd_rev_modbase_records.sorted.bam";
-        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
-        let header = bam::Reader::from_path(bam_fp)
-            .map_err(|e| e.to_string())
-            .map(|reader| reader.header().to_owned())
-            .unwrap();
-        let tids = (0..header.target_count())
-            .map(|tid| {
-                let size = header.target_len(tid).unwrap() as u32;
-                let ref_name = String::from_utf8(header.tid2name(tid).to_vec()).unwrap();
-                (tid, size, ref_name)
-            })
-            .collect::<Vec<(u32, u32, String)>>();
-
-        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
-        let mut fasta_reader = faidx::Reader::from_path(fasta_fp).unwrap();
-        let reference_sequences = tids
-            .iter()
-            .map(|(tid, size, name)| {
-                let size = *size as usize;
-                let seq = fasta_reader.fetch_seq_string(name, 0, size).unwrap();
-                (name.to_string(), seq)
-            })
-            .collect::<HashMap<String, String>>();
-
-        let contig = "oligo_1512_adapters";
-        let dna = reference_sequences.get(contig).unwrap();
+        let name = "oligo_1512_adapters";
+        let dna = load_test_sequence(name);
         let start = 49;
         let end = 99;
-        let slice_a = dna
-            .char_indices()
-            .filter_map(|(pos, nt)| {
-                if pos >= start && pos <= end {
-                    Some(nt)
-                } else {
-                    None
-                }
-            })
-            .collect::<String>();
-        let slice_b = fasta_reader.fetch_seq_string(contig, start, end).unwrap();
-        dbg!(&slice_a);
-        dbg!(&slice_b);
+        let slice_a = util::slice_dna_sequence(&dna, start, end);
+        let slice_b = fasta_reader.fetch_seq_string(name, start, end).unwrap();
         assert_eq!(slice_a, slice_b);
     }
 
-    // #[test]
-    // fn test_mod_pileup_processor() {
-    //     let code = &HydroxyMethylCytosineCode;
-    //     let mut processor = ModBasePileupProcessor::new(
-    //         "tests/resources/fwd_rev_modbase_records.sorted.bam",
-    //         "tests/resources/CGI_ladder_3.6kb_ref.fa",
-    //         0,
-    //         70,
-    //         95,
-    //     )
-    //     .unwrap();
-    //     let pileup = processor.process_region(code, &CpGModificationMotif);
-    //     let counts = pileup
-    //         .features
-    //         .iter_counts(code)
-    //         .map(|pileup| {
-    //             let key = (pileup.position, pileup.strand);
-    //             (key, pileup)
-    //         })
-    //         .collect::<HashMap<_, _>>();
-    //
-    //     assert_eq!(counts.len(), 6);
-    //     let pileup = counts.get(&(72, Strand::Positive)).unwrap();
-    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
-    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-    //     assert_eq!(pileup.n_canonical, 0u16);
-    //     let pileup = counts.get(&(73, Strand::Negative)).unwrap();
-    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
-    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-    //     assert_eq!(pileup.n_canonical, 0u16);
-    //     let pileup = counts.get(&(90, Strand::Positive)).unwrap();
-    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
-    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-    //     assert_eq!(pileup.n_canonical, 0u16);
-    //     let pileup = counts.get(&(91, Strand::Negative)).unwrap();
-    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &0u16);
-    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-    //     assert_eq!(pileup.n_canonical, 0u16);
-    //     assert_eq!(pileup.n_nocall, 1u16);
-    //     let pileup = counts.get(&(93, Strand::Positive)).unwrap();
-    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
-    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-    //     assert_eq!(pileup.n_canonical, 0u16);
-    //     let pileup = counts.get(&(94, Strand::Negative)).unwrap();
-    //     assert_eq!(pileup.n_modified.get(&'m').unwrap(), &0u16);
-    //     assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
-    //     assert_eq!(pileup.n_canonical, 0u16);
-    //     assert_eq!(pileup.n_nocall, 0u16);
-    //     assert_eq!(pileup.n_delete, 1u16);
-    // }
+    #[test]
+    fn test_mod_pileup_processor() {
+        let name = "oligo_1512_adapters";
+        let dna = load_test_sequence(name);
+        let code = &HydroxyMethylCytosineCode;
+        let start_pos = 70;
+        let end_pos = 95;
+        let mut processor = ModBasePileupProcessor::new(
+            "tests/resources/fwd_rev_modbase_records.sorted.bam",
+            0,
+            start_pos,
+            end_pos,
+        )
+        .unwrap();
+        let ref_seq = util::slice_dna_sequence(&dna, start_pos as usize, end_pos as usize);
+        let pileup = processor.process_region(code, &CpGModificationMotif, name, &ref_seq);
+        let counts = pileup
+            .features
+            .iter_counts(code)
+            .map(|pileup| {
+                let key = (pileup.position, pileup.strand);
+                (key, pileup)
+            })
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(counts.len(), 6);
+        let pileup = counts.get(&(72, Strand::Positive)).unwrap();
+        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
+        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+        assert_eq!(pileup.n_canonical, 0u16);
+        let pileup = counts.get(&(73, Strand::Negative)).unwrap();
+        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
+        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+        assert_eq!(pileup.n_canonical, 0u16);
+        let pileup = counts.get(&(90, Strand::Positive)).unwrap();
+        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
+        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+        assert_eq!(pileup.n_canonical, 0u16);
+        let pileup = counts.get(&(91, Strand::Negative)).unwrap();
+        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &0u16);
+        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+        assert_eq!(pileup.n_canonical, 0u16);
+        assert_eq!(pileup.n_nocall, 1u16);
+        let pileup = counts.get(&(93, Strand::Positive)).unwrap();
+        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &1u16);
+        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+        assert_eq!(pileup.n_canonical, 0u16);
+        let pileup = counts.get(&(94, Strand::Negative)).unwrap();
+        assert_eq!(pileup.n_modified.get(&'m').unwrap(), &0u16);
+        assert_eq!(pileup.n_modified.get(&'h').unwrap(), &0u16);
+        assert_eq!(pileup.n_canonical, 0u16);
+        assert_eq!(pileup.n_nocall, 0u16);
+        assert_eq!(pileup.n_delete, 1u16);
+    }
 }

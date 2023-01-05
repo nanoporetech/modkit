@@ -149,45 +149,6 @@ mod mod_base_code_tests {
     }
 
     #[test]
-    fn test_cpg_motif2() {
-        let bam_fp = "tests/resources/fwd_rev_modbase_records.sorted.bam";
-        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
-        let header = bam::Reader::from_path(bam_fp)
-            .map_err(|e| e.to_string())
-            .map(|reader| reader.header().to_owned())
-            .unwrap();
-        let tids = (0..header.target_count())
-            .map(|tid| {
-                let size = header.target_len(tid).unwrap() as u32;
-                let ref_name = String::from_utf8(header.tid2name(tid).to_vec()).unwrap();
-                (tid, size, ref_name)
-            })
-            .collect::<Vec<(u32, u32, String)>>();
-
-        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
-        let mut fasta_reader = faidx::Reader::from_path(fasta_fp).unwrap();
-        let reference_sequences = tids
-            .iter()
-            .map(|(tid, size, name)| {
-                let size = *size as usize;
-                // todo need a fail here
-                let seq = fasta_reader.fetch_seq_string(name, 0, size).unwrap();
-                (name.to_string(), seq)
-            })
-            .collect::<HashMap<String, String>>();
-
-        let dna = reference_sequences.get("oligo_1512_adapters").unwrap();
-        let motif = CpGModificationMotif;
-
-        let motif_positions = motif.find_matches(dna);
-        dbg!(motif_positions);
-
-        // let intervals = IntervalChunks::new(dna.len() as u32, 50, motif.required_overlap())
-        //     .collect::<Vec<_>>();
-        // dbg!(intervals);
-    }
-
-    #[test]
     fn test_chh_modification_motifs() {
         //                ++  -
         let seq = "ACCTAG";

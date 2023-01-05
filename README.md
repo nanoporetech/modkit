@@ -26,8 +26,21 @@ cargo run --release -- tests/resources/input_5mC.bam flattened_5mC.bam
 mod_flatten tests/resources/input_5mC.bam flattened_5mC.bam
 ```
 
-## TODO
+## TODO (`mod_flatten`)
 - [ ] Don't remove sup/dup/secondary alignments
 - [ ] Handle removing mod-prob in ambiguous mode (`.`).
 - [ ] C-API
+- [ ] duplex
 - [ ] python lib
+
+## TODO (`bamtobed`)
+- [ ] Proper command line
+- [ ] logging?
+- [ ] check all C/all positions
+- [ ] estimation of threshold
+- [ ] duplex
+- [ ] collapse
+- [ ] GC in read cache
+- [ ] test on larger dataset
+- [ ] bigwig output
+- 
