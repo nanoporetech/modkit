@@ -4,11 +4,15 @@ use std::process::Output;
 
 #[test]
 fn test_help() {
-    let workdir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let exe = std::path::Path::new(&workdir).join("target/debug/mod_flatten");
+    // let workdir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    // let exe = std::path::Path::new(&workdir).join("target/debug/mod_flatten");
+    // assert!(exe.exists());
+
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_mod-kit"));
     assert!(exe.exists());
 
     let help = std::process::Command::new(exe)
+        .arg("mod-collapse")
         .arg("--help")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -20,7 +24,7 @@ fn test_help() {
 }
 
 fn run_mod_flatten(args: &[&str]) -> Output {
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_mod_flatten"));
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_mod-kit"));
     assert!(exe.exists());
 
     let output = std::process::Command::new(exe)
@@ -37,7 +41,7 @@ fn run_mod_flatten(args: &[&str]) -> Output {
 
 fn test_output(input_path: &str, output_path: &str, check_file_path: &str) {
     let temp_file = std::env::temp_dir().join(output_path);
-    let args = [input_path, temp_file.to_str().unwrap()];
+    let args = ["mod-collapse", input_path, temp_file.to_str().unwrap()];
     run_mod_flatten(&args);
     assert!(temp_file.exists());
 
@@ -72,6 +76,7 @@ fn test_methyl() {
 fn test_no_tags() {
     let temp_file = std::env::temp_dir().join("test_out_no_tags.bam");
     run_mod_flatten(&[
+        "mod-collapse",
         "tests/resources/input_C_no_tags.bam",
         temp_file.to_str().unwrap(),
     ]);

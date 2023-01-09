@@ -25,9 +25,11 @@ impl SkipMode {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 pub enum BaseModCall {
     Canonical(f32),
     Modified(f32, char),
+    Filtered,
 }
 
 #[derive(Debug, PartialEq)]
@@ -195,8 +197,8 @@ fn quals_to_probs(quals: &mut [f32]) {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct BaseModPositions {
-    canonical_base: char,
+pub(crate) struct BaseModPositions {
+    pub(crate) canonical_base: char,
     mode: SkipMode,
     strand: Strand,
     mod_base_codes: Vec<char>,
@@ -204,7 +206,7 @@ struct BaseModPositions {
 }
 
 impl BaseModPositions {
-    fn parse(mod_positions: &str) -> Result<Self, InputError> {
+    pub(crate) fn parse(mod_positions: &str) -> Result<Self, InputError> {
         let mut parts = mod_positions.split(',');
         let mut header = parts
             .nth(0)
@@ -429,35 +431,60 @@ pub fn get_ml_tag_from_record(record: &bam::Record) -> Option<Result<Vec<u16>, R
     get_tag::<Vec<u16>>(&record, &ML_TAGS, &parse_ml_tag)
 }
 
+pub fn parse_raw_mod_tags(record: &bam::Record) -> Option<Result<(String, Vec<u16>), RunError>> {
+    let mm = get_mm_tag_from_record(record);
+    let ml = get_ml_tag_from_record(record);
+    match (mm, ml) {
+        (None, _) | (_, None) => None,
+        (Some(Ok(mm)), Some(Ok(ml))) => Some(Ok((mm, ml))),
+        (Some(Err(err)), _) => Some(Err(RunError::new_input_error(format!(
+            "MM tag malformed {}",
+            err.to_string()
+        )))),
+        (_, Some(Err(err))) => Some(Err(RunError::new_input_error(format!(
+            "ML tag malformed {}",
+            err.to_string()
+        )))),
+    }
+}
+
 pub fn base_mod_probs_from_record(
     record: &bam::Record,
     converter: &DeltaListConverter,
     canonical_base: char,
 ) -> Result<SeqPosBaseModProbs, RunError> {
-    // TODO could make this inspect the canonical bases from the MM tag and not
-    //  require the `canonical_base` argument
-    let (mm, ml) = {
-        let mm = get_mm_tag_from_record(record);
-        let ml = get_ml_tag_from_record(record);
-        match (mm, ml) {
-            (None, _) | (_, None) => {
-                return Err(RunError::new_skipped("no mod tags"));
-            }
-            (Some(Ok(mm)), Some(Ok(ml))) => (mm, ml),
-            (Some(Err(err)), _) => {
-                return Err(RunError::new_input_error(format!(
-                    "MM tag malformed {}",
-                    err.to_string()
-                )));
-            }
-            (_, Some(Err(err))) => {
-                return Err(RunError::new_input_error(format!(
-                    "ML tag malformed {}",
-                    err.to_string()
-                )));
-            }
+    let (mm, ml) = match parse_raw_mod_tags(record) {
+        Some(Ok((mm, ml))) => (mm, ml),
+        Some(Err(run_error)) => {
+            return Err(run_error);
+        }
+        None => {
+            return Err(RunError::new_skipped("no mod tags"));
         }
     };
+
+    // let (mm, ml) = {
+    //     let mm = get_mm_tag_from_record(record);
+    //     let ml = get_ml_tag_from_record(record);
+    //     match (mm, ml) {
+    //         (None, _) | (_, None) => {
+    //             return Err(RunError::new_skipped("no mod tags"));
+    //         }
+    //         (Some(Ok(mm)), Some(Ok(ml))) => (mm, ml),
+    //         (Some(Err(err)), _) => {
+    //             return Err(RunError::new_input_error(format!(
+    //                 "MM tag malformed {}",
+    //                 err.to_string()
+    //             )));
+    //         }
+    //         (_, Some(Err(err))) => {
+    //             return Err(RunError::new_input_error(format!(
+    //                 "ML tag malformed {}",
+    //                 err.to_string()
+    //             )));
+    //         }
+    //     }
+    // };
 
     extract_mod_probs(&mm, &ml, canonical_base, &converter)
         .map_err(|input_err| RunError::BadInput(input_err))

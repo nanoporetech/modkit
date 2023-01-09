@@ -34,9 +34,37 @@ impl Iterator for IntervalChunks {
     }
 }
 
+pub fn slice_dna_sequence(str_seq: &str, start: usize, end: usize) -> String {
+    str_seq
+        .char_indices()
+        .filter_map(|(pos, nt)| {
+            if pos >= start && pos <= end {
+                Some(nt)
+            } else {
+                None
+            }
+        })
+        .collect::<String>()
+}
+
 #[cfg(test)]
 mod interval_chunks_tests {
-    use crate::interval_chunks::IntervalChunks;
+    use crate::interval_chunks::{slice_dna_sequence, IntervalChunks};
+    use crate::test_utils::load_test_sequence;
+    use rust_htslib::faidx;
+
+    #[test]
+    fn test_check_sequence_slicing_is_same_as_fetch() {
+        let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
+        let mut fasta_reader = faidx::Reader::from_path(fasta_fp).unwrap();
+        let name = "oligo_1512_adapters";
+        let dna = load_test_sequence(name);
+        let start = 49;
+        let end = 99;
+        let slice_a = slice_dna_sequence(&dna, start, end);
+        let slice_b = fasta_reader.fetch_seq_string(name, start, end).unwrap();
+        assert_eq!(slice_a, slice_b);
+    }
 
     #[test]
     fn test_interval_chunks() {

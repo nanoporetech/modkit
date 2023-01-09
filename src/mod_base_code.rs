@@ -2,12 +2,13 @@ use itertools::Itertools;
 use std::collections::VecDeque;
 
 use crate::util;
-use rust_htslib::bgzf::CompressionLevel::Default;
 
 pub trait ModBaseCode {
     fn num_mods(&self) -> usize;
     fn idx_for_mod_code(&self, raw_code: char) -> Option<usize>;
     fn raw_mod_codes(&self) -> &'static [char];
+    fn canonical_base(&self) -> char;
+    fn canonical_base_strand(&self, strand: util::Strand) -> char;
 }
 
 #[derive(Copy, Clone)]

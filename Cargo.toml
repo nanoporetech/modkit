@@ -5,12 +5,15 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+#[[bin]]
+#name = "mod_flatten"
+#path = "src/bin/main.rs"
+#[[bin]]
+#name = "bamtobed"
+#path = "src/bin/bamtobed.rs"
 [[bin]]
-name = "mod_flatten"
+name = "modkit"
 path = "src/bin/main.rs"
-[[bin]]
-name = "bamtobed"
-path = "src/bin/bamtobed.rs"
 
 [lib]
 path = "src/lib.rs"
@@ -37,9 +40,9 @@ criterion = "0.4.0"
 lazy-regex = "2.3.1"
 onig = { version = "6", default-features = false }
 
-[[bench]]
-name = "motif_benchmark"
-harness = false
+#[[bench]]
+#name = "motif_benchmark"
+#harness = false
 
 #[profile.release]
 #lto = true
