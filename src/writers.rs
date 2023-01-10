@@ -41,7 +41,8 @@ impl OutWriter<ModBasePileup> for BEDWriter {
             for feature_count in feature_counts {
                 let row = format!(
                     "{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
-                    {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}\n",
+                    {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}\
+                    {sep}{}{sep}{}{sep}{}{sep}{}\n",
                     item.chrom_name,
                     pos,
                     pos + 1,
@@ -50,7 +51,8 @@ impl OutWriter<ModBasePileup> for BEDWriter {
                     feature_count.strand.to_char(),
                     pos,
                     pos + 1,
-                    "0,0,0",
+                    "255,0,0",
+                    1, 1, 0,
                     feature_count.filtered_coverage,
                     format!("{:.0}", feature_count.fraction_modified * 100f32),
                     feature_count.n_modified,
@@ -58,7 +60,8 @@ impl OutWriter<ModBasePileup> for BEDWriter {
                     feature_count.n_other_modified,
                     feature_count.n_delete,
                     feature_count.n_filtered,
-                    feature_count.n_diff
+                    feature_count.n_diff,
+                    feature_count.n_nocall,
                 );
                 self.buf_writer
                     .write(row.as_bytes())

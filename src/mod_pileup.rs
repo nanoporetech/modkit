@@ -96,6 +96,7 @@ pub struct PileupFeatureCounts {
     pub n_delete: u32,
     pub n_filtered: u32,
     pub n_diff: u32,
+    pub n_nocall: u32
 }
 
 struct FeatureVector {
@@ -217,6 +218,7 @@ impl FeatureVector {
             let n_mod = self.counts[8];
             let filtered_coverage = n_canonical + n_mod;
             let raw_mod_code = 'a';
+            let n_nocall = self.counts[2];
             let percent_modified = n_mod as f32 / (n_mod as f32 + n_canonical as f32);
             let n_diff = self.counts[3]
                 .saturating_add(self.counts[4])
@@ -235,6 +237,7 @@ impl FeatureVector {
                 n_delete: pos_strand_n_delete,
                 n_filtered: pos_stand_n_filt,
                 n_diff,
+                n_nocall,
             });
         }
         // + strand C-mods
@@ -242,6 +245,7 @@ impl FeatureVector {
             let n_canonical = self.counts[7];
             let n_h = self.counts[9];
             let n_m = self.counts[10];
+            let n_nocall = self.counts[3];
             let filtered_coverage = n_canonical + n_h + n_m;
             let n_diff = self.counts[2]
                 .saturating_add(self.counts[4])
@@ -263,6 +267,7 @@ impl FeatureVector {
                     n_delete: pos_strand_n_delete,
                     n_filtered: pos_stand_n_filt,
                     n_diff,
+                    n_nocall
                 })
             }
         }
@@ -272,6 +277,7 @@ impl FeatureVector {
             let n_mod = self.counts[19];
             let filtered_coverage = n_canonical + n_mod;
             let raw_mod_code = 'a';
+            let n_nocall = self.counts[13];
             let percent_modified = n_mod as f32 / (n_mod as f32 + n_canonical as f32);
             let n_diff = self.counts[14]
                 .saturating_add(self.counts[15])
@@ -290,6 +296,7 @@ impl FeatureVector {
                 n_delete: neg_strand_n_delete,
                 n_filtered: neg_stand_n_filt,
                 n_diff,
+                n_nocall,
             });
         }
         // - strand C-mods
@@ -298,6 +305,7 @@ impl FeatureVector {
             let n_h = self.counts[20];
             let n_m = self.counts[21];
             let filtered_coverage = n_canonical + n_h + n_m;
+            let n_nocall = self.counts[14];
             let n_diff = self.counts[13]
                 .saturating_add(self.counts[15])
                 .saturating_add(self.counts[16])
@@ -318,6 +326,7 @@ impl FeatureVector {
                     n_delete: neg_strand_n_delete,
                     n_filtered: neg_stand_n_filt,
                     n_diff,
+                    n_nocall,
                 })
             }
         }
