@@ -93,6 +93,51 @@ impl ModificationMotif for CpGModificationMotif {
     }
 }
 
+#[inline]
+fn find_matching_positions<
+    'a,
+    const WINDOW_SIZE: usize,
+    const STEP_SIZE: usize,
+    const PATTERN_SIZE: u8,
+>(
+    encoded_seq: &'a [u8],
+    encoded_pattern: &'a [u8],
+) -> impl Iterator<Item = usize> + 'a {
+    encoded_seq
+        .windows(WINDOW_SIZE)
+        .step_by(STEP_SIZE)
+        .enumerate()
+        .filter_map(|(i, chunk)| {
+            let match_count = array_mul(chunk, encoded_pattern);
+            if match_count == PATTERN_SIZE {
+                Some(i)
+            } else {
+                None
+            }
+        })
+}
+
+#[inline]
+pub(crate) fn encode_seq(seq: &str) -> Vec<u8> {
+    seq.chars()
+        .flat_map(|c| match c {
+            'A' => [1, 0, 0, 0],
+            'C' => [0, 1, 0, 0],
+            'G' => [0, 0, 1, 0],
+            'T' => [0, 0, 0, 1],
+            'H' => [1, 1, 0, 1],
+            // todo, the rest of the IUPAC codes...
+            _ => panic!("non-canonical base {c}"),
+        })
+        .collect()
+}
+
+#[inline]
+fn array_mul(a: &[u8], b: &[u8]) -> u8 {
+    assert_eq!(a.len(), b.len());
+    a.iter().zip(b.iter()).map(|(x, y)| (*x) * (*y)).sum()
+}
+
 pub struct CHHModificationMotif;
 const CHH_MOTIF: [u8; 12] = [0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1];
 impl ModificationMotif for CHHModificationMotif {

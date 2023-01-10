@@ -1,11 +1,10 @@
 use crate::mod_bam::BaseModCall;
 use crate::read_cache::ReadCache;
-use crate::util::{dna_complement, Strand};
+use crate::util::Strand;
 use itertools::Itertools;
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use std::collections::HashMap;
-use std::ops::ShlAssign;
 use std::path::Path;
 
 #[allow(non_camel_case_types)]
@@ -96,7 +95,7 @@ pub struct PileupFeatureCounts {
     pub n_delete: u32,
     pub n_filtered: u32,
     pub n_diff: u32,
-    pub n_nocall: u32
+    pub n_nocall: u32,
 }
 
 struct FeatureVector {
@@ -267,7 +266,7 @@ impl FeatureVector {
                     n_delete: pos_strand_n_delete,
                     n_filtered: pos_stand_n_filt,
                     n_diff,
-                    n_nocall
+                    n_nocall,
                 })
             }
         }
@@ -464,7 +463,7 @@ pub fn process_region<T: AsRef<Path>>(
 }
 
 #[cfg(test)]
-mod mod_pileup2_tests {
+mod mod_pileup_tests {
     use crate::mod_pileup::{DnaBase, Feature, FeatureVector, ModCode};
     use crate::util::Strand;
 
@@ -475,12 +474,14 @@ mod mod_pileup2_tests {
         fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::C));
         fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::m));
         fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::m));
+        fv.add_feature(Strand::Positive, Feature::NoCall(DnaBase::C));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         let counts = fv.decode();
-        assert_eq!(counts.len(), 2);
+        assert_eq!(counts.len(), 2); // h and m, negative strand should not be there
         for pileup_counts in counts {
             assert_eq!(pileup_counts.filtered_coverage, 3);
+            assert_eq!(pileup_counts.n_nocall, 1);
             assert_eq!(pileup_counts.n_diff, 1);
             assert_eq!(pileup_counts.strand, Strand::Positive);
         }
@@ -490,6 +491,7 @@ mod mod_pileup2_tests {
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         let counts = fv.decode();
+        assert_eq!(counts.len(), 4);
         counts
             .iter()
             .filter(|c| c.strand == Strand::Negative)

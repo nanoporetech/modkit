@@ -20,16 +20,16 @@ use std::thread;
 #[derive(Subcommand)]
 pub enum Commands {
     /// Collapse N-way base modification calls to (N-1)-way
-    ModCollapse(Collapse),
-    /// Convert BAM with mod-base tags to another format
-    ModPileup(ModBamPileup),
+    Collapse(Collapse),
+    /// Pileup (combine) mod calls across genomic positions.
+    Pileup(ModBamPileup),
 }
 
 impl Commands {
     pub fn run(&self) -> Result<(), String> {
         match self {
-            Self::ModCollapse(x) => x.run(),
-            Self::ModPileup(x) => x.run(),
+            Self::Collapse(x) => x.run(),
+            Self::Pileup(x) => x.run(),
         }
     }
 }
@@ -196,25 +196,6 @@ impl Collapse {
     }
 }
 
-fn check_raw_motif(raw_motif: &str) -> Result<(String, char), String> {
-    let splitted = raw_motif.split(' ').collect::<Vec<&str>>();
-    if splitted.len() != 2usize {
-        Err("invalid motif format, should be SEQ MOD_BASE_POSITION, for example 'CG 0'".to_owned())
-    } else {
-        let pos = splitted[1].parse::<usize>().or(Err(format!(
-            "failed to parse MOD_BASE_POSITION from {raw_motif}"
-        )))?;
-        let motif_seq = splitted[0].to_string();
-        if pos > motif_seq.len() - 1 {
-            return Err(format!(
-                "position {pos} is off the end of the motif sequence {motif_seq}"
-            ));
-        }
-        let canonical_base = motif_seq.chars().collect::<Vec<char>>()[pos];
-        Ok((motif_seq, canonical_base))
-    }
-}
-
 const ALLOWED_MOD_CODES: [char; 4] = ['h', 'm', 'a', 'c'];
 fn check_raw_modbase_code(raw_code: &str) -> Result<String, String> {
     for raw_modbase_code in raw_code.chars() {
@@ -234,22 +215,15 @@ pub struct ModBamPileup {
     in_bam: PathBuf,
     /// Output file
     out_bed: PathBuf,
-    // #[arg(
-    //     group="mod-args",
-    //     short='m',
-    //     long,
-    //     default_value_t=String::from("CG 0"),
-    //     value_parser = check_raw_motif)
-    // ]
-    // motif: String,
-    // #[arg(
-    //     group="mod-args",
-    //     short='c',
-    //     long,
-    //     default_value_t=String::from("hm"),
-    //     value_parser = check_raw_modbase_code)
-    // ]
-    // modbase_code: String,
+    /// TODO, unused atm
+    #[arg(
+        group="mod-args",
+        short='c',
+        long,
+        default_value_t=String::from("hm"),
+        value_parser = check_raw_modbase_code)
+    ]
+    modbase_code: String,
 }
 
 impl ModBamPileup {
@@ -260,7 +234,6 @@ impl ModBamPileup {
         let tids = (0..header.target_count())
             .map(|tid| {
                 let size = header.target_len(tid).unwrap() as u32;
-                let ref_name = String::from_utf8(header.tid2name(tid).to_vec()).unwrap();
                 (tid, size)
             })
             .collect::<Vec<(u32, u32)>>();

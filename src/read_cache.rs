@@ -1,6 +1,6 @@
 use crate::errs::RunError;
 use crate::mod_bam::{
-    base_mod_probs_from_record, extract_mod_probs, get_mm_tag_from_record, parse_raw_mod_tags,
+    extract_mod_probs, parse_raw_mod_tags,
     BaseModCall, BaseModPositions, DeltaListConverter, SeqPosBaseModProbs,
 };
 use crate::util;
@@ -137,20 +137,17 @@ impl ReadCache {
 
 #[cfg(test)]
 mod read_cache_tests {
-    use crate::mod_bam::{base_mod_probs_from_record, BaseModCall, DeltaListConverter};
+    use crate::mod_bam::{base_mod_probs_from_record, DeltaListConverter};
     use crate::read_cache::ReadCache;
+    use crate::test_utils::dna_complement;
     use crate::util;
-    use crate::util::dna_complement;
     use rust_htslib::bam::{self, FetchDefinition, Read, Reader as BamReader};
     use std::collections::HashMap;
 
-    fn tests_record(record: &bam::Record, header: &bam::HeaderView) {
+    fn tests_record(record: &bam::Record) {
         let query_name = String::from_utf8(record.qname().to_vec()).unwrap();
-        let tid = {
-            let x = record.tid();
-            assert!(x >= 0);
-            x as u32
-        };
+        let x = record.tid();
+        assert!(x >= 0);
 
         // mapping of _reference position_ to forward read position
         let forward_aligned_pairs = util::get_aligned_pairs_forward(&record)
@@ -160,14 +157,6 @@ mod read_cache_tests {
         let forward_sequence = util::get_forward_sequence(&record)
             .map(|seq| seq.chars().collect::<Vec<char>>())
             .unwrap();
-
-        // let reference_name = String::from_utf8_lossy(header.tid2name(tid));
-        // let ref_len = header.target_len(tid).unwrap();
-        // let seq = fasta
-        //     .fetch_seq_string(reference_name, 0, ref_len as usize)
-        //     .unwrap()
-        //     .chars()
-        //     .collect::<Vec<_>>();
 
         let mut cache = ReadCache::new();
         cache.add_record(&record).unwrap();
@@ -192,14 +181,14 @@ mod read_cache_tests {
     fn test_read_cache_aligned_pairs() {
         let mut reader =
             BamReader::from_path("tests/resources/fwd_rev_modbase_records.bam").unwrap();
-        let header = reader.header().to_owned();
         for r in reader.records() {
             let record = r.unwrap();
-            tests_record(&record, &header);
+            tests_record(&record);
         }
     }
 
     #[test]
+    #[ignore = "verbose, used for development"]
     fn test_read_cache_get_mod_calls() {
         let mut reader =
             bam::IndexedReader::from_path("tests/resources/fwd_rev_modbase_records.sorted.bam")

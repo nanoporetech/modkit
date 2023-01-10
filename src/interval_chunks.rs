@@ -1,6 +1,3 @@
-use rayon::iter::plumbing::UnindexedConsumer;
-use rayon::iter::ParallelIterator;
-
 pub struct IntervalChunks {
     seq_len: u32,
     chunk_size: u32,
@@ -56,7 +53,7 @@ mod interval_chunks_tests {
     #[test]
     fn test_check_sequence_slicing_is_same_as_fetch() {
         let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
-        let mut fasta_reader = faidx::Reader::from_path(fasta_fp).unwrap();
+        let fasta_reader = faidx::Reader::from_path(fasta_fp).unwrap();
         let name = "oligo_1512_adapters";
         let dna = load_test_sequence(name);
         let start = 49;
@@ -69,7 +66,7 @@ mod interval_chunks_tests {
     #[test]
     fn test_interval_chunks() {
         let seq = "ABCDEF".chars().collect::<Vec<char>>();
-        let mut ic = IntervalChunks::new((seq.len() as u32), 3, 1);
+        let mut ic = IntervalChunks::new(seq.len() as u32, 3, 1);
         let (s, e) = ic.next().unwrap();
         assert_eq!(s, 0);
         assert_eq!(e, 3);
