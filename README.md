@@ -1,33 +1,37 @@
-# mod_flatten
+# mod_kit
+
+> Tools for handling BAMs with mod bases
+
+
+# `modkit `
 
 ```bash
-flattens N-way base-modification calls into N-1-way
+Usage: modkit <COMMAND>
 
-Usage: mod_flatten [OPTIONS] <IN_BAM> <OUT_BAM>
-
-Arguments:
-  <IN_BAM>
-  <OUT_BAM>
+Commands:
+  collapse  Collapse N-way base modification calls to (N-1)-way
+  pileup    Pileup (combine) mod calls across genomic positions
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
-  -b, --base <BASE>          canonical base to flatten calls for [default: C]
-  -m, --mod-base <MOD_BASE>  mod base code to flatten/remove [default: h]
-  -t, --threads <THREADS>    number of threads to use [default: 1]
-  -f, --ff                   exit on bad reads, otherwise continue
-  -h, --help                 Print help information
+  -h, --help  Print help information
 ```
+## TODO (all)
+- [ ] CI/CD that runs tests and builds artifacts
+- [ ] python lib
 
-## Example
-```bash
-cargo run --release -- tests/resources/input_5mC.bam flattened_5mC.bam
-
-# or if installed
-
-mod_flatten tests/resources/input_5mC.bam flattened_5mC.bam
-```
-
-## TODO
+## TODO (`collapse`)
 - [ ] Don't remove sup/dup/secondary alignments
 - [ ] Handle removing mod-prob in ambiguous mode (`.`).
-- [ ] C-API
-- [ ] python lib
+- [ ] duplex
+
+## TODO (`pileup`)
+- [x] Proper command line
+- [ ] logging?
+  - Should log to a file
+- [ ] estimation of threshold
+- [ ] duplex
+- [ ] collapse
+- [ ] GC in read cache
+- [ ] test on larger dataset
+- [ ] bigwig output

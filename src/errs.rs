@@ -71,3 +71,9 @@ impl std::fmt::Display for RunError {
         write!(f, "{}", reason)
     }
 }
+
+impl std::fmt::Debug for RunError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}

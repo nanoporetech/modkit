@@ -4,11 +4,11 @@ use std::process::Output;
 
 #[test]
 fn test_help() {
-    let workdir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let exe = std::path::Path::new(&workdir).join("target/debug/mod_flatten");
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
     assert!(exe.exists());
 
     let help = std::process::Command::new(exe)
+        .arg("collapse")
         .arg("--help")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -19,8 +19,8 @@ fn test_help() {
     assert!(help.status.success());
 }
 
-fn run_mod_flatten(args: &[&str]) -> Output {
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_mod_flatten"));
+fn run_collapse(args: &[&str]) -> Output {
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
     assert!(exe.exists());
 
     let output = std::process::Command::new(exe)
@@ -35,10 +35,10 @@ fn run_mod_flatten(args: &[&str]) -> Output {
     output
 }
 
-fn test_output(input_path: &str, output_path: &str, check_file_path: &str) {
+fn test_collapse_output(input_path: &str, output_path: &str, check_file_path: &str) {
     let temp_file = std::env::temp_dir().join(output_path);
-    let args = [input_path, temp_file.to_str().unwrap()];
-    run_mod_flatten(&args);
+    let args = ["collapse", input_path, temp_file.to_str().unwrap()];
+    run_collapse(&args);
     assert!(temp_file.exists());
 
     let mut test_bam = bam::Reader::from_path(temp_file).unwrap();
@@ -51,8 +51,8 @@ fn test_output(input_path: &str, output_path: &str, check_file_path: &str) {
 }
 
 #[test]
-fn test_canonical() {
-    test_output(
+fn test_collapse_canonical() {
+    test_collapse_output(
         "tests/resources/input_C.bam",
         "test_C.bam",
         "tests/resources/ref_out_C_auto.bam",
@@ -60,8 +60,8 @@ fn test_canonical() {
 }
 
 #[test]
-fn test_methyl() {
-    test_output(
+fn test_collapse_methyl() {
+    test_collapse_output(
         "tests/resources/input_5mC.bam",
         "test_5mC.bam",
         "tests/resources/ref_out_5mC_auto.bam",
@@ -69,10 +69,18 @@ fn test_methyl() {
 }
 
 #[test]
-fn test_no_tags() {
+fn test_collapse_no_tags() {
     let temp_file = std::env::temp_dir().join("test_out_no_tags.bam");
-    run_mod_flatten(&[
+    run_collapse(&[
+        "collapse",
         "tests/resources/input_C_no_tags.bam",
         temp_file.to_str().unwrap(),
     ]);
+}
+
+#[test]
+#[ignore = "TODO"]
+fn test_mod_pileup_processor() {
+    let _bam_fp = "tests/resources/fwd_rev_modbase_records.sorted.bam";
+    // let fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
 }
