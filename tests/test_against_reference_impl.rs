@@ -35,7 +35,11 @@ fn run_collapse(args: &[&str]) -> Output {
     output
 }
 
-fn test_collapse_output(input_path: &str, output_path: &str, check_file_path: &str) {
+fn test_collapse_output(
+    input_path: &str,
+    output_path: &str,
+    check_file_path: &str,
+) {
     let temp_file = std::env::temp_dir().join(output_path);
     let args = ["collapse", input_path, temp_file.to_str().unwrap()];
     run_collapse(&args);
