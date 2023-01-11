@@ -1,7 +1,7 @@
 use crate::errs::RunError;
 use crate::mod_bam::{
-    extract_mod_probs, parse_raw_mod_tags,
-    BaseModCall, BaseModPositions, DeltaListConverter, SeqPosBaseModProbs,
+    extract_mod_probs, parse_raw_mod_tags, BaseModCall, BaseModPositions,
+    DeltaListConverter, SeqPosBaseModProbs,
 };
 use crate::util;
 use rust_htslib::bam;
@@ -34,8 +34,8 @@ impl ReadCache {
         seq_pos_base_mod_probs: SeqPosBaseModProbs,
         canonical_base: char,
     ) -> Result<(), RunError> {
-        let aligned_pairs =
-            util::get_aligned_pairs_forward(&record).collect::<HashMap<usize, u64>>();
+        let aligned_pairs = util::get_aligned_pairs_forward(&record)
+            .collect::<HashMap<usize, u64>>();
         let ref_pos_base_mod_calls = seq_pos_base_mod_probs
             .into_iter()
             // here the q_pos is the forward-oriented position
@@ -66,14 +66,24 @@ impl ReadCache {
                         if raw_mm.is_empty() {
                             None
                         } else {
-                            Some(BaseModPositions::parse(raw_mm).map(|pos| pos.canonical_base))
+                            Some(
+                                BaseModPositions::parse(raw_mm)
+                                    .map(|pos| pos.canonical_base),
+                            )
                         }
                     })
                     .collect::<Result<Vec<char>, _>>()?;
                 for canonical_base in bases_with_mod_calls {
-                    let converter = DeltaListConverter::new_from_record(record, canonical_base)?;
-                    let seq_pos_base_mod_probs =
-                        extract_mod_probs(&mm, &ml, canonical_base, &converter)?;
+                    let converter = DeltaListConverter::new_from_record(
+                        record,
+                        canonical_base,
+                    )?;
+                    let seq_pos_base_mod_probs = extract_mod_probs(
+                        &mm,
+                        &ml,
+                        canonical_base,
+                        &converter,
+                    )?;
                     self.add_base_mod_probs_for_base(
                         &record_name,
                         record,
@@ -106,13 +116,12 @@ impl ReadCache {
             None
         } else {
             if let Some(canonical_base_to_calls) = self.reads.get(&read_id) {
-                canonical_base_to_calls
-                    .get(&canonical_base)
-                    .and_then(|ref_pos_mod_base_calls| {
-                        ref_pos_mod_base_calls
-                            .get(&(position as u64))
-                            .map(|base_mod_call| match base_mod_call {
-                                BaseModCall::Canonical(p) | BaseModCall::Modified(p, _) => {
+                canonical_base_to_calls.get(&canonical_base).and_then(
+                    |ref_pos_mod_base_calls| {
+                        ref_pos_mod_base_calls.get(&(position as u64)).map(
+                            |base_mod_call| match base_mod_call {
+                                BaseModCall::Canonical(p)
+                                | BaseModCall::Modified(p, _) => {
                                     if *p > threshold {
                                         *base_mod_call
                                     } else {
@@ -120,8 +129,10 @@ impl ReadCache {
                                     }
                                 }
                                 BaseModCall::Filtered => *base_mod_call,
-                            })
-                    })
+                            },
+                        )
+                    },
+                )
             } else {
                 match self.add_record(record) {
                     Ok(_) => {}
@@ -160,8 +171,10 @@ mod read_cache_tests {
 
         let mut cache = ReadCache::new();
         cache.add_record(&record).unwrap();
-        let converter = DeltaListConverter::new_from_record(&record, 'C').unwrap();
-        let base_mod_probs = base_mod_probs_from_record(&record, &converter, 'C').unwrap();
+        let converter =
+            DeltaListConverter::new_from_record(&record, 'C').unwrap();
+        let base_mod_probs =
+            base_mod_probs_from_record(&record, &converter, 'C').unwrap();
         let read_base_mod_probs = cache
             .reads
             .get(&query_name)
@@ -180,7 +193,8 @@ mod read_cache_tests {
     #[test]
     fn test_read_cache_aligned_pairs() {
         let mut reader =
-            BamReader::from_path("tests/resources/fwd_rev_modbase_records.bam").unwrap();
+            BamReader::from_path("tests/resources/fwd_rev_modbase_records.bam")
+                .unwrap();
         for r in reader.records() {
             let record = r.unwrap();
             tests_record(&record);
@@ -190,12 +204,14 @@ mod read_cache_tests {
     #[test]
     #[ignore = "verbose, used for development"]
     fn test_read_cache_get_mod_calls() {
-        let mut reader =
-            bam::IndexedReader::from_path("tests/resources/fwd_rev_modbase_records.sorted.bam")
-                .unwrap();
+        let mut reader = bam::IndexedReader::from_path(
+            "tests/resources/fwd_rev_modbase_records.sorted.bam",
+        )
+        .unwrap();
         let header = reader.header().to_owned();
         let tid = 0;
-        let target_name = String::from_utf8(header.tid2name(tid).to_vec()).unwrap();
+        let target_name =
+            String::from_utf8(header.tid2name(tid).to_vec()).unwrap();
         assert_eq!(target_name, "oligo_1512_adapters");
         let target_length = header.target_len(tid).unwrap();
 
@@ -212,11 +228,19 @@ mod read_cache_tests {
                 }
                 let record = alignment.record();
                 let read_base = if record.is_reverse() {
-                    dna_complement(record.seq()[alignment.qpos().unwrap()] as char).unwrap()
+                    dna_complement(
+                        record.seq()[alignment.qpos().unwrap()] as char,
+                    )
+                    .unwrap()
                 } else {
                     record.seq()[alignment.qpos().unwrap()] as char
                 };
-                let mod_base_call = read_cache.get_mod_call(&record, pileup.pos(), read_base, 0f32);
+                let mod_base_call = read_cache.get_mod_call(
+                    &record,
+                    pileup.pos(),
+                    read_base,
+                    0f32,
+                );
                 let read_id = String::from_utf8_lossy(record.qname());
                 println!("{}\t{}\t{:?}", read_id, pileup.pos(), mod_base_call);
             }
