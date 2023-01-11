@@ -69,8 +69,12 @@ impl DnaBase {
         match self {
             Self::A => Ok(ModCode::A),
             Self::C => Ok(ModCode::C),
-            Self::G => Err(format!("no mod code for canonical base {}", self.char())),
-            Self::T => Err(format!("no mod code for canonical base {}", self.char())),
+            Self::G => {
+                Err(format!("no mod code for canonical base {}", self.char()))
+            }
+            Self::T => {
+                Err(format!("no mod code for canonical base {}", self.char()))
+            }
         }
     }
 }
@@ -218,7 +222,8 @@ impl FeatureVector {
             let filtered_coverage = n_canonical + n_mod;
             let raw_mod_code = 'a';
             let n_nocall = self.counts[2];
-            let percent_modified = n_mod as f32 / (n_mod as f32 + n_canonical as f32);
+            let percent_modified =
+                n_mod as f32 / (n_mod as f32 + n_canonical as f32);
             let n_diff = self.counts[3]
                 .saturating_add(self.counts[4])
                 .saturating_add(self.counts[5])
@@ -254,7 +259,8 @@ impl FeatureVector {
             for (raw_mod_code, (n_modified, n_other_modified)) in
                 [('h', (n_h, n_m)), ('m', (n_m, n_h))]
             {
-                let percent_modified = n_modified as f32 / filtered_coverage as f32;
+                let percent_modified =
+                    n_modified as f32 / filtered_coverage as f32;
                 counts.push(PileupFeatureCounts {
                     strand: Strand::Positive,
                     filtered_coverage,
@@ -277,7 +283,8 @@ impl FeatureVector {
             let filtered_coverage = n_canonical + n_mod;
             let raw_mod_code = 'a';
             let n_nocall = self.counts[13];
-            let percent_modified = n_mod as f32 / (n_mod as f32 + n_canonical as f32);
+            let percent_modified =
+                n_mod as f32 / (n_mod as f32 + n_canonical as f32);
             let n_diff = self.counts[14]
                 .saturating_add(self.counts[15])
                 .saturating_add(self.counts[16])
@@ -313,7 +320,8 @@ impl FeatureVector {
             for (raw_mod_code, (n_modified, n_other_modified)) in
                 [('h', (n_h, n_m)), ('m', (n_m, n_h))]
             {
-                let percent_modified = n_modified as f32 / filtered_coverage as f32;
+                let percent_modified =
+                    n_modified as f32 / filtered_coverage as f32;
                 counts.push(PileupFeatureCounts {
                     strand: Strand::Negative,
                     filtered_coverage,
@@ -382,7 +390,9 @@ pub struct ModBasePileup {
 }
 
 impl ModBasePileup {
-    pub fn iter_counts(&self) -> impl Iterator<Item = (&u32, &Vec<PileupFeatureCounts>)> {
+    pub fn iter_counts(
+        &self,
+    ) -> impl Iterator<Item = (&u32, &Vec<PileupFeatureCounts>)> {
         self.position_feature_counts
             .iter()
             .sorted_by(|(x, _), (y, _)| x.cmp(y))
@@ -396,7 +406,9 @@ pub fn process_region<T: AsRef<Path>>(
     end_pos: u32,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader = bam::IndexedReader::from_path(bam_fp).unwrap();
-    let chrom_name = String::from_utf8_lossy(bam_reader.header().tid2name(chrom_tid)).to_string();
+    let chrom_name =
+        String::from_utf8_lossy(bam_reader.header().tid2name(chrom_tid))
+            .to_string();
     bam_reader
         .fetch(FetchDefinition::Region(
             chrom_tid as i32,
@@ -429,7 +441,8 @@ pub fn process_region<T: AsRef<Path>>(
 
             // not delete or skip, add base
             let read_base =
-                DnaBase::parse(record.seq()[alignment.qpos().unwrap()] as char).unwrap();
+                DnaBase::parse(record.seq()[alignment.qpos().unwrap()] as char)
+                    .unwrap();
             let read_base = if record.is_reverse() {
                 read_base.complement()
             } else {
@@ -440,13 +453,13 @@ pub fn process_region<T: AsRef<Path>>(
                 read_cache.get_mod_call(&record, pos, read_base.char(), 0f32)
             {
                 match mod_call {
-                    BaseModCall::Canonical(_) => {
-                        Feature::ModCall(read_base.canonical_mod_code().unwrap())
-                    }
+                    BaseModCall::Canonical(_) => Feature::ModCall(
+                        read_base.canonical_mod_code().unwrap(),
+                    ),
                     BaseModCall::Filtered => Feature::Filtered,
-                    BaseModCall::Modified(_, raw_code) => {
-                        Feature::ModCall(ModCode::parse_raw_mod_code(raw_code).unwrap())
-                    }
+                    BaseModCall::Modified(_, raw_code) => Feature::ModCall(
+                        ModCode::parse_raw_mod_code(raw_code).unwrap(),
+                    ),
                 }
             } else {
                 Feature::NoCall(read_base)

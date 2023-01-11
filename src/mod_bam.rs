@@ -85,7 +85,8 @@ impl BaseModProbs {
             .filter(|(mod_code, _prob)| **mod_code != mod_to_collapse)
             .collect::<Vec<(&char, &f32)>>();
         let total_marginal_collapsed_prob =
-            marginal_collapsed_prob.iter().map(|(_, p)| *p).sum::<f32>() + canonical_prob;
+            marginal_collapsed_prob.iter().map(|(_, p)| *p).sum::<f32>()
+                + canonical_prob;
 
         let mut mod_codes = IndexSet::new();
         let mut probs = Vec::new();
@@ -99,7 +100,9 @@ impl BaseModProbs {
     }
 
     fn combine(&mut self, other: Self) {
-        for (mod_code, prob) in other.mod_codes.into_iter().zip(other.probs.into_iter()) {
+        for (mod_code, prob) in
+            other.mod_codes.into_iter().zip(other.probs.into_iter())
+        {
             if let Some(idx) = self.mod_codes.get_index_of(&mod_code) {
                 self.probs[idx] += prob
             } else {
@@ -115,7 +118,10 @@ pub struct DeltaListConverter {
 }
 
 impl DeltaListConverter {
-    pub fn new_from_record(record: &bam::Record, canonical_base: char) -> Result<Self, RunError> {
+    pub fn new_from_record(
+        record: &bam::Record,
+        canonical_base: char,
+    ) -> Result<Self, RunError> {
         let seq = util::get_forward_sequence(&record)?;
 
         Ok(Self::new(&seq, canonical_base))
@@ -136,7 +142,10 @@ impl DeltaListConverter {
         Self { cumulative_counts }
     }
 
-    pub fn to_positions(&self, delta_list: &[u32]) -> Result<Vec<usize>, InputError> {
+    pub fn to_positions(
+        &self,
+        delta_list: &[u32],
+    ) -> Result<Vec<usize>, InputError> {
         let mut finger = 0usize;
         let mut n_skips = 0u32;
         let mut positions = Vec::with_capacity(delta_list.len());
@@ -247,7 +256,10 @@ impl BaseModPositions {
             .map(|raw_pos| raw_pos.replace(";", "").parse::<u32>())
             .collect::<Result<Vec<u32>, _>>()
             .map_err(|e| {
-                InputError::new(&format!("failed to parse position list, {}", e.to_string()))
+                InputError::new(&format!(
+                    "failed to parse position list, {}",
+                    e.to_string()
+                ))
             })?;
 
         Ok(Self {
@@ -299,8 +311,13 @@ pub fn extract_mod_probs(
         }
         let base_mod_positions = BaseModPositions::parse(mod_positions)?;
         if base_mod_positions.canonical_base == canonical_base {
-            let base_mod_probs =
-                get_base_mod_probs(&base_mod_positions, &mod_quals, pointer, converter).unwrap();
+            let base_mod_probs = get_base_mod_probs(
+                &base_mod_positions,
+                &mod_quals,
+                pointer,
+                converter,
+            )
+            .unwrap();
             combine_positions_to_probs(&mut positions_to_probs, base_mod_probs);
         }
         pointer += base_mod_positions.delta_list.len();
@@ -330,12 +347,16 @@ fn get_base_mod_probs(
     assert_eq!(probs.len() / stride, positions.len());
     for (chunk, position) in probs.chunks(stride).zip(positions) {
         assert_eq!(chunk.len(), stride);
-        for (i, mod_base_code) in base_mod_positions.mod_base_codes.iter().enumerate() {
+        for (i, mod_base_code) in
+            base_mod_positions.mod_base_codes.iter().enumerate()
+        {
             let prob = chunk[i];
-            if let Some(base_mod_probs) = positions_to_probs.get_mut(&position) {
+            if let Some(base_mod_probs) = positions_to_probs.get_mut(&position)
+            {
                 base_mod_probs.insert_base_mod_prob(*mod_base_code, prob);
             } else {
-                positions_to_probs.insert(position, BaseModProbs::new(*mod_base_code, prob));
+                positions_to_probs
+                    .insert(position, BaseModProbs::new(*mod_base_code, prob));
             }
         }
     }
@@ -349,7 +370,9 @@ pub fn collapse_mod_probs(
 ) -> SeqPosBaseModProbs {
     positions_to_probs
         .into_iter()
-        .map(|(pos, mod_base_probs)| (pos, mod_base_probs.collapse(mod_base_to_remove)))
+        .map(|(pos, mod_base_probs)| {
+            (pos, mod_base_probs.collapse(mod_base_to_remove))
+        })
         .collect()
 }
 
@@ -375,7 +398,8 @@ pub fn format_mm_ml_tag(
     let mut mm_tag = String::new();
     let mut ml_tag = Vec::new();
 
-    for (mod_code, mut positions_and_probs) in mod_code_to_position.into_iter() {
+    for (mod_code, mut positions_and_probs) in mod_code_to_position.into_iter()
+    {
         positions_and_probs.sort_by(|(x_pos, _), (y_pos, _)| x_pos.cmp(&y_pos));
         let header = format!("{}+{}?,", canonical_base, mod_code);
         let positions = positions_and_probs
@@ -423,15 +447,21 @@ fn parse_ml_tag(ml_aux: &Aux, tag_key: &str) -> Result<Vec<u16>, RunError> {
     }
 }
 
-pub fn get_mm_tag_from_record(record: &bam::Record) -> Option<Result<String, RunError>> {
+pub fn get_mm_tag_from_record(
+    record: &bam::Record,
+) -> Option<Result<String, RunError>> {
     get_tag::<String>(&record, &MM_TAGS, &parse_mm_tag)
 }
 
-pub fn get_ml_tag_from_record(record: &bam::Record) -> Option<Result<Vec<u16>, RunError>> {
+pub fn get_ml_tag_from_record(
+    record: &bam::Record,
+) -> Option<Result<Vec<u16>, RunError>> {
     get_tag::<Vec<u16>>(&record, &ML_TAGS, &parse_ml_tag)
 }
 
-pub fn parse_raw_mod_tags(record: &bam::Record) -> Option<Result<(String, Vec<u16>), RunError>> {
+pub fn parse_raw_mod_tags(
+    record: &bam::Record,
+) -> Option<Result<(String, Vec<u16>), RunError>> {
     let mm = get_mm_tag_from_record(record);
     let ml = get_ml_tag_from_record(record);
     match (mm, ml) {
@@ -550,7 +580,10 @@ mod mod_bam_tests {
                 .map(|raw_pos| raw_pos.parse::<u32>())
                 .collect::<Result<Vec<u32>, _>>()
                 .map_err(|e| {
-                    InputError::new(&format!("failed to parse position list, {}", e.to_string()))
+                    InputError::new(&format!(
+                        "failed to parse position list, {}",
+                        e.to_string()
+                    ))
                 })?;
 
             let positions = converter.to_positions(&delta_list)?;
@@ -558,10 +591,13 @@ mod mod_bam_tests {
                 for pos in &positions {
                     let qual = mod_quals[prob_array_idx];
                     let prob = qual_to_prob(qual);
-                    if let Some(base_mod_probs) = probs_for_positions.get_mut(pos) {
+                    if let Some(base_mod_probs) =
+                        probs_for_positions.get_mut(pos)
+                    {
                         base_mod_probs.insert_base_mod_prob(mod_base, prob);
                     } else {
-                        probs_for_positions.insert(*pos, BaseModProbs::new(mod_base, prob));
+                        probs_for_positions
+                            .insert(*pos, BaseModProbs::new(mod_base, prob));
                     }
                     // consume from the ML array
                     prob_array_idx += 1;
@@ -640,17 +676,20 @@ mod mod_bam_tests {
 
     #[test]
     fn test_parse_mm_tag() {
-        let tag = "C+h?,5,2,1,3,1,2,3,1,2,1,11,5;C+m?,5,2,1,3,1,2,3,1,2,1,11,5;";
+        let tag =
+            "C+h?,5,2,1,3,1,2,3,1,2,1,11,5;C+m?,5,2,1,3,1,2,3,1,2,1,11,5;";
         let dna = "ATGTGCCTGCTGGACATGTTTATGCTCGTCTACTTCGTTCAGTTACGTATTGCTCCAG\
             CGCTCGAACTGTAGCCGCTGCTGCTGGGTGAAGTTGTGGCGGTACACGAGCTCCGCCGGCTGCAGCAGCTTC\
             TCCCCATCCTGGCGCTTCTCCCCGAGCAATTGGTG";
         let mod_quals = vec![
-            197, 13, 156, 1, 3, 5, 9, 26, 8, 1, 0, 13, 10, 67, 1, 0, 1, 0, 5, 5, 5, 0, 0, 8,
+            197, 13, 156, 1, 3, 5, 9, 26, 8, 1, 0, 13, 10, 67, 1, 0, 1, 0, 5,
+            5, 5, 0, 0, 8,
         ];
 
         let converter = DeltaListConverter::new(dna, 'C');
         let positions_to_probs =
-            get_mod_probs_for_query_positions(tag, 'C', &mod_quals, &converter).unwrap();
+            get_mod_probs_for_query_positions(tag, 'C', &mod_quals, &converter)
+                .unwrap();
         assert_eq!(positions_to_probs.len(), 12);
     }
 
@@ -676,7 +715,8 @@ mod mod_bam_tests {
     #[test]
     fn test_mod_base_positions() {
         let raw_positions = "C+h?,5,2,1,3,1,2,3,1,2,1,11,5;";
-        let base_mod_positions = BaseModPositions::parse(raw_positions).unwrap();
+        let base_mod_positions =
+            BaseModPositions::parse(raw_positions).unwrap();
         let expected = BaseModPositions {
             canonical_base: 'C',
             mode: SkipMode::Ambiguous,

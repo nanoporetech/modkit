@@ -1,6 +1,7 @@
 use crate::errs::{InputError, RunError};
 use crate::mod_bam::{
-    base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag, DeltaListConverter,
+    base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
+    DeltaListConverter,
 };
 use std::io::BufWriter;
 // use crate::mod_base_code::ModificationMotif;
@@ -69,17 +70,19 @@ pub struct Collapse {
 pub(crate) fn get_spinner() -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
-        ProgressStyle::with_template("{spinner:.blue} {msg} [{elapsed_precise}] {pos}")
-            .unwrap()
-            .tick_strings(&[
-                "▹▹▹▹▹",
-                "▸▹▹▹▹",
-                "▹▸▹▹▹",
-                "▹▹▸▹▹",
-                "▹▹▹▸▹",
-                "▹▹▹▹▸",
-                "▪▪▪▪▪",
-            ]),
+        ProgressStyle::with_template(
+            "{spinner:.blue} {msg} [{elapsed_precise}] {pos}",
+        )
+        .unwrap()
+        .tick_strings(&[
+            "▹▹▹▹▹",
+            "▸▹▹▹▹",
+            "▹▸▹▹▹",
+            "▹▹▸▹▹",
+            "▹▹▹▸▹",
+            "▹▹▹▹▸",
+            "▪▪▪▪▪",
+        ]),
     );
     spinner
 }
@@ -91,17 +94,27 @@ fn flatten_mod_probs(
     canonical_base: char,
     mod_base_to_remove: char,
 ) -> CliResult<bam::Record> {
-    if record.is_supplementary() || record.is_secondary() || record.is_duplicate() {
+    if record.is_supplementary()
+        || record.is_secondary()
+        || record.is_duplicate()
+    {
         return Err(RunError::new_skipped("not primary"));
     }
     if record.seq_len() == 0 {
         return Err(RunError::new_failed("seq is zero length"));
     }
 
-    let converter = DeltaListConverter::new_from_record(&record, canonical_base)?;
-    let probs_for_positions = base_mod_probs_from_record(&record, &converter, canonical_base)?;
-    let collapsed_probs_for_positions = collapse_mod_probs(probs_for_positions, mod_base_to_remove);
-    let (mm, ml) = format_mm_ml_tag(collapsed_probs_for_positions, canonical_base, &converter);
+    let converter =
+        DeltaListConverter::new_from_record(&record, canonical_base)?;
+    let probs_for_positions =
+        base_mod_probs_from_record(&record, &converter, canonical_base)?;
+    let collapsed_probs_for_positions =
+        collapse_mod_probs(probs_for_positions, mod_base_to_remove);
+    let (mm, ml) = format_mm_ml_tag(
+        collapsed_probs_for_positions,
+        canonical_base,
+        &converter,
+    );
 
     record
         .remove_aux("MM".as_bytes())
@@ -133,12 +146,14 @@ impl Collapse {
         let mod_base_to_remove = self.mod_base;
         let fail_fast = self.fail_fast;
 
-        let mut reader = bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
+        let mut reader =
+            bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
         reader.set_threads(threads).map_err(|e| e.to_string())?;
 
         let header = bam::Header::from_template(reader.header());
         let mut out_bam =
-            bam::Writer::from_path(out_fp, &header, bam::Format::Bam).map_err(|e| e.to_string())?;
+            bam::Writer::from_path(out_fp, &header, bam::Format::Bam)
+                .map_err(|e| e.to_string())?;
 
         let spinner = get_spinner();
         let message = format!(
@@ -154,8 +169,13 @@ impl Collapse {
         let mut total_skipped = 0usize;
         for (i, result) in reader.records().enumerate() {
             if let Ok(record) = result {
-                match flatten_mod_probs(record, canonical_base, mod_base_to_remove) {
-                    Err(RunError::BadInput(InputError(err))) | Err(RunError::Failed(err)) => {
+                match flatten_mod_probs(
+                    record,
+                    canonical_base,
+                    mod_base_to_remove,
+                ) {
+                    Err(RunError::BadInput(InputError(err)))
+                    | Err(RunError::Failed(err)) => {
                         if fail_fast {
                             return Err(err.to_string());
                         } else {
@@ -168,7 +188,10 @@ impl Collapse {
                     Ok(record) => {
                         if let Err(err) = out_bam.write(&record) {
                             if fail_fast {
-                                return Err(format!("failed to write {}", err.to_string()));
+                                return Err(format!(
+                                    "failed to write {}",
+                                    err.to_string()
+                                ));
                             } else {
                                 total_failed += 1;
                             }
@@ -247,19 +270,22 @@ impl ModBamPileup {
         thread::spawn(move || {
             pool.install(|| {
                 for (tid, size) in tids {
-                    let intervals = IntervalChunks::new(size, 50, 0).collect::<Vec<(u32, u32)>>();
+                    let intervals = IntervalChunks::new(size, 50, 0)
+                        .collect::<Vec<(u32, u32)>>();
                     let mut result: Vec<Result<ModBasePileup, String>> = vec![];
                     let (res, _) = rayon::join(
                         || {
                             intervals
                                 .into_par_iter()
-                                .map(|(start, end)| process_region(&in_bam_fp, tid, start, end))
+                                .map(|(start, end)| {
+                                    process_region(&in_bam_fp, tid, start, end)
+                                })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()
                         },
                         || {
-                            result
-                                .into_iter()
-                                .for_each(|mod_base_pileup| snd.send(mod_base_pileup).unwrap());
+                            result.into_iter().for_each(|mod_base_pileup| {
+                                snd.send(mod_base_pileup).unwrap()
+                            });
                         },
                     );
                     result = res;

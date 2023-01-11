@@ -1,6 +1,5 @@
 use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Aux};
 
-
 use crate::errs::{InputError, RunError};
 
 pub(crate) fn get_aligned_pairs_forward(
@@ -27,14 +26,19 @@ pub(crate) fn get_aligned_pairs_forward(
 }
 
 #[inline]
-pub(crate) fn get_forward_sequence(record: &bam::Record) -> Result<String, RunError> {
+pub(crate) fn get_forward_sequence(
+    record: &bam::Record,
+) -> Result<String, RunError> {
     let raw_seq = if record.is_reverse() {
         bio::alphabets::dna::revcomp(record.seq().as_bytes())
     } else {
         record.seq().as_bytes()
     };
     let seq = String::from_utf8(raw_seq).map_err(|e| {
-        RunError::new_input_error(format!("failed to convert sequence to string, {}", e))
+        RunError::new_input_error(format!(
+            "failed to convert sequence to string, {}",
+            e
+        ))
     })?;
     if seq.len() == 0 {
         return Err(RunError::new_failed("seq is empty"));

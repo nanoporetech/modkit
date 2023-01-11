@@ -64,7 +64,9 @@ impl From<InputError> for RunError {
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let reason = match self {
-            RunError::BadInput(InputError(reason)) => format!("Bad Input: {}", reason),
+            RunError::BadInput(InputError(reason)) => {
+                format!("Bad Input: {}", reason)
+            }
             RunError::Skipped(reason) => format!("Skipped: {}", reason),
             RunError::Failed(reason) => format!("Failed: {}", reason),
         };
