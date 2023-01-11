@@ -1,6 +1,6 @@
 use crate::mod_bam::BaseModCall;
 use crate::read_cache::ReadCache;
-use crate::util::Strand;
+use crate::util::{record_is_secondary, Strand};
 use itertools::Itertools;
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
@@ -367,7 +367,7 @@ impl<'a> Iterator for PileupIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut pileup: Option<Self::Item> = None;
-        while let Some(plp) = self.pileups.next().map(|res| res.unwrap()) {
+        while let Some(Ok(plp)) = self.pileups.next() {
             let off_end = plp.pos() >= self.end_pos;
             if off_end {
                 // we're done
@@ -390,6 +390,10 @@ pub struct ModBasePileup {
 }
 
 impl ModBasePileup {
+    pub fn num_results(&self) -> usize {
+        self.position_feature_counts.len()
+    }
+
     pub fn iter_counts(
         &self,
     ) -> impl Iterator<Item = (&u32, &Vec<PileupFeatureCounts>)> {
@@ -405,7 +409,8 @@ pub fn process_region<T: AsRef<Path>>(
     start_pos: u32,
     end_pos: u32,
 ) -> Result<ModBasePileup, String> {
-    let mut bam_reader = bam::IndexedReader::from_path(bam_fp).unwrap();
+    let mut bam_reader =
+        bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
     let chrom_name =
         String::from_utf8_lossy(bam_reader.header().tid2name(chrom_tid))
             .to_string();
@@ -415,7 +420,7 @@ pub fn process_region<T: AsRef<Path>>(
             start_pos as i64,
             end_pos as i64,
         ))
-        .unwrap();
+        .map_err(|e| e.to_string())?;
 
     let mut read_cache = ReadCache::new();
     let mut position_feature_counts = HashMap::new();
@@ -425,7 +430,10 @@ pub fn process_region<T: AsRef<Path>>(
         let pos = pileup.pos();
         for alignment in pileup.alignments() {
             let record = alignment.record();
-            if alignment.is_refskip() {
+            if alignment.is_refskip()
+                || record_is_secondary(&record)
+                || record.seq_len() == 0
+            {
                 continue;
             }
             let strand = if record.is_reverse() {
@@ -440,13 +448,23 @@ pub fn process_region<T: AsRef<Path>>(
             }
 
             // not delete or skip, add base
-            let read_base =
-                DnaBase::parse(record.seq()[alignment.qpos().unwrap()] as char)
-                    .unwrap();
-            let read_base = if record.is_reverse() {
-                read_base.complement()
+            let read_base = alignment.qpos().and_then(|pos| {
+                if pos >= record.seq_len() {
+                    eprintln!("> record position is not included in sequence?");
+                    None
+                } else {
+                    DnaBase::parse(record.seq()[pos] as char).ok()
+                }
+            });
+
+            let read_base = if let Some(base) = read_base {
+                if record.is_reverse() {
+                    base.complement()
+                } else {
+                    base
+                }
             } else {
-                read_base
+                continue;
             };
 
             let feature = if let Some(mod_call) =

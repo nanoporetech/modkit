@@ -1,22 +1,27 @@
-use crate::errs::{InputError, RunError};
-use crate::mod_bam::{
-    base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
-    DeltaListConverter,
-};
 use std::io::BufWriter;
-// use crate::mod_base_code::ModificationMotif;
-use crate::interval_chunks::IntervalChunks;
-use crate::mod_pileup::{process_region, ModBasePileup};
-use crate::writers::{BEDWriter, OutWriter};
+use std::path::PathBuf;
+use std::thread;
+
+use anyhow::{Context, Result as AnyhowResult};
 use clap::{Args, Subcommand};
 use crossbeam_channel::bounded;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{
+    MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle,
+};
 use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
-use std::path::PathBuf;
-use std::thread;
+
+use crate::errs::{InputError, RunError};
+use crate::interval_chunks::IntervalChunks;
+use crate::mod_bam::{
+    base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
+    DeltaListConverter,
+};
+use crate::mod_pileup::{process_region, ModBasePileup};
+use crate::util::record_is_secondary;
+use crate::writers::{BEDWriter, OutWriter};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -71,7 +76,7 @@ pub(crate) fn get_spinner() -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::with_template(
-            "{spinner:.blue} {msg} [{elapsed_precise}] {pos}",
+            "{spinner:.blue} [{elapsed_precise}] {pos} {msg}",
         )
         .unwrap()
         .tick_strings(&[
@@ -94,10 +99,7 @@ fn flatten_mod_probs(
     canonical_base: char,
     mod_base_to_remove: char,
 ) -> CliResult<bam::Record> {
-    if record.is_supplementary()
-        || record.is_secondary()
-        || record.is_duplicate()
-    {
+    if record_is_secondary(&record) {
         return Err(RunError::new_skipped("not primary"));
     }
     if record.seq_len() == 0 {
@@ -246,37 +248,83 @@ pub struct ModBamPileup {
         default_value_t=String::from("hm"),
         value_parser = check_raw_modbase_code)
     ]
-    modbase_code: String,
+    modbases: String,
+
+    #[arg(short = '@', long, default_value_t = 4)]
+    threads: usize,
+
+    #[arg(short = 'i', long, default_value_t = 100_000)]
+    interval_size: u32,
+    // #[arg()]
+    // log_filepath: PathBuf,
 }
 
 impl ModBamPileup {
-    fn run(&self) -> Result<(), String> {
+    fn run(&self) -> AnyhowResult<(), String> {
         let header = bam::Reader::from_path(&self.in_bam)
             .map_err(|e| e.to_string())
             .map(|reader| reader.header().to_owned())?;
         let tids = (0..header.target_count())
-            .map(|tid| {
-                let size = header.target_len(tid).unwrap() as u32;
-                (tid, size)
+            .filter_map(|tid| {
+                let chrom_name =
+                    String::from_utf8(header.tid2name(tid).to_vec()).unwrap_or("???".to_owned());
+                match header.target_len(tid) {
+                    Some(size) => Some((tid, size as u32, chrom_name)),
+                    None => {
+                        eprintln!("> no size information for {chrom_name} (tid: {tid})");
+                        None
+                    }
+                }
             })
-            .collect::<Vec<(u32, u32)>>();
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .unwrap();
+            .collect::<Vec<(u32, u32, String)>>();
 
-        let (snd, rx) = bounded(0);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.threads)
+            .build()
+            .with_context(|| "failed to make threadpool")
+            .map_err(|e| e.to_string())?;
+
+        let _bam_reader = bam::IndexedReader::from_path(&self.in_bam)
+            .with_context(|| {
+                "failed to read BAM, is there an associated index?"
+            })
+            .map_err(|e| e.to_string())?;
+
+        let (snd, rx) = bounded(1_000); // todo figure out sane default for this?
         let in_bam_fp = self.in_bam.clone();
+        let interval_size = self.interval_size;
+
+        let master_progress = MultiProgress::new();
+        let sty = ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+        )
+        .unwrap()
+        .progress_chars("##-");
+        let tid_progress = master_progress
+            .add(ProgressBar::new(tids.len() as u64))
+            .with_style(sty.clone());
+        tid_progress.set_message("contigs");
+        let write_progress = master_progress.add(get_spinner());
+        write_progress.set_message("rows written");
+
         thread::spawn(move || {
             pool.install(|| {
-                for (tid, size) in tids {
-                    let intervals = IntervalChunks::new(size, 50, 0)
+                for (tid, size, ref_name) in tids {
+                    let intervals = IntervalChunks::new(size, interval_size, 0)
                         .collect::<Vec<(u32, u32)>>();
+                    let n_intervals = intervals.len();
+                    let interval_progress = master_progress.add(
+                        ProgressBar::new(n_intervals as u64)
+                            .with_style(sty.clone()),
+                    );
+                    interval_progress
+                        .set_message(format!("processing {}", ref_name));
                     let mut result: Vec<Result<ModBasePileup, String>> = vec![];
                     let (res, _) = rayon::join(
                         || {
                             intervals
                                 .into_par_iter()
+                                .progress_with(interval_progress)
                                 .map(|(start, end)| {
                                     process_region(&in_bam_fp, tid, start, end)
                                 })
@@ -284,27 +332,30 @@ impl ModBamPileup {
                         },
                         || {
                             result.into_iter().for_each(|mod_base_pileup| {
-                                snd.send(mod_base_pileup).unwrap()
+                                snd.send(mod_base_pileup)
+                                    .expect("failed to send")
                             });
                         },
                     );
                     result = res;
-                    result
-                        .into_iter()
-                        .for_each(|pileup| snd.send(pileup).unwrap());
+                    result.into_iter().for_each(|pileup| {
+                        snd.send(pileup).expect("failed to send")
+                    });
+                    tid_progress.inc(1);
                 }
             });
         });
 
         let out_fp_str = self.out_bed.clone();
-        let out_fp = std::fs::File::create(out_fp_str).unwrap();
+        let out_fp = std::fs::File::create(out_fp_str)
+            .context("failed to make output file")
+            .map_err(|e| e.to_string())?;
         let mut writer = BEDWriter::new(BufWriter::new(out_fp));
-        let spinner = get_spinner();
         for result in rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {
                     let rows_written = writer.write(mod_base_pileup)?;
-                    spinner.inc(rows_written);
+                    write_progress.inc(rows_written);
                 }
                 Err(message) => {
                     eprintln!("> unexpected error {message}");

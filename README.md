@@ -33,5 +33,5 @@ Options:
 - [ ] duplex
 - [ ] collapse
 - [ ] GC in read cache
-- [ ] test on larger dataset
+- [x] test on larger dataset
 - [ ] bigwig output
