@@ -6,6 +6,7 @@ use std::io::BufWriter;
 // use crate::mod_base_code::ModificationMotif;
 use crate::interval_chunks::IntervalChunks;
 use crate::mod_pileup::{process_region, ModBasePileup};
+use crate::motif_bed::motif_bed;
 use crate::writers::{BEDWriter, OutWriter};
 use clap::{Args, Subcommand};
 use crossbeam_channel::bounded;
@@ -23,6 +24,8 @@ pub enum Commands {
     Collapse(Collapse),
     /// Pileup (combine) mod calls across genomic positions.
     Pileup(ModBamPileup),
+    /// Create BED file with all locations of a motif
+    MotifBed(MotifBed),
 }
 
 impl Commands {
@@ -30,6 +33,7 @@ impl Commands {
         match self {
             Self::Collapse(x) => x.run(),
             Self::Pileup(x) => x.run(),
+            Self::MotifBed(x) => x.run(),
         }
     }
 }
@@ -286,5 +290,22 @@ impl ModBamPileup {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Args)]
+pub struct MotifBed {
+    /// Input FASTA file
+    fasta: PathBuf,
+    /// Motif to search for within FASTA
+    motif: String,
+    /// Offset within motif
+    offset: i32,
+}
+
+impl MotifBed {
+    fn run(&self) -> Result<(), String> {
+	motif_bed(&self.fasta, &self.motif, self.offset);
+	Ok(())
     }
 }
