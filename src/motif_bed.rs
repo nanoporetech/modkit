@@ -1,6 +1,6 @@
 use regex::Regex;
-use std::path::PathBuf;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 
 fn iupac_to_regex(pattern: &str) -> String {
     let mut regex = String::new();
@@ -31,16 +31,19 @@ fn iupac_to_regex(pattern: &str) -> String {
 
 fn motif_rev_comp(motif: &str) -> String {
     let mut reverse_complement = motif.chars().rev().collect::<String>();
-    reverse_complement = reverse_complement.chars().map(|c| match c {
-        'A' => 'T',
-        'C' => 'G',
-        'G' => 'C',
-        'T' => 'A',
-        'U' => 'A',
-        '[' => ']',
-        ']' => '[',
-        _ => c,
-    }).collect();
+    reverse_complement = reverse_complement
+        .chars()
+        .map(|c| match c {
+            'A' => 'T',
+            'C' => 'G',
+            'G' => 'C',
+            'T' => 'A',
+            'U' => 'A',
+            '[' => ']',
+            ']' => '[',
+            _ => c,
+        })
+        .collect();
     reverse_complement
 }
 
@@ -56,30 +59,30 @@ fn process_record(
     // if reverse complement pattern is the same, only search forward pattern
     // and avoid sort
     if re.as_str() == rc_re.as_str() {
-	for m in re.find_iter(seq) {
-	    if offset <= rc_offset {
-		motif_hits.push((m.start() as i32 + offset, "+"));
-		motif_hits.push((m.start() as i32 + rc_offset, "-"));
-	    } else {
-		motif_hits.push((m.start() as i32 + rc_offset, "-"));
-		motif_hits.push((m.start() as i32 + offset, "+"));
-	    }
-	}
+        for m in re.find_iter(seq) {
+            if offset <= rc_offset {
+                motif_hits.push((m.start() as i32 + offset, "+"));
+                motif_hits.push((m.start() as i32 + rc_offset, "-"));
+            } else {
+                motif_hits.push((m.start() as i32 + rc_offset, "-"));
+                motif_hits.push((m.start() as i32 + offset, "+"));
+            }
+        }
     } else {
-	for m in re.find_iter(seq) {
-	    motif_hits.push((m.start() as i32 + offset, "+"));
-	}
-	for m in rc_re.find_iter(seq) {
-	    motif_hits.push((m.start() as i32 + rc_offset, "-"));
-	}
-	motif_hits.sort();
+        for m in re.find_iter(seq) {
+            motif_hits.push((m.start() as i32 + offset, "+"));
+        }
+        for m in rc_re.find_iter(seq) {
+            motif_hits.push((m.start() as i32 + rc_offset, "-"));
+        }
+        motif_hits.sort();
     }
 
     // get contig name
     let (_, rest) = header.split_at(1);
     let ctg = rest.split_whitespace().next().unwrap_or("");
     for (pos, strand) in motif_hits {
-	println!("{}\t{}\t{}\t.\t.\t{}", ctg, pos, pos + 1, strand);
+        println!("{}\t{}\t{}\t.\t.\t{}", ctg, pos, pos + 1, strand);
     }
 }
 

@@ -331,7 +331,7 @@ pub struct MotifBed {
 
 impl MotifBed {
     fn run(&self) -> Result<(), String> {
-	motif_bed(&self.fasta, &self.motif, self.offset);
-	Ok(())
+        motif_bed(&self.fasta, &self.motif, self.offset);
+        Ok(())
     }
 }
