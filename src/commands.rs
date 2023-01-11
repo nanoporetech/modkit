@@ -255,13 +255,14 @@ pub struct ModBamPileup {
 
     #[arg(short = 'i', long, default_value_t = 100_000)]
     interval_size: u32,
+    // TODO incorperate a proper logging facade and log to a file
     // #[arg()]
     // log_filepath: PathBuf,
 }
 
 impl ModBamPileup {
     fn run(&self) -> AnyhowResult<(), String> {
-        let header = bam::Reader::from_path(&self.in_bam)
+        let header = bam::IndexedReader::from_path(&self.in_bam)
             .map_err(|e| e.to_string())
             .map(|reader| reader.header().to_owned())?;
         let tids = (0..header.target_count())
@@ -282,12 +283,6 @@ impl ModBamPileup {
             .num_threads(self.threads)
             .build()
             .with_context(|| "failed to make threadpool")
-            .map_err(|e| e.to_string())?;
-
-        let _bam_reader = bam::IndexedReader::from_path(&self.in_bam)
-            .with_context(|| {
-                "failed to read BAM, is there an associated index?"
-            })
             .map_err(|e| e.to_string())?;
 
         let (snd, rx) = bounded(1_000); // todo figure out sane default for this?

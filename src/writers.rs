@@ -73,7 +73,6 @@ impl OutWriter<ModBasePileup> for BEDWriter {
                 rows_written += 1;
             }
         }
-        // eprintln!("? !! wrote {} rows", rows_written);
         Ok(rows_written)
     }
 }
