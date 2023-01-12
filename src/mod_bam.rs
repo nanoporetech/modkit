@@ -478,6 +478,28 @@ pub fn parse_raw_mod_tags(
     }
 }
 
+pub fn get_canonical_bases_with_mod_calls(
+    record: &bam::Record,
+) -> Result<Vec<char>, RunError> {
+    match parse_raw_mod_tags(record) {
+        Some(Ok((mm_tag_string, _ml))) => mm_tag_string
+            .split(';')
+            .filter_map(|raw_mm| {
+                if raw_mm.is_empty() {
+                    None
+                } else {
+                    Some(BaseModPositions::parse(raw_mm).map(
+                        |base_mod_positions| base_mod_positions.canonical_base,
+                    ))
+                }
+            })
+            .collect::<Result<Vec<char>, InputError>>()
+            .map_err(|input_err| input_err.into()),
+        Some(Err(e)) => Err(e),
+        None => Ok(Vec::new()),
+    }
+}
+
 pub fn base_mod_probs_from_record(
     record: &bam::Record,
     converter: &DeltaListConverter,
@@ -492,29 +514,6 @@ pub fn base_mod_probs_from_record(
             return Err(RunError::new_skipped("no mod tags"));
         }
     };
-
-    // let (mm, ml) = {
-    //     let mm = get_mm_tag_from_record(record);
-    //     let ml = get_ml_tag_from_record(record);
-    //     match (mm, ml) {
-    //         (None, _) | (_, None) => {
-    //             return Err(RunError::new_skipped("no mod tags"));
-    //         }
-    //         (Some(Ok(mm)), Some(Ok(ml))) => (mm, ml),
-    //         (Some(Err(err)), _) => {
-    //             return Err(RunError::new_input_error(format!(
-    //                 "MM tag malformed {}",
-    //                 err.to_string()
-    //             )));
-    //         }
-    //         (_, Some(Err(err))) => {
-    //             return Err(RunError::new_input_error(format!(
-    //                 "ML tag malformed {}",
-    //                 err.to_string()
-    //             )));
-    //         }
-    //     }
-    // };
 
     extract_mod_probs(&mm, &ml, canonical_base, &converter)
         .map_err(|input_err| RunError::BadInput(input_err))

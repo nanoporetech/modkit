@@ -1,4 +1,5 @@
 use std::io::BufWriter;
+use std::num::ParseFloatError;
 use std::path::PathBuf;
 use std::thread;
 
@@ -20,6 +21,9 @@ use crate::mod_bam::{
     DeltaListConverter,
 };
 use crate::mod_pileup::{process_region, ModBasePileup};
+use crate::thresholds::{
+    calc_threshold_from_bam, sample_modbase_probs, Percentiles,
+};
 use crate::util::record_is_secondary;
 use crate::writers::{BEDWriter, OutWriter};
 
@@ -29,6 +33,8 @@ pub enum Commands {
     Collapse(Collapse),
     /// Pileup (combine) mod calls across genomic positions.
     Pileup(ModBamPileup),
+    /// Get an estimate of the distribution of mod-base prediction probabilities
+    SampleProbs(SampleModBaseProbs),
 }
 
 impl Commands {
@@ -36,6 +42,7 @@ impl Commands {
         match self {
             Self::Collapse(x) => x.run(),
             Self::Pileup(x) => x.run(),
+            Self::SampleProbs(x) => x.run(),
         }
     }
 }
@@ -250,11 +257,21 @@ pub struct ModBamPileup {
     ]
     modbases: String,
 
-    #[arg(short = '@', long, default_value_t = 4)]
+    #[arg(short, long, default_value_t = 4)]
     threads: usize,
 
     #[arg(short = 'i', long, default_value_t = 100_000)]
     interval_size: u32,
+
+    /// Sample fraction
+    #[arg(short = 'f', long, default_value_t = 0.1)]
+    sampling_frac: f64,
+
+    #[arg(group = "thresholds", long, default_value_t = false)]
+    no_threshold: bool,
+
+    #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
+    filter_percentile: f32,
     // TODO incorperate a proper logging facade and log to a file
     // #[arg()]
     // log_filepath: PathBuf,
@@ -262,6 +279,25 @@ pub struct ModBamPileup {
 
 impl ModBamPileup {
     fn run(&self) -> AnyhowResult<(), String> {
+        let threshold = if self.no_threshold {
+            0f32
+        } else {
+            eprintln!(
+                "> determining filter threshold probability using sampling \
+                frequency {}",
+                self.sampling_frac
+            );
+            calc_threshold_from_bam(
+                &self.in_bam,
+                self.threads,
+                self.sampling_frac,
+                self.filter_percentile,
+                None,
+            )?
+        };
+
+        eprintln!("> using filter threshold {}", threshold);
+
         let header = bam::IndexedReader::from_path(&self.in_bam)
             .map_err(|e| e.to_string())
             .map(|reader| reader.header().to_owned())?;
@@ -321,7 +357,9 @@ impl ModBamPileup {
                                 .into_par_iter()
                                 .progress_with(interval_progress)
                                 .map(|(start, end)| {
-                                    process_region(&in_bam_fp, tid, start, end)
+                                    process_region(
+                                        &in_bam_fp, tid, start, end, threshold,
+                                    )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()
                         },
@@ -357,6 +395,58 @@ impl ModBamPileup {
                 }
             }
         }
+        Ok(())
+    }
+}
+
+fn parse_percentiles(
+    raw_percentiles: &str,
+) -> Result<Vec<f32>, ParseFloatError> {
+    if raw_percentiles.contains("..") {
+        todo!("handle parsing ranges")
+    } else {
+        raw_percentiles
+            .split(',')
+            .map(|x| x.parse::<f32>())
+            .collect()
+    }
+}
+
+#[derive(Args)]
+pub struct SampleModBaseProbs {
+    /// Input BAM, should be sorted and have associated index
+    in_bam: PathBuf,
+    /// Sample fraction
+    #[arg(short = 'f', long, default_value_t = 0.1)]
+    sampling_frac: f64,
+    /// number of threads to use reading BAM
+    #[arg(short, long, default_value_t = 4)]
+    threads: usize,
+    /// random seed for deterministic running, default is non-deterministic
+    #[arg(short, long)]
+    seed: Option<u64>,
+    /// Percentiles to calculate, space separated list
+    #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
+    percentiles: String,
+}
+
+impl SampleModBaseProbs {
+    fn run(&self) -> AnyhowResult<(), String> {
+        let mut bam = bam::Reader::from_path(&self.in_bam).unwrap();
+        bam.set_threads(self.threads).unwrap();
+
+        let mut probs =
+            sample_modbase_probs(&mut bam, self.seed, self.sampling_frac)
+                .map_err(|e| e.to_string())?;
+        let desired_percentiles = parse_percentiles(&self.percentiles)
+            .with_context(|| {
+                format!("failed to parse percentiles: {}", &self.percentiles)
+            })
+            .map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            Percentiles::new(&mut probs, &desired_percentiles)?.report()
+        );
         Ok(())
     }
 }

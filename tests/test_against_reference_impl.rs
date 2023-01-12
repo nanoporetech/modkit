@@ -84,7 +84,7 @@ fn test_collapse_no_tags() {
 }
 
 #[test]
-fn test_mod_pileup_processor() {
+fn test_mod_pileup() {
     let temp_file = std::env::temp_dir().join("test_pileup.bed");
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
     assert!(exe.exists());
@@ -93,6 +93,7 @@ fn test_mod_pileup_processor() {
         "pileup",
         "-i",
         "25", // use small interval to make sure chunking works
+        "--no-threshold",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
