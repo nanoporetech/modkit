@@ -428,14 +428,22 @@ pub fn process_region<T: AsRef<Path>>(
     for pileup in pileup_iter {
         let mut feature_vector = FeatureVector::new();
         let pos = pileup.pos();
-        for alignment in pileup.alignments() {
-            let record = alignment.record();
-            if alignment.is_refskip()
-                || record_is_secondary(&record)
-                || record.seq_len() == 0
-            {
-                continue;
+
+        let alignment_iter = pileup.alignments().filter_map(|alignment| {
+            if alignment.is_refskip() {
+                None
+            } else {
+                let record = alignment.record();
+                if record_is_secondary(&record) || record.seq_len() == 0 {
+                    None
+                } else {
+                    Some(alignment)
+                }
             }
+        });
+        for alignment in alignment_iter {
+            assert!(!alignment.is_refskip());
+            let record = alignment.record();
             let strand = if record.is_reverse() {
                 Strand::Negative
             } else {
