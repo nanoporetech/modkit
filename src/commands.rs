@@ -245,7 +245,7 @@ fn check_raw_modbase_code(raw_code: &str) -> Result<String, String> {
 pub struct ModBamPileup {
     /// Input BAM, should be sorted and have associated index
     in_bam: PathBuf,
-    /// Output file
+    /// Output file (BED format).
     out_bed: PathBuf,
     /// TODO, unused atm
     #[arg(
@@ -257,19 +257,33 @@ pub struct ModBamPileup {
     ]
     modbases: String,
 
+    /// Number of threads to use while processing chunks concurrently.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
 
+    /// Interval chunk size to process concurrently. Smaller interval chunk
+    /// sizes will use less memory but incur more overhead.
     #[arg(short = 'i', long, default_value_t = 100_000)]
     interval_size: u32,
 
-    /// Sample fraction
+    /// Sample this fraction of the reads when estimating the
+    /// `filter-percentile`. In practice, 50-100 thousand reads is sufficient to
+    /// estimate the model output distribution and determine the filtering
+    /// threshold.
     #[arg(short = 'f', long, default_value_t = 0.1)]
     sampling_frac: f64,
 
-    #[arg(group = "thresholds", long, default_value_t = false)]
-    no_threshold: bool,
+    /// random seed for deterministic running, default is non-deterministic
+    #[arg(long)]
+    seed: Option<u64>,
 
+    /// Do not perform any filtering, include all mod base calls in output
+    #[arg(group = "thresholds", long, default_value_t = false)]
+    no_filtering: bool,
+
+    /// Filter (remove) mod-calls where the probability of the predicted
+    /// variant is below this percentile. For example, 0.1 will filter
+    /// out the lowest 10% of modification calls.
     #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
     filter_percentile: f32,
     // TODO incorperate a proper logging facade and log to a file
@@ -279,7 +293,7 @@ pub struct ModBamPileup {
 
 impl ModBamPileup {
     fn run(&self) -> AnyhowResult<(), String> {
-        let threshold = if self.no_threshold {
+        let threshold = if self.no_filtering {
             0f32
         } else {
             eprintln!(
@@ -292,7 +306,7 @@ impl ModBamPileup {
                 self.threads,
                 self.sampling_frac,
                 self.filter_percentile,
-                None,
+                self.seed,
             )?
         };
 
