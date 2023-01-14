@@ -6,6 +6,7 @@ use crate::mod_bam::{
 use crate::util::record_is_secondary;
 use anyhow::Context;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::info;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rust_htslib::bam::{Read, Reader};
@@ -110,8 +111,8 @@ pub fn sample_modbase_probs(
         record_count += 1;
     }
     spinner.finish_and_clear();
-    eprintln!(
-        "> sampled {} probabilities from {} records",
+    info!(
+        "Sampled {} probabilities from {} records",
         probs.len(),
         record_count
     );
