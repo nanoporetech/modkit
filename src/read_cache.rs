@@ -136,7 +136,11 @@ impl ReadCache {
             } else {
                 match self.add_record(record) {
                     Ok(_) => {}
-                    Err(_) => {
+                    Err(err) => {
+                        eprintln!(
+                            "> read {read_id} failed to get mod tags {}",
+                            err.to_string()
+                        );
                         self.skip_set.insert(read_id);
                     }
                 }

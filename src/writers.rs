@@ -1,4 +1,5 @@
 use crate::mod_pileup::ModBasePileup;
+use anyhow::Context;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
@@ -67,6 +68,7 @@ impl OutWriter<ModBasePileup> for BEDWriter {
                 );
                 self.buf_writer
                     .write(row.as_bytes())
+                    .with_context(|| "failed to write row")
                     .map_err(|e| e.to_string())?;
                 rows_written += 1;
             }
