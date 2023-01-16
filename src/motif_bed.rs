@@ -51,9 +51,9 @@ fn process_record(
     header: &str,
     seq: &str,
     re: &Regex,
-    offset: i32,
+    offset: usize,
     rc_re: &Regex,
-    rc_offset: i32,
+    rc_offset: usize,
 ) {
     let mut motif_hits = vec![];
     // if reverse complement pattern is the same, only search forward pattern
@@ -61,19 +61,19 @@ fn process_record(
     if re.as_str() == rc_re.as_str() {
         for m in re.find_iter(seq) {
             if offset <= rc_offset {
-                motif_hits.push((m.start() as i32 + offset, "+"));
-                motif_hits.push((m.start() as i32 + rc_offset, "-"));
+                motif_hits.push((m.start() + offset, "+"));
+                motif_hits.push((m.start() + rc_offset, "-"));
             } else {
-                motif_hits.push((m.start() as i32 + rc_offset, "-"));
-                motif_hits.push((m.start() as i32 + offset, "+"));
+                motif_hits.push((m.start() + rc_offset, "-"));
+                motif_hits.push((m.start() + offset, "+"));
             }
         }
     } else {
         for m in re.find_iter(seq) {
-            motif_hits.push((m.start() as i32 + offset, "+"));
+            motif_hits.push((m.start() + offset, "+"));
         }
         for m in rc_re.find_iter(seq) {
-            motif_hits.push((m.start() as i32 + rc_offset, "-"));
+            motif_hits.push((m.start() + rc_offset, "-"));
         }
         motif_hits.sort();
     }
@@ -86,12 +86,12 @@ fn process_record(
     }
 }
 
-pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: i32) {
+pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize) {
     let motif = iupac_to_regex(&motif_raw);
     let re = Regex::new(&motif).unwrap();
     let rc_motif = motif_rev_comp(&motif);
     let rc_re = Regex::new(&rc_motif).unwrap();
-    let rc_offset = motif_raw.len() as i32 - 1 - offset;
+    let rc_offset = motif_raw.len().checked_sub(offset + 1).unwrap();
 
     let file = std::fs::File::open(path).expect("Could not open file");
     let reader = BufReader::new(file);

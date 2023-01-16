@@ -326,7 +326,7 @@ pub struct MotifBed {
     /// Motif to search for within FASTA
     motif: String,
     /// Offset within motif
-    offset: i32,
+    offset: usize,
 }
 
 impl MotifBed {
