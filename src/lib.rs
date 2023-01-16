@@ -4,6 +4,7 @@ pub mod interval_chunks;
 pub mod mod_bam;
 pub mod mod_pileup;
 mod read_cache;
+pub mod thresholds;
 mod util;
 pub mod writers;
 

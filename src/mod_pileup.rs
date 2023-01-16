@@ -408,6 +408,7 @@ pub fn process_region<T: AsRef<Path>>(
     chrom_tid: u32,
     start_pos: u32,
     end_pos: u32,
+    threshold: f32,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -475,9 +476,12 @@ pub fn process_region<T: AsRef<Path>>(
                 continue;
             };
 
-            let feature = if let Some(mod_call) =
-                read_cache.get_mod_call(&record, pos, read_base.char(), 0f32)
-            {
+            let feature = if let Some(mod_call) = read_cache.get_mod_call(
+                &record,
+                pos,
+                read_base.char(),
+                threshold,
+            ) {
                 match mod_call {
                     BaseModCall::Canonical(_) => Feature::ModCall(
                         read_base.canonical_mod_code().unwrap(),

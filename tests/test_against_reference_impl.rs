@@ -1,6 +1,7 @@
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
 use std::io::Read as StdRead;
+use std::path::PathBuf;
 use std::process::Output;
 
 #[test]
@@ -83,19 +84,28 @@ fn test_collapse_no_tags() {
     ]);
 }
 
-#[test]
-fn test_mod_pileup_processor() {
-    let temp_file = std::env::temp_dir().join("test_pileup.bed");
+fn check_against_expected_text_file(output_fp: &str, expected_fp: &str) {
+    let test = {
+        let mut fh = std::fs::File::open(output_fp).unwrap();
+        let mut buff = String::new();
+        fh.read_to_string(&mut buff).unwrap();
+        buff
+    };
+    let expected = {
+        // this file was hand-checked for correctness.
+        let mut fh = std::fs::File::open(expected_fp).unwrap();
+        let mut buff = String::new();
+        fh.read_to_string(&mut buff).unwrap();
+        buff
+    };
+
+    similar_asserts::assert_eq!(test, expected);
+}
+
+fn run_modkit_pileup(args: &[&str]) {
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
     assert!(exe.exists());
 
-    let args = [
-        "pileup",
-        "-i",
-        "25", // use small interval to make sure chunking works
-        "tests/resources/bc_anchored_10_reads.sorted.bam",
-        temp_file.to_str().unwrap(),
-    ];
     let output = std::process::Command::new(exe)
         .args(args)
         .stdout(std::process::Stdio::null())
@@ -105,23 +115,55 @@ fn test_mod_pileup_processor() {
         .wait_with_output()
         .unwrap();
     assert!(output.status.success());
+}
 
-    let test = {
-        let mut fh = std::fs::File::open(temp_file.to_str().unwrap()).unwrap();
-        let mut buff = String::new();
-        fh.read_to_string(&mut buff).unwrap();
-        buff
-    };
-    let expected = {
-        // this file was hand-checked for correctness.
-        let mut fh = std::fs::File::open(
-            "tests/resources/modbam.modpileup_fixed_nocall.bed",
-        )
-        .unwrap();
-        let mut buff = String::new();
-        fh.read_to_string(&mut buff).unwrap();
-        buff
-    };
+#[test]
+fn test_mod_pileup_no_filt() {
+    let temp_file = std::env::temp_dir().join("test_pileup_nofilt.bed");
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    assert!(exe.exists());
 
-    similar_asserts::assert_eq!(test, expected);
+    let args = [
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "--no-filtering",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+    ];
+
+    run_modkit_pileup(&args);
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/modbam.modpileup_nofilt.bed",
+    );
+}
+
+#[test]
+fn test_mod_pileup_with_filt() {
+    let temp_file = std::env::temp_dir().join("test_pileup_withfilt.bed");
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    assert!(exe.exists());
+
+    let args = [
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "-f",
+        "1.0",
+        "-p",
+        "0.25",
+        "--seed",
+        "42",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+    ];
+
+    run_modkit_pileup(&args);
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/modbam.modpileup_filt025.bed",
+    );
 }
