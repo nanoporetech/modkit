@@ -4,6 +4,7 @@ use crate::mod_bam::{
     BaseModCall, DeltaListConverter, SeqPosBaseModProbs,
 };
 use crate::util;
+use log::debug;
 use rust_htslib::bam;
 use std::collections::{HashMap, HashSet};
 
@@ -128,8 +129,8 @@ impl ReadCache {
                 match self.add_record(record) {
                     Ok(_) => {}
                     Err(err) => {
-                        eprintln!(
-                            "> read {read_id} failed to get mod tags {}",
+                        debug!(
+                            "read {read_id} failed to get mod tags {}",
                             err.to_string()
                         );
                         self.skip_set.insert(read_id);

@@ -9,6 +9,7 @@ use crossbeam_channel::bounded;
 use indicatif::{
     MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle,
 };
+use log::{debug, info};
 use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
@@ -16,6 +17,7 @@ use rust_htslib::bam::Read;
 
 use crate::errs::{InputError, RunError};
 use crate::interval_chunks::IntervalChunks;
+use crate::logging::init_logging;
 use crate::mod_bam::{
     base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
     DeltaListConverter,
@@ -77,6 +79,10 @@ pub struct Collapse {
         default_value_t = false
     )]
     fail_fast: bool,
+
+    /// Output debug logs to file at this path
+    #[arg(long)]
+    log_filepath: Option<PathBuf>,
 }
 
 pub(crate) fn get_spinner() -> ProgressBar {
@@ -148,6 +154,7 @@ fn flatten_mod_probs(
 
 impl Collapse {
     pub fn run(&self) -> Result<(), String> {
+        let _handle = init_logging(self.log_filepath.as_ref());
         let fp = &self.in_bam;
         let out_fp = &self.out_bam;
         let threads = self.threads;
@@ -171,7 +178,7 @@ impl Collapse {
             fp.to_str().unwrap_or("???"),
             out_fp.to_str().unwrap_or("???")
         );
-        eprintln!("> {}", message);
+        info!("> {}", message);
         spinner.set_message("Flattening ModBAM");
         let mut total = 0usize;
         let mut total_failed = 0usize;
@@ -286,18 +293,21 @@ pub struct ModBamPileup {
     /// out the lowest 10% of modification calls.
     #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
     filter_percentile: f32,
-    // TODO incorperate a proper logging facade and log to a file
-    // #[arg()]
-    // log_filepath: PathBuf,
+
+    /// Output debug logs to file at this path
+    #[arg(long)]
+    log_filepath: Option<PathBuf>,
 }
 
 impl ModBamPileup {
     fn run(&self) -> AnyhowResult<(), String> {
+        let _handle = init_logging(self.log_filepath.as_ref());
+
         let threshold = if self.no_filtering {
             0f32
         } else {
-            eprintln!(
-                "> determining filter threshold probability using sampling \
+            info!(
+                "Determining filter threshold probability using sampling \
                 frequency {}",
                 self.sampling_frac
             );
@@ -310,7 +320,7 @@ impl ModBamPileup {
             )?
         };
 
-        eprintln!("> using filter threshold {}", threshold);
+        info!("Using filter threshold {}", threshold);
 
         let header = bam::IndexedReader::from_path(&self.in_bam)
             .map_err(|e| e.to_string())
@@ -322,7 +332,7 @@ impl ModBamPileup {
                 match header.target_len(tid) {
                     Some(size) => Some((tid, size as u32, chrom_name)),
                     None => {
-                        eprintln!("> no size information for {chrom_name} (tid: {tid})");
+                        debug!("> no size information for {chrom_name} (tid: {tid})");
                         None
                     }
                 }
@@ -405,10 +415,13 @@ impl ModBamPileup {
                     write_progress.inc(rows_written);
                 }
                 Err(message) => {
-                    eprintln!("> unexpected error {message}");
+                    debug!("> unexpected error {message}");
                 }
             }
         }
+        let rows_processed = write_progress.position();
+        write_progress.finish_and_clear();
+        info!("Done, processed {rows_processed} rows.");
         Ok(())
     }
 }

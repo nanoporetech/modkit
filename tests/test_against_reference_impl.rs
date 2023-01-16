@@ -1,8 +1,8 @@
+use std::io::Read as StdRead;
+use std::process::Output;
+
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
-use std::io::Read as StdRead;
-use std::path::PathBuf;
-use std::process::Output;
 
 #[test]
 fn test_help() {

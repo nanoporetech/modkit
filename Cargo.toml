@@ -11,9 +11,6 @@ path = "src/bin/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-# tried to use noodles, but it wouldn't parse my BAMs (edit. I was using it wrong :<)
-# still as of now noodles doesn't have a pileup engine - not a hard requirement, but
-# it's certainly nice to have
 rust-htslib = "0.40.2"
 bio = "1.0.0"
 indexmap = "1.9.2"
@@ -26,6 +23,8 @@ rayon = "1.6.1"
 crossbeam = "0.8.2"
 crossbeam-channel = "0.5.6"
 rand = "0.8.5"
+log = "0.4.0"
+log4rs = { version = "1.2.0", features = ["file_appender", "json_encoder"]}
 
 [dev-dependencies]
 similar-asserts = "1.4.2"

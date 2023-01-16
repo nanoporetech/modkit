@@ -2,6 +2,7 @@ use crate::mod_bam::BaseModCall;
 use crate::read_cache::ReadCache;
 use crate::util::{record_is_secondary, Strand};
 use itertools::Itertools;
+use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use std::collections::HashMap;
@@ -459,7 +460,7 @@ pub fn process_region<T: AsRef<Path>>(
             // not delete or skip, add base
             let read_base = alignment.qpos().and_then(|pos| {
                 if pos >= record.seq_len() {
-                    eprintln!("> record position is not included in sequence?");
+                    debug!("Record position is not included in sequence?");
                     None
                 } else {
                     DnaBase::parse(record.seq()[pos] as char).ok()
