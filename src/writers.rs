@@ -1,4 +1,5 @@
 use crate::mod_pileup::ModBasePileup;
+use crate::summarize::ModSummary;
 use anyhow::Context;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -74,5 +75,68 @@ impl OutWriter<ModBasePileup> for BEDWriter {
             }
         }
         Ok(rows_written)
+    }
+}
+
+pub struct TsvWriter<W: Write> {
+    buf_writer: BufWriter<W>,
+}
+
+impl TsvWriter<std::io::Stdout> {
+    pub fn new() -> Self {
+        let out = BufWriter::new(std::io::stdout());
+
+        Self { buf_writer: out }
+    }
+}
+
+impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
+    fn write(&mut self, item: ModSummary) -> Result<u64, String> {
+        let mut report = String::new();
+        let mod_called_bases = item
+            .mod_called_bases
+            .iter()
+            .map(|d| d.char().to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        report.push_str(&format!("mod_bases\t{}\n", mod_called_bases));
+        for (dna_base, read_count) in item.reads_with_mod_calls {
+            report.push_str(&format!(
+                "count_reads_{}\t{}\n",
+                dna_base.char(),
+                read_count
+            ));
+        }
+        for (canonical_base, mod_counts) in item.mod_call_counts {
+            let total_calls = mod_counts.values().sum::<u64>() as f64;
+            for (mod_code, counts) in mod_counts {
+                report.push_str(&format!(
+                    "{}_calls_{}\t{}\n",
+                    canonical_base.char(),
+                    mod_code.char(),
+                    counts
+                ));
+                report.push_str(&format!(
+                    "{}_frac_{}\t{}\n",
+                    canonical_base.char(),
+                    mod_code.char(),
+                    counts as f64 / total_calls
+                ));
+            }
+            report.push_str(&format!(
+                "total_mod_calls\t{}\n",
+                total_calls as u64
+            ));
+        }
+
+        report.push_str(&format!(
+            "total_reads_used\t{}\n",
+            item.total_reads_used
+        ));
+
+        self.buf_writer
+            .write(report.as_bytes())
+            .map_err(|e| e.to_string())?;
+        Ok(1)
     }
 }

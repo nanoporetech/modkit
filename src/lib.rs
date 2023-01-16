@@ -5,6 +5,7 @@ pub mod logging;
 pub mod mod_bam;
 pub mod mod_pileup;
 mod read_cache;
+pub mod summarize;
 pub mod thresholds;
 mod util;
 pub mod writers;

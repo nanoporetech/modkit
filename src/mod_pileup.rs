@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone)]
-enum ModCode {
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum ModCode {
     A,
     C,
     a,
@@ -19,7 +19,9 @@ enum ModCode {
 }
 
 impl ModCode {
-    fn parse_raw_mod_code(raw_mod_code: char) -> Result<Self, String> {
+    pub(crate) fn parse_raw_mod_code(
+        raw_mod_code: char,
+    ) -> Result<Self, String> {
         match raw_mod_code {
             'a' => Ok(Self::a),
             'h' => Ok(Self::h),
@@ -27,10 +29,20 @@ impl ModCode {
             _ => Err("no mod code for {raw_mod_code}".to_string()),
         }
     }
+
+    pub fn char(&self) -> char {
+        match self {
+            Self::A => 'A',
+            Self::C => 'C',
+            Self::a => 'a',
+            Self::h => 'h',
+            Self::m => 'm',
+        }
+    }
 }
 
-#[derive(Debug, Copy, Clone)]
-enum DnaBase {
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub enum DnaBase {
     A,
     C,
     G,
@@ -38,7 +50,7 @@ enum DnaBase {
 }
 
 impl DnaBase {
-    fn parse(nt: char) -> Result<Self, String> {
+    pub(crate) fn parse(nt: char) -> Result<Self, String> {
         match nt {
             'A' => Ok(Self::A),
             'C' => Ok(Self::C),
@@ -57,7 +69,7 @@ impl DnaBase {
         }
     }
 
-    fn char(&self) -> char {
+    pub(crate) fn char(&self) -> char {
         match self {
             Self::A => 'A',
             Self::C => 'C',
@@ -66,7 +78,7 @@ impl DnaBase {
         }
     }
 
-    fn canonical_mod_code(self) -> Result<ModCode, String> {
+    pub(crate) fn canonical_mod_code(self) -> Result<ModCode, String> {
         match self {
             Self::A => Ok(ModCode::A),
             Self::C => Ok(ModCode::C),

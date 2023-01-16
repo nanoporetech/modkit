@@ -4,7 +4,7 @@ use crate::util::{get_tag, Strand};
 use indexmap::{indexset, IndexSet};
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const MM_TAGS: [&str; 2] = ["MM", "Mm"];
 const ML_TAGS: [&str; 2] = ["ML", "Ml"];
@@ -493,7 +493,8 @@ pub fn get_canonical_bases_with_mod_calls(
                     ))
                 }
             })
-            .collect::<Result<Vec<char>, InputError>>()
+            .collect::<Result<HashSet<char>, InputError>>()
+            .map(|chars| chars.into_iter().collect::<Vec<char>>())
             .map_err(|input_err| input_err.into()),
         Some(Err(e)) => Err(e),
         None => Ok(Vec::new()),
@@ -727,21 +728,6 @@ mod mod_bam_tests {
         assert_eq!(base_mod_positions, expected);
     }
 
-    // #[test]
-    // fn test_quals_to_probs() {
-    //     let mut quals = vec![100f32; 10_000];
-    //     let start_time = std::time::Instant::now();
-    //     let _probs2 = quals_to_probs(&mut quals);
-    //     let elapsed = start_time.elapsed();
-    //     dbg!(elapsed);
-    //
-    //     let quals = vec![100u16; 10_000];
-    //     let start_time = std::time::Instant::now();
-    //     let _probs1 = quals.iter().map(|q| qual_to_prob(*q)).collect::<Vec<_>>();
-    //     let elapsed = start_time.elapsed();
-    //     dbg!(elapsed);
-    // }
-
     #[test]
     fn test_get_base_mod_probs() {
         let dna = "GATCGACTACGTCGA";
@@ -802,37 +788,4 @@ mod mod_bam_tests {
             assert_eq!(base_mod_probs.mod_codes, other.mod_codes);
         }
     }
-
-    // #[test]
-    // fn test_iter_records() {
-    //     let fp = "data/hac_v4_C_20220804_1429_X3_FAT62446_e21856a4.bam";
-    //     // let fp = "data/tmp_old_tags.bam";
-    //     // let fp = "data/tmp.sorted.bam";
-    //     let mut reader = Reader::from_path(fp).unwrap();
-    //
-    //     let alpha = "Chm";
-    //     let n = alpha.len();
-    //
-    //     for (i, result) in reader.records().enumerate() {
-    //         let record = result.unwrap();
-    //         let seq = if record.is_reverse() {
-    //             bio::alphabets::dna::revcomp(record.seq().as_bytes())
-    //         } else {
-    //             record.seq().as_bytes()
-    //         };
-    //         let dna = String::from_utf8(seq).unwrap();
-    //
-    //
-    //
-    //         dbg!(record.is_reverse());
-    //         dbg!(dna);
-    //         // parse_mod_probs(&record);
-    //         break;
-    //         // if i > 1 {
-    //         //     break;
-    //         // }
-    //     }
-    //
-    //     println!("done");
-    // }
 }
