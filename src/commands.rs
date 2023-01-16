@@ -23,11 +23,12 @@ use crate::mod_bam::{
     DeltaListConverter,
 };
 use crate::mod_pileup::{process_region, ModBasePileup};
+use crate::summarize::summarize_modbam;
 use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
 };
 use crate::util::record_is_secondary;
-use crate::writers::{BEDWriter, OutWriter};
+use crate::writers::{BEDWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -37,6 +38,8 @@ pub enum Commands {
     Pileup(ModBamPileup),
     /// Get an estimate of the distribution of mod-base prediction probabilities
     SampleProbs(SampleModBaseProbs),
+    /// Summarize the mod tags present in a BAM and get basic statistics
+    Summary(ModSummarize),
 }
 
 impl Commands {
@@ -45,6 +48,7 @@ impl Commands {
             Self::Collapse(x) => x.run(),
             Self::Pileup(x) => x.run(),
             Self::SampleProbs(x) => x.run(),
+            Self::Summary(x) => x.run(),
         }
     }
 }
@@ -474,6 +478,25 @@ impl SampleModBaseProbs {
             "{}",
             Percentiles::new(&mut probs, &desired_percentiles)?.report()
         );
+        Ok(())
+    }
+}
+
+#[derive(Args)]
+pub struct ModSummarize {
+    /// Input ModBam file
+    in_bam: PathBuf,
+    /// number of threads to use reading BAM
+    #[arg(short, long, default_value_t = 4)]
+    threads: usize,
+}
+
+impl ModSummarize {
+    pub fn run(&self) -> AnyhowResult<(), String> {
+        let mod_summary = summarize_modbam(&self.in_bam, self.threads)
+            .map_err(|e| e.to_string())?;
+        let mut writer = TsvWriter::new();
+        writer.write(mod_summary).map_err(|e| e.to_string())?;
         Ok(())
     }
 }
