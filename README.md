@@ -29,9 +29,9 @@ Options:
 - [x] Proper command line
 - [ ] logging?
   - Should log to a file
-- [ ] estimation of threshold
-- [ ] duplex
 - [ ] collapse
+- [x] estimation of threshold
+- [ ] duplex
 - [ ] GC in read cache
-- [ ] test on larger dataset
+- [x] test on larger dataset
 - [ ] bigwig output

@@ -1,9 +1,10 @@
 use crate::errs::RunError;
 use crate::mod_bam::{
-    extract_mod_probs, parse_raw_mod_tags, BaseModCall, BaseModPositions,
-    DeltaListConverter, SeqPosBaseModProbs,
+    extract_mod_probs, get_canonical_bases_with_mod_calls, parse_raw_mod_tags,
+    BaseModCall, DeltaListConverter, SeqPosBaseModProbs,
 };
 use crate::util;
+use log::debug;
 use rust_htslib::bam;
 use std::collections::{HashMap, HashSet};
 
@@ -60,19 +61,8 @@ impl ReadCache {
             .map_err(|e| RunError::new_input_error(e.to_string()))?;
         match parse_raw_mod_tags(record) {
             Some(Ok((mm, ml))) => {
-                let bases_with_mod_calls = mm
-                    .split(';')
-                    .filter_map(|raw_mm| {
-                        if raw_mm.is_empty() {
-                            None
-                        } else {
-                            Some(
-                                BaseModPositions::parse(raw_mm)
-                                    .map(|pos| pos.canonical_base),
-                            )
-                        }
-                    })
-                    .collect::<Result<Vec<char>, _>>()?;
+                let bases_with_mod_calls =
+                    get_canonical_bases_with_mod_calls(record)?;
                 for canonical_base in bases_with_mod_calls {
                     let converter = DeltaListConverter::new_from_record(
                         record,
@@ -116,6 +106,8 @@ impl ReadCache {
             None
         } else {
             if let Some(canonical_base_to_calls) = self.reads.get(&read_id) {
+                // todo(arand) this is ugly, make it easier to follow or at least comment up the
+                //  logic also maybe remove the need for the read cache all together?
                 canonical_base_to_calls.get(&canonical_base).and_then(
                     |ref_pos_mod_base_calls| {
                         ref_pos_mod_base_calls.get(&(position as u64)).map(
@@ -136,7 +128,11 @@ impl ReadCache {
             } else {
                 match self.add_record(record) {
                     Ok(_) => {}
-                    Err(_) => {
+                    Err(err) => {
+                        debug!(
+                            "read {read_id} failed to get mod tags {}",
+                            err.to_string()
+                        );
                         self.skip_set.insert(read_id);
                     }
                 }

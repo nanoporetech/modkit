@@ -1,15 +1,16 @@
 use crate::mod_bam::BaseModCall;
 use crate::read_cache::ReadCache;
-use crate::util::Strand;
+use crate::util::{record_is_secondary, Strand};
 use itertools::Itertools;
+use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use std::collections::HashMap;
 use std::path::Path;
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone)]
-enum ModCode {
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum ModCode {
     A,
     C,
     a,
@@ -18,7 +19,9 @@ enum ModCode {
 }
 
 impl ModCode {
-    fn parse_raw_mod_code(raw_mod_code: char) -> Result<Self, String> {
+    pub(crate) fn parse_raw_mod_code(
+        raw_mod_code: char,
+    ) -> Result<Self, String> {
         match raw_mod_code {
             'a' => Ok(Self::a),
             'h' => Ok(Self::h),
@@ -26,10 +29,20 @@ impl ModCode {
             _ => Err("no mod code for {raw_mod_code}".to_string()),
         }
     }
+
+    pub fn char(&self) -> char {
+        match self {
+            Self::A => 'A',
+            Self::C => 'C',
+            Self::a => 'a',
+            Self::h => 'h',
+            Self::m => 'm',
+        }
+    }
 }
 
-#[derive(Debug, Copy, Clone)]
-enum DnaBase {
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub enum DnaBase {
     A,
     C,
     G,
@@ -37,7 +50,7 @@ enum DnaBase {
 }
 
 impl DnaBase {
-    fn parse(nt: char) -> Result<Self, String> {
+    pub(crate) fn parse(nt: char) -> Result<Self, String> {
         match nt {
             'A' => Ok(Self::A),
             'C' => Ok(Self::C),
@@ -56,7 +69,7 @@ impl DnaBase {
         }
     }
 
-    fn char(&self) -> char {
+    pub(crate) fn char(&self) -> char {
         match self {
             Self::A => 'A',
             Self::C => 'C',
@@ -65,7 +78,7 @@ impl DnaBase {
         }
     }
 
-    fn canonical_mod_code(self) -> Result<ModCode, String> {
+    pub(crate) fn canonical_mod_code(self) -> Result<ModCode, String> {
         match self {
             Self::A => Ok(ModCode::A),
             Self::C => Ok(ModCode::C),
@@ -367,7 +380,7 @@ impl<'a> Iterator for PileupIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut pileup: Option<Self::Item> = None;
-        while let Some(plp) = self.pileups.next().map(|res| res.unwrap()) {
+        while let Some(Ok(plp)) = self.pileups.next() {
             let off_end = plp.pos() >= self.end_pos;
             if off_end {
                 // we're done
@@ -390,6 +403,10 @@ pub struct ModBasePileup {
 }
 
 impl ModBasePileup {
+    pub fn num_results(&self) -> usize {
+        self.position_feature_counts.len()
+    }
+
     pub fn iter_counts(
         &self,
     ) -> impl Iterator<Item = (&u32, &Vec<PileupFeatureCounts>)> {
@@ -404,8 +421,10 @@ pub fn process_region<T: AsRef<Path>>(
     chrom_tid: u32,
     start_pos: u32,
     end_pos: u32,
+    threshold: f32,
 ) -> Result<ModBasePileup, String> {
-    let mut bam_reader = bam::IndexedReader::from_path(bam_fp).unwrap();
+    let mut bam_reader =
+        bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
     let chrom_name =
         String::from_utf8_lossy(bam_reader.header().tid2name(chrom_tid))
             .to_string();
@@ -415,7 +434,7 @@ pub fn process_region<T: AsRef<Path>>(
             start_pos as i64,
             end_pos as i64,
         ))
-        .unwrap();
+        .map_err(|e| e.to_string())?;
 
     let mut read_cache = ReadCache::new();
     let mut position_feature_counts = HashMap::new();
@@ -423,11 +442,22 @@ pub fn process_region<T: AsRef<Path>>(
     for pileup in pileup_iter {
         let mut feature_vector = FeatureVector::new();
         let pos = pileup.pos();
-        for alignment in pileup.alignments() {
-            let record = alignment.record();
+
+        let alignment_iter = pileup.alignments().filter_map(|alignment| {
             if alignment.is_refskip() {
-                continue;
+                None
+            } else {
+                let record = alignment.record();
+                if record_is_secondary(&record) || record.seq_len() == 0 {
+                    None
+                } else {
+                    Some(alignment)
+                }
             }
+        });
+        for alignment in alignment_iter {
+            assert!(!alignment.is_refskip());
+            let record = alignment.record();
             let strand = if record.is_reverse() {
                 Strand::Negative
             } else {
@@ -440,18 +470,31 @@ pub fn process_region<T: AsRef<Path>>(
             }
 
             // not delete or skip, add base
-            let read_base =
-                DnaBase::parse(record.seq()[alignment.qpos().unwrap()] as char)
-                    .unwrap();
-            let read_base = if record.is_reverse() {
-                read_base.complement()
+            let read_base = alignment.qpos().and_then(|pos| {
+                if pos >= record.seq_len() {
+                    debug!("Record position is not included in sequence?");
+                    None
+                } else {
+                    DnaBase::parse(record.seq()[pos] as char).ok()
+                }
+            });
+
+            let read_base = if let Some(base) = read_base {
+                if record.is_reverse() {
+                    base.complement()
+                } else {
+                    base
+                }
             } else {
-                read_base
+                continue;
             };
 
-            let feature = if let Some(mod_call) =
-                read_cache.get_mod_call(&record, pos, read_base.char(), 0f32)
-            {
+            let feature = if let Some(mod_call) = read_cache.get_mod_call(
+                &record,
+                pos,
+                read_base.char(),
+                threshold,
+            ) {
                 match mod_call {
                     BaseModCall::Canonical(_) => Feature::ModCall(
                         read_base.canonical_mod_code().unwrap(),

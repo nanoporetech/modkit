@@ -84,3 +84,7 @@ impl Strand {
         }
     }
 }
+
+pub fn record_is_secondary(record: &bam::Record) -> bool {
+    record.is_supplementary() || record.is_secondary() || record.is_duplicate()
+}
