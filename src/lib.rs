@@ -3,6 +3,7 @@ pub mod errs;
 pub mod interval_chunks;
 pub mod logging;
 pub mod mod_bam;
+mod mod_base_code;
 pub mod mod_pileup;
 pub mod motif_bed;
 mod read_cache;

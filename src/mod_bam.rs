@@ -1,4 +1,5 @@
 use crate::errs::{InputError, RunError};
+use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
 use crate::util::{get_tag, Strand};
 use indexmap::{indexset, IndexSet};
@@ -34,7 +35,7 @@ pub enum BaseModCall {
 
 #[derive(Debug, PartialEq)]
 pub struct BaseModProbs {
-    mod_codes: IndexSet<char>,
+    pub(crate) mod_codes: IndexSet<char>,
     probs: Vec<f32>,
 }
 
@@ -76,7 +77,7 @@ impl BaseModProbs {
         1f32 - self.probs.iter().sum::<f32>()
     }
 
-    fn collapse(self, mod_to_collapse: char) -> BaseModProbs {
+    pub(crate) fn collapse(self, mod_to_collapse: char) -> BaseModProbs {
         let canonical_prob = 1f32 - self.probs.iter().sum::<f32>();
         let marginal_collapsed_prob = self
             .mod_codes
@@ -480,7 +481,7 @@ pub fn parse_raw_mod_tags(
 
 pub fn get_canonical_bases_with_mod_calls(
     record: &bam::Record,
-) -> Result<Vec<char>, RunError> {
+) -> Result<Vec<DnaBase>, RunError> {
     match parse_raw_mod_tags(record) {
         Some(Ok((mm_tag_string, _ml))) => mm_tag_string
             .split(';')
@@ -488,13 +489,16 @@ pub fn get_canonical_bases_with_mod_calls(
                 if raw_mm.is_empty() {
                     None
                 } else {
-                    Some(BaseModPositions::parse(raw_mm).map(
-                        |base_mod_positions| base_mod_positions.canonical_base,
+                    Some(BaseModPositions::parse(raw_mm).and_then(
+                        |base_mod_positions| {
+                            DnaBase::parse(base_mod_positions.canonical_base)
+                                .map_err(|e| InputError::new(&e.to_string()))
+                        },
                     ))
                 }
             })
-            .collect::<Result<HashSet<char>, InputError>>()
-            .map(|chars| chars.into_iter().collect::<Vec<char>>())
+            .collect::<Result<HashSet<DnaBase>, InputError>>()
+            .map(|chars| chars.into_iter().collect::<Vec<DnaBase>>())
             .map_err(|input_err| input_err.into()),
         Some(Err(e)) => Err(e),
         None => Ok(Vec::new()),

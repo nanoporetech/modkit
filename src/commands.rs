@@ -1,4 +1,4 @@
-use crate::motif_bed::motif_bed;
+use std::collections::HashSet;
 use std::io::BufWriter;
 use std::num::ParseFloatError;
 use std::path::PathBuf;
@@ -16,6 +16,7 @@ use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
+use crate::motif_bed::motif_bed;
 use crate::errs::{InputError, RunError};
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
@@ -23,6 +24,7 @@ use crate::mod_bam::{
     base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
     DeltaListConverter,
 };
+use crate::mod_base_code::ModCode;
 use crate::mod_pileup::{process_region, ModBasePileup};
 use crate::summarize::summarize_modbam;
 use crate::thresholds::{
@@ -235,7 +237,7 @@ impl Collapse {
         }
         spinner.finish_and_clear();
 
-        eprintln!(
+        info!(
             "> done, {} records processed, {} failed, {} skipped",
             total, total_failed, total_skipped
         );
@@ -262,15 +264,18 @@ pub struct ModBamPileup {
     in_bam: PathBuf,
     /// Output file (BED format).
     out_bed: PathBuf,
-    /// TODO, unused atm
+    /// Restrict mod base calls to a subset of all calls. For example, if a
+    /// read contains 5hmC and 5mC calls, but you want 5mC calls only, using
+    /// "m" as the option will collapse the 3-way 5hmC/5mC/C calls to 2-way
+    /// 5mC/C calls. Format: list of modified base codes as in the SAM
+    /// specification (link), e.g. "hmf". See `collapse`  command for more
+    /// details.
     #[arg(
-        group="mod-args",
         short='c',
         long,
-        default_value_t=String::from("hm"),
         value_parser = check_raw_modbase_code)
     ]
-    modbases: String,
+    modbases: Option<String>,
 
     /// Number of threads to use while processing chunks concurrently.
     #[arg(short, long, default_value_t = 4)]
@@ -334,6 +339,15 @@ impl ModBamPileup {
 
         info!("Using filter threshold {}", threshold);
 
+        let mod_base_codes = self.modbases.as_ref().map(|s| {
+            let restricted_codes = s
+                .chars()
+                .map(|c| ModCode::parse_raw_mod_code(c).unwrap())
+                .collect::<HashSet<ModCode>>();
+            info!("using modbase codes {:?}", restricted_codes);
+            restricted_codes
+        });
+
         let header = bam::IndexedReader::from_path(&self.in_bam)
             .map_err(|e| e.to_string())
             .map(|reader| reader.header().to_owned())?;
@@ -394,7 +408,12 @@ impl ModBamPileup {
                                 .progress_with(interval_progress)
                                 .map(|(start, end)| {
                                     process_region(
-                                        &in_bam_fp, tid, start, end, threshold,
+                                        &in_bam_fp,
+                                        tid,
+                                        start,
+                                        end,
+                                        threshold,
+                                        mod_base_codes.as_ref(),
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()

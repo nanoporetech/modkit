@@ -58,7 +58,7 @@ impl OutWriter<ModBasePileup> for BEDWriter {
                     1,
                     0,
                     feature_count.filtered_coverage,
-                    format!("{:.0}", feature_count.fraction_modified * 100f32),
+                    format!("{:.2}", feature_count.fraction_modified * 100f32),
                     feature_count.n_modified,
                     feature_count.n_canonical,
                     feature_count.n_other_modified,

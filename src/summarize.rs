@@ -3,7 +3,7 @@ use crate::mod_bam::{
     base_mod_probs_from_record, get_canonical_bases_with_mod_calls,
     BaseModCall, DeltaListConverter,
 };
-use crate::mod_pileup::{DnaBase, ModCode};
+use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util::record_is_secondary;
 use indicatif::{ProgressBar, ProgressStyle};
 use rust_htslib::bam;
@@ -42,15 +42,7 @@ pub fn summarize_modbam<T: AsRef<Path>>(
         // pull out the canonical bases in the MM tags, drop records that fail to parse
         .filter_map(|record| {
             get_canonical_bases_with_mod_calls(&record)
-                .and_then(|bases| {
-                    let dna_bases = bases
-                        .into_iter()
-                        .map(DnaBase::parse)
-                        .collect::<Result<Vec<DnaBase>, String>>();
-                    dna_bases
-                        .map(|bs| (bs, record))
-                        .map_err(|er| RunError::new_skipped(er.to_string()))
-                })
+                .map(|bases| (bases, record))
                 .ok()
         });
 

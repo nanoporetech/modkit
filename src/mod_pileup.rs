@@ -1,96 +1,13 @@
 use crate::mod_bam::BaseModCall;
+use crate::mod_base_code::{DnaBase, ModCode};
 use crate::read_cache::ReadCache;
 use crate::util::{record_is_secondary, Strand};
 use itertools::Itertools;
 use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
-
-#[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum ModCode {
-    A,
-    C,
-    a,
-    h,
-    m,
-}
-
-impl ModCode {
-    pub(crate) fn parse_raw_mod_code(
-        raw_mod_code: char,
-    ) -> Result<Self, String> {
-        match raw_mod_code {
-            'a' => Ok(Self::a),
-            'h' => Ok(Self::h),
-            'm' => Ok(Self::m),
-            _ => Err("no mod code for {raw_mod_code}".to_string()),
-        }
-    }
-
-    pub fn char(&self) -> char {
-        match self {
-            Self::A => 'A',
-            Self::C => 'C',
-            Self::a => 'a',
-            Self::h => 'h',
-            Self::m => 'm',
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub enum DnaBase {
-    A,
-    C,
-    G,
-    T,
-}
-
-impl DnaBase {
-    pub(crate) fn parse(nt: char) -> Result<Self, String> {
-        match nt {
-            'A' => Ok(Self::A),
-            'C' => Ok(Self::C),
-            'G' => Ok(Self::G),
-            'T' => Ok(Self::T),
-            _ => Err("unknown? {nt}".to_string()),
-        }
-    }
-
-    fn complement(self) -> Self {
-        match self {
-            Self::A => Self::T,
-            Self::C => Self::G,
-            Self::G => Self::C,
-            Self::T => Self::A,
-        }
-    }
-
-    pub(crate) fn char(&self) -> char {
-        match self {
-            Self::A => 'A',
-            Self::C => 'C',
-            Self::G => 'G',
-            Self::T => 'T',
-        }
-    }
-
-    pub(crate) fn canonical_mod_code(self) -> Result<ModCode, String> {
-        match self {
-            Self::A => Ok(ModCode::A),
-            Self::C => Ok(ModCode::C),
-            Self::G => {
-                Err(format!("no mod code for canonical base {}", self.char()))
-            }
-            Self::T => {
-                Err(format!("no mod code for canonical base {}", self.char()))
-            }
-        }
-    }
-}
 
 #[derive(Debug, Copy, Clone)]
 enum Feature {
@@ -220,7 +137,19 @@ impl FeatureVector {
         }
     }
 
-    pub fn decode(self) -> Vec<PileupFeatureCounts> {
+    pub fn decode(
+        self,
+        observed_mods: HashSet<ModCode>,
+        restricted_mod_codes: Option<&HashSet<ModCode>>,
+    ) -> Vec<PileupFeatureCounts> {
+        let check_mod_code = |mod_code: ModCode| -> bool {
+            if let Some(codes) = restricted_mod_codes {
+                codes.contains(&mod_code)
+            } else {
+                observed_mods.contains(&mod_code)
+            }
+        };
+
         let mut counts = Vec::new();
         // there is mod info on the + strand
         let pos_strand_n_delete = self.counts[0];
@@ -229,11 +158,11 @@ impl FeatureVector {
         let neg_stand_n_filt = self.counts[12];
 
         // + strand A-mods
-        if (self.counts[6] + self.counts[8]) > 0 {
+        if (self.counts[6] + self.counts[8]) > 0 && check_mod_code(ModCode::a) {
             let n_canonical = self.counts[6];
             let n_mod = self.counts[8];
             let filtered_coverage = n_canonical + n_mod;
-            let raw_mod_code = 'a';
+            let raw_mod_code = ModCode::a.char();
             let n_nocall = self.counts[2];
             let percent_modified =
                 n_mod as f32 / (n_mod as f32 + n_canonical as f32);
@@ -269,32 +198,35 @@ impl FeatureVector {
                 .saturating_add(self.counts[5])
                 .saturating_add(self.counts[6])
                 .saturating_add(self.counts[8]);
-            for (raw_mod_code, (n_modified, n_other_modified)) in
-                [('h', (n_h, n_m)), ('m', (n_m, n_h))]
+            for (mod_code, (n_modified, n_other_modified)) in
+                [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
             {
-                let percent_modified =
-                    n_modified as f32 / filtered_coverage as f32;
-                counts.push(PileupFeatureCounts {
-                    strand: Strand::Positive,
-                    filtered_coverage,
-                    raw_mod_code,
-                    fraction_modified: percent_modified,
-                    n_canonical,
-                    n_modified,
-                    n_other_modified,
-                    n_delete: pos_strand_n_delete,
-                    n_filtered: pos_stand_n_filt,
-                    n_diff,
-                    n_nocall,
-                })
+                if check_mod_code(mod_code) {
+                    let percent_modified =
+                        n_modified as f32 / filtered_coverage as f32;
+                    counts.push(PileupFeatureCounts {
+                        strand: Strand::Positive,
+                        filtered_coverage,
+                        raw_mod_code: mod_code.char(),
+                        fraction_modified: percent_modified,
+                        n_canonical,
+                        n_modified,
+                        n_other_modified,
+                        n_delete: pos_strand_n_delete,
+                        n_filtered: pos_stand_n_filt,
+                        n_diff,
+                        n_nocall,
+                    })
+                }
             }
         }
         // - strand A-mods
-        if (self.counts[17] + self.counts[19]) > 0 {
+        if (self.counts[17] + self.counts[19]) > 0 && check_mod_code(ModCode::a)
+        {
             let n_canonical = self.counts[17];
             let n_mod = self.counts[19];
             let filtered_coverage = n_canonical + n_mod;
-            let raw_mod_code = 'a';
+            let raw_mod_code = ModCode::a.char();
             let n_nocall = self.counts[13];
             let percent_modified =
                 n_mod as f32 / (n_mod as f32 + n_canonical as f32);
@@ -330,24 +262,26 @@ impl FeatureVector {
                 .saturating_add(self.counts[16])
                 .saturating_add(self.counts[17])
                 .saturating_add(self.counts[19]);
-            for (raw_mod_code, (n_modified, n_other_modified)) in
-                [('h', (n_h, n_m)), ('m', (n_m, n_h))]
+            for (mod_code, (n_modified, n_other_modified)) in
+                [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
             {
-                let percent_modified =
-                    n_modified as f32 / filtered_coverage as f32;
-                counts.push(PileupFeatureCounts {
-                    strand: Strand::Negative,
-                    filtered_coverage,
-                    raw_mod_code,
-                    fraction_modified: percent_modified,
-                    n_canonical,
-                    n_modified,
-                    n_other_modified,
-                    n_delete: neg_strand_n_delete,
-                    n_filtered: neg_stand_n_filt,
-                    n_diff,
-                    n_nocall,
-                })
+                if check_mod_code(mod_code) {
+                    let percent_modified =
+                        n_modified as f32 / filtered_coverage as f32;
+                    counts.push(PileupFeatureCounts {
+                        strand: Strand::Negative,
+                        filtered_coverage,
+                        raw_mod_code: mod_code.char(),
+                        fraction_modified: percent_modified,
+                        n_canonical,
+                        n_modified,
+                        n_other_modified,
+                        n_delete: neg_strand_n_delete,
+                        n_filtered: neg_stand_n_filt,
+                        n_diff,
+                        n_nocall,
+                    })
+                }
             }
         }
 
@@ -422,6 +356,7 @@ pub fn process_region<T: AsRef<Path>>(
     start_pos: u32,
     end_pos: u32,
     threshold: f32,
+    restricted_mod_base_codes: Option<&HashSet<ModCode>>,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -436,11 +371,12 @@ pub fn process_region<T: AsRef<Path>>(
         ))
         .map_err(|e| e.to_string())?;
 
-    let mut read_cache = ReadCache::new();
+    let mut read_cache = ReadCache::new(restricted_mod_base_codes);
     let mut position_feature_counts = HashMap::new();
     let pileup_iter = PileupIter::new(bam_reader.pileup(), start_pos, end_pos);
     for pileup in pileup_iter {
         let mut feature_vector = FeatureVector::new();
+        let mut observed_mod_codes = HashSet::new();
         let pos = pileup.pos();
 
         let alignment_iter = pileup.alignments().filter_map(|alignment| {
@@ -458,6 +394,8 @@ pub fn process_region<T: AsRef<Path>>(
         for alignment in alignment_iter {
             assert!(!alignment.is_refskip());
             let record = alignment.record();
+            observed_mod_codes
+                .extend(read_cache.get_mod_codes_for_record(&record));
             let strand = if record.is_reverse() {
                 Strand::Negative
             } else {
@@ -508,9 +446,13 @@ pub fn process_region<T: AsRef<Path>>(
                 Feature::NoCall(read_base)
             };
             feature_vector.add_feature(strand, feature);
-        }
-        position_feature_counts.insert(pos, feature_vector.decode());
-    }
+        } // alignment loop
+        position_feature_counts.insert(
+            pos,
+            feature_vector
+                .decode(observed_mod_codes, restricted_mod_base_codes),
+        );
+    } // position loop
 
     Ok(ModBasePileup {
         chrom_name,
