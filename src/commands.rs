@@ -1,7 +1,5 @@
-use std::io::BufWriter;
-// use crate::mod_base_code::ModificationMotif;
-use crate::interval_chunks::IntervalChunks;
 use crate::motif_bed::motif_bed;
+use std::io::BufWriter;
 use std::num::ParseFloatError;
 use std::path::PathBuf;
 use std::thread;
@@ -19,6 +17,7 @@ use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
 use crate::errs::{InputError, RunError};
+use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
