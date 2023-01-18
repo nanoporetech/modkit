@@ -134,6 +134,7 @@ fn test_mod_pileup_no_filt() {
         "-i",
         "25", // use small interval to make sure chunking works
         "--no-filtering",
+        "--output-bed",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
@@ -162,6 +163,7 @@ fn test_mod_pileup_with_filt() {
         "0.25",
         "--seed",
         "42",
+        "--output-bed",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
@@ -210,8 +212,8 @@ fn test_mod_pileup_collapse() {
         "pileup",
         "-i",
         "25", // use small interval to make sure chunking works
-        "--modbases",
-        "m",
+        "--method",
+        "norm",
         "--no-filtering",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_restricted_bed.to_str().unwrap(),

@@ -21,7 +21,7 @@ use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
-    DeltaListConverter,
+    CollapseMethod, DeltaListConverter,
 };
 use crate::mod_base_code::ModCode;
 use crate::mod_pileup::{process_region, ModBasePileup};
@@ -59,6 +59,15 @@ impl Commands {
     }
 }
 
+fn check_collapse_method(raw_method: &str) -> Result<String, String> {
+    match raw_method {
+        "norm" => Ok(raw_method.to_owned()),
+        "dist" => Ok(raw_method.to_owned()),
+        "sum" => Err("sum not allowed for collapse command".to_owned()),
+        _ => Err(format!("unknown method {raw_method}")),
+    }
+}
+
 #[derive(Args)]
 pub struct Collapse {
     /// BAM file to collapse mod call from
@@ -90,6 +99,14 @@ pub struct Collapse {
     )]
     fail_fast: bool,
 
+    /// Method to use to collapse mod calls, 'norm', 'dist', 'sum'.
+    #[arg(
+        long,
+        default_value_t = String::from("norm"),
+        value_parser = check_collapse_method
+    )]
+    #[arg(long)]
+    method: String,
     /// Output debug logs to file at this path
     #[arg(long)]
     log_filepath: Option<PathBuf>,
@@ -121,6 +138,7 @@ fn flatten_mod_probs(
     mut record: bam::Record,
     canonical_base: char,
     mod_base_to_remove: char,
+    method: CollapseMethod,
 ) -> CliResult<bam::Record> {
     if record_is_secondary(&record) {
         return Err(RunError::new_skipped("not primary"));
@@ -134,7 +152,7 @@ fn flatten_mod_probs(
     let probs_for_positions =
         base_mod_probs_from_record(&record, &converter, canonical_base)?;
     let collapsed_probs_for_positions =
-        collapse_mod_probs(probs_for_positions, mod_base_to_remove);
+        collapse_mod_probs(probs_for_positions, mod_base_to_remove, method);
     let (mm, ml) = format_mm_ml_tag(
         collapsed_probs_for_positions,
         canonical_base,
@@ -165,6 +183,8 @@ fn flatten_mod_probs(
 impl Collapse {
     pub fn run(&self) -> Result<(), String> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        let method = CollapseMethod::parse_str(&self.method)?;
+
         let fp = &self.in_bam;
         let out_fp = &self.out_bam;
         let threads = self.threads;
@@ -188,7 +208,7 @@ impl Collapse {
             fp.to_str().unwrap_or("???"),
             out_fp.to_str().unwrap_or("???")
         );
-        info!("> {}", message);
+        info!("{}", message);
         spinner.set_message("Flattening ModBAM");
         let mut total = 0usize;
         let mut total_failed = 0usize;
@@ -199,6 +219,7 @@ impl Collapse {
                     record,
                     canonical_base,
                     mod_base_to_remove,
+                    method,
                 ) {
                     Err(RunError::BadInput(InputError(err)))
                     | Err(RunError::Failed(err)) => {
@@ -238,7 +259,7 @@ impl Collapse {
         spinner.finish_and_clear();
 
         info!(
-            "> done, {} records processed, {} failed, {} skipped",
+            "done, {} records processed, {} failed, {} skipped",
             total, total_failed, total_skipped
         );
         Ok(())
@@ -264,18 +285,6 @@ pub struct ModBamPileup {
     in_bam: PathBuf,
     /// Output file (BED format).
     out_bed: PathBuf,
-    /// Restrict mod base calls to a subset of all calls. For example, if a
-    /// read contains 5hmC and 5mC calls, but you want 5mC calls only, using
-    /// "m" as the option will collapse the 3-way 5hmC/5mC/C calls to 2-way
-    /// 5mC/C calls. Format: list of modified base codes as in the SAM
-    /// specification (link), e.g. "hmf". See `collapse` command for more
-    /// details.
-    #[arg(
-        long,
-        value_parser = check_raw_modbase_code)
-    ]
-    modbases: Option<String>,
-
     /// Number of threads to use while processing chunks concurrently.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
@@ -310,6 +319,10 @@ pub struct ModBamPileup {
     #[arg(long)]
     log_filepath: Option<PathBuf>,
 
+    /// Method to use to collapse mod calls, 'norm', 'dist', 'sum'.
+    #[arg(long)]
+    method: Option<String>,
+
     /// Output BED format (for visualization)
     #[arg(long, default_value_t = false)]
     output_bed: bool,
@@ -318,6 +331,13 @@ pub struct ModBamPileup {
 impl ModBamPileup {
     fn run(&self) -> AnyhowResult<(), String> {
         let _handle = init_logging(self.log_filepath.as_ref());
+
+        let (method, mod_base_codes) = if let Some(raw_method) = &self.method {
+            let method = CollapseMethod::parse_str(raw_method)?;
+            (method, Some(HashSet::from([ModCode::m])))
+        } else {
+            (CollapseMethod::Pass, None)
+        };
 
         let threshold = if self.no_filtering {
             0f32
@@ -337,15 +357,6 @@ impl ModBamPileup {
         };
 
         info!("Using filter threshold {}", threshold);
-
-        let mod_base_codes = self.modbases.as_ref().map(|s| {
-            let restricted_codes = s
-                .chars()
-                .map(|c| ModCode::parse_raw_mod_code(c).unwrap())
-                .collect::<HashSet<ModCode>>();
-            info!("using modbase codes {:?}", restricted_codes);
-            restricted_codes
-        });
 
         let header = bam::IndexedReader::from_path(&self.in_bam)
             .map_err(|e| e.to_string())
@@ -413,6 +424,7 @@ impl ModBamPileup {
                                         end,
                                         threshold,
                                         mod_base_codes.as_ref(),
+                                        method,
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()

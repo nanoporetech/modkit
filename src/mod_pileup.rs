@@ -1,4 +1,4 @@
-use crate::mod_bam::BaseModCall;
+use crate::mod_bam::{BaseModCall, CollapseMethod};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::read_cache::ReadCache;
 use crate::util::{record_is_secondary, Strand};
@@ -141,6 +141,7 @@ impl FeatureVector {
         self,
         observed_mods: &HashSet<ModCode>,
         restricted_mod_codes: Option<&HashSet<ModCode>>,
+        method: CollapseMethod,
     ) -> Vec<PileupFeatureCounts> {
         let check_mod_code = |mod_code: ModCode| -> bool {
             if let Some(codes) = restricted_mod_codes {
@@ -191,6 +192,12 @@ impl FeatureVector {
             let n_canonical = self.counts[7];
             let n_h = self.counts[9];
             let n_m = self.counts[10];
+
+            let (n_h, n_m) = match method {
+                CollapseMethod::Sum => (0, n_h + n_m),
+                _ => (n_h, n_m),
+            };
+
             let n_nocall = self.counts[3];
             let filtered_coverage = n_canonical + n_h + n_m;
             let n_diff = self.counts[2]
@@ -255,6 +262,10 @@ impl FeatureVector {
             let n_canonical = self.counts[18];
             let n_h = self.counts[20];
             let n_m = self.counts[21];
+            let (n_h, n_m) = match method {
+                CollapseMethod::Sum => (0, n_h + n_m),
+                _ => (n_h, n_m),
+            };
             let filtered_coverage = n_canonical + n_h + n_m;
             let n_nocall = self.counts[14];
             let n_diff = self.counts[13]
@@ -357,6 +368,7 @@ pub fn process_region<T: AsRef<Path>>(
     end_pos: u32,
     threshold: f32,
     restricted_mod_base_codes: Option<&HashSet<ModCode>>,
+    method: CollapseMethod,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -371,7 +383,7 @@ pub fn process_region<T: AsRef<Path>>(
         ))
         .map_err(|e| e.to_string())?;
 
-    let mut read_cache = ReadCache::new(restricted_mod_base_codes);
+    let mut read_cache = ReadCache::new(restricted_mod_base_codes, method);
     let mut position_feature_counts = HashMap::new();
     let pileup_iter = PileupIter::new(bam_reader.pileup(), start_pos, end_pos);
     for pileup in pileup_iter {
@@ -449,8 +461,11 @@ pub fn process_region<T: AsRef<Path>>(
         } // alignment loop
         position_feature_counts.insert(
             pos,
-            feature_vector
-                .decode(&observed_mod_codes, restricted_mod_base_codes),
+            feature_vector.decode(
+                &observed_mod_codes,
+                restricted_mod_base_codes,
+                method,
+            ),
         );
     } // position loop
 
@@ -462,6 +477,7 @@ pub fn process_region<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod mod_pileup_tests {
+    use crate::mod_bam::CollapseMethod;
     use crate::mod_pileup::{DnaBase, Feature, FeatureVector, ModCode};
     use crate::util::Strand;
     use std::collections::HashSet;
@@ -477,7 +493,7 @@ mod mod_pileup_tests {
         fv.add_feature(Strand::Positive, Feature::NoCall(DnaBase::C));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        let counts = fv.decode(&observed_mods, None);
+        let counts = fv.decode(&observed_mods, None, CollapseMethod::Pass);
         assert_eq!(counts.len(), 2); // h and m, negative strand should not be there
         for pileup_counts in counts {
             assert_eq!(pileup_counts.filtered_coverage, 3);
@@ -490,7 +506,7 @@ mod mod_pileup_tests {
         fv.add_feature(Strand::Negative, Feature::ModCall(ModCode::m));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        let counts = fv.decode(&observed_mods, None);
+        let counts = fv.decode(&observed_mods, None, CollapseMethod::Pass);
         assert_eq!(counts.len(), 4);
         counts
             .iter()

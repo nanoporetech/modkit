@@ -6,7 +6,8 @@ use rust_htslib::bam;
 use crate::errs::{InputError, RunError};
 use crate::mod_bam::{
     collapse_mod_probs, extract_mod_probs, get_canonical_bases_with_mod_calls,
-    parse_raw_mod_tags, BaseModCall, DeltaListConverter, SeqPosBaseModProbs,
+    parse_raw_mod_tags, BaseModCall, CollapseMethod, DeltaListConverter,
+    SeqPosBaseModProbs,
 };
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
@@ -25,18 +26,22 @@ pub(crate) struct ReadCache<'a> {
     restrict_mod_bases: Option<&'a HashSet<ModCode>>,
     /// mapping of read_id (query_name) to the mod codes contained in that read
     mod_codes: HashMap<String, HashSet<ModCode>>,
+    /// collapse method
+    method: CollapseMethod,
 }
 
 impl<'a> ReadCache<'a> {
     // todo garbage collect freq
     pub(crate) fn new(
         restrict_mod_bases: Option<&'a HashSet<ModCode>>,
+        method: CollapseMethod,
     ) -> Self {
         Self {
             reads: HashMap::new(),
             skip_set: HashSet::new(),
             mod_codes: HashMap::new(),
             restrict_mod_bases,
+            method,
         }
     }
 
@@ -94,6 +99,7 @@ impl<'a> ReadCache<'a> {
                 seq_base_mod_probs = collapse_mod_probs(
                     seq_base_mod_probs,
                     mod_code_to_remove.char(),
+                    self.method,
                 );
             }
         }
@@ -254,7 +260,9 @@ mod read_cache_tests {
 
     use rust_htslib::bam::{self, FetchDefinition, Read, Reader as BamReader};
 
-    use crate::mod_bam::{base_mod_probs_from_record, DeltaListConverter};
+    use crate::mod_bam::{
+        base_mod_probs_from_record, CollapseMethod, DeltaListConverter,
+    };
     use crate::read_cache::ReadCache;
     use crate::test_utils::dna_complement;
     use crate::util;
@@ -273,7 +281,7 @@ mod read_cache_tests {
             .map(|seq| seq.chars().collect::<Vec<char>>())
             .unwrap();
 
-        let mut cache = ReadCache::new(None);
+        let mut cache = ReadCache::new(None, CollapseMethod::Pass);
         cache.add_record(&record).unwrap();
         let converter =
             DeltaListConverter::new_from_record(&record, 'C').unwrap();
@@ -323,7 +331,7 @@ mod read_cache_tests {
             .fetch(FetchDefinition::Region(tid as i32, 0, target_length as i64))
             .unwrap();
 
-        let mut read_cache = ReadCache::new(None);
+        let mut read_cache = ReadCache::new(None, CollapseMethod::Pass);
         for p in reader.pileup() {
             let pileup = p.unwrap();
             for alignment in pileup.alignments() {
