@@ -2,7 +2,7 @@ use std::io::BufWriter;
 // use crate::mod_base_code::ModificationMotif;
 use crate::interval_chunks::IntervalChunks;
 use crate::motif_bed::motif_bed;
-use std::num::ParseFloatErrorB;
+use std::num::ParseFloatError;
 use std::path::PathBuf;
 use std::thread;
 
