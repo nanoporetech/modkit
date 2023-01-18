@@ -1,3 +1,4 @@
+use crate::motif_bed::motif_bed;
 use std::io::BufWriter;
 use std::num::ParseFloatError;
 use std::path::PathBuf;
@@ -40,6 +41,8 @@ pub enum Commands {
     SampleProbs(SampleModBaseProbs),
     /// Summarize the mod tags present in a BAM and get basic statistics
     Summary(ModSummarize),
+    /// Create BED file with all locations of a motif
+    MotifBed(MotifBed),
 }
 
 impl Commands {
@@ -49,6 +52,7 @@ impl Commands {
             Self::Pileup(x) => x.run(),
             Self::SampleProbs(x) => x.run(),
             Self::Summary(x) => x.run(),
+            Self::MotifBed(x) => x.run(),
         }
     }
 }
@@ -497,6 +501,23 @@ impl ModSummarize {
             .map_err(|e| e.to_string())?;
         let mut writer = TsvWriter::new();
         writer.write(mod_summary).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
+#[derive(Args)]
+pub struct MotifBed {
+    /// Input FASTA file
+    fasta: PathBuf,
+    /// Motif to search for within FASTA
+    motif: String,
+    /// Offset within motif
+    offset: usize,
+}
+
+impl MotifBed {
+    fn run(&self) -> Result<(), String> {
+        motif_bed(&self.fasta, &self.motif, self.offset);
         Ok(())
     }
 }
