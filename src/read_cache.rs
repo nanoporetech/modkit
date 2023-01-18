@@ -63,6 +63,14 @@ impl ReadCache {
             Some(Ok((mm, ml))) => {
                 let bases_with_mod_calls =
                     get_canonical_bases_with_mod_calls(record)?;
+                if bases_with_mod_calls.is_empty() {
+                    let msg = format!(
+                        "record {} has empty mm tag {}",
+                        &record_name, &mm
+                    );
+                    debug!("{}", &msg);
+                    return Err(RunError::Skipped(msg));
+                }
                 for canonical_base in bases_with_mod_calls {
                     let converter = DeltaListConverter::new_from_record(
                         record,
@@ -81,6 +89,10 @@ impl ReadCache {
                         canonical_base,
                     )?;
                 }
+                assert!(
+                    self.skip_set.contains(&record_name)
+                        || self.reads.contains_key(&record_name)
+                );
             }
             Some(Err(run_error)) => {
                 return Err(run_error);
