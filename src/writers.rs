@@ -78,6 +78,56 @@ impl OutWriter<ModBasePileup> for BEDWriter {
     }
 }
 
+pub struct BedMethylWriter {
+    buf_writer: BufWriter<File>,
+}
+
+impl BedMethylWriter {
+    pub fn new(buf_writer: BufWriter<File>) -> Self {
+        Self { buf_writer }
+    }
+}
+
+impl OutWriter<ModBasePileup> for BedMethylWriter {
+    fn write(&mut self, item: ModBasePileup) -> Result<u64, String> {
+        let mut rows_written = 0;
+        let sep = '\t';
+        for (pos, feature_counts) in item.iter_counts() {
+            for feature_count in feature_counts {
+                let row = format!(
+                    "{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
+                    {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}\
+                    {sep}{}{sep}\n",
+                    item.chrom_name,
+                    pos,
+                    pos + 1,
+                    feature_count.raw_mod_code,
+                    feature_count.filtered_coverage,
+                    feature_count.strand.to_char(),
+                    pos,
+                    pos + 1,
+                    "255,0,0",
+                    feature_count.filtered_coverage,
+                    format!("{:.2}", feature_count.fraction_modified * 100f32),
+                    feature_count.n_modified,
+                    feature_count.n_canonical,
+                    feature_count.n_other_modified,
+                    feature_count.n_delete,
+                    feature_count.n_filtered,
+                    feature_count.n_diff,
+                    feature_count.n_nocall,
+                );
+                self.buf_writer
+                    .write(row.as_bytes())
+                    .with_context(|| "failed to write row")
+                    .map_err(|e| e.to_string())?;
+                rows_written += 1;
+            }
+        }
+        Ok(rows_written)
+    }
+}
+
 pub struct TsvWriter<W: Write> {
     buf_writer: BufWriter<W>,
 }
