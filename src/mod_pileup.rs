@@ -139,7 +139,7 @@ impl FeatureVector {
 
     pub fn decode(
         self,
-        observed_mods: HashSet<ModCode>,
+        observed_mods: &HashSet<ModCode>,
         restricted_mod_codes: Option<&HashSet<ModCode>>,
     ) -> Vec<PileupFeatureCounts> {
         let check_mod_code = |mod_code: ModCode| -> bool {
@@ -450,7 +450,7 @@ pub fn process_region<T: AsRef<Path>>(
         position_feature_counts.insert(
             pos,
             feature_vector
-                .decode(observed_mod_codes, restricted_mod_base_codes),
+                .decode(&observed_mod_codes, restricted_mod_base_codes),
         );
     } // position loop
 
@@ -464,9 +464,11 @@ pub fn process_region<T: AsRef<Path>>(
 mod mod_pileup_tests {
     use crate::mod_pileup::{DnaBase, Feature, FeatureVector, ModCode};
     use crate::util::Strand;
+    use std::collections::HashSet;
 
     #[test]
     fn test_feature_vector() {
+        let observed_mods = HashSet::from([ModCode::m, ModCode::h]);
         let mut fv = FeatureVector::new();
         fv.add_feature(Strand::Positive, Feature::NoCall(DnaBase::A));
         fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::C));
@@ -475,7 +477,7 @@ mod mod_pileup_tests {
         fv.add_feature(Strand::Positive, Feature::NoCall(DnaBase::C));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        let counts = fv.decode();
+        let counts = fv.decode(&observed_mods, None);
         assert_eq!(counts.len(), 2); // h and m, negative strand should not be there
         for pileup_counts in counts {
             assert_eq!(pileup_counts.filtered_coverage, 3);
@@ -488,7 +490,7 @@ mod mod_pileup_tests {
         fv.add_feature(Strand::Negative, Feature::ModCall(ModCode::m));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        let counts = fv.decode();
+        let counts = fv.decode(&observed_mods, None);
         assert_eq!(counts.len(), 4);
         counts
             .iter()

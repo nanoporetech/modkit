@@ -33,7 +33,7 @@ fn run_collapse(args: &[&str]) -> Output {
         .unwrap()
         .wait_with_output()
         .unwrap();
-    assert!(output.status.success());
+    assert!(output.status.success(), "failed to run {:?}", args);
     output
 }
 
@@ -114,7 +114,13 @@ fn run_modkit_pileup(args: &[&str]) {
         .unwrap()
         .wait_with_output()
         .unwrap();
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "failed to run with args {:?}",
+        args,
+        // uncomment if you want to see stderr
+        // String::from_utf8(output.stderr).unwrap()
+    );
 }
 
 #[test]
@@ -165,5 +171,55 @@ fn test_mod_pileup_with_filt() {
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
         "tests/resources/modbam.modpileup_filt025.bed",
+    );
+}
+
+#[test]
+fn test_mod_pileup_collapse() {
+    let test_collapsed_bam = std::env::temp_dir().join("test_collapsed.bam");
+    let test_collapsed_bed = std::env::temp_dir().join("test_collapsed.bed");
+    let test_restricted_bed = std::env::temp_dir().join("test_restricted.bed");
+
+    let collapse_args = [
+        "collapse",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        test_collapsed_bam.to_str().unwrap(),
+    ];
+    run_collapse(&collapse_args);
+    assert!(test_collapsed_bam.exists());
+    bam::index::build(
+        test_collapsed_bam.clone(),
+        None,
+        bam::index::Type::Bai,
+        1,
+    )
+    .unwrap();
+
+    let pileup_args = [
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "--no-filtering",
+        test_collapsed_bam.to_str().unwrap(),
+        test_collapsed_bed.to_str().unwrap(),
+    ];
+    run_modkit_pileup(&pileup_args);
+    assert!(test_collapsed_bed.exists());
+
+    let pileup_args = [
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "--modbases",
+        "m",
+        "--no-filtering",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        test_restricted_bed.to_str().unwrap(),
+    ];
+    run_modkit_pileup(&pileup_args);
+    assert!(test_restricted_bed.exists());
+    check_against_expected_text_file(
+        test_restricted_bed.to_str().unwrap(),
+        test_collapsed_bed.to_str().unwrap(),
     );
 }

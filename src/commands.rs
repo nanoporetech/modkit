@@ -16,7 +16,6 @@ use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
-use crate::motif_bed::motif_bed;
 use crate::errs::{InputError, RunError};
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
@@ -26,6 +25,7 @@ use crate::mod_bam::{
 };
 use crate::mod_base_code::ModCode;
 use crate::mod_pileup::{process_region, ModBasePileup};
+use crate::motif_bed::motif_bed;
 use crate::summarize::summarize_modbam;
 use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
@@ -268,10 +268,9 @@ pub struct ModBamPileup {
     /// read contains 5hmC and 5mC calls, but you want 5mC calls only, using
     /// "m" as the option will collapse the 3-way 5hmC/5mC/C calls to 2-way
     /// 5mC/C calls. Format: list of modified base codes as in the SAM
-    /// specification (link), e.g. "hmf". See `collapse`  command for more
+    /// specification (link), e.g. "hmf". See `collapse` command for more
     /// details.
     #[arg(
-        short='c',
         long,
         value_parser = check_raw_modbase_code)
     ]

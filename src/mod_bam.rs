@@ -1,5 +1,5 @@
 use crate::errs::{InputError, RunError};
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::DnaBase;
 use crate::util;
 use crate::util::{get_tag, Strand};
 use indexmap::{indexset, IndexSet};

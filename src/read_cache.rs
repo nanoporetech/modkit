@@ -1,8 +1,6 @@
-use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
-use std::ops::Sub;
 
-use log::{debug, info};
+use log::debug;
 use rust_htslib::bam;
 
 use crate::errs::{InputError, RunError};
@@ -275,7 +273,7 @@ mod read_cache_tests {
             .map(|seq| seq.chars().collect::<Vec<char>>())
             .unwrap();
 
-        let mut cache = ReadCache::new();
+        let mut cache = ReadCache::new(None);
         cache.add_record(&record).unwrap();
         let converter =
             DeltaListConverter::new_from_record(&record, 'C').unwrap();
@@ -325,7 +323,7 @@ mod read_cache_tests {
             .fetch(FetchDefinition::Region(tid as i32, 0, target_length as i64))
             .unwrap();
 
-        let mut read_cache = ReadCache::new();
+        let mut read_cache = ReadCache::new(None);
         for p in reader.pileup() {
             let pileup = p.unwrap();
             for alignment in pileup.alignments() {
