@@ -29,7 +29,7 @@ use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
 };
 use crate::util::record_is_secondary;
-use crate::writers::{BEDWriter, OutWriter, TsvWriter};
+use crate::writers::{BEDWriter, BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -305,6 +305,10 @@ pub struct ModBamPileup {
     /// Output debug logs to file at this path
     #[arg(long)]
     log_filepath: Option<PathBuf>,
+
+    /// Output BED format (for visualization)
+    #[arg(long, default_value_t = false)]
+    output_bed: bool,
 }
 
 impl ModBamPileup {
@@ -415,7 +419,11 @@ impl ModBamPileup {
         let out_fp = std::fs::File::create(out_fp_str)
             .context("failed to make output file")
             .map_err(|e| e.to_string())?;
-        let mut writer = BEDWriter::new(BufWriter::new(out_fp));
+        let mut writer: Box<dyn OutWriter<ModBasePileup>> = if self.output_bed {
+            Box::new(BEDWriter::new(BufWriter::new(out_fp)))
+        } else {
+            Box::new(BedMethylWriter::new(BufWriter::new(out_fp)))
+        };
         for result in rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {
