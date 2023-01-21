@@ -177,7 +177,24 @@ fn test_mod_pileup_with_filt() {
 }
 
 #[test]
-fn test_mod_pileup_combine() {}
+fn test_mod_pileup_combine() {
+    let test_collapsed_bam = std::env::temp_dir().join("test_combined.bam");
+    let pileup_args = [
+        "pileup",
+        "--combine",
+        "--no-filtering",
+        "--output-bed",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        test_collapsed_bam.to_str().unwrap(),
+    ];
+    run_modkit_pileup(&pileup_args);
+    assert!(test_collapsed_bam.exists());
+
+    check_against_expected_text_file(
+        test_collapsed_bam.to_str().unwrap(),
+        "tests/resources/modbam.modpileup_combined.bed",
+    );
+}
 
 #[test]
 fn test_mod_pileup_collapse() {

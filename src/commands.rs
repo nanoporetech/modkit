@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io::BufWriter;
 use std::num::ParseFloatError;
 use std::path::PathBuf;
@@ -77,7 +76,7 @@ pub struct Collapse {
     #[arg(short, long, default_value_t = 'C')]
     base: char,
     /// mod base code to flatten/remove
-    #[arg(short, long, default_value_t = 'h')]
+    #[arg(short, long, default_value_t = 'h', value_parser = check_raw_modbase_code)]
     mod_base: char,
     /// number of threads to use
     #[arg(short, long, default_value_t = 1)]
@@ -273,7 +272,7 @@ fn check_raw_modbase_code(raw_code: &str) -> Result<String, String> {
 pub struct ModBamPileup {
     /// Input BAM, should be sorted and have associated index
     in_bam: PathBuf,
-    /// Output file (BED format).
+    /// Output file
     out_bed: PathBuf,
     /// Number of threads to use while processing chunks concurrently.
     #[arg(short, long, default_value_t = 4)]
@@ -309,12 +308,12 @@ pub struct ModBamPileup {
     #[arg(long)]
     log_filepath: Option<PathBuf>,
 
-    /// Combine mod calls, emit modified/not-modified
+    /// Combine mod calls, all counts of modified bases are summed together.
     #[arg(long, default_value_t = false, group = "combine_args")]
     combine: bool,
 
     /// Secret API: collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
-    #[arg(long, group = "combine_args")]
+    #[arg(long, group = "combine_args", hide = true, value_parser = check_raw_modbase_code)]
     collapse: Option<char>,
     /// Method to use to collapse mod calls, 'norm', 'dist'.
     #[arg(
@@ -322,6 +321,7 @@ pub struct ModBamPileup {
         default_value_t = String::from("norm"),
         value_parser = check_collapse_method,
         requires = "collapse",
+        hide = true,
     )]
     #[arg(long)]
     method: String,
@@ -449,6 +449,7 @@ impl ModBamPileup {
                     });
                     tid_progress.inc(1);
                 }
+                tid_progress.finish_and_clear();
             });
         });
 
