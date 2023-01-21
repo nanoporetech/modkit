@@ -8,6 +8,8 @@ pub enum ModCode {
     a,
     h,
     m,
+    G,
+    T,
 }
 
 impl ModCode {
@@ -29,6 +31,8 @@ impl ModCode {
             Self::a => 'a',
             Self::h => 'h',
             Self::m => 'm',
+            Self::G => 'G',
+            Self::T => 'T',
         }
     }
 }

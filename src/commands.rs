@@ -24,7 +24,7 @@ use crate::mod_bam::{
     CollapseMethod, DeltaListConverter,
 };
 use crate::mod_base_code::ModCode;
-use crate::mod_pileup::{process_region, ModBasePileup};
+use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::motif_bed;
 use crate::summarize::summarize_modbam;
 use crate::thresholds::{
@@ -63,7 +63,6 @@ fn check_collapse_method(raw_method: &str) -> Result<String, String> {
     match raw_method {
         "norm" => Ok(raw_method.to_owned()),
         "dist" => Ok(raw_method.to_owned()),
-        "sum" => Err("sum not allowed for collapse command".to_owned()),
         _ => Err(format!("unknown method {raw_method}")),
     }
 }
@@ -74,32 +73,21 @@ pub struct Collapse {
     in_bam: PathBuf,
     /// File path to new BAM file
     out_bam: PathBuf,
-    #[arg(
-        short,
-        long,
-        help = "canonical base to flatten calls for",
-        default_value_t = 'C'
-    )]
+    /// Canonical base to flatten calls for
+    #[arg(short, long, default_value_t = 'C')]
     base: char,
-    #[arg(
-        short,
-        long,
-        help = "mod base code to flatten/remove",
-        default_value_t = 'h'
-    )]
+    /// mod base code to flatten/remove
+    #[arg(short, long, default_value_t = 'h')]
     mod_base: char,
-    #[arg(short, long, help = "number of threads to use", default_value_t = 1)]
+    /// number of threads to use
+    #[arg(short, long, default_value_t = 1)]
     threads: usize,
 
-    #[arg(
-        short,
-        long = "ff",
-        help = "exit on bad reads, otherwise continue",
-        default_value_t = false
-    )]
+    /// number of threads to use
+    #[arg(short, long = "ff", default_value_t = false)]
     fail_fast: bool,
 
-    /// Method to use to collapse mod calls, 'norm', 'dist', 'sum'.
+    /// Method to use to collapse mod calls, 'norm', 'dist'.
     #[arg(
         long,
         default_value_t = String::from("norm"),
@@ -183,7 +171,9 @@ fn flatten_mod_probs(
 impl Collapse {
     pub fn run(&self) -> Result<(), String> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let method = CollapseMethod::parse_str(&self.method)?;
+        let mod_code_to_remove = ModCode::parse_raw_mod_code(self.mod_base)?;
+        let method =
+            CollapseMethod::parse_str(&self.method, mod_code_to_remove)?;
 
         let fp = &self.in_bam;
         let out_fp = &self.out_bam;
@@ -319,9 +309,22 @@ pub struct ModBamPileup {
     #[arg(long)]
     log_filepath: Option<PathBuf>,
 
-    /// Method to use to collapse mod calls, 'norm', 'dist', 'sum'.
+    /// Combine mod calls, emit modified/not-modified
+    #[arg(long, default_value_t = false, group = "combine_args")]
+    combine: bool,
+
+    /// Secret API: collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
+    #[arg(long, group = "combine_args")]
+    collapse: Option<char>,
+    /// Method to use to collapse mod calls, 'norm', 'dist'.
+    #[arg(
+        long,
+        default_value_t = String::from("norm"),
+        value_parser = check_collapse_method,
+        requires = "collapse",
+    )]
     #[arg(long)]
-    method: Option<String>,
+    method: String,
 
     /// Output BED format (for visualization)
     #[arg(long, default_value_t = false)]
@@ -332,11 +335,15 @@ impl ModBamPileup {
     fn run(&self) -> AnyhowResult<(), String> {
         let _handle = init_logging(self.log_filepath.as_ref());
 
-        let (method, mod_base_codes) = if let Some(raw_method) = &self.method {
-            let method = CollapseMethod::parse_str(raw_method)?;
-            (method, Some(HashSet::from([ModCode::m])))
-        } else {
-            (CollapseMethod::Pass, None)
+        let pileup_options = match (self.combine, &self.collapse) {
+            (false, None) => PileupNumericOptions::Passthrough,
+            (true, _) => PileupNumericOptions::Combine,
+            (_, Some(raw_mod_code)) => {
+                let mod_code = ModCode::parse_raw_mod_code(*raw_mod_code)?;
+                let method =
+                    CollapseMethod::parse_str(self.method.as_str(), mod_code)?;
+                PileupNumericOptions::Collapse(method)
+            }
         };
 
         let threshold = if self.no_filtering {
@@ -347,6 +354,7 @@ impl ModBamPileup {
                 frequency {}",
                 self.sampling_frac
             );
+            // todo need to calc threshold based on collapsed probs
             calc_threshold_from_bam(
                 &self.in_bam,
                 self.threads,
@@ -423,8 +431,7 @@ impl ModBamPileup {
                                         start,
                                         end,
                                         threshold,
-                                        mod_base_codes.as_ref(),
-                                        method,
+                                        &pileup_options,
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()

@@ -177,6 +177,9 @@ fn test_mod_pileup_with_filt() {
 }
 
 #[test]
+fn test_mod_pileup_combine() {}
+
+#[test]
 fn test_mod_pileup_collapse() {
     let test_collapsed_bam = std::env::temp_dir().join("test_collapsed.bam");
     let test_collapsed_bed = std::env::temp_dir().join("test_collapsed.bed");
@@ -212,6 +215,8 @@ fn test_mod_pileup_collapse() {
         "pileup",
         "-i",
         "25", // use small interval to make sure chunking works
+        "--collapse",
+        "m",
         "--method",
         "norm",
         "--no-filtering",

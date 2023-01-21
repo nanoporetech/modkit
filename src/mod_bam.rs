@@ -1,9 +1,8 @@
 use crate::errs::{InputError, RunError};
-use crate::mod_base_code::DnaBase;
+use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
 use crate::util::{get_tag, Strand};
 use indexmap::{indexset, IndexSet};
-use log::error;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
 use std::collections::{HashMap, HashSet};
@@ -13,19 +12,24 @@ const ML_TAGS: [&str; 2] = ["ML", "Ml"];
 
 #[derive(Debug, Copy, Clone)]
 pub enum CollapseMethod {
-    ReNormalize,
-    ReDistribute,
-    Sum,
-    Pass,
+    /// ModCode is the modified base to _retain_
+    ReNormalize(ModCode),
+    /// ModCode is the modified base to _retain_
+    ReDistribute(ModCode),
 }
 
 impl CollapseMethod {
-    pub fn parse_str(raw: &str) -> Result<Self, InputError> {
+    pub fn parse_str(raw: &str, mod_code: ModCode) -> Result<Self, InputError> {
         match raw {
-            "norm" => Ok(Self::ReNormalize),
-            "dist" => Ok(Self::ReDistribute),
-            "sum" => Ok(Self::Sum),
+            "norm" => Ok(Self::ReNormalize(mod_code)),
+            "dist" => Ok(Self::ReDistribute(mod_code)),
             _ => Err(InputError::new(&format!("bad collapse method: {}", raw))),
+        }
+    }
+
+    pub(crate) fn mod_code(&self) -> ModCode {
+        match self {
+            Self::ReDistribute(mc) | Self::ReNormalize(mc) => *mc,
         }
     }
 }
@@ -108,7 +112,7 @@ impl BaseModProbs {
     ) -> BaseModProbs {
         let canonical_prob = 1f32 - self.probs.iter().sum::<f32>();
         match method {
-            CollapseMethod::ReNormalize => {
+            CollapseMethod::ReNormalize(_) => {
                 let marginal_collapsed_prob = self
                     .iter_probs()
                     .filter(|(mod_code, _prob)| **mod_code != mod_to_collapse)
@@ -130,7 +134,7 @@ impl BaseModProbs {
 
                 Self { mod_codes, probs }
             }
-            CollapseMethod::ReDistribute => {
+            CollapseMethod::ReDistribute(_) => {
                 let marginal_prob = self
                     .iter_probs()
                     .filter_map(|(mod_code, prob)| {
@@ -160,11 +164,6 @@ impl BaseModProbs {
                 assert!(check_total - 100f32 < 0.00001);
 
                 Self { mod_codes, probs }
-            }
-            CollapseMethod::Sum => self,
-            CollapseMethod::Pass => {
-                error!("shouldn't happen, but I'll allow it");
-                self
             }
         }
     }
@@ -716,8 +715,8 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.05273438, 0.03320312],
         };
-        let collapsed =
-            mod_base_probs.collapse('h', CollapseMethod::ReNormalize);
+        let collapsed = mod_base_probs
+            .collapse('h', CollapseMethod::ReNormalize(ModCode::m));
         assert_eq!(collapsed.probs, vec![0.035051543]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
@@ -728,8 +727,8 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.05273438, 0.03320312],
         };
-        let collapsed =
-            mod_base_probs.collapse('h', CollapseMethod::ReDistribute);
+        let collapsed = mod_base_probs
+            .collapse('h', CollapseMethod::ReDistribute(ModCode::m));
         assert_eq!(collapsed.probs, vec![0.0859375]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }

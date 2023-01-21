@@ -17,30 +17,24 @@ use crate::util;
 type RefPosBaseModCalls = HashMap<u64, BaseModCall>; // todo use FxHasher
 
 // todo last position (for gc)
-pub(crate) struct ReadCache<'a> {
+pub(crate) struct ReadCache {
     /// Mapping of read_id to reference position <> base mod calls for that read
     reads: HashMap<String, HashMap<char, RefPosBaseModCalls>>,
     /// these reads don't have mod tags or should be skipped for some other reason
     skip_set: HashSet<String>,
-    /// if Some only emit calls for these mod codes, else emit all mods
-    restrict_mod_bases: Option<&'a HashSet<ModCode>>,
     /// mapping of read_id (query_name) to the mod codes contained in that read
     mod_codes: HashMap<String, HashSet<ModCode>>,
     /// collapse method
-    method: CollapseMethod,
+    method: Option<CollapseMethod>,
 }
 
-impl<'a> ReadCache<'a> {
+impl ReadCache {
     // todo garbage collect freq
-    pub(crate) fn new(
-        restrict_mod_bases: Option<&'a HashSet<ModCode>>,
-        method: CollapseMethod,
-    ) -> Self {
+    pub(crate) fn new(method: Option<CollapseMethod>) -> Self {
         Self {
             reads: HashMap::new(),
             skip_set: HashSet::new(),
             mod_codes: HashMap::new(),
-            restrict_mod_bases,
             method,
         }
     }
@@ -91,19 +85,19 @@ impl<'a> ReadCache<'a> {
             canonical_base.char(),
             converter,
         )?;
-        if let Some(restricted_mod_codes) = &self.restrict_mod_bases {
+        if let Some(collapse_method) = self.method {
             for mod_code_to_remove in canonical_base
                 .get_mod_codes()
-                .difference(restricted_mod_codes)
+                .iter()
+                .filter(|mod_code| **mod_code != collapse_method.mod_code())
             {
                 seq_base_mod_probs = collapse_mod_probs(
                     seq_base_mod_probs,
                     mod_code_to_remove.char(),
-                    self.method,
+                    collapse_method,
                 );
             }
         }
-
         Ok(seq_base_mod_probs)
     }
 
@@ -138,6 +132,7 @@ impl<'a> ReadCache<'a> {
                     let mod_code_iter = seq_pos_base_mod_probs
                         .values()
                         .flat_map(|base_mod_probs| {
+                            // use ModCode here? to avoid this indirection..?
                             base_mod_probs.mod_codes.iter().filter_map(
                                 |raw_mod_code| {
                                     ModCode::parse_raw_mod_code(*raw_mod_code)
@@ -281,7 +276,7 @@ mod read_cache_tests {
             .map(|seq| seq.chars().collect::<Vec<char>>())
             .unwrap();
 
-        let mut cache = ReadCache::new(None, CollapseMethod::Pass);
+        let mut cache = ReadCache::new(None);
         cache.add_record(&record).unwrap();
         let converter =
             DeltaListConverter::new_from_record(&record, 'C').unwrap();
@@ -331,7 +326,7 @@ mod read_cache_tests {
             .fetch(FetchDefinition::Region(tid as i32, 0, target_length as i64))
             .unwrap();
 
-        let mut read_cache = ReadCache::new(None, CollapseMethod::Pass);
+        let mut read_cache = ReadCache::new(None);
         for p in reader.pileup() {
             let pileup = p.unwrap();
             for alignment in pileup.alignments() {

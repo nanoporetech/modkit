@@ -134,23 +134,77 @@ impl FeatureVector {
             (Strand::Negative, Feature::ModCall(ModCode::m)) => {
                 self.counts[21] = self.counts[21].saturating_add(1)
             }
+
+            (_, Feature::ModCall(ModCode::G)) => {}
+            (_, Feature::ModCall(ModCode::T)) => {}
+        }
+    }
+
+    fn add_pileup_counts(
+        pileup_options: &PileupNumericOptions,
+        counts: &mut Vec<PileupFeatureCounts>,
+        observed_mods: &HashSet<ModCode>,
+        strand: Strand,
+        filtered_coverage: u32,
+        n_h: u32,
+        n_m: u32,
+        n_canonical: u32,
+        n_delete: u32,
+        n_filtered: u32,
+        n_diff: u32,
+        n_nocall: u32,
+    ) {
+        match pileup_options {
+            PileupNumericOptions::Passthrough
+            | PileupNumericOptions::Collapse(_) => {
+                for (mod_code, (n_modified, n_other_modified)) in
+                    [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
+                {
+                    if observed_mods.contains(&mod_code) {
+                        let percent_modified =
+                            n_modified as f32 / filtered_coverage as f32;
+                        counts.push(PileupFeatureCounts {
+                            strand,
+                            filtered_coverage,
+                            raw_mod_code: mod_code.char(),
+                            fraction_modified: percent_modified,
+                            n_canonical,
+                            n_modified,
+                            n_other_modified,
+                            n_delete,
+                            n_filtered,
+                            n_diff,
+                            n_nocall,
+                        })
+                    }
+                }
+            }
+            PileupNumericOptions::Combine => {
+                let n_modified = n_h + n_m;
+                let percent_modified =
+                    n_modified as f32 / filtered_coverage as f32;
+                counts.push(PileupFeatureCounts {
+                    strand,
+                    filtered_coverage,
+                    raw_mod_code: ModCode::C.char(),
+                    fraction_modified: percent_modified,
+                    n_canonical,
+                    n_modified,
+                    n_other_modified: 0,
+                    n_delete,
+                    n_filtered,
+                    n_diff,
+                    n_nocall,
+                })
+            }
         }
     }
 
     pub fn decode(
         self,
         observed_mods: &HashSet<ModCode>,
-        restricted_mod_codes: Option<&HashSet<ModCode>>,
-        method: CollapseMethod,
+        pileup_options: &PileupNumericOptions,
     ) -> Vec<PileupFeatureCounts> {
-        let check_mod_code = |mod_code: ModCode| -> bool {
-            if let Some(codes) = restricted_mod_codes {
-                codes.contains(&mod_code)
-            } else {
-                observed_mods.contains(&mod_code)
-            }
-        };
-
         let mut counts = Vec::new();
         // there is mod info on the + strand
         let pos_strand_n_delete = self.counts[0];
@@ -159,7 +213,9 @@ impl FeatureVector {
         let neg_stand_n_filt = self.counts[12];
 
         // + strand A-mods
-        if (self.counts[6] + self.counts[8]) > 0 && check_mod_code(ModCode::a) {
+        if (self.counts[6] + self.counts[8]) > 0
+            && observed_mods.contains(&ModCode::a)
+        {
             let n_canonical = self.counts[6];
             let n_mod = self.counts[8];
             let filtered_coverage = n_canonical + n_mod;
@@ -190,45 +246,79 @@ impl FeatureVector {
         // + strand C-mods
         if (self.counts[7] + self.counts[9] + self.counts[10]) > 0 {
             let n_canonical = self.counts[7];
-            let n_h = self.counts[9];
-            let n_m = self.counts[10];
-
-            let (n_h, n_m) = match method {
-                CollapseMethod::Sum => (0, n_h + n_m),
-                _ => (n_h, n_m),
-            };
-
             let n_nocall = self.counts[3];
-            let filtered_coverage = n_canonical + n_h + n_m;
             let n_diff = self.counts[2]
                 .saturating_add(self.counts[4])
                 .saturating_add(self.counts[5])
                 .saturating_add(self.counts[6])
                 .saturating_add(self.counts[8]);
-            for (mod_code, (n_modified, n_other_modified)) in
-                [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
-            {
-                if check_mod_code(mod_code) {
-                    let percent_modified =
-                        n_modified as f32 / filtered_coverage as f32;
-                    counts.push(PileupFeatureCounts {
-                        strand: Strand::Positive,
-                        filtered_coverage,
-                        raw_mod_code: mod_code.char(),
-                        fraction_modified: percent_modified,
-                        n_canonical,
-                        n_modified,
-                        n_other_modified,
-                        n_delete: pos_strand_n_delete,
-                        n_filtered: pos_stand_n_filt,
-                        n_diff,
-                        n_nocall,
-                    })
-                }
-            }
+
+            let n_h = self.counts[9];
+            let n_m = self.counts[10];
+            let filtered_coverage = n_canonical + n_h + n_m;
+            Self::add_pileup_counts(
+                pileup_options,
+                &mut counts,
+                observed_mods,
+                Strand::Positive,
+                filtered_coverage,
+                n_h,
+                n_m,
+                n_canonical,
+                pos_strand_n_delete,
+                pos_stand_n_filt,
+                n_diff,
+                n_nocall,
+            );
+
+            // match pileup_options {
+            //     PileupNumericOptions::Passthrough
+            //     | PileupNumericOptions::Collapse(_) => {
+            //         for (mod_code, (n_modified, n_other_modified)) in
+            //             [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
+            //         {
+            //             if observed_mods.contains(&mod_code) {
+            //                 let percent_modified =
+            //                     n_modified as f32 / filtered_coverage as f32;
+            //                 counts.push(PileupFeatureCounts {
+            //                     strand: Strand::Positive,
+            //                     filtered_coverage,
+            //                     raw_mod_code: mod_code.char(),
+            //                     fraction_modified: percent_modified,
+            //                     n_canonical,
+            //                     n_modified,
+            //                     n_other_modified,
+            //                     n_delete: pos_strand_n_delete,
+            //                     n_filtered: pos_stand_n_filt,
+            //                     n_diff,
+            //                     n_nocall,
+            //                 })
+            //             }
+            //         }
+            //     }
+            //     PileupNumericOptions::Combine => {
+            //         let n_modified = n_h + n_m;
+            //         let percent_modified =
+            //             n_modified as f32 / filtered_coverage as f32;
+            //         counts.push(PileupFeatureCounts {
+            //             strand: Strand::Positive,
+            //             filtered_coverage,
+            //             raw_mod_code: ModCode::C.char(),
+            //             fraction_modified: percent_modified,
+            //             n_canonical,
+            //             n_modified,
+            //             n_other_modified,
+            //             n_delete: pos_strand_n_delete,
+            //             n_filtered: pos_stand_n_filt,
+            //             n_diff,
+            //             n_nocall,
+            //         })
+            //     }
+            // }
         }
         // - strand A-mods
-        if (self.counts[17] + self.counts[19]) > 0 && check_mod_code(ModCode::a)
+        if (self.counts[17] + self.counts[19]) > 0
+            && observed_mods.contains(&ModCode::a)
         {
             let n_canonical = self.counts[17];
             let n_mod = self.counts[19];
@@ -262,10 +352,6 @@ impl FeatureVector {
             let n_canonical = self.counts[18];
             let n_h = self.counts[20];
             let n_m = self.counts[21];
-            let (n_h, n_m) = match method {
-                CollapseMethod::Sum => (0, n_h + n_m),
-                _ => (n_h, n_m),
-            };
             let filtered_coverage = n_canonical + n_h + n_m;
             let n_nocall = self.counts[14];
             let n_diff = self.counts[13]
@@ -273,27 +359,42 @@ impl FeatureVector {
                 .saturating_add(self.counts[16])
                 .saturating_add(self.counts[17])
                 .saturating_add(self.counts[19]);
-            for (mod_code, (n_modified, n_other_modified)) in
-                [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
-            {
-                if check_mod_code(mod_code) {
-                    let percent_modified =
-                        n_modified as f32 / filtered_coverage as f32;
-                    counts.push(PileupFeatureCounts {
-                        strand: Strand::Negative,
-                        filtered_coverage,
-                        raw_mod_code: mod_code.char(),
-                        fraction_modified: percent_modified,
-                        n_canonical,
-                        n_modified,
-                        n_other_modified,
-                        n_delete: neg_strand_n_delete,
-                        n_filtered: neg_stand_n_filt,
-                        n_diff,
-                        n_nocall,
-                    })
-                }
-            }
+            Self::add_pileup_counts(
+                pileup_options,
+                &mut counts,
+                observed_mods,
+                Strand::Negative,
+                filtered_coverage,
+                n_h,
+                n_m,
+                n_canonical,
+                neg_strand_n_delete,
+                neg_stand_n_filt,
+                n_diff,
+                n_nocall,
+            );
+
+            // for (mod_code, (n_modified, n_other_modified)) in
+            //     [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
+            // {
+            //     if check_mod_code(mod_code) {
+            //         let percent_modified =
+            //             n_modified as f32 / filtered_coverage as f32;
+            //         counts.push(PileupFeatureCounts {
+            //             strand: Strand::Negative,
+            //             filtered_coverage,
+            //             raw_mod_code: mod_code.char(),
+            //             fraction_modified: percent_modified,
+            //             n_canonical,
+            //             n_modified,
+            //             n_other_modified,
+            //             n_delete: neg_strand_n_delete,
+            //             n_filtered: neg_stand_n_filt,
+            //             n_diff,
+            //             n_nocall,
+            //         })
+            //     }
+            // }
         }
 
         counts
@@ -361,14 +462,28 @@ impl ModBasePileup {
     }
 }
 
+pub enum PileupNumericOptions {
+    Passthrough,
+    Combine,
+    Collapse(CollapseMethod),
+}
+
+impl PileupNumericOptions {
+    fn get_collapse_method(&self) -> Option<CollapseMethod> {
+        match self {
+            Self::Collapse(method) => Some(*method),
+            _ => None,
+        }
+    }
+}
+
 pub fn process_region<T: AsRef<Path>>(
     bam_fp: T,
     chrom_tid: u32,
     start_pos: u32,
     end_pos: u32,
     threshold: f32,
-    restricted_mod_base_codes: Option<&HashSet<ModCode>>,
-    method: CollapseMethod,
+    pileup_numeric_options: &PileupNumericOptions,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -383,7 +498,8 @@ pub fn process_region<T: AsRef<Path>>(
         ))
         .map_err(|e| e.to_string())?;
 
-    let mut read_cache = ReadCache::new(restricted_mod_base_codes, method);
+    let mut read_cache =
+        ReadCache::new(pileup_numeric_options.get_collapse_method());
     let mut position_feature_counts = HashMap::new();
     let pileup_iter = PileupIter::new(bam_reader.pileup(), start_pos, end_pos);
     for pileup in pileup_iter {
@@ -461,11 +577,7 @@ pub fn process_region<T: AsRef<Path>>(
         } // alignment loop
         position_feature_counts.insert(
             pos,
-            feature_vector.decode(
-                &observed_mod_codes,
-                restricted_mod_base_codes,
-                method,
-            ),
+            feature_vector.decode(&observed_mod_codes, &pileup_numeric_options),
         );
     } // position loop
 
@@ -478,7 +590,9 @@ pub fn process_region<T: AsRef<Path>>(
 #[cfg(test)]
 mod mod_pileup_tests {
     use crate::mod_bam::CollapseMethod;
-    use crate::mod_pileup::{DnaBase, Feature, FeatureVector, ModCode};
+    use crate::mod_pileup::{
+        DnaBase, Feature, FeatureVector, ModCode, PileupNumericOptions,
+    };
     use crate::util::Strand;
     use std::collections::HashSet;
 
@@ -493,7 +607,8 @@ mod mod_pileup_tests {
         fv.add_feature(Strand::Positive, Feature::NoCall(DnaBase::C));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        let counts = fv.decode(&observed_mods, None, CollapseMethod::Pass);
+        let counts =
+            fv.decode(&observed_mods, &PileupNumericOptions::Passthrough);
         assert_eq!(counts.len(), 2); // h and m, negative strand should not be there
         for pileup_counts in counts {
             assert_eq!(pileup_counts.filtered_coverage, 3);
@@ -506,7 +621,8 @@ mod mod_pileup_tests {
         fv.add_feature(Strand::Negative, Feature::ModCall(ModCode::m));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        let counts = fv.decode(&observed_mods, None, CollapseMethod::Pass);
+        let counts =
+            fv.decode(&observed_mods, &PileupNumericOptions::Passthrough);
         assert_eq!(counts.len(), 4);
         counts
             .iter()
