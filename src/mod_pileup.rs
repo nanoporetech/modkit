@@ -32,111 +32,64 @@ pub struct PileupFeatureCounts {
     pub n_nocall: u32,
 }
 
+#[allow(non_snake_case)]
+#[derive(Debug, Default)]
+struct Tally {
+    n_delete: u32,
+    n_filtered: u32,
+    n_basecall_A: u32,
+    n_basecall_C: u32,
+    n_basecall_G: u32,
+    n_basecall_T: u32,
+    n_modcall_A: u32,
+    n_modcall_C: u32,
+    n_modcall_a: u32,
+    n_modcall_h: u32,
+    n_modcall_m: u32,
+}
+
+impl Tally {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn add_feature(&mut self, feature: Feature) {
+        match feature {
+            Feature::Filtered => self.n_filtered += 1,
+            Feature::Delete => self.n_delete += 1,
+            Feature::ModCall(mod_base) => match mod_base {
+                ModCode::C => self.n_modcall_C += 1,
+                ModCode::h => self.n_modcall_h += 1,
+                ModCode::m => self.n_modcall_m += 1,
+                ModCode::A => self.n_modcall_A += 1,
+                ModCode::a => self.n_modcall_a += 1,
+                _ => {}
+            },
+            Feature::NoCall(dna_base) => match dna_base {
+                DnaBase::A => self.n_basecall_A += 1,
+                DnaBase::C => self.n_basecall_C += 1,
+                DnaBase::G => self.n_basecall_G += 1,
+                DnaBase::T => self.n_basecall_T += 1,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Default)]
 struct FeatureVector {
-    // idx  strand  count
-    //--------------------
-    // 0   +  delete
-    // 1   +  filtered
-    // 2   +  n A
-    // 3   +  n C
-    // 4   +  n G
-    // 5   +  n T
-    // 6   +  n A - canonical
-    // 7   +  n C - canonical
-    // 8   +  n a
-    // 9   +  n h
-    // 10  +  n m
-    // 11  -  delete
-    // 12  -  filtered
-    // 13  -  n A
-    // 14  -  n C
-    // 15  -  n G
-    // 16  -  n T
-    // 17  -  n A - canonical
-    // 18  -  n C - canonical
-    // 19  -  n a
-    // 20  -  n h
-    // 21  -  n m
-    counts: [u32; 22],
+    pos_tally: Tally,
+    neg_tally: Tally,
 }
 
 impl FeatureVector {
-    pub fn new() -> Self {
-        Self { counts: [0u32; 22] }
+    pub(crate) fn new() -> Self {
+        Self::default()
     }
 
-    pub fn add_feature(&mut self, strand: Strand, feature: Feature) {
-        match (strand, feature) {
-            (Strand::Positive, Feature::Delete) => {
-                self.counts[0] = self.counts[0].saturating_add(1)
-            }
-            (Strand::Positive, Feature::Filtered) => {
-                self.counts[1] = self.counts[1].saturating_add(1)
-            }
-            (Strand::Positive, Feature::NoCall(DnaBase::A)) => {
-                self.counts[2] = self.counts[2].saturating_add(1)
-            }
-            (Strand::Positive, Feature::NoCall(DnaBase::C)) => {
-                self.counts[3] = self.counts[3].saturating_add(1)
-            }
-            (Strand::Positive, Feature::NoCall(DnaBase::G)) => {
-                self.counts[4] = self.counts[4].saturating_add(1)
-            }
-            (Strand::Positive, Feature::NoCall(DnaBase::T)) => {
-                self.counts[5] = self.counts[5].saturating_add(1)
-            }
-            (Strand::Positive, Feature::ModCall(ModCode::A)) => {
-                self.counts[6] = self.counts[6].saturating_add(1)
-            }
-            (Strand::Positive, Feature::ModCall(ModCode::C)) => {
-                self.counts[7] = self.counts[7].saturating_add(1)
-            }
-            (Strand::Positive, Feature::ModCall(ModCode::a)) => {
-                self.counts[8] = self.counts[8].saturating_add(1)
-            }
-            (Strand::Positive, Feature::ModCall(ModCode::h)) => {
-                self.counts[9] = self.counts[9].saturating_add(1)
-            }
-            (Strand::Positive, Feature::ModCall(ModCode::m)) => {
-                self.counts[10] = self.counts[10].saturating_add(1)
-            }
-
-            (Strand::Negative, Feature::Delete) => {
-                self.counts[11] = self.counts[11].saturating_add(1)
-            }
-            (Strand::Negative, Feature::Filtered) => {
-                self.counts[12] = self.counts[12].saturating_add(1)
-            }
-            (Strand::Negative, Feature::NoCall(DnaBase::A)) => {
-                self.counts[13] = self.counts[13].saturating_add(1)
-            }
-            (Strand::Negative, Feature::NoCall(DnaBase::C)) => {
-                self.counts[14] = self.counts[14].saturating_add(1)
-            }
-            (Strand::Negative, Feature::NoCall(DnaBase::G)) => {
-                self.counts[15] = self.counts[15].saturating_add(1)
-            }
-            (Strand::Negative, Feature::NoCall(DnaBase::T)) => {
-                self.counts[16] = self.counts[16].saturating_add(1)
-            }
-            (Strand::Negative, Feature::ModCall(ModCode::A)) => {
-                self.counts[17] = self.counts[17].saturating_add(1)
-            }
-            (Strand::Negative, Feature::ModCall(ModCode::C)) => {
-                self.counts[18] = self.counts[18].saturating_add(1)
-            }
-            (Strand::Negative, Feature::ModCall(ModCode::a)) => {
-                self.counts[19] = self.counts[19].saturating_add(1)
-            }
-            (Strand::Negative, Feature::ModCall(ModCode::h)) => {
-                self.counts[20] = self.counts[20].saturating_add(1)
-            }
-            (Strand::Negative, Feature::ModCall(ModCode::m)) => {
-                self.counts[21] = self.counts[21].saturating_add(1)
-            }
-
-            (_, Feature::ModCall(ModCode::G)) => {}
-            (_, Feature::ModCall(ModCode::T)) => {}
+    pub(crate) fn add_feature(&mut self, strand: Strand, feature: Feature) {
+        match strand {
+            Strand::Positive => self.pos_tally.add_feature(feature),
+            Strand::Negative => self.neg_tally.add_feature(feature),
         }
     }
 
@@ -200,202 +153,94 @@ impl FeatureVector {
         }
     }
 
+    fn add_tally_to_counts(
+        counts: &mut Vec<PileupFeatureCounts>,
+        tally: &Tally,
+        strand: Strand,
+        observed_mods: &HashSet<ModCode>,
+        pileup_options: &PileupNumericOptions,
+    ) {
+        if (tally.n_modcall_A + tally.n_modcall_a) > 0 {
+            let n_canonical = tally.n_modcall_A;
+            let n_mod = tally.n_modcall_a;
+            let filtered_coverage = n_canonical + n_mod;
+            let raw_mod_code = ModCode::a.char();
+            let n_nocall = tally.n_basecall_A;
+            let percent_modified =
+                n_mod as f32 / (n_mod as f32 + n_canonical as f32);
+            let n_diff = tally.n_basecall_C
+                + tally.n_basecall_T
+                + tally.n_basecall_G
+                + tally.n_modcall_C
+                + tally.n_modcall_m
+                + tally.n_modcall_h;
+            counts.push(PileupFeatureCounts {
+                strand,
+                filtered_coverage,
+                raw_mod_code,
+                fraction_modified: percent_modified,
+                n_canonical,
+                n_modified: n_mod,
+                n_other_modified: 0,
+                n_delete: tally.n_delete,
+                n_filtered: tally.n_filtered,
+                n_diff,
+                n_nocall,
+            });
+        }
+
+        // + strand C-mods
+        if (tally.n_modcall_h + tally.n_modcall_m + tally.n_modcall_C) > 0 {
+            let n_canonical = tally.n_modcall_C;
+            let n_nocall = tally.n_basecall_C;
+
+            let n_diff = tally.n_basecall_A
+                + tally.n_basecall_G
+                + tally.n_basecall_T
+                + tally.n_modcall_A
+                + tally.n_modcall_a;
+
+            let n_h = tally.n_modcall_h;
+            let n_m = tally.n_modcall_m;
+            let filtered_coverage = n_canonical + n_h + n_m;
+            Self::add_pileup_counts(
+                pileup_options,
+                counts,
+                observed_mods,
+                strand,
+                filtered_coverage,
+                n_h,
+                n_m,
+                n_canonical,
+                tally.n_delete,
+                tally.n_filtered,
+                n_diff,
+                n_nocall,
+            );
+        }
+    }
+
     pub fn decode(
         self,
-        observed_mods: &HashSet<ModCode>,
+        pos_observed_mods: &HashSet<ModCode>,
+        neg_observed_mods: &HashSet<ModCode>,
         pileup_options: &PileupNumericOptions,
     ) -> Vec<PileupFeatureCounts> {
         let mut counts = Vec::new();
-        // there is mod info on the + strand
-        let pos_strand_n_delete = self.counts[0];
-        let pos_stand_n_filt = self.counts[1];
-        let neg_strand_n_delete = self.counts[11];
-        let neg_stand_n_filt = self.counts[12];
-
-        // + strand A-mods
-        if (self.counts[6] + self.counts[8]) > 0
-            && observed_mods.contains(&ModCode::a)
-        {
-            let n_canonical = self.counts[6];
-            let n_mod = self.counts[8];
-            let filtered_coverage = n_canonical + n_mod;
-            let raw_mod_code = ModCode::a.char();
-            let n_nocall = self.counts[2];
-            let percent_modified =
-                n_mod as f32 / (n_mod as f32 + n_canonical as f32);
-            let n_diff = self.counts[3]
-                .saturating_add(self.counts[4])
-                .saturating_add(self.counts[5])
-                .saturating_add(self.counts[7])
-                .saturating_add(self.counts[9])
-                .saturating_add(self.counts[19]);
-            counts.push(PileupFeatureCounts {
-                strand: Strand::Positive,
-                filtered_coverage,
-                raw_mod_code,
-                fraction_modified: percent_modified,
-                n_canonical,
-                n_modified: n_mod,
-                n_other_modified: 0,
-                n_delete: pos_strand_n_delete,
-                n_filtered: pos_stand_n_filt,
-                n_diff,
-                n_nocall,
-            });
-        }
-        // + strand C-mods
-        if (self.counts[7] + self.counts[9] + self.counts[10]) > 0 {
-            let n_canonical = self.counts[7];
-            let n_nocall = self.counts[3];
-            let n_diff = self.counts[2]
-                .saturating_add(self.counts[4])
-                .saturating_add(self.counts[5])
-                .saturating_add(self.counts[6])
-                .saturating_add(self.counts[8]);
-
-            let n_h = self.counts[9];
-            let n_m = self.counts[10];
-            let filtered_coverage = n_canonical + n_h + n_m;
-            Self::add_pileup_counts(
-                pileup_options,
-                &mut counts,
-                observed_mods,
-                Strand::Positive,
-                filtered_coverage,
-                n_h,
-                n_m,
-                n_canonical,
-                pos_strand_n_delete,
-                pos_stand_n_filt,
-                n_diff,
-                n_nocall,
-            );
-
-            // match pileup_options {
-            //     PileupNumericOptions::Passthrough
-            //     | PileupNumericOptions::Collapse(_) => {
-            //         for (mod_code, (n_modified, n_other_modified)) in
-            //             [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
-            //         {
-            //             if observed_mods.contains(&mod_code) {
-            //                 let percent_modified =
-            //                     n_modified as f32 / filtered_coverage as f32;
-            //                 counts.push(PileupFeatureCounts {
-            //                     strand: Strand::Positive,
-            //                     filtered_coverage,
-            //                     raw_mod_code: mod_code.char(),
-            //                     fraction_modified: percent_modified,
-            //                     n_canonical,
-            //                     n_modified,
-            //                     n_other_modified,
-            //                     n_delete: pos_strand_n_delete,
-            //                     n_filtered: pos_stand_n_filt,
-            //                     n_diff,
-            //                     n_nocall,
-            //                 })
-            //             }
-            //         }
-            //     }
-            //     PileupNumericOptions::Combine => {
-            //         let n_modified = n_h + n_m;
-            //         let percent_modified =
-            //             n_modified as f32 / filtered_coverage as f32;
-            //         counts.push(PileupFeatureCounts {
-            //             strand: Strand::Positive,
-            //             filtered_coverage,
-            //             raw_mod_code: ModCode::C.char(),
-            //             fraction_modified: percent_modified,
-            //             n_canonical,
-            //             n_modified,
-            //             n_other_modified,
-            //             n_delete: pos_strand_n_delete,
-            //             n_filtered: pos_stand_n_filt,
-            //             n_diff,
-            //             n_nocall,
-            //         })
-            //     }
-            // }
-        }
-        // - strand A-mods
-        if (self.counts[17] + self.counts[19]) > 0
-            && observed_mods.contains(&ModCode::a)
-        {
-            let n_canonical = self.counts[17];
-            let n_mod = self.counts[19];
-            let filtered_coverage = n_canonical + n_mod;
-            let raw_mod_code = ModCode::a.char();
-            let n_nocall = self.counts[13];
-            let percent_modified =
-                n_mod as f32 / (n_mod as f32 + n_canonical as f32);
-            let n_diff = self.counts[14]
-                .saturating_add(self.counts[15])
-                .saturating_add(self.counts[16])
-                .saturating_add(self.counts[18])
-                .saturating_add(self.counts[20])
-                .saturating_add(self.counts[21]);
-            counts.push(PileupFeatureCounts {
-                strand: Strand::Negative,
-                filtered_coverage,
-                raw_mod_code,
-                fraction_modified: percent_modified,
-                n_canonical,
-                n_modified: n_mod,
-                n_other_modified: 0,
-                n_delete: neg_strand_n_delete,
-                n_filtered: neg_stand_n_filt,
-                n_diff,
-                n_nocall,
-            });
-        }
-        // - strand C-mods
-        if (self.counts[18] + self.counts[20] + self.counts[21]) > 0 {
-            let n_canonical = self.counts[18];
-            let n_h = self.counts[20];
-            let n_m = self.counts[21];
-            let filtered_coverage = n_canonical + n_h + n_m;
-            let n_nocall = self.counts[14];
-            let n_diff = self.counts[13]
-                .saturating_add(self.counts[15])
-                .saturating_add(self.counts[16])
-                .saturating_add(self.counts[17])
-                .saturating_add(self.counts[19]);
-            Self::add_pileup_counts(
-                pileup_options,
-                &mut counts,
-                observed_mods,
-                Strand::Negative,
-                filtered_coverage,
-                n_h,
-                n_m,
-                n_canonical,
-                neg_strand_n_delete,
-                neg_stand_n_filt,
-                n_diff,
-                n_nocall,
-            );
-
-            // for (mod_code, (n_modified, n_other_modified)) in
-            //     [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
-            // {
-            //     if check_mod_code(mod_code) {
-            //         let percent_modified =
-            //             n_modified as f32 / filtered_coverage as f32;
-            //         counts.push(PileupFeatureCounts {
-            //             strand: Strand::Negative,
-            //             filtered_coverage,
-            //             raw_mod_code: mod_code.char(),
-            //             fraction_modified: percent_modified,
-            //             n_canonical,
-            //             n_modified,
-            //             n_other_modified,
-            //             n_delete: neg_strand_n_delete,
-            //             n_filtered: neg_stand_n_filt,
-            //             n_diff,
-            //             n_nocall,
-            //         })
-            //     }
-            // }
-        }
+        Self::add_tally_to_counts(
+            &mut counts,
+            &self.pos_tally,
+            Strand::Positive,
+            pos_observed_mods,
+            pileup_options,
+        );
+        Self::add_tally_to_counts(
+            &mut counts,
+            &self.neg_tally,
+            Strand::Negative,
+            neg_observed_mods,
+            pileup_options,
+        );
 
         counts
     }
@@ -504,7 +349,9 @@ pub fn process_region<T: AsRef<Path>>(
     let pileup_iter = PileupIter::new(bam_reader.pileup(), start_pos, end_pos);
     for pileup in pileup_iter {
         let mut feature_vector = FeatureVector::new();
-        let mut observed_mod_codes = HashSet::new();
+        let mut pos_strand_observed_mod_codes = HashSet::new();
+        let mut neg_strand_observed_mod_codes = HashSet::new();
+        // let mut observed_mod_codes = HashSet::new();
         let pos = pileup.pos();
 
         let alignment_iter = pileup.alignments().filter_map(|alignment| {
@@ -522,11 +369,15 @@ pub fn process_region<T: AsRef<Path>>(
         for alignment in alignment_iter {
             assert!(!alignment.is_refskip());
             let record = alignment.record();
-            observed_mod_codes
-                .extend(read_cache.get_mod_codes_for_record(&record));
+            // observed_mod_codes
+            //     .extend(read_cache.get_mod_codes_for_record(&record));
             let strand = if record.is_reverse() {
+                neg_strand_observed_mod_codes
+                    .extend(read_cache.get_mod_codes_for_record(&record));
                 Strand::Negative
             } else {
+                pos_strand_observed_mod_codes
+                    .extend(read_cache.get_mod_codes_for_record(&record));
                 Strand::Positive
             };
 
@@ -577,7 +428,11 @@ pub fn process_region<T: AsRef<Path>>(
         } // alignment loop
         position_feature_counts.insert(
             pos,
-            feature_vector.decode(&observed_mod_codes, &pileup_numeric_options),
+            feature_vector.decode(
+                &pos_strand_observed_mod_codes,
+                &neg_strand_observed_mod_codes,
+                &pileup_numeric_options,
+            ),
         );
     } // position loop
 
@@ -597,7 +452,8 @@ mod mod_pileup_tests {
 
     #[test]
     fn test_feature_vector() {
-        let observed_mods = HashSet::from([ModCode::m, ModCode::h]);
+        let pos_observed_mods = HashSet::from([ModCode::m, ModCode::h]);
+        let neg_observed_mods = HashSet::new();
         let mut fv = FeatureVector::new();
         fv.add_feature(Strand::Positive, Feature::NoCall(DnaBase::A));
         fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::C));
@@ -606,8 +462,11 @@ mod mod_pileup_tests {
         fv.add_feature(Strand::Positive, Feature::NoCall(DnaBase::C));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        let counts =
-            fv.decode(&observed_mods, &PileupNumericOptions::Passthrough);
+        let counts = fv.decode(
+            &pos_observed_mods,
+            &neg_observed_mods,
+            &PileupNumericOptions::Passthrough,
+        );
         assert_eq!(counts.len(), 2); // h and m, negative strand should not be there
         for pileup_counts in counts {
             assert_eq!(pileup_counts.filtered_coverage, 3);
@@ -616,12 +475,16 @@ mod mod_pileup_tests {
             assert_eq!(pileup_counts.strand, Strand::Positive);
         }
         let mut fv = FeatureVector::new();
+        let neg_observed_mods = HashSet::from([ModCode::m, ModCode::h]);
         fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::C));
         fv.add_feature(Strand::Negative, Feature::ModCall(ModCode::m));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
         fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        let counts =
-            fv.decode(&observed_mods, &PileupNumericOptions::Passthrough);
+        let counts = fv.decode(
+            &pos_observed_mods,
+            &neg_observed_mods,
+            &PileupNumericOptions::Passthrough,
+        );
         assert_eq!(counts.len(), 4);
         counts
             .iter()
