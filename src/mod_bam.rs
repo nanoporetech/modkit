@@ -57,7 +57,7 @@ pub enum BaseModCall {
     Filtered,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct BaseModProbs {
     pub(crate) mod_codes: IndexSet<char>,
     probs: Vec<f32>,
@@ -149,7 +149,7 @@ impl BaseModProbs {
                     .iter_probs()
                     .filter(|(mod_code, _prob)| *mod_code != &mod_to_collapse)
                     .collect::<Vec<_>>();
-                let n_other_mods = other_mods.len() as f32;
+                let n_other_mods = other_mods.len() as f32 + 1f32; // plus 1 for the canonical base
                 let prob_to_redistribute = marginal_prob / n_other_mods;
 
                 let mut check_total = 0f32;
@@ -161,7 +161,7 @@ impl BaseModProbs {
                     mod_codes.insert(*mod_code);
                     probs.push(new_prob);
                 }
-                assert!(check_total - 100f32 < 0.00001);
+                assert!((check_total - 100f32) < 0.00001);
 
                 Self { mod_codes, probs }
             }
@@ -710,7 +710,24 @@ mod mod_bam_tests {
     }
 
     #[test]
-    fn test_mod_prob_collapse_norm() {
+    fn test_mod_prob_collapse() {
+        let mod_base_probs = BaseModProbs {
+            mod_codes: indexset! {'h', 'm'},
+            probs: vec![0.85, 0.10],
+        };
+        let collapsed = mod_base_probs
+            .clone()
+            .collapse('h', CollapseMethod::ReDistribute(ModCode::m));
+        assert_eq!(collapsed.probs, vec![0.52500004]);
+        assert_eq!(collapsed.mod_codes, indexset! {'m'});
+        let collapsed = mod_base_probs
+            .collapse('h', CollapseMethod::ReNormalize(ModCode::m));
+        assert_eq!(collapsed.probs, vec![0.6666669]);
+        assert_eq!(collapsed.mod_codes, indexset! {'m'});
+    }
+
+    #[test]
+    fn test_mod_prob_collapse_norm_examples() {
         let mod_base_probs = BaseModProbs {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.05273438, 0.03320312],
@@ -722,14 +739,14 @@ mod mod_bam_tests {
     }
 
     #[test]
-    fn test_mod_prob_collapse_dist() {
+    fn test_mod_prob_collapse_dist_examples() {
         let mod_base_probs = BaseModProbs {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.05273438, 0.03320312],
         };
         let collapsed = mod_base_probs
             .collapse('h', CollapseMethod::ReDistribute(ModCode::m));
-        assert_eq!(collapsed.probs, vec![0.0859375]);
+        assert_eq!(collapsed.probs, vec![0.059570313]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
 

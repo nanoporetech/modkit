@@ -255,9 +255,7 @@ mod read_cache_tests {
 
     use rust_htslib::bam::{self, FetchDefinition, Read, Reader as BamReader};
 
-    use crate::mod_bam::{
-        base_mod_probs_from_record, CollapseMethod, DeltaListConverter,
-    };
+    use crate::mod_bam::{base_mod_probs_from_record, DeltaListConverter};
     use crate::read_cache::ReadCache;
     use crate::test_utils::dna_complement;
     use crate::util;

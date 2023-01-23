@@ -589,7 +589,6 @@ pub fn process_region<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod mod_pileup_tests {
-    use crate::mod_bam::CollapseMethod;
     use crate::mod_pileup::{
         DnaBase, Feature, FeatureVector, ModCode, PileupNumericOptions,
     };

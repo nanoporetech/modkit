@@ -76,7 +76,7 @@ pub struct Collapse {
     #[arg(short, long, default_value_t = 'C')]
     base: char,
     /// mod base code to flatten/remove
-    #[arg(short, long, default_value_t = 'h', value_parser = check_raw_modbase_code)]
+    #[arg(short, long, default_value_t = 'h')]
     mod_base: char,
     /// number of threads to use
     #[arg(short, long, default_value_t = 1)]
@@ -255,19 +255,6 @@ impl Collapse {
     }
 }
 
-const ALLOWED_MOD_CODES: [char; 4] = ['h', 'm', 'a', 'c'];
-fn check_raw_modbase_code(raw_code: &str) -> Result<String, String> {
-    for raw_modbase_code in raw_code.chars() {
-        if !ALLOWED_MOD_CODES.contains(&raw_modbase_code) {
-            return Err(format!(
-                "mod base code {raw_modbase_code} not allowed, options are {:?}",
-                ALLOWED_MOD_CODES
-            ));
-        }
-    }
-    return Ok(raw_code.to_string());
-}
-
 #[derive(Args)]
 pub struct ModBamPileup {
     /// Input BAM, should be sorted and have associated index
@@ -313,7 +300,7 @@ pub struct ModBamPileup {
     combine: bool,
 
     /// Secret API: collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
-    #[arg(long, group = "combine_args", hide = true, value_parser = check_raw_modbase_code)]
+    #[arg(long, group = "combine_args", hide = true, value_parser)]
     collapse: Option<char>,
     /// Method to use to collapse mod calls, 'norm', 'dist'.
     #[arg(
