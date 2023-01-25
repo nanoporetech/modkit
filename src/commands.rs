@@ -291,6 +291,10 @@ pub struct ModBamPileup {
     #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
     filter_percentile: f32,
 
+    /// Filter threshold, drop calls below this probability
+    #[arg(group = "thresholds", long)]
+    filter_threshold: Option<f32>,
+
     /// Output debug logs to file at this path
     #[arg(long)]
     log_filepath: Option<PathBuf>,
@@ -321,6 +325,10 @@ pub struct ModBamPileup {
 impl ModBamPileup {
     fn run(&self) -> AnyhowResult<(), String> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        // do this first so we fail when the file isn't readable
+        let header = bam::IndexedReader::from_path(&self.in_bam)
+            .map_err(|e| e.to_string())
+            .map(|reader| reader.header().to_owned())?;
 
         let pileup_options = match (self.combine, &self.collapse) {
             (false, None) => PileupNumericOptions::Passthrough,
@@ -335,6 +343,9 @@ impl ModBamPileup {
 
         let threshold = if self.no_filtering {
             0f32
+        } else if let Some(user_threshold) = self.filter_threshold {
+            info!("Using user-defined threshold probability: {}", user_threshold);
+            user_threshold
         } else {
             info!(
                 "Determining filter threshold probability using sampling \
@@ -353,9 +364,6 @@ impl ModBamPileup {
 
         info!("Using filter threshold {}", threshold);
 
-        let header = bam::IndexedReader::from_path(&self.in_bam)
-            .map_err(|e| e.to_string())
-            .map(|reader| reader.header().to_owned())?;
         let tids = (0..header.target_count())
             .filter_map(|tid| {
                 let chrom_name =

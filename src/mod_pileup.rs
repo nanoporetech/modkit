@@ -49,9 +49,9 @@ struct Tally {
 }
 
 impl Tally {
-    fn new() -> Self {
-        Self::default()
-    }
+    // fn new() -> Self {
+    //     Self::default()
+    // }
 
     fn add_feature(&mut self, feature: Feature) {
         match feature {
