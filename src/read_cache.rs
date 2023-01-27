@@ -17,7 +17,7 @@ use crate::util;
 type RefPosBaseModCalls = HashMap<u64, BaseModCall>; // todo use FxHasher
 
 // todo last position (for gc)
-pub(crate) struct ReadCache {
+pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that read
     reads: HashMap<String, HashMap<char, RefPosBaseModCalls>>,
     /// these reads don't have mod tags or should be skipped for some other reason
@@ -25,12 +25,12 @@ pub(crate) struct ReadCache {
     /// mapping of read_id (query_name) to the mod codes contained in that read
     mod_codes: HashMap<String, HashSet<ModCode>>,
     /// collapse method
-    method: Option<CollapseMethod>,
+    method: Option<&'a CollapseMethod>,
 }
 
-impl ReadCache {
+impl<'a> ReadCache<'a> {
     // todo garbage collect freq
-    pub(crate) fn new(method: Option<CollapseMethod>) -> Self {
+    pub(crate) fn new(method: Option<&'a CollapseMethod>) -> Self {
         Self {
             reads: HashMap::new(),
             skip_set: HashSet::new(),
@@ -85,18 +85,20 @@ impl ReadCache {
             canonical_base.char(),
             converter,
         )?;
-        if let Some(collapse_method) = self.method {
-            for mod_code_to_remove in canonical_base
-                .get_mod_codes()
-                .iter()
-                .filter(|mod_code| **mod_code != collapse_method.mod_code())
-            {
-                seq_base_mod_probs = collapse_mod_probs(
-                    seq_base_mod_probs,
-                    mod_code_to_remove.char(),
-                    collapse_method,
-                );
-            }
+        if let Some(collapse_method) = &self.method {
+            seq_base_mod_probs =
+                collapse_mod_probs(seq_base_mod_probs, collapse_method);
+            // for mod_code_to_remove in canonical_base
+            //     .get_mod_codes()
+            //     .iter()
+            //     .filter(|mod_code| **mod_code != collapse_method.mod_code())
+            // {
+            //     seq_base_mod_probs = collapse_mod_probs(
+            //         seq_base_mod_probs,
+            //         mod_code_to_remove.char(),
+            //         collapse_method,
+            //     );
+            // }
         }
         Ok(seq_base_mod_probs)
     }

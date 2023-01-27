@@ -314,9 +314,9 @@ pub enum PileupNumericOptions {
 }
 
 impl PileupNumericOptions {
-    fn get_collapse_method(&self) -> Option<CollapseMethod> {
+    fn get_collapse_method(&self) -> Option<&CollapseMethod> {
         match self {
-            Self::Collapse(method) => Some(*method),
+            Self::Collapse(method) => Some(method),
             _ => None,
         }
     }

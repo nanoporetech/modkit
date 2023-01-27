@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ModCode {
@@ -84,14 +82,6 @@ impl DnaBase {
             Self::T => {
                 Err(format!("no mod code for canonical base {}", self.char()))
             }
-        }
-    }
-
-    pub(crate) fn get_mod_codes(&self) -> HashSet<ModCode> {
-        match self {
-            Self::A => HashSet::from([ModCode::a]),
-            Self::C => HashSet::from([ModCode::m, ModCode::h]),
-            _ => HashSet::new(),
         }
     }
 }
