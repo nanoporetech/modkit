@@ -49,7 +49,7 @@ impl SkipMode {
 #[derive(Debug, Copy, Clone)]
 pub enum BaseModCall {
     Canonical(f32),
-    Modified(f32, char),
+    Modified(f32, ModCode),
     Filtered,
 }
 
@@ -85,7 +85,10 @@ impl BaseModProbs {
             .max_by(|(p, _), (q, _)| p.partial_cmp(q).unwrap());
         if let Some((mod_prob, mod_code)) = max_mod_prob {
             if *mod_prob > canonical_prob {
-                BaseModCall::Modified(*mod_prob, *mod_code)
+                BaseModCall::Modified(
+                    *mod_prob,
+                    ModCode::parse_raw_mod_code(*mod_code).unwrap(),
+                )
             } else {
                 BaseModCall::Canonical(canonical_prob)
             }
@@ -167,7 +170,6 @@ impl BaseModProbs {
                 let mut mod_codes = IndexSet::new();
 
                 let mut converted_prob = 0f32;
-
                 for (raw_mod_code, prob) in self.iter_probs() {
                     // todo(arand) remove this unnecessary unwrap when refactoring
                     let mod_code =
@@ -181,10 +183,15 @@ impl BaseModProbs {
                         mod_codes.insert(*raw_mod_code);
                     }
                 }
-                probs.push(converted_prob);
-                mod_codes.insert(to.char());
 
-                Self { mod_codes, probs }
+                let mut new_base_mod_probs = Self { probs, mod_codes };
+
+                if converted_prob > 0f32 {
+                    new_base_mod_probs
+                        .insert_base_mod_prob(to.char(), converted_prob);
+                }
+
+                new_base_mod_probs
             }
         }
     }
@@ -595,7 +602,7 @@ pub fn get_canonical_bases_with_mod_calls(
 pub fn base_mod_probs_from_record(
     record: &bam::Record,
     converter: &DeltaListConverter,
-    canonical_base: char,
+    canonical_base: char, // todo(arand) should be in the converter
 ) -> Result<SeqPosBaseModProbs, RunError> {
     let (mm, ml) = match parse_raw_mod_tags(record) {
         Some(Ok((mm, ml))) => (mm, ml),
@@ -791,6 +798,34 @@ mod mod_bam_tests {
         });
         assert_eq!(collapsed.probs, vec![0.85]);
         assert_eq!(collapsed.mod_codes, indexset! {'C'});
+    }
+
+    #[test]
+    fn test_mod_prob_convert_sums_prob() {
+        let mod_base_probs = BaseModProbs {
+            mod_codes: indexset! {'h', 'm'},
+            probs: vec![0.10, 0.75],
+        };
+        let collapsed = mod_base_probs.collapse(&CollapseMethod::Convert {
+            from: HashSet::from([ModCode::h]),
+            to: ModCode::m,
+        });
+        assert_eq!(collapsed.probs, vec![0.85]);
+        assert_eq!(collapsed.mod_codes, indexset! {'m'});
+    }
+
+    #[test]
+    fn test_mod_prob_convert_noop() {
+        let mod_base_probs = BaseModProbs {
+            mod_codes: indexset! {'h', 'm'},
+            probs: vec![0.10, 0.75],
+        };
+        let collapsed = mod_base_probs.collapse(&CollapseMethod::Convert {
+            from: HashSet::from([ModCode::a]),
+            to: ModCode::A,
+        });
+        assert_eq!(collapsed.probs, vec![0.10, 0.75]);
+        assert_eq!(collapsed.mod_codes, indexset! {'h', 'm'});
     }
 
     #[test]

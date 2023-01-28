@@ -8,6 +8,8 @@ pub enum ModCode {
     m,
     G,
     T,
+    anyC,
+    anyA,
 }
 
 impl ModCode {
@@ -18,7 +20,9 @@ impl ModCode {
             'a' => Ok(Self::a),
             'h' => Ok(Self::h),
             'm' => Ok(Self::m),
-            _ => Err("no mod code for {raw_mod_code}".to_string()),
+            'C' => Ok(Self::anyC),
+            'A' => Ok(Self::anyA),
+            _ => Err(format!("no mod code for {raw_mod_code}")),
         }
     }
 
@@ -31,6 +35,29 @@ impl ModCode {
             Self::m => 'm',
             Self::G => 'G',
             Self::T => 'T',
+            Self::anyA => 'A',
+            Self::anyC => 'C',
+        }
+    }
+
+    pub fn canonical_base(&self) -> DnaBase {
+        match self {
+            Self::A => DnaBase::A,
+            Self::C => DnaBase::C,
+            Self::a => DnaBase::A,
+            Self::h => DnaBase::C,
+            Self::m => DnaBase::C,
+            Self::G => DnaBase::G,
+            Self::T => DnaBase::T,
+            Self::anyC => DnaBase::C,
+            Self::anyA => DnaBase::A,
+        }
+    }
+
+    pub(crate) fn is_canonical(&self) -> bool {
+        match self {
+            Self::A | Self::C | Self::G | Self::T => true,
+            _ => false,
         }
     }
 }

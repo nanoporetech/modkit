@@ -11,6 +11,7 @@ use rust_htslib::bam::Read;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+#[derive(Debug)]
 pub struct ModSummary {
     pub mod_called_bases: Vec<DnaBase>,
     pub reads_with_mod_calls: HashMap<DnaBase, u64>,
@@ -101,17 +102,10 @@ pub fn summarize_modbam<T: AsRef<Path>>(
                                     .or_insert(0);
                                 *count += 1;
                             }
-                            BaseModCall::Modified(_p, raw_mod_code) => {
-                                match ModCode::parse_raw_mod_code(raw_mod_code)
-                                {
-                                    Ok(mod_code) => {
-                                        let count = mod_counts
-                                            .entry(mod_code)
-                                            .or_insert(0);
-                                        *count += 1;
-                                    }
-                                    Err(_) => {}
-                                }
+                            BaseModCall::Modified(_p, mod_code) => {
+                                let count =
+                                    mod_counts.entry(mod_code).or_insert(0);
+                                *count += 1;
                             }
                             BaseModCall::Filtered => {}
                         }

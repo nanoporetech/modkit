@@ -417,9 +417,9 @@ pub fn process_region<T: AsRef<Path>>(
                         read_base.canonical_mod_code().unwrap(),
                     ),
                     BaseModCall::Filtered => Feature::Filtered,
-                    BaseModCall::Modified(_, raw_code) => Feature::ModCall(
-                        ModCode::parse_raw_mod_code(raw_code).unwrap(),
-                    ),
+                    BaseModCall::Modified(_, mod_code) => {
+                        Feature::ModCall(mod_code)
+                    }
                 }
             } else {
                 Feature::NoCall(read_base)

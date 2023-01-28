@@ -160,16 +160,21 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
         for (canonical_base, mod_counts) in item.mod_call_counts {
             let total_calls = mod_counts.values().sum::<u64>() as f64;
             for (mod_code, counts) in mod_counts {
+                let label = if mod_code.is_canonical() {
+                    format!("unmodified")
+                } else {
+                    format!("modified_{}", mod_code.char())
+                };
                 report.push_str(&format!(
                     "{}_calls_{}\t{}\n",
                     canonical_base.char(),
-                    mod_code.char(),
+                    label,
                     counts
                 ));
                 report.push_str(&format!(
                     "{}_frac_{}\t{}\n",
                     canonical_base.char(),
-                    mod_code.char(),
+                    label,
                     counts as f64 / total_calls
                 ));
             }
