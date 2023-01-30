@@ -1,6 +1,7 @@
 use std::io::Read as StdRead;
 use std::process::Output;
 
+use mod_kit::mod_bam::parse_raw_mod_tags;
 use mod_kit::mod_base_code::{DnaBase, ModCode};
 use mod_kit::summarize::summarize_modbam;
 use rust_htslib::bam;
@@ -45,13 +46,7 @@ fn test_adjust_output(
     check_file_path: &str,
 ) {
     let temp_file = std::env::temp_dir().join(output_path);
-    let args = [
-        "adjust-mods",
-        "--ignore",
-        "h",
-        input_path,
-        temp_file.to_str().unwrap(),
-    ];
+    let args = ["adjust-mods", input_path, temp_file.to_str().unwrap()];
     run_modkit(&args);
     assert!(temp_file.exists());
 
@@ -87,8 +82,6 @@ fn test_adjust_no_tags() {
     let temp_file = std::env::temp_dir().join("test_out_no_tags.bam");
     run_modkit(&[
         "adjust-mods",
-        "--ignore",
-        "h",
         "tests/resources/input_C_no_tags.bam",
         temp_file.to_str().unwrap(),
     ]);
@@ -193,8 +186,6 @@ fn test_mod_pileup_collapse() {
 
     let collapse_args = [
         "adjust-mods",
-        "--ignore",
-        "h",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_collapsed_bam.to_str().unwrap(),
     ];
@@ -237,6 +228,39 @@ fn test_mod_pileup_collapse() {
         test_restricted_bed.to_str().unwrap(),
         test_collapsed_bed.to_str().unwrap(),
     );
+}
+#[test]
+fn test_adjust_to_no_mods() {
+    let test_ignore_h_bam =
+        std::env::temp_dir().join("test_adjust_to_no_mods_ignore_h.bam");
+    let test_both_bam =
+        std::env::temp_dir().join("test_adjust_to_no_mods_ignore_both.bam");
+    let first_adjust_args = [
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        test_ignore_h_bam.to_str().unwrap(),
+    ];
+    run_modkit(&first_adjust_args);
+    let mut reader =
+        bam::Reader::from_path(test_ignore_h_bam.to_str().unwrap()).unwrap();
+    for record in reader.records().map(|r| r.expect("should parse record")) {
+        let (mm, _ml) = parse_raw_mod_tags(&record).unwrap().unwrap();
+        assert!(mm.starts_with("C+m?"));
+    }
+    let second_adjust_args = [
+        "adjust-mods",
+        "--ignore",
+        "m",
+        test_ignore_h_bam.to_str().unwrap(),
+        test_both_bam.to_str().unwrap(),
+    ];
+    run_modkit(&second_adjust_args);
+    let mut reader =
+        bam::Reader::from_path(test_both_bam.to_str().unwrap()).unwrap();
+    for record in reader.records().map(|r| r.expect("should parse record")) {
+        let (mm, _ml) = parse_raw_mod_tags(&record).unwrap().unwrap();
+        assert!(mm.starts_with("C+C?"));
+    }
 }
 
 #[test]

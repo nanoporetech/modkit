@@ -87,6 +87,7 @@ impl BaseModProbs {
             if *mod_prob > canonical_prob {
                 BaseModCall::Modified(
                     *mod_prob,
+                    // todo(arand) use ModCodes directly in BaseModProbs
                     ModCode::parse_raw_mod_code(*mod_code).unwrap(),
                 )
             } else {
@@ -414,7 +415,7 @@ pub fn extract_mod_probs(
                 pointer,
                 converter,
             )
-            .unwrap();
+            .unwrap(); // todo(arand) remove this unwrap
             combine_positions_to_probs(&mut positions_to_probs, base_mod_probs);
         }
         pointer += base_mod_positions.delta_list.len();
@@ -478,11 +479,7 @@ pub fn format_mm_ml_tag(
 ) -> (String, Vec<u8>) {
     let mut mod_code_to_position = HashMap::new();
     for (position, mod_base_probs) in positions_to_probs {
-        for (mod_base_code, mod_base_prob) in mod_base_probs
-            .mod_codes
-            .iter()
-            .zip(mod_base_probs.probs.iter())
-        {
+        for (mod_base_code, mod_base_prob) in mod_base_probs.iter_probs() {
             let entry = mod_code_to_position
                 .entry(*mod_base_code)
                 .or_insert(Vec::new());
@@ -493,28 +490,37 @@ pub fn format_mm_ml_tag(
     let mut mm_tag = String::new();
     let mut ml_tag = Vec::new();
 
-    for (mod_code, mut positions_and_probs) in mod_code_to_position.into_iter()
-    {
-        positions_and_probs.sort_by(|(x_pos, _), (y_pos, _)| x_pos.cmp(&y_pos));
-        let header = format!("{}+{}?,", canonical_base, mod_code);
-        let positions = positions_and_probs
-            .iter()
-            .map(|(pos, _prob)| *pos)
-            .collect::<Vec<usize>>();
-        let delta_list = converter.to_delta_list(&positions);
-        let delta_list = delta_list
-            .into_iter()
-            .map(|d| d.to_string())
-            .collect::<Vec<String>>()
-            .join(",");
-        mm_tag.push_str(&header);
-        mm_tag.push_str(&delta_list);
-        mm_tag.push(';');
-        let quals = positions_and_probs
-            .iter()
-            .map(|(_pos, prob)| prob_to_qual(*prob))
-            .collect::<Vec<u8>>();
-        ml_tag.extend(quals.into_iter());
+    if mod_code_to_position.is_empty() {
+        let raw_mod_code = ModCode::get_any_mod_code(canonical_base)
+            .map(|mod_code| mod_code.char())
+            .unwrap_or(canonical_base);
+        mm_tag.push_str(&format!("{}+{}?", canonical_base, raw_mod_code));
+    } else {
+        for (mod_code, mut positions_and_probs) in
+            mod_code_to_position.into_iter()
+        {
+            positions_and_probs
+                .sort_by(|(x_pos, _), (y_pos, _)| x_pos.cmp(&y_pos));
+            let header = format!("{}+{}?,", canonical_base, mod_code);
+            let positions = positions_and_probs
+                .iter()
+                .map(|(pos, _prob)| *pos)
+                .collect::<Vec<usize>>();
+            let delta_list = converter.to_delta_list(&positions);
+            let delta_list = delta_list
+                .into_iter()
+                .map(|d| d.to_string())
+                .collect::<Vec<String>>()
+                .join(",");
+            mm_tag.push_str(&header);
+            mm_tag.push_str(&delta_list);
+            mm_tag.push(';');
+            let quals = positions_and_probs
+                .iter()
+                .map(|(_pos, prob)| prob_to_qual(*prob))
+                .collect::<Vec<u8>>();
+            ml_tag.extend(quals.into_iter());
+        }
     }
 
     (mm_tag, ml_tag)

@@ -73,21 +73,9 @@ pub struct Adjust {
     in_bam: PathBuf,
     /// File path to new BAM file
     out_bam: PathBuf,
-    // /// Canonical base to flatten calls for
-    // #[arg(
-    //     short = 'b',
-    //     long,
-    //     default_value_t = 'C',
-    //     conflicts_with = "convert"
-    // )]
-    // canonical_base: char,
-    /// mod base code to flatten/remove
-    #[arg(
-        long,
-        conflicts_with = "convert",
-        required_unless_present = "convert"
-    )]
-    ignore: Option<char>,
+    /// mod base code to ignore/remove
+    #[arg(long, conflicts_with = "convert", default_value_t = 'h')]
+    ignore: char,
     /// number of threads to use
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
@@ -202,54 +190,49 @@ impl Adjust {
 
         let fail_fast = self.fail_fast;
 
-        let methods = match (&self.method, &self.convert, &self.ignore) {
-            (_, Some(convert), _) => {
-                let mut conversions = HashMap::new();
-                for chunk in convert.chunks(2) {
-                    assert_eq!(chunk.len(), 2);
-                    let from = ModCode::parse_raw_mod_code(chunk[0])?;
-                    let to = ModCode::parse_raw_mod_code(chunk[1])?;
-                    let froms = conversions.entry(to).or_insert(HashSet::new());
-                    froms.insert(from);
-                }
-                for (to_code, from_codes) in conversions.iter() {
-                    info!(
-                        "Converting {} to {}",
-                        from_codes.iter().map(|c| c.char()).collect::<String>(),
-                        to_code.char()
-                    )
-                }
-                conversions
-                    .into_iter()
-                    .map(|(to_mod_code, from_mod_codes)| {
-                        let canonical_base = to_mod_code.canonical_base();
-                        let method = CollapseMethod::Convert {
-                            to: to_mod_code,
-                            from: from_mod_codes,
-                        };
-
-                        (canonical_base, method)
-                    })
-                    .collect::<Vec<(DnaBase, CollapseMethod)>>()
+        let methods = if let Some(convert) = &self.convert {
+            let mut conversions = HashMap::new();
+            for chunk in convert.chunks(2) {
+                assert_eq!(chunk.len(), 2);
+                let from = ModCode::parse_raw_mod_code(chunk[0])?;
+                let to = ModCode::parse_raw_mod_code(chunk[1])?;
+                let froms = conversions.entry(to).or_insert(HashSet::new());
+                froms.insert(from);
             }
-            (method, _, Some(raw_mod_code_to_ignore)) => {
-                let mod_code_to_remove =
-                    ModCode::parse_raw_mod_code(*raw_mod_code_to_ignore)?;
+            for (to_code, from_codes) in conversions.iter() {
                 info!(
-                    "{}",
-                    format!(
-                        "Removing mod base {} from {}, new bam {}",
-                        mod_code_to_remove.char(),
-                        fp.to_str().unwrap_or("???"),
-                        out_fp.to_str().unwrap_or("???")
-                    )
-                );
-                let canonical_base = mod_code_to_remove.canonical_base();
-                let method =
-                    CollapseMethod::parse_str(method, mod_code_to_remove)?;
-                vec![(canonical_base, method)]
+                    "Converting {} to {}",
+                    from_codes.iter().map(|c| c.char()).collect::<String>(),
+                    to_code.char()
+                )
             }
-            _ => return Err(format!("specify convert or ignore")),
+            conversions
+                .into_iter()
+                .map(|(to_mod_code, from_mod_codes)| {
+                    let canonical_base = to_mod_code.canonical_base();
+                    let method = CollapseMethod::Convert {
+                        to: to_mod_code,
+                        from: from_mod_codes,
+                    };
+
+                    (canonical_base, method)
+                })
+                .collect::<Vec<(DnaBase, CollapseMethod)>>()
+        } else {
+            let mod_code_to_remove = ModCode::parse_raw_mod_code(self.ignore)?;
+            info!(
+                "{}",
+                format!(
+                    "Removing mod base {} from {}, new bam {}",
+                    mod_code_to_remove.char(),
+                    fp.to_str().unwrap_or("???"),
+                    out_fp.to_str().unwrap_or("???")
+                )
+            );
+            let canonical_base = mod_code_to_remove.canonical_base();
+            let method =
+                CollapseMethod::parse_str(&self.method, mod_code_to_remove)?;
+            vec![(canonical_base, method)]
         };
 
         let spinner = get_spinner();

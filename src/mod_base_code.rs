@@ -1,14 +1,20 @@
+use log::debug;
+
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ModCode {
+    /// canonical A
     A,
+    /// canonical C
     C,
     a,
     h,
     m,
     G,
     T,
+    /// Any C mod
     anyC,
+    /// Any A mod
     anyA,
 }
 
@@ -58,6 +64,17 @@ impl ModCode {
         match self {
             Self::A | Self::C | Self::G | Self::T => true,
             _ => false,
+        }
+    }
+
+    pub fn get_any_mod_code(raw_dna_base: char) -> Option<ModCode> {
+        match raw_dna_base {
+            'C' => Some(ModCode::anyC),
+            'A' => Some(ModCode::anyA),
+            _ => {
+                debug!("raw dna base {raw_dna_base} does not have a 'any mod' code");
+                None
+            }
         }
     }
 }
