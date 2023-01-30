@@ -900,7 +900,7 @@ mod mod_bam_tests {
     }
 
     #[test]
-    fn test_mod_base_positions() {
+    fn test_mod_parse_base_positions() {
         let raw_positions = "C+h?,5,2,1,3,1,2,3,1,2,1,11,5;";
         let base_mod_positions =
             BaseModPositions::parse(raw_positions).unwrap();
@@ -912,6 +912,23 @@ mod mod_bam_tests {
             delta_list: vec![5, 2, 1, 3, 1, 2, 3, 1, 2, 1, 11, 5],
         };
 
+        assert_eq!(base_mod_positions, expected);
+
+        let raw_positions = "C+m,5,2,1,3,1,2,3,1,2,1,11,5;";
+        let base_mod_positions =
+            BaseModPositions::parse(raw_positions).unwrap();
+        let expected = BaseModPositions {
+            canonical_base: 'C',
+            mode: SkipMode::ProbModified,
+            strand: Strand::Positive,
+            mod_base_codes: vec!['m'],
+            delta_list: vec![5, 2, 1, 3, 1, 2, 3, 1, 2, 1, 11, 5],
+        };
+
+        assert_eq!(base_mod_positions, expected);
+        let raw_positions = "C+m.,5,2,1,3,1,2,3,1,2,1,11,5;";
+        let base_mod_positions =
+            BaseModPositions::parse(raw_positions).unwrap();
         assert_eq!(base_mod_positions, expected);
     }
 
