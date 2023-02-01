@@ -3,13 +3,12 @@ use std::collections::{HashMap, HashSet};
 use log::debug;
 use rust_htslib::bam;
 
-use crate::errs::{InputError, RunError};
+use crate::errs::RunError;
 use crate::mod_bam::{
-    collapse_mod_probs, extract_mod_probs, get_canonical_bases_with_mod_calls,
-    parse_raw_mod_tags, BaseModCall, CollapseMethod, DeltaListConverter,
-    ModBaseInfo, SeqPosBaseModProbs,
+    collapse_mod_probs, BaseModCall, CollapseMethod, ModBaseInfo,
+    SeqPosBaseModProbs,
 };
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::ModCode;
 use crate::util;
 
 /// Mapping of _reference position_ to base mod calls as determined by the aligned pairs for the
@@ -73,7 +72,7 @@ impl<'a> ReadCache<'a> {
 
     /// Add a record to the cache.
     fn add_record(&mut self, record: &bam::Record) -> Result<(), RunError> {
-        let record_name = String::from_utf8(record.qname().to_vec())
+        let record_name = util::get_query_name_string(record)
             .map_err(|e| RunError::new_input_error(e.to_string()))?;
         let mod_base_info = ModBaseInfo::new_from_record(record)?;
 

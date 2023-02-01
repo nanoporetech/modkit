@@ -279,7 +279,7 @@ fn test_pileup_no_mod_calls() {
 
     run_modkit(&args);
 
-    let mut reader = BufReader::new(File::open(empty_bedfile).unwrap());
+    let reader = BufReader::new(File::open(empty_bedfile).unwrap());
     let lines = reader.lines().collect::<Vec<Result<String, _>>>();
     assert_eq!(lines.len(), 0);
 }

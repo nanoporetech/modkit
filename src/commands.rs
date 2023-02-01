@@ -29,6 +29,7 @@ use crate::summarize::summarize_modbam;
 use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
 };
+use crate::util;
 use crate::util::record_is_secondary;
 use crate::writers::{BEDWriter, BedMethylWriter, OutWriter, TsvWriter};
 
@@ -241,12 +242,15 @@ impl Adjust {
         let mut total_skipped = 0usize;
         for (i, result) in reader.records().enumerate() {
             if let Ok(record) = result {
+                let record_name = util::get_query_name_string(&record)
+                    .unwrap_or("???".to_owned());
                 match adjust_mod_probs(record, &methods) {
                     Err(RunError::BadInput(InputError(err)))
                     | Err(RunError::Failed(err)) => {
                         if fail_fast {
                             return Err(err.to_string());
                         } else {
+                            debug!("read {} failed, {}", record_name, err);
                             total_failed += 1;
                         }
                     }
@@ -261,6 +265,7 @@ impl Adjust {
                                     err.to_string()
                                 ));
                             } else {
+                                debug!("failed to write {}", err);
                                 total_failed += 1;
                             }
                         } else {
