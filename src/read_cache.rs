@@ -43,7 +43,7 @@ impl<'a> ReadCache<'a> {
     /// in the case of an error the caller could remove this read from
     /// future consideration
     #[inline]
-    fn add_base_mod_probs_for_base(
+    fn add_modbase_probs_for_record_and_canonical_base(
         &mut self,
         record_name: &str,
         record: &bam::Record,
@@ -76,29 +76,13 @@ impl<'a> ReadCache<'a> {
         &self,
         raw_mm: &str,
         raw_ml: &[u16],
-        canonical_base: DnaBase,
         converter: &DeltaListConverter,
     ) -> Result<SeqPosBaseModProbs, InputError> {
-        let mut seq_base_mod_probs = extract_mod_probs(
-            raw_mm,
-            raw_ml,
-            canonical_base.char(),
-            converter,
-        )?;
+        let mut seq_base_mod_probs =
+            extract_mod_probs(raw_mm, raw_ml, converter)?;
         if let Some(collapse_method) = &self.method {
             seq_base_mod_probs =
                 collapse_mod_probs(seq_base_mod_probs, collapse_method);
-            // for mod_code_to_remove in canonical_base
-            //     .get_mod_codes()
-            //     .iter()
-            //     .filter(|mod_code| **mod_code != collapse_method.mod_code())
-            // {
-            //     seq_base_mod_probs = collapse_mod_probs(
-            //         seq_base_mod_probs,
-            //         mod_code_to_remove.char(),
-            //         collapse_method,
-            //     );
-            // }
         }
         Ok(seq_base_mod_probs)
     }
@@ -119,17 +103,15 @@ impl<'a> ReadCache<'a> {
                     debug!("{}", &msg);
                     return Err(RunError::Skipped(msg));
                 }
+                // can use the new ModBaseInfo here instead
                 for canonical_base in bases_with_mod_calls {
                     let converter = DeltaListConverter::new_from_record(
                         record,
                         canonical_base.char(),
                     )?;
-                    let seq_pos_base_mod_probs = self.get_mod_base_probs(
-                        &mm,
-                        &ml,
-                        canonical_base,
-                        &converter,
-                    )?;
+                    // this comes out of the other object, but will need collapse logic here
+                    let seq_pos_base_mod_probs =
+                        self.get_mod_base_probs(&mm, &ml, &converter)?;
 
                     let mod_code_iter = seq_pos_base_mod_probs
                         .values()
@@ -150,7 +132,7 @@ impl<'a> ReadCache<'a> {
                         .or_insert(HashSet::new());
                     record_mod_codes.extend(mod_code_iter);
 
-                    self.add_base_mod_probs_for_base(
+                    self.add_modbase_probs_for_record_and_canonical_base(
                         &record_name,
                         record,
                         seq_pos_base_mod_probs,
@@ -281,7 +263,7 @@ mod read_cache_tests {
         let converter =
             DeltaListConverter::new_from_record(&record, 'C').unwrap();
         let base_mod_probs =
-            base_mod_probs_from_record(&record, &converter, 'C').unwrap();
+            base_mod_probs_from_record(&record, &converter).unwrap();
         let read_base_mod_probs = cache
             .reads
             .get(&query_name)

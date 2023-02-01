@@ -80,11 +80,7 @@ pub fn summarize_modbam<T: AsRef<Path>>(
                 &record,
                 canonical_base.char(),
             )?;
-            match base_mod_probs_from_record(
-                &record,
-                &converter,
-                canonical_base.char(),
-            ) {
+            match base_mod_probs_from_record(&record, &converter) {
                 Ok(seq_pos_base_mod_probs) => {
                     let count =
                         reads_with_mod_calls.entry(canonical_base).or_insert(0);

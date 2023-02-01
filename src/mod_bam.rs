@@ -106,7 +106,10 @@ impl BaseModProbs {
         self.mod_codes.iter().zip(self.probs.iter())
     }
 
-    pub(crate) fn collapse(self, method: &CollapseMethod) -> BaseModProbs {
+    pub(crate) fn into_collapsed(
+        self,
+        method: &CollapseMethod,
+    ) -> BaseModProbs {
         let canonical_prob = self.canonical_prob();
         match method {
             CollapseMethod::ReNormalize(mod_to_collapse) => {
@@ -213,6 +216,7 @@ impl BaseModProbs {
 
 pub struct DeltaListConverter {
     cumulative_counts: Vec<u32>,
+    canonical_base: char,
 }
 
 impl DeltaListConverter {
@@ -237,7 +241,10 @@ impl DeltaListConverter {
             .collect::<Vec<u32>>();
 
         assert_eq!(cumulative_counts.len(), read_sequence.len());
-        Self { cumulative_counts }
+        Self {
+            cumulative_counts,
+            canonical_base: base,
+        }
     }
 
     pub fn to_positions(
@@ -393,11 +400,10 @@ fn combine_positions_to_probs(
 
 /// Mapping of _forward sequence_ position to `BaseModProbs`.
 pub type SeqPosBaseModProbs = HashMap<usize, BaseModProbs>;
-
 pub fn extract_mod_probs(
     raw_mm: &str,
     mod_quals: &[u16],
-    canonical_base: char,
+    // canonical_base: char,
     converter: &DeltaListConverter,
 ) -> Result<SeqPosBaseModProbs, InputError> {
     let splited = raw_mm.split(";");
@@ -408,7 +414,7 @@ pub fn extract_mod_probs(
             continue;
         }
         let base_mod_positions = BaseModPositions::parse(mod_positions)?;
-        if base_mod_positions.canonical_base == canonical_base {
+        if base_mod_positions.canonical_base == converter.canonical_base {
             let base_mod_probs = get_base_mod_probs(
                 &base_mod_positions,
                 &mod_quals,
@@ -418,7 +424,8 @@ pub fn extract_mod_probs(
             .unwrap(); // todo(arand) remove this unwrap
             combine_positions_to_probs(&mut positions_to_probs, base_mod_probs);
         }
-        pointer += base_mod_positions.delta_list.len();
+        pointer +=
+            base_mod_positions.delta_list.len() * base_mod_positions.stride();
     }
 
     Ok(positions_to_probs)
@@ -468,15 +475,17 @@ pub fn collapse_mod_probs(
 ) -> SeqPosBaseModProbs {
     positions_to_probs
         .into_iter()
-        .map(|(pos, mod_base_probs)| (pos, mod_base_probs.collapse(method)))
+        .map(|(pos, mod_base_probs)| {
+            (pos, mod_base_probs.into_collapsed(method))
+        })
         .collect()
 }
 
 pub fn format_mm_ml_tag(
     positions_to_probs: HashMap<usize, BaseModProbs>,
-    canonical_base: char,
     converter: &DeltaListConverter,
 ) -> (String, Vec<u8>) {
+    let canonical_base = converter.canonical_base;
     let mut mod_code_to_position = HashMap::new();
     for (position, mod_base_probs) in positions_to_probs {
         for (mod_base_code, mod_base_prob) in mod_base_probs.iter_probs() {
@@ -491,11 +500,12 @@ pub fn format_mm_ml_tag(
     let mut ml_tag = Vec::new();
 
     if mod_code_to_position.is_empty() {
-        let raw_mod_code = ModCode::get_any_mod_code(canonical_base)
+        let raw_mod_code = ModCode::get_ambig_modcode(canonical_base)
             .map(|mod_code| mod_code.char())
             .unwrap_or(canonical_base);
         mm_tag.push_str(&format!("{}+{}?", canonical_base, raw_mod_code));
     } else {
+        // todo(arand) this should emit C+hm style tags when possible
         for (mod_code, mut positions_and_probs) in
             mod_code_to_position.into_iter()
         {
@@ -579,6 +589,88 @@ pub fn parse_raw_mod_tags(
     }
 }
 
+pub struct ModBaseInfo {
+    seq_base_mod_probs: HashMap<char, SeqPosBaseModProbs>,
+    converters: HashMap<char, DeltaListConverter>,
+}
+
+impl ModBaseInfo {
+    pub fn new_from_record(record: &bam::Record) -> Result<Self, RunError> {
+        let (mm, ml) = match parse_raw_mod_tags(record) {
+            Some(Ok((mm, ml))) => (mm, ml),
+            Some(Err(run_error)) => {
+                return Err(run_error);
+            }
+            None => {
+                return Err(RunError::new_skipped("no mod tags"));
+            }
+        };
+
+        let forward_sequence = util::get_forward_sequence(record)?;
+        Self::new(&mm, &ml, &forward_sequence)
+    }
+
+    pub fn new(
+        mm: &str,
+        raw_ml: &[u16],
+        forward_seq: &str,
+    ) -> Result<Self, RunError> {
+        let mut seq_base_mod_probs = HashMap::new();
+        let mut converters = HashMap::new();
+        let mut pointer = 0usize;
+        for raw_mm in mm.split(';').filter(|raw_mm| !raw_mm.is_empty()) {
+            let base_mod_positions = BaseModPositions::parse(raw_mm)?;
+
+            let converter = converters
+                .entry(base_mod_positions.canonical_base)
+                .or_insert(DeltaListConverter::new(
+                    forward_seq,
+                    base_mod_positions.canonical_base,
+                ));
+            let base_mod_probs = get_base_mod_probs(
+                &base_mod_positions,
+                &raw_ml,
+                pointer,
+                &converter,
+            )?;
+            let positions_to_probs = seq_base_mod_probs
+                .entry(base_mod_positions.canonical_base)
+                .or_insert(HashMap::new());
+            combine_positions_to_probs(positions_to_probs, base_mod_probs);
+            pointer += base_mod_positions.delta_list.len()
+                * base_mod_positions.stride();
+        }
+
+        Ok(Self {
+            seq_base_mod_probs,
+            converters,
+        })
+    }
+
+    pub fn into_iter_base_mod_probs(
+        self,
+    ) -> impl Iterator<Item = (DeltaListConverter, SeqPosBaseModProbs)> {
+        let mut seq_mod_probs = self
+            .seq_base_mod_probs
+            .into_iter()
+            .collect::<Vec<(char, SeqPosBaseModProbs)>>();
+        let mut converters = self
+            .converters
+            .into_iter()
+            .collect::<Vec<(char, DeltaListConverter)>>();
+        assert_eq!(seq_mod_probs.len(), converters.len());
+
+        seq_mod_probs.sort_by(|(a, _), (b, _)| a.cmp(b));
+        converters.sort_by(|(a, _), (b, _)| a.cmp(b));
+        seq_mod_probs.into_iter().zip(converters).map(
+            |((a, probs), (b, converter))| {
+                assert_eq!(a, b);
+                (converter, probs)
+            },
+        )
+    }
+}
+
 pub fn get_canonical_bases_with_mod_calls(
     record: &bam::Record,
 ) -> Result<Vec<DnaBase>, RunError> {
@@ -598,7 +690,9 @@ pub fn get_canonical_bases_with_mod_calls(
                 }
             })
             .collect::<Result<HashSet<DnaBase>, InputError>>()
-            .map(|chars| chars.into_iter().collect::<Vec<DnaBase>>())
+            .map(|canonical_bases| {
+                canonical_bases.into_iter().collect::<Vec<DnaBase>>()
+            })
             .map_err(|input_err| input_err.into()),
         Some(Err(e)) => Err(e),
         None => Ok(Vec::new()),
@@ -608,7 +702,6 @@ pub fn get_canonical_bases_with_mod_calls(
 pub fn base_mod_probs_from_record(
     record: &bam::Record,
     converter: &DeltaListConverter,
-    canonical_base: char, // todo(arand) should be in the converter
 ) -> Result<SeqPosBaseModProbs, RunError> {
     let (mm, ml) = match parse_raw_mod_tags(record) {
         Some(Ok((mm, ml))) => (mm, ml),
@@ -620,7 +713,7 @@ pub fn base_mod_probs_from_record(
         }
     };
 
-    extract_mod_probs(&mm, &ml, canonical_base, &converter)
+    extract_mod_probs(&mm, &ml, &converter)
         .map_err(|input_err| RunError::BadInput(input_err))
 }
 
@@ -748,13 +841,23 @@ mod mod_bam_tests {
         };
         let collapsed = mod_base_probs
             .clone()
-            .collapse(&CollapseMethod::ReDistribute(ModCode::h));
+            .into_collapsed(&CollapseMethod::ReDistribute(ModCode::h));
         assert_eq!(collapsed.probs, vec![0.52500004]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
-        let collapsed =
-            mod_base_probs.collapse(&CollapseMethod::ReNormalize(ModCode::h));
+        let collapsed = mod_base_probs
+            .clone()
+            .into_collapsed(&CollapseMethod::ReNormalize(ModCode::h));
         assert_eq!(collapsed.probs, vec![0.6666669]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
+
+        let collapsed = mod_base_probs
+            .clone()
+            .into_collapsed(&CollapseMethod::ReNormalize(ModCode::a));
+        assert_eq!(&collapsed, &mod_base_probs);
+        let collapsed = mod_base_probs
+            .clone()
+            .into_collapsed(&CollapseMethod::ReDistribute(ModCode::a));
+        assert_eq!(&collapsed, &mod_base_probs);
     }
 
     #[test]
@@ -763,8 +866,8 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.05273438, 0.03320312],
         };
-        let collapsed =
-            mod_base_probs.collapse(&CollapseMethod::ReNormalize(ModCode::h));
+        let collapsed = mod_base_probs
+            .into_collapsed(&CollapseMethod::ReNormalize(ModCode::h));
         assert_eq!(collapsed.probs, vec![0.035051543]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
@@ -775,8 +878,8 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.05273438, 0.03320312],
         };
-        let collapsed =
-            mod_base_probs.collapse(&CollapseMethod::ReDistribute(ModCode::h));
+        let collapsed = mod_base_probs
+            .into_collapsed(&CollapseMethod::ReDistribute(ModCode::h));
         assert_eq!(collapsed.probs, vec![0.059570313]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
@@ -787,10 +890,11 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.10, 0.75],
         };
-        let collapsed = mod_base_probs.collapse(&CollapseMethod::Convert {
-            from: HashSet::from([ModCode::h]),
-            to: ModCode::C,
-        });
+        let collapsed =
+            mod_base_probs.into_collapsed(&CollapseMethod::Convert {
+                from: HashSet::from([ModCode::h]),
+                to: ModCode::C,
+            });
         assert_eq!(collapsed.probs, vec![0.75, 0.10]);
         assert_eq!(collapsed.mod_codes, indexset! {'m', 'C'});
 
@@ -798,10 +902,11 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.10, 0.75],
         };
-        let collapsed = mod_base_probs.collapse(&CollapseMethod::Convert {
-            from: HashSet::from([ModCode::h, ModCode::m]),
-            to: ModCode::C,
-        });
+        let collapsed =
+            mod_base_probs.into_collapsed(&CollapseMethod::Convert {
+                from: HashSet::from([ModCode::h, ModCode::m]),
+                to: ModCode::C,
+            });
         assert_eq!(collapsed.probs, vec![0.85]);
         assert_eq!(collapsed.mod_codes, indexset! {'C'});
     }
@@ -812,10 +917,11 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.10, 0.75],
         };
-        let collapsed = mod_base_probs.collapse(&CollapseMethod::Convert {
-            from: HashSet::from([ModCode::h]),
-            to: ModCode::m,
-        });
+        let collapsed =
+            mod_base_probs.into_collapsed(&CollapseMethod::Convert {
+                from: HashSet::from([ModCode::h]),
+                to: ModCode::m,
+            });
         assert_eq!(collapsed.probs, vec![0.85]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
@@ -826,10 +932,11 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.10, 0.75],
         };
-        let collapsed = mod_base_probs.collapse(&CollapseMethod::Convert {
-            from: HashSet::from([ModCode::a]),
-            to: ModCode::A,
-        });
+        let collapsed =
+            mod_base_probs.into_collapsed(&CollapseMethod::Convert {
+                from: HashSet::from([ModCode::a]),
+                to: ModCode::A,
+            });
         assert_eq!(collapsed.probs, vec![0.10, 0.75]);
         assert_eq!(collapsed.mod_codes, indexset! {'h', 'm'});
     }
@@ -894,7 +1001,7 @@ mod mod_bam_tests {
         .into_iter()
         .collect::<HashMap<usize, BaseModProbs>>();
 
-        let (mm, ml) = format_mm_ml_tag(positions_and_probs, 'C', &converter);
+        let (mm, ml) = format_mm_ml_tag(positions_and_probs, &converter);
         assert_eq!(mm, "C+m?,1,1,0;");
         assert_eq!(ml, vec![25, 230, 51]);
     }
@@ -941,7 +1048,7 @@ mod mod_bam_tests {
         let converter = DeltaListConverter::new(dna, canonical_base);
 
         let positions_to_probs =
-            extract_mod_probs(tag, &quals, canonical_base, &converter).unwrap();
+            extract_mod_probs(tag, &quals, &converter).unwrap();
 
         assert_eq!(positions_to_probs.len(), 3);
         let mut found_positions = Vec::new();
@@ -959,7 +1066,7 @@ mod mod_bam_tests {
         let quals = vec![1, 1, 1, 200, 200, 200];
 
         let positions_to_probs_1 =
-            extract_mod_probs(tag, &quals, canonical_base, &converter).unwrap();
+            extract_mod_probs(tag, &quals, &converter).unwrap();
         // dbg!(positions_to_probs, positions_to_probs_1);
 
         assert_eq!(positions_to_probs, positions_to_probs_1);
@@ -974,7 +1081,7 @@ mod mod_bam_tests {
         let converter = DeltaListConverter::new(dna, canonical_base);
 
         let positions_to_probs =
-            extract_mod_probs(tag, &quals, canonical_base, &converter).unwrap();
+            extract_mod_probs(tag, &quals, &converter).unwrap();
         assert_eq!(positions_to_probs.len(), 3);
         for (_pos, base_mod_probs) in positions_to_probs.iter() {
             assert_eq!(&base_mod_probs.probs, &[0.005859375, 0.005859375]);
@@ -984,12 +1091,121 @@ mod mod_bam_tests {
         let tag = "C+hm?,0,1,0;A+a?,0,1,0;";
         let quals = vec![1, 1, 1, 1, 1, 1, 200, 200, 200];
         let positions_to_probs_comb =
-            extract_mod_probs(tag, &quals, canonical_base, &converter).unwrap();
+            extract_mod_probs(tag, &quals, &converter).unwrap();
         assert_eq!(positions_to_probs_comb.len(), positions_to_probs.len());
         for (position, base_mod_probs) in positions_to_probs_comb.iter() {
             let other = positions_to_probs.get(position).unwrap();
             assert_eq!(base_mod_probs.probs, other.probs);
             assert_eq!(base_mod_probs.mod_codes, other.mod_codes);
         }
+    }
+
+    #[test]
+    fn test_mod_base_info() {
+        // Preamble, make a short DNA and the converters
+        let dna = "GATCGACTACGTCGA";
+        let c_converter = DeltaListConverter::new(dna, 'C');
+        let a_converter = DeltaListConverter::new(dna, 'A');
+
+        // these tags only have 1 canonical base, parse these and these are the
+        // expected values for the rest of the test
+        let c_tag = "C+hm?,0,1,0;";
+        let a_tag = "A+a?,0,1,0;";
+        let c_quals = vec![1, 100, 1, 100, 1, 100]; // interleaved!
+        let a_quals = vec![200, 200, 200];
+
+        let c_expected_seq_pos_base_mod_probs =
+            extract_mod_probs(c_tag, &c_quals, &c_converter).unwrap();
+        let a_expected_seq_pos_base_mod_probs =
+            extract_mod_probs(a_tag, &a_quals, &a_converter).unwrap();
+
+        let c_expected = BaseModProbs {
+            mod_codes: indexset! { 'h', 'm' },
+            probs: vec![0.005859375, 0.39257813],
+        };
+        let a_expected = BaseModProbs {
+            mod_codes: indexset! {'a'},
+            probs: vec![0.7832031],
+        };
+        assert_eq!(
+            c_expected_seq_pos_base_mod_probs
+                .keys()
+                .map(|c| *c)
+                .collect::<HashSet<usize>>(),
+            HashSet::from([9, 12, 3])
+        );
+        assert_eq!(
+            a_expected_seq_pos_base_mod_probs
+                .keys()
+                .map(|c| *c)
+                .collect::<HashSet<usize>>(),
+            HashSet::from([1, 8, 14])
+        );
+
+        for base_mod_probs in c_expected_seq_pos_base_mod_probs.values() {
+            assert_eq!(base_mod_probs, &c_expected);
+        }
+
+        for base_mod_probs in a_expected_seq_pos_base_mod_probs.values() {
+            assert_eq!(base_mod_probs, &a_expected);
+        }
+
+        // test with the tag/quals separated
+        let tag = "C+h?,0,1,0;A+a?,0,1,0;C+m?,0,1,0;";
+        let quals = vec![1, 1, 1, 200, 200, 200, 100, 100, 100];
+        let obs_mod_base_info = ModBaseInfo::new(tag, &quals, dna).unwrap();
+        assert_eq!(
+            obs_mod_base_info.seq_base_mod_probs.get(&'C').unwrap(),
+            &c_expected_seq_pos_base_mod_probs
+        );
+        assert_eq!(
+            obs_mod_base_info.seq_base_mod_probs.get(&'A').unwrap(),
+            &a_expected_seq_pos_base_mod_probs
+        );
+
+        let obs_base_mod_probs =
+            extract_mod_probs(tag, &quals, &c_converter).unwrap();
+        assert_eq!(&obs_base_mod_probs, &c_expected_seq_pos_base_mod_probs);
+        let obs_base_mod_probs =
+            extract_mod_probs(tag, &quals, &a_converter).unwrap();
+        assert_eq!(&obs_base_mod_probs, &a_expected_seq_pos_base_mod_probs);
+
+        let tag = "C+h?,0,1,0;C+m?,0,1,0;A+a?,0,1,0;";
+        let quals = vec![1, 1, 1, 100, 100, 100, 200, 200, 200];
+        let obs_mod_base_info = ModBaseInfo::new(tag, &quals, dna).unwrap();
+        assert_eq!(
+            obs_mod_base_info.seq_base_mod_probs.get(&'C').unwrap(),
+            &c_expected_seq_pos_base_mod_probs
+        );
+        assert_eq!(
+            obs_mod_base_info.seq_base_mod_probs.get(&'A').unwrap(),
+            &a_expected_seq_pos_base_mod_probs
+        );
+
+        let obs_base_mod_probs =
+            extract_mod_probs(tag, &quals, &c_converter).unwrap();
+        assert_eq!(&obs_base_mod_probs, &c_expected_seq_pos_base_mod_probs);
+        let obs_base_mod_probs =
+            extract_mod_probs(tag, &quals, &a_converter).unwrap();
+        assert_eq!(&obs_base_mod_probs, &a_expected_seq_pos_base_mod_probs);
+
+        // test with the mods "combined"
+        let tag = "C+hm?,0,1,0;A+a?,0,1,0;";
+        let quals = vec![1, 100, 1, 100, 1, 100, 200, 200, 200];
+        let obs_mod_base_info = ModBaseInfo::new(tag, &quals, dna).unwrap();
+        assert_eq!(
+            obs_mod_base_info.seq_base_mod_probs.get(&'C').unwrap(),
+            &c_expected_seq_pos_base_mod_probs
+        );
+        assert_eq!(
+            obs_mod_base_info.seq_base_mod_probs.get(&'A').unwrap(),
+            &a_expected_seq_pos_base_mod_probs
+        );
+        let obs_base_mod_probs =
+            extract_mod_probs(tag, &quals, &c_converter).unwrap();
+        assert_eq!(&obs_base_mod_probs, &c_expected_seq_pos_base_mod_probs);
+        let obs_base_mod_probs =
+            extract_mod_probs(tag, &quals, &a_converter).unwrap();
+        assert_eq!(&obs_base_mod_probs, &a_expected_seq_pos_base_mod_probs);
     }
 }

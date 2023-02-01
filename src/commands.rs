@@ -21,7 +21,7 @@ use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
-    CollapseMethod, DeltaListConverter,
+    CollapseMethod, DeltaListConverter, ModBaseInfo,
 };
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
@@ -124,7 +124,7 @@ type CliResult<T> = Result<T, RunError>;
 
 fn adjust_mod_probs(
     mut record: bam::Record,
-    methods: &[(DnaBase, CollapseMethod)],
+    methods: &[CollapseMethod],
 ) -> CliResult<bam::Record> {
     if record_is_secondary(&record) {
         return Err(RunError::new_skipped("not primary"));
@@ -133,43 +133,41 @@ fn adjust_mod_probs(
         return Err(RunError::new_failed("seq is zero length"));
     }
 
-    for (canonical_base, method) in methods.iter() {
-        let converter = DeltaListConverter::new_from_record(
-            &record,
-            canonical_base.char(),
-        )?;
-        let probs_for_positions = base_mod_probs_from_record(
-            &record,
-            &converter,
-            canonical_base.char(),
-        )?;
-        let collapsed_probs_for_positions =
-            collapse_mod_probs(probs_for_positions, method);
-        let (mm, ml) = format_mm_ml_tag(
-            collapsed_probs_for_positions,
-            canonical_base.char(),
-            &converter,
-        );
+    let mod_base_info = ModBaseInfo::new_from_record(&record)?;
 
-        record
-            .remove_aux("MM".as_bytes())
-            .expect("failed to remove MM tag");
-        record
-            .remove_aux("ML".as_bytes())
-            .expect("failed to remove ML tag");
-        let mm = Aux::String(&mm);
-        let ml_arr: AuxArray<u8> = {
-            let sl = &ml;
-            sl.into()
-        };
-        let ml = Aux::ArrayU8(ml_arr);
-        record
-            .push_aux("MM".as_bytes(), mm)
-            .expect("failed to add MM tag");
-        record
-            .push_aux("ML".as_bytes(), ml)
-            .expect("failed to add ML tag");
+    let mut mm_agg = String::new();
+    let mut ml_agg = Vec::new();
+
+    for (converter, mut seq_pos_mod_probs) in
+        mod_base_info.into_iter_base_mod_probs()
+    {
+        for method in methods {
+            seq_pos_mod_probs = collapse_mod_probs(seq_pos_mod_probs, method);
+        }
+        let (mm, mut ml) = format_mm_ml_tag(seq_pos_mod_probs, &converter);
+        mm_agg.push_str(&mm);
+        ml_agg.extend_from_slice(&mut ml);
     }
+
+    record
+        .remove_aux("MM".as_bytes())
+        .expect("failed to remove MM tag");
+    record
+        .remove_aux("ML".as_bytes())
+        .expect("failed to remove ML tag");
+    let mm = Aux::String(&mm_agg);
+    let ml_arr: AuxArray<u8> = {
+        let sl = &ml_agg;
+        sl.into()
+    };
+    let ml = Aux::ArrayU8(ml_arr);
+    record
+        .push_aux("MM".as_bytes(), mm)
+        .expect("failed to add MM tag");
+    record
+        .push_aux("ML".as_bytes(), ml)
+        .expect("failed to add ML tag");
+
     Ok(record)
 }
 
@@ -209,15 +207,15 @@ impl Adjust {
             conversions
                 .into_iter()
                 .map(|(to_mod_code, from_mod_codes)| {
-                    let canonical_base = to_mod_code.canonical_base();
+                    // let canonical_base = to_mod_code.canonical_base();
                     let method = CollapseMethod::Convert {
                         to: to_mod_code,
                         from: from_mod_codes,
                     };
 
-                    (canonical_base, method)
+                    method
                 })
-                .collect::<Vec<(DnaBase, CollapseMethod)>>()
+                .collect::<Vec<CollapseMethod>>()
         } else {
             let mod_code_to_remove = ModCode::parse_raw_mod_code(self.ignore)?;
             info!(
@@ -229,10 +227,10 @@ impl Adjust {
                     out_fp.to_str().unwrap_or("???")
                 )
             );
-            let canonical_base = mod_code_to_remove.canonical_base();
+            // let canonical_base = mod_code_to_remove.canonical_base();
             let method =
                 CollapseMethod::parse_str(&self.method, mod_code_to_remove)?;
-            vec![(canonical_base, method)]
+            vec![method]
         };
 
         let spinner = get_spinner();
