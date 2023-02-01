@@ -71,27 +71,18 @@ impl<'a> ReadCache<'a> {
         Ok(())
     }
 
-    #[inline]
-    fn get_mod_base_probs(
-        &self,
-        raw_mm: &str,
-        raw_ml: &[u16],
-        converter: &DeltaListConverter,
-    ) -> Result<SeqPosBaseModProbs, InputError> {
-        let mut seq_base_mod_probs =
-            extract_mod_probs(raw_mm, raw_ml, converter)?;
-        if let Some(collapse_method) = &self.method {
-            seq_base_mod_probs =
-                collapse_mod_probs(seq_base_mod_probs, collapse_method);
-        }
-        Ok(seq_base_mod_probs)
-    }
-
     /// Add a record to the cache.
     fn add_record(&mut self, record: &bam::Record) -> Result<(), RunError> {
         let record_name = String::from_utf8(record.qname().to_vec())
             .map_err(|e| RunError::new_input_error(e.to_string()))?;
         let mod_base_info = ModBaseInfo::new_from_record(record)?;
+
+        if mod_base_info.is_empty() {
+            let msg = format!("record {} has no mod calls", &record_name);
+            debug!("{}", &msg);
+            return Err(RunError::Skipped(msg));
+        }
+
         for (converter, mut seq_base_mod_probs) in
             mod_base_info.into_iter_base_mod_probs()
         {
@@ -193,9 +184,14 @@ impl<'a> ReadCache<'a> {
                             "read {read_id} failed to get mod tags {}",
                             err.to_string()
                         );
-                        self.skip_set.insert(read_id);
+                        self.skip_set.insert(read_id.clone());
                     }
                 }
+                assert!(
+                    self.skip_set.contains(&read_id)
+                        || self.mod_codes.contains_key(&read_id),
+                    "should have been added..."
+                );
                 self.get_mod_codes_for_record(record)
             }
         }
@@ -256,6 +252,18 @@ mod read_cache_tests {
         for r in reader.records() {
             let record = r.unwrap();
             tests_record(&record);
+        }
+    }
+
+    #[test]
+    fn test_read_cache_stack_overflow_empty_tags() {
+        let mut reader =
+            BamReader::from_path("tests/resources/empty-tags.bam").unwrap();
+
+        let mut cache = ReadCache::new(None);
+        for r in reader.records() {
+            let record = r.unwrap();
+            assert!(cache.add_record(&record).is_err());
         }
     }
 

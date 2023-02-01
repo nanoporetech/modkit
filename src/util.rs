@@ -1,4 +1,5 @@
 use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Aux};
+use std::string::FromUtf8Error;
 
 use crate::errs::{InputError, RunError};
 
@@ -25,6 +26,12 @@ pub(crate) fn get_aligned_pairs_forward(
     })
 }
 
+pub(crate) fn get_query_name_string(
+    record: &bam::Record,
+) -> Result<String, FromUtf8Error> {
+    String::from_utf8(record.qname().to_vec())
+}
+
 #[inline]
 pub(crate) fn get_forward_sequence(
     record: &bam::Record,
@@ -48,9 +55,9 @@ pub(crate) fn get_forward_sequence(
 
 pub(crate) fn get_tag<T>(
     record: &bam::Record,
-    tag_keys: &[&str; 2],
+    tag_keys: &[&'static str; 2],
     parser: &dyn Fn(&Aux, &str) -> Result<T, RunError>,
-) -> Option<Result<T, RunError>> {
+) -> Option<Result<(T, &'static str), RunError>> {
     let tag_new = record.aux(tag_keys[0].as_bytes());
     let tag_old = record.aux(tag_keys[1].as_bytes());
 
@@ -60,7 +67,10 @@ pub(crate) fn get_tag<T>(
         _ => None,
     };
 
-    tag.map(|(aux, t)| parser(&aux, t))
+    tag.map(|(aux, t)| {
+        let parsed = parser(&aux, t);
+        parsed.map(|res| (res, t))
+    })
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]

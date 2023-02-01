@@ -20,10 +20,9 @@ use crate::errs::{InputError, RunError};
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
-    base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
-    CollapseMethod, DeltaListConverter, ModBaseInfo,
+    collapse_mod_probs, format_mm_ml_tag, CollapseMethod, ModBaseInfo,
 };
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::ModCode;
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::motif_bed;
 use crate::summarize::summarize_modbam;
@@ -134,6 +133,8 @@ fn adjust_mod_probs(
     }
 
     let mod_base_info = ModBaseInfo::new_from_record(&record)?;
+    let mm_style = mod_base_info.mm_style;
+    let ml_style = mod_base_info.ml_style;
 
     let mut mm_agg = String::new();
     let mut ml_agg = Vec::new();
@@ -150,10 +151,10 @@ fn adjust_mod_probs(
     }
 
     record
-        .remove_aux("MM".as_bytes())
+        .remove_aux(mm_style.as_bytes())
         .expect("failed to remove MM tag");
     record
-        .remove_aux("ML".as_bytes())
+        .remove_aux(ml_style.as_bytes())
         .expect("failed to remove ML tag");
     let mm = Aux::String(&mm_agg);
     let ml_arr: AuxArray<u8> = {
@@ -162,10 +163,10 @@ fn adjust_mod_probs(
     };
     let ml = Aux::ArrayU8(ml_arr);
     record
-        .push_aux("MM".as_bytes(), mm)
+        .push_aux(mm_style.as_bytes(), mm)
         .expect("failed to add MM tag");
     record
-        .push_aux("ML".as_bytes(), ml)
+        .push_aux(ml_style.as_bytes(), ml)
         .expect("failed to add ML tag");
 
     Ok(record)
