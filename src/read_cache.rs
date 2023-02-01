@@ -7,7 +7,7 @@ use crate::errs::{InputError, RunError};
 use crate::mod_bam::{
     collapse_mod_probs, extract_mod_probs, get_canonical_bases_with_mod_calls,
     parse_raw_mod_tags, BaseModCall, CollapseMethod, DeltaListConverter,
-    SeqPosBaseModProbs,
+    ModBaseInfo, SeqPosBaseModProbs,
 };
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
@@ -91,68 +91,37 @@ impl<'a> ReadCache<'a> {
     fn add_record(&mut self, record: &bam::Record) -> Result<(), RunError> {
         let record_name = String::from_utf8(record.qname().to_vec())
             .map_err(|e| RunError::new_input_error(e.to_string()))?;
-        match parse_raw_mod_tags(record) {
-            Some(Ok((mm, ml))) => {
-                let bases_with_mod_calls =
-                    get_canonical_bases_with_mod_calls(record)?;
-                if bases_with_mod_calls.is_empty() {
-                    let msg = format!(
-                        "record {} has empty mm tag {}",
-                        &record_name, &mm
-                    );
-                    debug!("{}", &msg);
-                    return Err(RunError::Skipped(msg));
-                }
-                // can use the new ModBaseInfo here instead
-                for canonical_base in bases_with_mod_calls {
-                    let converter = DeltaListConverter::new_from_record(
-                        record,
-                        canonical_base.char(),
-                    )?;
-                    // this comes out of the other object, but will need collapse logic here
-                    let seq_pos_base_mod_probs =
-                        self.get_mod_base_probs(&mm, &ml, &converter)?;
-
-                    let mod_code_iter = seq_pos_base_mod_probs
-                        .values()
-                        .flat_map(|base_mod_probs| {
-                            // use ModCode here? to avoid this indirection..?
-                            base_mod_probs.mod_codes.iter().filter_map(
-                                |raw_mod_code| {
-                                    ModCode::parse_raw_mod_code(*raw_mod_code)
-                                        .ok()
-                                },
-                            )
-                        })
-                        .collect::<HashSet<ModCode>>();
-
-                    let record_mod_codes = self
-                        .mod_codes
-                        .entry(record_name.to_owned())
-                        .or_insert(HashSet::new());
-                    record_mod_codes.extend(mod_code_iter);
-
-                    self.add_modbase_probs_for_record_and_canonical_base(
-                        &record_name,
-                        record,
-                        seq_pos_base_mod_probs,
-                        canonical_base.char(),
-                    )?;
-                }
-                assert!(
-                    self.skip_set.contains(&record_name)
-                        || self.reads.contains_key(&record_name)
-                );
+        let mod_base_info = ModBaseInfo::new_from_record(record)?;
+        for (converter, mut seq_base_mod_probs) in
+            mod_base_info.into_iter_base_mod_probs()
+        {
+            if let Some(method) = &self.method {
+                seq_base_mod_probs =
+                    collapse_mod_probs(seq_base_mod_probs, method);
             }
-            Some(Err(run_error)) => {
-                return Err(run_error);
-            }
-            None => {
-                // no mod tags, make a sentinel so we don't check again
-                self.skip_set.insert(record_name);
-            }
+
+            let mod_codes = seq_base_mod_probs
+                .values()
+                .flat_map(|base_mod_probs| {
+                    base_mod_probs.mod_codes.iter().filter_map(|raw_mod_code| {
+                        ModCode::parse_raw_mod_code(*raw_mod_code).ok()
+                    })
+                })
+                .collect::<HashSet<ModCode>>();
+
+            let record_mod_codes = self
+                .mod_codes
+                .entry(record_name.to_owned())
+                .or_insert(HashSet::new());
+            record_mod_codes.extend(mod_codes);
+
+            self.add_modbase_probs_for_record_and_canonical_base(
+                &record_name,
+                record,
+                seq_base_mod_probs,
+                converter.canonical_base,
+            )?;
         }
-
         Ok(())
     }
 

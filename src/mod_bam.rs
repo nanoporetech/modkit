@@ -216,7 +216,7 @@ impl BaseModProbs {
 
 pub struct DeltaListConverter {
     cumulative_counts: Vec<u32>,
-    canonical_base: char,
+    pub(crate) canonical_base: char,
 }
 
 impl DeltaListConverter {
