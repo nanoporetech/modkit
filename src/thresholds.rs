@@ -86,12 +86,14 @@ pub fn sample_modbase_probs(
     let mut record_count = 0usize;
     for (canonical_bases, record) in record_iter {
         for canonical_base in canonical_bases {
-            let converter =
-                DeltaListConverter::new_from_record(&record, canonical_base)?;
+            let converter = DeltaListConverter::new_from_record(
+                &record,
+                canonical_base.char(),
+            )?;
             let seq_pos_base_mod_probs = base_mod_probs_from_record(
                 &record,
                 &converter,
-                canonical_base,
+                canonical_base.char(),
             )?;
             let mut mod_probs = seq_pos_base_mod_probs
                 .iter()

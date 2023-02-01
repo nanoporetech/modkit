@@ -1,4 +1,4 @@
-use crate::motif_bed::motif_bed;
+use std::collections::{HashMap, HashSet};
 use std::io::BufWriter;
 use std::num::ParseFloatError;
 use std::path::PathBuf;
@@ -21,9 +21,11 @@ use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
-    DeltaListConverter,
+    CollapseMethod, DeltaListConverter,
 };
-use crate::mod_pileup::{process_region, ModBasePileup};
+use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
+use crate::motif_bed::motif_bed;
 use crate::summarize::summarize_modbam;
 use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
@@ -34,7 +36,7 @@ use crate::writers::{BEDWriter, BedMethylWriter, OutWriter, TsvWriter};
 #[derive(Subcommand)]
 pub enum Commands {
     /// Collapse N-way base modification calls to (N-1)-way
-    Collapse(Collapse),
+    AdjustMods(Adjust),
     /// Pileup (combine) mod calls across genomic positions.
     Pileup(ModBamPileup),
     /// Get an estimate of the distribution of mod-base prediction probabilities
@@ -48,7 +50,7 @@ pub enum Commands {
 impl Commands {
     pub fn run(&self) -> Result<(), String> {
         match self {
-            Self::Collapse(x) => x.run(),
+            Self::AdjustMods(x) => x.run(),
             Self::Pileup(x) => x.run(),
             Self::SampleProbs(x) => x.run(),
             Self::Summary(x) => x.run(),
@@ -57,36 +59,41 @@ impl Commands {
     }
 }
 
+fn check_collapse_method(raw_method: &str) -> Result<String, String> {
+    match raw_method {
+        "norm" => Ok(raw_method.to_owned()),
+        "dist" => Ok(raw_method.to_owned()),
+        _ => Err(format!("unknown method {raw_method}")),
+    }
+}
+
 #[derive(Args)]
-pub struct Collapse {
+pub struct Adjust {
     /// BAM file to collapse mod call from
     in_bam: PathBuf,
     /// File path to new BAM file
     out_bam: PathBuf,
-    #[arg(
-        short,
-        long,
-        help = "canonical base to flatten calls for",
-        default_value_t = 'C'
-    )]
-    base: char,
-    #[arg(
-        short,
-        long,
-        help = "mod base code to flatten/remove",
-        default_value_t = 'h'
-    )]
-    mod_base: char,
-    #[arg(short, long, help = "number of threads to use", default_value_t = 1)]
+    /// mod base code to ignore/remove
+    #[arg(long, conflicts_with = "convert", default_value_t = 'h')]
+    ignore: char,
+    /// number of threads to use
+    #[arg(short, long, default_value_t = 4)]
     threads: usize,
-
-    #[arg(
-        short,
-        long = "ff",
-        help = "exit on bad reads, otherwise continue",
-        default_value_t = false
-    )]
+    /// number of threads to use
+    #[arg(short, long = "ff", default_value_t = false)]
     fail_fast: bool,
+    /// Method to use to collapse mod calls, 'norm', 'dist'.
+    #[arg(
+        long,
+        default_value_t = String::from("norm"),
+        value_parser = check_collapse_method,
+        requires = "ignore",
+    )]
+    method: String,
+    /// Convert one mod-tag to another, summing the probabilities together if
+    /// the retained mod tag is already present.
+    #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
+    convert: Option<Vec<char>>,
 
     /// Output debug logs to file at this path
     #[arg(long)]
@@ -115,10 +122,9 @@ pub(crate) fn get_spinner() -> ProgressBar {
 
 type CliResult<T> = Result<T, RunError>;
 
-fn flatten_mod_probs(
+fn adjust_mod_probs(
     mut record: bam::Record,
-    canonical_base: char,
-    mod_base_to_remove: char,
+    methods: &[(DnaBase, CollapseMethod)],
 ) -> CliResult<bam::Record> {
     if record_is_secondary(&record) {
         return Err(RunError::new_skipped("not primary"));
@@ -127,77 +133,116 @@ fn flatten_mod_probs(
         return Err(RunError::new_failed("seq is zero length"));
     }
 
-    let converter =
-        DeltaListConverter::new_from_record(&record, canonical_base)?;
-    let probs_for_positions =
-        base_mod_probs_from_record(&record, &converter, canonical_base)?;
-    let collapsed_probs_for_positions =
-        collapse_mod_probs(probs_for_positions, mod_base_to_remove);
-    let (mm, ml) = format_mm_ml_tag(
-        collapsed_probs_for_positions,
-        canonical_base,
-        &converter,
-    );
+    for (canonical_base, method) in methods.iter() {
+        let converter = DeltaListConverter::new_from_record(
+            &record,
+            canonical_base.char(),
+        )?;
+        let probs_for_positions = base_mod_probs_from_record(
+            &record,
+            &converter,
+            canonical_base.char(),
+        )?;
+        let collapsed_probs_for_positions =
+            collapse_mod_probs(probs_for_positions, method);
+        let (mm, ml) = format_mm_ml_tag(
+            collapsed_probs_for_positions,
+            canonical_base.char(),
+            &converter,
+        );
 
-    record
-        .remove_aux("MM".as_bytes())
-        .expect("failed to remove MM tag");
-    record
-        .remove_aux("ML".as_bytes())
-        .expect("failed to remove ML tag");
-    let mm = Aux::String(&mm);
-    let ml_arr: AuxArray<u8> = {
-        let sl = &ml;
-        sl.into()
-    };
-    let ml = Aux::ArrayU8(ml_arr);
-    record
-        .push_aux("MM".as_bytes(), mm)
-        .expect("failed to add MM tag");
-    record
-        .push_aux("ML".as_bytes(), ml)
-        .expect("failed to add ML tag");
+        record
+            .remove_aux("MM".as_bytes())
+            .expect("failed to remove MM tag");
+        record
+            .remove_aux("ML".as_bytes())
+            .expect("failed to remove ML tag");
+        let mm = Aux::String(&mm);
+        let ml_arr: AuxArray<u8> = {
+            let sl = &ml;
+            sl.into()
+        };
+        let ml = Aux::ArrayU8(ml_arr);
+        record
+            .push_aux("MM".as_bytes(), mm)
+            .expect("failed to add MM tag");
+        record
+            .push_aux("ML".as_bytes(), ml)
+            .expect("failed to add ML tag");
+    }
     Ok(record)
 }
 
-impl Collapse {
+impl Adjust {
     pub fn run(&self) -> Result<(), String> {
         let _handle = init_logging(self.log_filepath.as_ref());
         let fp = &self.in_bam;
         let out_fp = &self.out_bam;
-        let threads = self.threads;
-        let canonical_base = self.base;
-        let mod_base_to_remove = self.mod_base;
-        let fail_fast = self.fail_fast;
-
+        // let canonical_base = self.canonical_base;
         let mut reader =
             bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
+        let threads = self.threads;
         reader.set_threads(threads).map_err(|e| e.to_string())?;
-
         let header = bam::Header::from_template(reader.header());
         let mut out_bam =
             bam::Writer::from_path(out_fp, &header, bam::Format::Bam)
                 .map_err(|e| e.to_string())?;
 
+        let fail_fast = self.fail_fast;
+
+        let methods = if let Some(convert) = &self.convert {
+            let mut conversions = HashMap::new();
+            for chunk in convert.chunks(2) {
+                assert_eq!(chunk.len(), 2);
+                let from = ModCode::parse_raw_mod_code(chunk[0])?;
+                let to = ModCode::parse_raw_mod_code(chunk[1])?;
+                let froms = conversions.entry(to).or_insert(HashSet::new());
+                froms.insert(from);
+            }
+            for (to_code, from_codes) in conversions.iter() {
+                info!(
+                    "Converting {} to {}",
+                    from_codes.iter().map(|c| c.char()).collect::<String>(),
+                    to_code.char()
+                )
+            }
+            conversions
+                .into_iter()
+                .map(|(to_mod_code, from_mod_codes)| {
+                    let canonical_base = to_mod_code.canonical_base();
+                    let method = CollapseMethod::Convert {
+                        to: to_mod_code,
+                        from: from_mod_codes,
+                    };
+
+                    (canonical_base, method)
+                })
+                .collect::<Vec<(DnaBase, CollapseMethod)>>()
+        } else {
+            let mod_code_to_remove = ModCode::parse_raw_mod_code(self.ignore)?;
+            info!(
+                "{}",
+                format!(
+                    "Removing mod base {} from {}, new bam {}",
+                    mod_code_to_remove.char(),
+                    fp.to_str().unwrap_or("???"),
+                    out_fp.to_str().unwrap_or("???")
+                )
+            );
+            let canonical_base = mod_code_to_remove.canonical_base();
+            let method =
+                CollapseMethod::parse_str(&self.method, mod_code_to_remove)?;
+            vec![(canonical_base, method)]
+        };
+
         let spinner = get_spinner();
-        let message = format!(
-            "Removing mod base {} from {}, new bam {}",
-            mod_base_to_remove,
-            fp.to_str().unwrap_or("???"),
-            out_fp.to_str().unwrap_or("???")
-        );
-        info!("> {}", message);
-        spinner.set_message("Flattening ModBAM");
+        spinner.set_message("Adjusting ModBAM");
         let mut total = 0usize;
         let mut total_failed = 0usize;
         let mut total_skipped = 0usize;
         for (i, result) in reader.records().enumerate() {
             if let Ok(record) = result {
-                match flatten_mod_probs(
-                    record,
-                    canonical_base,
-                    mod_base_to_remove,
-                ) {
+                match adjust_mod_probs(record, &methods) {
                     Err(RunError::BadInput(InputError(err)))
                     | Err(RunError::Failed(err)) => {
                         if fail_fast {
@@ -235,43 +280,20 @@ impl Collapse {
         }
         spinner.finish_and_clear();
 
-        eprintln!(
-            "> done, {} records processed, {} failed, {} skipped",
+        info!(
+            "done, {} records processed, {} failed, {} skipped",
             total, total_failed, total_skipped
         );
         Ok(())
     }
 }
 
-const ALLOWED_MOD_CODES: [char; 4] = ['h', 'm', 'a', 'c'];
-fn check_raw_modbase_code(raw_code: &str) -> Result<String, String> {
-    for raw_modbase_code in raw_code.chars() {
-        if !ALLOWED_MOD_CODES.contains(&raw_modbase_code) {
-            return Err(format!(
-                "mod base code {raw_modbase_code} not allowed, options are {:?}",
-                ALLOWED_MOD_CODES
-            ));
-        }
-    }
-    return Ok(raw_code.to_string());
-}
-
 #[derive(Args)]
 pub struct ModBamPileup {
     /// Input BAM, should be sorted and have associated index
     in_bam: PathBuf,
-    /// Output file (BED format).
+    /// Output file
     out_bed: PathBuf,
-    /// TODO, unused atm
-    #[arg(
-        group="mod-args",
-        short='c',
-        long,
-        default_value_t=String::from("hm"),
-        value_parser = check_raw_modbase_code)
-    ]
-    modbases: String,
-
     /// Number of threads to use while processing chunks concurrently.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
@@ -302,9 +324,31 @@ pub struct ModBamPileup {
     #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
     filter_percentile: f32,
 
+    /// Filter threshold, drop calls below this probability
+    #[arg(group = "thresholds", long)]
+    filter_threshold: Option<f32>,
+
     /// Output debug logs to file at this path
     #[arg(long)]
     log_filepath: Option<PathBuf>,
+
+    /// Combine mod calls, all counts of modified bases are summed together.
+    #[arg(long, default_value_t = false, group = "combine_args")]
+    combine: bool,
+
+    /// Secret API: collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
+    #[arg(long, group = "combine_args", hide = true, value_parser)]
+    collapse: Option<char>,
+    /// Method to use to collapse mod calls, 'norm', 'dist'.
+    #[arg(
+        long,
+        default_value_t = String::from("norm"),
+        value_parser = check_collapse_method,
+        requires = "collapse",
+        hide = true,
+    )]
+    #[arg(long)]
+    method: String,
 
     /// Output BED format (for visualization)
     #[arg(long, default_value_t = false)]
@@ -314,15 +358,37 @@ pub struct ModBamPileup {
 impl ModBamPileup {
     fn run(&self) -> AnyhowResult<(), String> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        // do this first so we fail when the file isn't readable
+        let header = bam::IndexedReader::from_path(&self.in_bam)
+            .map_err(|e| e.to_string())
+            .map(|reader| reader.header().to_owned())?;
+
+        let pileup_options = match (self.combine, &self.collapse) {
+            (false, None) => PileupNumericOptions::Passthrough,
+            (true, _) => PileupNumericOptions::Combine,
+            (_, Some(raw_mod_code)) => {
+                let mod_code = ModCode::parse_raw_mod_code(*raw_mod_code)?;
+                let method =
+                    CollapseMethod::parse_str(self.method.as_str(), mod_code)?;
+                PileupNumericOptions::Collapse(method)
+            }
+        };
 
         let threshold = if self.no_filtering {
             0f32
+        } else if let Some(user_threshold) = self.filter_threshold {
+            info!(
+                "Using user-defined threshold probability: {}",
+                user_threshold
+            );
+            user_threshold
         } else {
             info!(
                 "Determining filter threshold probability using sampling \
                 frequency {}",
                 self.sampling_frac
             );
+            // todo need to calc threshold based on collapsed probs
             calc_threshold_from_bam(
                 &self.in_bam,
                 self.threads,
@@ -334,9 +400,6 @@ impl ModBamPileup {
 
         info!("Using filter threshold {}", threshold);
 
-        let header = bam::IndexedReader::from_path(&self.in_bam)
-            .map_err(|e| e.to_string())
-            .map(|reader| reader.header().to_owned())?;
         let tids = (0..header.target_count())
             .filter_map(|tid| {
                 let chrom_name =
@@ -394,7 +457,12 @@ impl ModBamPileup {
                                 .progress_with(interval_progress)
                                 .map(|(start, end)| {
                                     process_region(
-                                        &in_bam_fp, tid, start, end, threshold,
+                                        &in_bam_fp,
+                                        tid,
+                                        start,
+                                        end,
+                                        threshold,
+                                        &pileup_options,
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()
@@ -412,6 +480,7 @@ impl ModBamPileup {
                     });
                     tid_progress.inc(1);
                 }
+                tid_progress.finish_and_clear();
             });
         });
 

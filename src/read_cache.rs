@@ -1,33 +1,48 @@
-use crate::errs::RunError;
-use crate::mod_bam::{
-    extract_mod_probs, get_canonical_bases_with_mod_calls, parse_raw_mod_tags,
-    BaseModCall, DeltaListConverter, SeqPosBaseModProbs,
-};
-use crate::util;
+use std::collections::{HashMap, HashSet};
+
 use log::debug;
 use rust_htslib::bam;
-use std::collections::{HashMap, HashSet};
+
+use crate::errs::{InputError, RunError};
+use crate::mod_bam::{
+    collapse_mod_probs, extract_mod_probs, get_canonical_bases_with_mod_calls,
+    parse_raw_mod_tags, BaseModCall, CollapseMethod, DeltaListConverter,
+    SeqPosBaseModProbs,
+};
+use crate::mod_base_code::{DnaBase, ModCode};
+use crate::util;
 
 /// Mapping of _reference position_ to base mod calls as determined by the aligned pairs for the
 /// read
-type ReadModBaseLookup = HashMap<u64, BaseModCall>; // todo use FxHasher
+type RefPosBaseModCalls = HashMap<u64, BaseModCall>; // todo use FxHasher
 
-pub(crate) struct ReadCache {
-    // todo last position (for gc)
-    reads: HashMap<String, HashMap<char, ReadModBaseLookup>>,
-    // these reads don't have mod tags
+// todo last position (for gc)
+pub(crate) struct ReadCache<'a> {
+    /// Mapping of read_id to reference position <> base mod calls for that read
+    reads: HashMap<String, HashMap<char, RefPosBaseModCalls>>,
+    /// these reads don't have mod tags or should be skipped for some other reason
     skip_set: HashSet<String>,
+    /// mapping of read_id (query_name) to the mod codes contained in that read
+    mod_codes: HashMap<String, HashSet<ModCode>>,
+    /// collapse method
+    method: Option<&'a CollapseMethod>,
 }
 
-impl ReadCache {
+impl<'a> ReadCache<'a> {
     // todo garbage collect freq
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(method: Option<&'a CollapseMethod>) -> Self {
         Self {
             reads: HashMap::new(),
             skip_set: HashSet::new(),
+            mod_codes: HashMap::new(),
+            method,
         }
     }
 
+    /// Subroutine that adds read's mod base calls to the cache (or error),
+    /// in the case of an error the caller could remove this read from
+    /// future consideration
+    #[inline]
     fn add_base_mod_probs_for_base(
         &mut self,
         record_name: &str,
@@ -56,6 +71,39 @@ impl ReadCache {
         Ok(())
     }
 
+    #[inline]
+    fn get_mod_base_probs(
+        &self,
+        raw_mm: &str,
+        raw_ml: &[u16],
+        canonical_base: DnaBase,
+        converter: &DeltaListConverter,
+    ) -> Result<SeqPosBaseModProbs, InputError> {
+        let mut seq_base_mod_probs = extract_mod_probs(
+            raw_mm,
+            raw_ml,
+            canonical_base.char(),
+            converter,
+        )?;
+        if let Some(collapse_method) = &self.method {
+            seq_base_mod_probs =
+                collapse_mod_probs(seq_base_mod_probs, collapse_method);
+            // for mod_code_to_remove in canonical_base
+            //     .get_mod_codes()
+            //     .iter()
+            //     .filter(|mod_code| **mod_code != collapse_method.mod_code())
+            // {
+            //     seq_base_mod_probs = collapse_mod_probs(
+            //         seq_base_mod_probs,
+            //         mod_code_to_remove.char(),
+            //         collapse_method,
+            //     );
+            // }
+        }
+        Ok(seq_base_mod_probs)
+    }
+
+    /// Add a record to the cache.
     fn add_record(&mut self, record: &bam::Record) -> Result<(), RunError> {
         let record_name = String::from_utf8(record.qname().to_vec())
             .map_err(|e| RunError::new_input_error(e.to_string()))?;
@@ -74,19 +122,39 @@ impl ReadCache {
                 for canonical_base in bases_with_mod_calls {
                     let converter = DeltaListConverter::new_from_record(
                         record,
-                        canonical_base,
+                        canonical_base.char(),
                     )?;
-                    let seq_pos_base_mod_probs = extract_mod_probs(
+                    let seq_pos_base_mod_probs = self.get_mod_base_probs(
                         &mm,
                         &ml,
                         canonical_base,
                         &converter,
                     )?;
+
+                    let mod_code_iter = seq_pos_base_mod_probs
+                        .values()
+                        .flat_map(|base_mod_probs| {
+                            // use ModCode here? to avoid this indirection..?
+                            base_mod_probs.mod_codes.iter().filter_map(
+                                |raw_mod_code| {
+                                    ModCode::parse_raw_mod_code(*raw_mod_code)
+                                        .ok()
+                                },
+                            )
+                        })
+                        .collect::<HashSet<ModCode>>();
+
+                    let record_mod_codes = self
+                        .mod_codes
+                        .entry(record_name.to_owned())
+                        .or_insert(HashSet::new());
+                    record_mod_codes.extend(mod_code_iter);
+
                     self.add_base_mod_probs_for_base(
                         &record_name,
                         record,
                         seq_pos_base_mod_probs,
-                        canonical_base,
+                        canonical_base.char(),
                     )?;
                 }
                 assert!(
@@ -106,11 +174,14 @@ impl ReadCache {
         Ok(())
     }
 
+    /// Get the mod call for a reference position from a read. If this read is
+    /// in the cache, look it up, if not parse the tags, add it to the cache
+    /// and return the mod call (if present).
     pub(crate) fn get_mod_call(
         &mut self,
         record: &bam::Record,
         position: u32,
-        canonical_base: char,
+        canonical_base: char, // todo make this DnaBase
         threshold: f32,
     ) -> Option<BaseModCall> {
         let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
@@ -152,16 +223,44 @@ impl ReadCache {
             }
         }
     }
+
+    pub(crate) fn get_mod_codes_for_record(
+        &mut self,
+        record: &bam::Record,
+    ) -> HashSet<ModCode> {
+        let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
+        if self.skip_set.contains(&read_id) {
+            HashSet::new()
+        } else {
+            if let Some(mod_codes) = self.mod_codes.get(&read_id) {
+                mod_codes.iter().map(|mc| *mc).collect()
+            } else {
+                match self.add_record(record) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        debug!(
+                            "read {read_id} failed to get mod tags {}",
+                            err.to_string()
+                        );
+                        self.skip_set.insert(read_id);
+                    }
+                }
+                self.get_mod_codes_for_record(record)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod read_cache_tests {
+    use std::collections::HashMap;
+
+    use rust_htslib::bam::{self, FetchDefinition, Read, Reader as BamReader};
+
     use crate::mod_bam::{base_mod_probs_from_record, DeltaListConverter};
     use crate::read_cache::ReadCache;
     use crate::test_utils::dna_complement;
     use crate::util;
-    use rust_htslib::bam::{self, FetchDefinition, Read, Reader as BamReader};
-    use std::collections::HashMap;
 
     fn tests_record(record: &bam::Record) {
         let query_name = String::from_utf8(record.qname().to_vec()).unwrap();
@@ -177,7 +276,7 @@ mod read_cache_tests {
             .map(|seq| seq.chars().collect::<Vec<char>>())
             .unwrap();
 
-        let mut cache = ReadCache::new();
+        let mut cache = ReadCache::new(None);
         cache.add_record(&record).unwrap();
         let converter =
             DeltaListConverter::new_from_record(&record, 'C').unwrap();
@@ -227,7 +326,7 @@ mod read_cache_tests {
             .fetch(FetchDefinition::Region(tid as i32, 0, target_length as i64))
             .unwrap();
 
-        let mut read_cache = ReadCache::new();
+        let mut read_cache = ReadCache::new(None);
         for p in reader.pileup() {
             let pileup = p.unwrap();
             for alignment in pileup.alignments() {

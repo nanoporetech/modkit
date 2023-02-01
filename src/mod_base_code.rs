@@ -1,275 +1,131 @@
-use itertools::Itertools;
-use std::collections::VecDeque;
+use log::debug;
 
-use crate::util;
-
-pub trait ModBaseCode {
-    fn num_mods(&self) -> usize;
-    fn idx_for_mod_code(&self, raw_code: char) -> Option<usize>;
-    fn raw_mod_codes(&self) -> &'static [char];
-    fn canonical_base(&self) -> char;
-    fn canonical_base_strand(&self, strand: util::Strand) -> char;
+#[allow(non_camel_case_types)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum ModCode {
+    /// canonical A
+    A,
+    /// canonical C
+    C,
+    a,
+    h,
+    m,
+    G,
+    T,
+    /// Any C mod
+    anyC,
+    /// Any A mod
+    anyA,
 }
 
-#[derive(Copy, Clone)]
-pub struct CytosineModBaseCode;
-const CYTOSINE_MODBASE_CODES: [char; 5] = ['C', 'c', 'f', 'h', 'm'];
-impl ModBaseCode for CytosineModBaseCode {
-    fn num_mods(&self) -> usize {
-        5
-    }
-
-    fn idx_for_mod_code(&self, raw_code: char) -> Option<usize> {
-        match raw_code {
-            'C' => Some(0),
-            'c' => Some(1),
-            'f' => Some(2),
-            'h' => Some(3),
-            'm' => Some(4),
-            _ => None,
+impl ModCode {
+    pub(crate) fn parse_raw_mod_code(
+        raw_mod_code: char,
+    ) -> Result<Self, String> {
+        match raw_mod_code {
+            'a' => Ok(Self::a),
+            'h' => Ok(Self::h),
+            'm' => Ok(Self::m),
+            'C' => Ok(Self::anyC),
+            'A' => Ok(Self::anyA),
+            _ => Err(format!("no mod code for {raw_mod_code}")),
         }
     }
 
-    fn raw_mod_codes(&self) -> &'static [char] {
-        &CYTOSINE_MODBASE_CODES
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct HydroxyMethylCytosineCode;
-const HMC_MODBASE_CODE_SUBSET: [char; 2] = ['h', 'm'];
-impl ModBaseCode for HydroxyMethylCytosineCode {
-    fn num_mods(&self) -> usize {
-        2
-    }
-
-    fn idx_for_mod_code(&self, raw_code: char) -> Option<usize> {
-        match raw_code {
-            'h' => Some(0),
-            'm' => Some(1),
-            _ => None,
+    pub fn char(&self) -> char {
+        match self {
+            Self::A => 'A',
+            Self::C => 'C',
+            Self::a => 'a',
+            Self::h => 'h',
+            Self::m => 'm',
+            Self::G => 'G',
+            Self::T => 'T',
+            Self::anyA => 'A',
+            Self::anyC => 'C',
         }
     }
 
-    fn raw_mod_codes(&self) -> &'static [char] {
-        &HMC_MODBASE_CODE_SUBSET
-    }
-}
-
-pub trait ModificationMotif {
-    // todo? would maybe be better API to have this return an iterator
-    fn find_matches(&self, seq: &str) -> VecDeque<(usize, util::Strand)>;
-    fn canonical_base(&self) -> char;
-    fn len(&self) -> u32;
-    fn required_overlap(&self) -> u32 {
-        let base = self.len() / 2;
-        base + (self.len() % 2)
-    }
-}
-
-struct CustomModificationMotif {
-    motif_seq: String,
-    canonical_base: char,
-}
-
-pub struct CpGModificationMotif;
-impl ModificationMotif for CpGModificationMotif {
-    fn find_matches(&self, seq: &str) -> VecDeque<(usize, util::Strand)> {
-        seq.match_indices("CG")
-            .flat_map(|(pos, _)| {
-                [
-                    (pos, util::Strand::Positive),
-                    (pos + 1, util::Strand::Negative),
-                ]
-            })
-            .collect()
+    pub fn canonical_base(&self) -> DnaBase {
+        match self {
+            Self::A => DnaBase::A,
+            Self::C => DnaBase::C,
+            Self::a => DnaBase::A,
+            Self::h => DnaBase::C,
+            Self::m => DnaBase::C,
+            Self::G => DnaBase::G,
+            Self::T => DnaBase::T,
+            Self::anyC => DnaBase::C,
+            Self::anyA => DnaBase::A,
+        }
     }
 
-    fn canonical_base(&self) -> char {
-        'C'
+    pub(crate) fn is_canonical(&self) -> bool {
+        match self {
+            Self::A | Self::C | Self::G | Self::T => true,
+            _ => false,
+        }
     }
-    fn len(&self) -> u32 {
-        2
-    }
-}
 
-#[inline]
-fn find_matching_positions<
-    'a,
-    const WINDOW_SIZE: usize,
-    const STEP_SIZE: usize,
-    const PATTERN_SIZE: u8,
->(
-    encoded_seq: &'a [u8],
-    encoded_pattern: &'a [u8],
-) -> impl Iterator<Item = usize> + 'a {
-    encoded_seq
-        .windows(WINDOW_SIZE)
-        .step_by(STEP_SIZE)
-        .enumerate()
-        .filter_map(|(i, chunk)| {
-            let match_count = array_mul(chunk, encoded_pattern);
-            if match_count == PATTERN_SIZE {
-                Some(i)
-            } else {
+    pub fn get_any_mod_code(raw_dna_base: char) -> Option<ModCode> {
+        match raw_dna_base {
+            'C' => Some(ModCode::anyC),
+            'A' => Some(ModCode::anyA),
+            _ => {
+                debug!("raw dna base {raw_dna_base} does not have a 'any mod' code");
                 None
             }
-        })
-}
-
-#[inline]
-pub(crate) fn encode_seq(seq: &str) -> Vec<u8> {
-    seq.chars()
-        .flat_map(|c| match c {
-            'A' => [1, 0, 0, 0],
-            'C' => [0, 1, 0, 0],
-            'G' => [0, 0, 1, 0],
-            'T' => [0, 0, 0, 1],
-            'H' => [1, 1, 0, 1],
-            // todo, the rest of the IUPAC codes...
-            _ => panic!("non-canonical base {c}"),
-        })
-        .collect()
-}
-
-#[inline]
-fn array_mul(a: &[u8], b: &[u8]) -> u8 {
-    assert_eq!(a.len(), b.len());
-    a.iter().zip(b.iter()).map(|(x, y)| (*x) * (*y)).sum()
-}
-
-pub struct CHHModificationMotif;
-const CHH_MOTIF: [u8; 12] = [0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1];
-impl ModificationMotif for CHHModificationMotif {
-    fn find_matches(&self, seq: &str) -> VecDeque<(usize, util::Strand)> {
-        let encoded_seq = util::encode_seq(seq);
-        let fw_pos = util::find_matching_positions::<12, 4, 3>(&encoded_seq, &CHH_MOTIF)
-            .map(|pos| (pos, util::Strand::Positive));
-        let rc_seq = bio::alphabets::dna::revcomp(seq.as_bytes());
-        let rc_seq = String::from_utf8(rc_seq).unwrap();
-        let encoded_rc_seq = util::encode_seq(&rc_seq);
-        let rv_pos = util::find_matching_positions::<12, 4, 3>(&encoded_rc_seq, &CHH_MOTIF)
-            .map(|pos| (seq.len() - 1 - pos, util::Strand::Negative));
-        let matches = fw_pos
-            .chain(rv_pos)
-            .sorted_by(|(x, _), (y, _)| x.cmp(y))
-            .collect::<VecDeque<(usize, util::Strand)>>();
-        matches
-    }
-    fn canonical_base(&self) -> char {
-        'C'
-    }
-    fn len(&self) -> u32 {
-        3
+        }
     }
 }
 
-#[cfg(test)]
-mod mod_base_code_tests {
-    use crate::interval_chunks::IntervalChunks;
-    use lazy_regex::regex;
-    use rust_htslib::bam::{self, Read, Reader as BamReader};
-    use std::collections::{HashMap, VecDeque};
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub enum DnaBase {
+    A,
+    C,
+    G,
+    T,
+}
 
-    use rust_htslib::faidx::{self, Reader as FastaReader};
-
-    use crate::mod_base_code::{CHHModificationMotif, CpGModificationMotif, ModificationMotif};
-    use crate::util::Strand;
-
-    #[test]
-    fn test_cpg_modification_motif() {
-        //               01     78 0
-        //                +-    +- +-
-        let seq = "CCGGTGACGGCGG";
-        let motif = CpGModificationMotif;
-        let matches = motif.find_matches(&seq);
-        let expected = vec![
-            (1, Strand::Positive),
-            (2, Strand::Negative),
-            (7, Strand::Positive),
-            (8, Strand::Negative),
-            (10, Strand::Positive),
-            (11, Strand::Negative),
-        ];
-        assert_eq!(matches.into_iter().collect::<Vec<_>>(), expected);
+impl DnaBase {
+    pub(crate) fn parse(nt: char) -> Result<Self, String> {
+        match nt {
+            'A' => Ok(Self::A),
+            'C' => Ok(Self::C),
+            'G' => Ok(Self::G),
+            'T' => Ok(Self::T),
+            _ => Err("unknown? {nt}".to_string()),
+        }
     }
 
-    #[test]
-    fn test_chh_modification_motifs() {
-        //                ++  -
-        let seq = "ACCTAG";
-        let motif = CHHModificationMotif;
-        let matches = motif.find_matches(&seq);
-        let expected = vec![
-            (1, Strand::Positive),
-            (2, Strand::Positive),
-            (5, Strand::Negative),
-        ];
-        assert_eq!(matches.into_iter().collect::<Vec<_>>(), expected);
+    pub(crate) fn complement(self) -> Self {
+        match self {
+            Self::A => Self::T,
+            Self::C => Self::G,
+            Self::G => Self::C,
+            Self::T => Self::A,
+        }
     }
 
-    #[test]
-    fn test_splitting_and_overlap() {
-        let motif = CpGModificationMotif;
-        let seq = "ACGCGTTT".chars().collect::<Vec<_>>();
-        let chunk_size = 4;
-        let mut intervals =
-            IntervalChunks::new(seq.len() as u32, chunk_size, motif.required_overlap());
-        let (start, end) = intervals.next().unwrap();
-        let (start, end) = (start as usize, end as usize);
-        let sub_seq = &seq[start..end].iter().collect::<String>();
-        assert_eq!(sub_seq, "ACGC");
-        let motif_positions = motif.find_matches(sub_seq).into_iter().collect::<Vec<_>>();
-        assert_eq!(
-            motif_positions,
-            vec![(1, Strand::Positive), (2, Strand::Negative)]
-        );
-
-        let (start, end) = intervals.next().unwrap();
-        let (start, end) = (start as usize, end as usize);
-        let sub_seq = &seq[start..end].iter().collect::<String>();
-        assert_eq!(sub_seq, "CGTT");
-        let motif_positions = motif.find_matches(sub_seq).into_iter().collect::<Vec<_>>();
-        assert_eq!(
-            motif_positions,
-            vec![(0, Strand::Positive), (1, Strand::Negative)]
-        );
-
-        let motif = CHHModificationMotif;
-        assert_eq!(motif.required_overlap(), 2);
-        let seq = "AACCATT".chars().collect::<Vec<_>>();
-        let mut intervals =
-            IntervalChunks::new(seq.len() as u32, chunk_size, motif.required_overlap());
-        let (start, end) = intervals.next().unwrap();
-        let (start, end) = (start as usize, end as usize);
-        let sub_seq = &seq[start..end].iter().collect::<String>();
-        assert_eq!(sub_seq, "AACC");
-        let motif_positions = motif.find_matches(sub_seq).into_iter().collect::<Vec<_>>();
-        assert_eq!(motif_positions, vec![]);
-
-        let (start, end) = intervals.next().unwrap();
-        let (start, end) = (start as usize, end as usize);
-        let sub_seq = &seq[start..end].iter().collect::<String>();
-        assert_eq!(sub_seq, "CCAT");
-        let motif_positions = motif.find_matches(sub_seq).into_iter().collect::<Vec<_>>();
-        assert_eq!(
-            motif_positions,
-            vec![(0, Strand::Positive), (1, Strand::Positive)]
-        );
+    pub(crate) fn char(&self) -> char {
+        match self {
+            Self::A => 'A',
+            Self::C => 'C',
+            Self::G => 'G',
+            Self::T => 'T',
+        }
     }
 
-    #[test]
-    #[ignore = "not yet implemented"]
-    fn test_chg_modification_motifs() {
-        todo!("implement CHG motif and test")
+    pub(crate) fn canonical_mod_code(self) -> Result<ModCode, String> {
+        match self {
+            Self::A => Ok(ModCode::A),
+            Self::C => Ok(ModCode::C),
+            Self::G => {
+                Err(format!("no mod code for canonical base {}", self.char()))
+            }
+            Self::T => {
+                Err(format!("no mod code for canonical base {}", self.char()))
+            }
+        }
     }
-
-    #[test]
-    #[ignore = "not yet implemented"]
-    fn test_generative_against_regex() {
-        todo!("write test that generates random DNA and tests against regex engine")
-    }
-
-    #[test]
-    fn test_generic_motif() {}
 }
