@@ -286,14 +286,26 @@ fn test_pileup_no_mod_calls() {
 
 #[test]
 fn test_pileup_old_tags() {
+    let updated_file =
+        std::env::temp_dir().join("test_pileup_old_tags_updated.bam");
+    run_modkit(&[
+        "update-tags",
+        "tests/resources/HG002_small.ch20._other.sorted.bam",
+        "--mode",
+        "ambiguous",
+        updated_file.to_str().unwrap(),
+    ]);
+    assert!(updated_file.exists());
+    bam::index::build(updated_file.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
     let out_file = std::env::temp_dir().join("test_pileup_old_tags.bed");
-    let args = [
+    run_modkit(&[
         "pileup",
         "--no-filtering",
-        "tests/resources/HG002_small.ch20._other.sorted.bam",
+        updated_file.to_str().unwrap(),
         out_file.to_str().unwrap(),
-    ];
-    run_modkit(&args);
+    ]);
     check_against_expected_text_file(
         out_file.to_str().unwrap(),
         "tests/resources/pileup-old-tags-regressiontest.bed",

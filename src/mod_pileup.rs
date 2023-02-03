@@ -361,6 +361,7 @@ pub fn process_region<T: AsRef<Path>>(
     end_pos: u32,
     threshold: f32,
     pileup_numeric_options: &PileupNumericOptions,
+    force_allow: bool,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -375,8 +376,10 @@ pub fn process_region<T: AsRef<Path>>(
         ))
         .map_err(|e| e.to_string())?;
 
-    let mut read_cache =
-        ReadCache::new(pileup_numeric_options.get_collapse_method());
+    let mut read_cache = ReadCache::new(
+        pileup_numeric_options.get_collapse_method(),
+        force_allow,
+    );
     let mut position_feature_counts = HashMap::new();
     let pileup_iter = PileupIter::new(bam_reader.pileup(), start_pos, end_pos);
     for pileup in pileup_iter {

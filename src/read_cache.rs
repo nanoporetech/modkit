@@ -6,7 +6,7 @@ use rust_htslib::bam;
 use crate::errs::RunError;
 use crate::mod_bam::{
     collapse_mod_probs, BaseModCall, CollapseMethod, ModBaseInfo,
-    SeqPosBaseModProbs,
+    SeqPosBaseModProbs, SkipMode,
 };
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
@@ -19,8 +19,8 @@ type RefPosBaseModCalls = HashMap<u64, BaseModCall>; // todo use FxHasher
 // todo last position (for gc)
 pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that read
-    pos_reads: HashMap<String, HashMap<char, RefPosBaseModCalls>>,
-    neg_reads: HashMap<String, HashMap<char, RefPosBaseModCalls>>,
+    pos_reads: HashMap<String, HashMap<char, (RefPosBaseModCalls, SkipMode)>>,
+    neg_reads: HashMap<String, HashMap<char, (RefPosBaseModCalls, SkipMode)>>,
     /// these reads don't have mod tags or should be skipped for some other reason
     skip_set: HashSet<String>,
     /// mapping of read_id (query_name) to the mod codes contained in that read
@@ -28,11 +28,16 @@ pub(crate) struct ReadCache<'a> {
     neg_mod_codes: HashMap<String, HashSet<ModCode>>,
     /// collapse method
     method: Option<&'a CollapseMethod>,
+    /// Force allowing of implicit canonical
+    force_allow: bool,
 }
 
 impl<'a> ReadCache<'a> {
     // todo garbage collect freq
-    pub(crate) fn new(method: Option<&'a CollapseMethod>) -> Self {
+    pub(crate) fn new(
+        method: Option<&'a CollapseMethod>,
+        force_allow: bool,
+    ) -> Self {
         Self {
             pos_reads: HashMap::new(),
             neg_reads: HashMap::new(),
@@ -40,6 +45,7 @@ impl<'a> ReadCache<'a> {
             pos_mod_codes: HashMap::new(),
             neg_mod_codes: HashMap::new(),
             method,
+            force_allow,
         }
     }
 
@@ -107,7 +113,10 @@ impl<'a> ReadCache<'a> {
         //     .reads
         //     .entry(record_name.to_owned())
         //     .or_insert(HashMap::new());
-        base_to_mod_calls.insert(canonical_base, ref_pos_base_mod_calls);
+        base_to_mod_calls.insert(
+            canonical_base,
+            (ref_pos_base_mod_calls, seq_pos_base_mod_probs.skip_mode),
+        );
         Ok(())
     }
 
@@ -119,19 +128,27 @@ impl<'a> ReadCache<'a> {
         let mod_base_info = ModBaseInfo::new_from_record(record)?;
         if mod_base_info.is_empty() {
             let msg = format!("record {} has no mod calls", &record_name);
-            debug!("{}", &msg);
             return Err(RunError::Skipped(msg));
+        }
+
+        for (_base, _strand, seq_pos_probs) in
+            mod_base_info.iter_seq_base_mod_probs()
+        {
+            if seq_pos_probs.skip_mode != SkipMode::Ambiguous
+                && !self.force_allow
+            {
+                let msg = format!(
+                    "record {} has un-allowed mode ({:?}), use \
+                '--force-implicit' or 'modkit update-tags --mode ambiguous'",
+                    &record_name, seq_pos_probs.skip_mode
+                );
+                return Err(RunError::Skipped(msg));
+            }
         }
 
         let (converters, mod_prob_iter) =
             mod_base_info.into_iter_base_mod_probs();
         for (base, mod_strand, mut seq_base_mod_probs) in mod_prob_iter {
-            if &record_name == "3cc54106-c79b-4a32-8abf-e102fc5e2cf3" {
-                debug!(
-                    "{base} {:?}, {:?}",
-                    mod_strand, seq_base_mod_probs.pos_to_base_mod_probs
-                );
-            }
             let converter = converters.get(&base).unwrap();
             if let Some(method) = &self.method {
                 seq_base_mod_probs =
@@ -206,20 +223,29 @@ impl<'a> ReadCache<'a> {
 
     #[inline]
     fn get_mod_call_from_mapping(
-        strand_calls: &HashMap<char, RefPosBaseModCalls>,
+        strand_calls: &HashMap<char, (RefPosBaseModCalls, SkipMode)>,
         canonical_base: char,
         position: u32,
         threshold: f32,
     ) -> Option<BaseModCall> {
-        strand_calls
-            .get(&canonical_base)
-            .and_then(|ref_pos_mod_calls| {
-                ref_pos_mod_calls
+        strand_calls.get(&canonical_base).and_then(
+            |(ref_pos_mod_calls, skip_mode)| {
+                let mod_base_call = ref_pos_mod_calls
                     .get(&(position as u64))
                     .map(|base_mod_call| {
                         Self::filter_base_mod_call(base_mod_call, threshold)
-                    })
-            })
+                    });
+                match skip_mode {
+                    SkipMode::Ambiguous => mod_base_call,
+                    SkipMode::ImplicitProbModified | SkipMode::ProbModified => {
+                        Some(
+                            mod_base_call
+                                .unwrap_or(BaseModCall::Canonical(1.0f32)),
+                        )
+                    }
+                }
+            },
+        )
     }
 
     /// Get the mod call for a reference position from a read. If this read is
@@ -330,10 +356,7 @@ impl<'a> ReadCache<'a> {
                     match self.add_record(record) {
                         Ok(_) => {}
                         Err(run_error) => {
-                            debug!(
-                                "read {read_id} failed to get mod tags {}",
-                                run_error.to_string()
-                            );
+                            debug!("read {read_id}, {}", run_error.to_string());
                             self.skip_set.insert(read_id.clone());
                         }
                     }
@@ -359,7 +382,9 @@ mod read_cache_tests {
 
     use rust_htslib::bam::{self, FetchDefinition, Read, Reader as BamReader};
 
-    use crate::mod_bam::{base_mod_probs_from_record, DeltaListConverter};
+    use crate::mod_bam::{
+        base_mod_probs_from_record, DeltaListConverter, SkipMode,
+    };
     use crate::read_cache::ReadCache;
     use crate::test_utils::dna_complement;
     use crate::util;
@@ -378,18 +403,20 @@ mod read_cache_tests {
             .map(|seq| seq.chars().collect::<Vec<char>>())
             .unwrap();
 
-        let mut cache = ReadCache::new(None);
+        let mut cache = ReadCache::new(None, false);
         cache.add_record(&record).unwrap();
         let converter =
             DeltaListConverter::new_from_record(&record, 'C').unwrap();
         let base_mod_probs =
             base_mod_probs_from_record(&record, &converter).unwrap();
 
-        let read_base_mod_probs = cache
+        let (read_base_mod_probs, skip_mode) = cache
             .pos_reads
             .get(&query_name)
             .and_then(|base_to_calls| base_to_calls.get(&'C'))
             .unwrap();
+
+        assert_eq!(skip_mode, &SkipMode::Ambiguous);
 
         // let read_base_mod_probs = match record.is_reverse() {
         //     true => cache
@@ -438,7 +465,7 @@ mod read_cache_tests {
         let mut reader =
             BamReader::from_path("tests/resources/empty-tags.bam").unwrap();
 
-        let mut cache = ReadCache::new(None);
+        let mut cache = ReadCache::new(None, false);
         for r in reader.records() {
             let record = r.unwrap();
             assert!(cache.add_record(&record).is_err());
@@ -463,7 +490,7 @@ mod read_cache_tests {
             .fetch(FetchDefinition::Region(tid as i32, 0, target_length as i64))
             .unwrap();
 
-        let mut read_cache = ReadCache::new(None);
+        let mut read_cache = ReadCache::new(None, false);
         for p in reader.pileup() {
             let pileup = p.unwrap();
             for alignment in pileup.alignments() {

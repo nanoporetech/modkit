@@ -8,8 +8,8 @@ use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
 use std::collections::{HashMap, HashSet};
 
-const MM_TAGS: [&str; 2] = ["MM", "Mm"];
-const ML_TAGS: [&str; 2] = ["ML", "Ml"];
+pub const MM_TAGS: [&str; 2] = ["MM", "Mm"];
+pub const ML_TAGS: [&str; 2] = ["ML", "Ml"];
 
 pub struct RawModTags {
     raw_mm: String,
@@ -65,7 +65,7 @@ impl CollapseMethod {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-enum SkipMode {
+pub(crate) enum SkipMode {
     Ambiguous,
     ProbModified,
     ImplicitProbModified,
@@ -463,7 +463,7 @@ fn combine_positions_to_probs(
 /// Mapping of _forward sequence_ position to `BaseModProbs`.
 #[derive(PartialEq, Debug)]
 pub struct SeqPosBaseModProbs {
-    skip_mode: SkipMode,
+    pub(crate) skip_mode: SkipMode,
     pub(crate) pos_to_base_mod_probs: HashMap<usize, BaseModProbs>,
 }
 
@@ -792,7 +792,6 @@ impl ModBaseInfo {
         })
     }
 
-    // todo change name
     pub fn into_iter_base_mod_probs(
         self,
     ) -> (
@@ -840,6 +839,22 @@ impl ModBaseInfo {
         } else {
             false
         }
+    }
+
+    pub fn iter_seq_base_mod_probs(
+        &self,
+    ) -> impl Iterator<Item = (&char, Strand, &SeqPosBaseModProbs)> {
+        let pos_iter = self.pos_seq_base_mod_probs.iter().map(
+            |(canonical_base, seq_pos_base_mod_probs)| {
+                (canonical_base, Strand::Positive, seq_pos_base_mod_probs)
+            },
+        );
+        let neg_iter = self.neg_seq_base_mod_probs.iter().map(
+            |(canonical_base, seq_pos_base_mod_probs)| {
+                (canonical_base, Strand::Negative, seq_pos_base_mod_probs)
+            },
+        );
+        pos_iter.chain(neg_iter)
     }
 }
 
@@ -1447,7 +1462,42 @@ mod mod_bam_tests {
         let info = ModBaseInfo::new(&tags, dna).unwrap();
         let (_converters, iterator) = info.into_iter_base_mod_probs();
         for (c, strand, probs) in iterator {
-            dbg!(c, strand, probs);
+            if c == 'C' {
+                assert_eq!(strand, Strand::Positive);
+                assert_eq!(
+                    probs
+                        .pos_to_base_mod_probs
+                        .keys()
+                        .map(|i| *i)
+                        .collect::<HashSet<usize>>(),
+                    HashSet::from([12, 15, 4])
+                );
+                let expected_modbase_probs = BaseModProbs {
+                    probs: vec![0.39257813, 0.005859375],
+                    mod_codes: indexset! { 'h', 'm'},
+                };
+                for mod_probs in probs.pos_to_base_mod_probs.values() {
+                    assert_eq!(mod_probs, &expected_modbase_probs);
+                }
+            } else {
+                assert_eq!(c, 'G');
+                assert_eq!(strand, Strand::Negative);
+                assert_eq!(
+                    probs
+                        .pos_to_base_mod_probs
+                        .keys()
+                        .map(|i| *i)
+                        .collect::<HashSet<usize>>(),
+                    HashSet::from([13, 16, 5])
+                );
+                let expected_modbase_probs = BaseModProbs {
+                    probs: vec![0.5878906, 0.009765625],
+                    mod_codes: indexset! { 'h', 'm'},
+                };
+                for mod_probs in probs.pos_to_base_mod_probs.values() {
+                    assert_eq!(mod_probs, &expected_modbase_probs);
+                }
+            }
         }
     }
 }
