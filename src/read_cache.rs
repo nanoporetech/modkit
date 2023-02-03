@@ -323,11 +323,6 @@ impl<'a> ReadCache<'a> {
         }
     }
 
-    pub(crate) fn should_skip(&self, record: &bam::Record) -> bool {
-        let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
-        self.skip_set.contains(&read_id)
-    }
-
     pub(crate) fn add_mod_codes_for_record(
         &mut self,
         record: &bam::Record,

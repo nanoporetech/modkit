@@ -944,15 +944,15 @@ mod mod_bam_tests {
                 .ok_or(InputError::new("failed to get strand"))?;
 
             // TODO handle duplex
-            let strand = Strand::parse_char(raw_stand).unwrap();
+            let _strand = Strand::parse_char(raw_stand).unwrap();
 
             let mut mod_base_codes = Vec::new();
-            let mut mode: Option<char> = None;
+            let mut _mode: Option<char> = None;
 
             while let Some(c) = header.next() {
                 match c {
                     '?' | '.' => {
-                        mode = Some(c);
+                        _mode = Some(c);
                     }
                     _ => mod_base_codes.push(c),
                 }
