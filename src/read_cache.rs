@@ -52,7 +52,7 @@ impl<'a> ReadCache<'a> {
         record_name: &str,
         record: &bam::Record,
         seq_pos_base_mod_probs: SeqPosBaseModProbs,
-        strand: Strand,
+        mod_strand: Strand,
         canonical_base: char,
     ) -> Result<(), RunError> {
         // let record_name = util::get_query_name_string(&record)
@@ -72,15 +72,23 @@ impl<'a> ReadCache<'a> {
                 }
             })
             .collect::<HashMap<u64, BaseModCall>>();
-        let read_table = match (strand, record.is_reverse()) {
-            // C+C positive stranded calls
-            (Strand::Positive, false) => &mut self.pos_reads,
-            (Strand::Positive, true) => &mut self.neg_reads,
-
-            // G-C negative stranded calls (duplex)
-            (Strand::Negative, false) => &mut self.neg_reads,
-            (Strand::Negative, true) => &mut self.pos_reads,
+        let read_table = match mod_strand {
+            Strand::Positive => &mut self.pos_reads,
+            Strand::Negative => &mut self.neg_reads,
         };
+
+        // let read_table = match (mod_strand, record.is_reverse()) {
+        //     // C+C positive stranded calls
+        //     (Strand::Positive, false) => &mut self.pos_reads,
+        //     (Strand::Positive, true) => &mut self.neg_reads,
+        //
+        //     // G-C negative stranded calls (duplex)
+        //     (Strand::Negative, false) => &mut self.neg_reads,
+        //     (Strand::Negative, true) => {
+        //         debug!("??");
+        //         &mut self.pos_reads
+        //     },
+        // };
         let base_to_mod_calls = read_table
             .entry(record_name.to_owned())
             .or_insert(HashMap::new());
@@ -117,7 +125,13 @@ impl<'a> ReadCache<'a> {
 
         let (converters, mod_prob_iter) =
             mod_base_info.into_iter_base_mod_probs();
-        for (base, strand, mut seq_base_mod_probs) in mod_prob_iter {
+        for (base, mod_strand, mut seq_base_mod_probs) in mod_prob_iter {
+            if &record_name == "3cc54106-c79b-4a32-8abf-e102fc5e2cf3" {
+                debug!(
+                    "{base} {:?}, {:?}",
+                    mod_strand, seq_base_mod_probs.pos_to_base_mod_probs
+                );
+            }
             let converter = converters.get(&base).unwrap();
             if let Some(method) = &self.method {
                 seq_base_mod_probs =
@@ -135,7 +149,7 @@ impl<'a> ReadCache<'a> {
                 })
                 .collect::<HashSet<ModCode>>();
 
-            let mod_codes_for_read = match (strand, record.is_reverse()) {
+            let mod_codes_for_read = match (mod_strand, record.is_reverse()) {
                 // C+C positive stranded
                 (Strand::Positive, false) => &mut self.pos_mod_codes,
                 (Strand::Positive, true) => &mut self.neg_mod_codes,
@@ -166,7 +180,7 @@ impl<'a> ReadCache<'a> {
                 &record_name,
                 record,
                 seq_base_mod_probs,
-                strand,
+                mod_strand,
                 converter.canonical_base,
             )?;
         }
@@ -371,18 +385,24 @@ mod read_cache_tests {
         let base_mod_probs =
             base_mod_probs_from_record(&record, &converter).unwrap();
 
-        let read_base_mod_probs = match record.is_reverse() {
-            true => cache
-                .neg_reads
-                .get(&query_name)
-                .and_then(|base_to_calls| base_to_calls.get(&'C'))
-                .unwrap(),
-            false => cache
-                .pos_reads
-                .get(&query_name)
-                .and_then(|base_to_calls| base_to_calls.get(&'C'))
-                .unwrap(),
-        };
+        let read_base_mod_probs = cache
+            .pos_reads
+            .get(&query_name)
+            .and_then(|base_to_calls| base_to_calls.get(&'C'))
+            .unwrap();
+
+        // let read_base_mod_probs = match record.is_reverse() {
+        //     true => cache
+        //         .neg_reads
+        //         .get(&query_name)
+        //         .and_then(|base_to_calls| base_to_calls.get(&'C'))
+        //         .unwrap(),
+        //     false => cache
+        //         .pos_reads
+        //         .get(&query_name)
+        //         .and_then(|base_to_calls| base_to_calls.get(&'C'))
+        //         .unwrap(),
+        // };
 
         // let read_base_mod_probs = cache
         //     .pos_reads

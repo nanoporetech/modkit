@@ -123,6 +123,7 @@ impl BaseModProbs {
 
     pub fn base_mod_call(&self) -> BaseModCall {
         let canonical_prob = self.canonical_prob();
+        // todo(arand) use iterprobs here
         let max_mod_prob = self
             .probs
             .iter()
@@ -489,7 +490,7 @@ pub fn extract_mod_probs(
     mod_quals: &[u16],
     converter: &DeltaListConverter,
 ) -> Result<SeqPosBaseModProbs, InputError> {
-    warn!("[deprecation warning] this method should not be called in production code");
+    // warn!("[deprecation warning] this method should not be called in production code");
     let splited = raw_mm.split(";");
     let mut positions_to_probs =
         SeqPosBaseModProbs::new_empty(SkipMode::Ambiguous);
@@ -1274,7 +1275,6 @@ mod mod_bam_tests {
 
         let positions_to_probs_1 =
             extract_mod_probs(tag, &quals, &converter).unwrap();
-        // dbg!(positions_to_probs, positions_to_probs_1);
 
         assert_eq!(positions_to_probs, positions_to_probs_1);
     }
@@ -1435,5 +1435,19 @@ mod mod_bam_tests {
         let obs_base_mod_probs =
             extract_mod_probs(tag, &quals, &a_converter).unwrap();
         assert_eq!(&obs_base_mod_probs, &a_expected_seq_pos_base_mod_probs);
+    }
+
+    #[test]
+    fn test_duplex_modbase_info() {
+        //               g c CG c  gg CG CG
+        let dna = "GACTCGACTGGACGTCGA";
+        let tag = "C+h?,1,1,0;C+m?,1,1,0;G-h?,1,2,0;G-m?,1,2,0";
+        let quals = vec![100, 100, 100, 1, 1, 1, 150, 150, 150, 2, 2, 2];
+        let tags = RawModTags::new(tag, &quals, true);
+        let info = ModBaseInfo::new(&tags, dna).unwrap();
+        let (_converters, iterator) = info.into_iter_base_mod_probs();
+        for (c, strand, probs) in iterator {
+            dbg!(c, strand, probs);
+        }
     }
 }
