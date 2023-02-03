@@ -1,10 +1,10 @@
 use crate::mod_bam::{BaseModCall, CollapseMethod};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::read_cache::ReadCache;
-use crate::util;
+
 use crate::util::{record_is_secondary, Strand};
 use itertools::Itertools;
-use log::{debug, error};
+use log::{debug};
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use std::collections::{HashMap, HashSet};

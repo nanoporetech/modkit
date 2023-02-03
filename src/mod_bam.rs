@@ -3,7 +3,7 @@ use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
 use crate::util::{get_tag, Strand};
 use indexmap::{indexset, IndexSet};
-use log::{error, warn};
+
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
 use std::collections::{HashMap, HashSet};

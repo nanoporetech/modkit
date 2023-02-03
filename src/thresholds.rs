@@ -1,7 +1,6 @@
 use crate::errs::{InputError, RunError};
 use crate::mod_bam::{
-    base_mod_probs_from_record, get_canonical_bases_with_mod_calls,
-    BaseModCall, DeltaListConverter, ModBaseInfo,
+    BaseModCall, ModBaseInfo,
 };
 use crate::util::record_is_secondary;
 use anyhow::Context;
@@ -85,7 +84,7 @@ pub fn sample_modbase_probs(
             continue;
         }
         let (_converters, prob_iter) = modbase_info.into_iter_base_mod_probs();
-        for (canonical_base, _strand, seq_pos_base_mod_probs) in prob_iter {
+        for (_canonical_base, _strand, seq_pos_base_mod_probs) in prob_iter {
             let mut mod_probs = seq_pos_base_mod_probs
                 .pos_to_base_mod_probs
                 .iter()

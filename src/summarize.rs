@@ -1,7 +1,6 @@
 use crate::errs::RunError;
 use crate::mod_bam::{
-    base_mod_probs_from_record, get_canonical_bases_with_mod_calls,
-    BaseModCall, DeltaListConverter, ModBaseInfo,
+    BaseModCall, ModBaseInfo,
 };
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util::{record_is_secondary, Strand};
