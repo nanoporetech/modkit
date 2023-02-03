@@ -86,7 +86,9 @@ pub fn summarize_modbam<T: AsRef<Path>>(
                         reads_with_mod_calls.entry(canonical_base).or_insert(0);
                     *count += 1;
 
-                    for (_position, base_mod_probs) in seq_pos_base_mod_probs.pos_to_base_mod_probs {
+                    for (_position, base_mod_probs) in
+                        seq_pos_base_mod_probs.pos_to_base_mod_probs
+                    {
                         match base_mod_probs.base_mod_call() {
                             BaseModCall::Canonical(_p) => {
                                 let count = mod_counts

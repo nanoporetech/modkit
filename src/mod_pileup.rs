@@ -384,16 +384,13 @@ pub fn process_region<T: AsRef<Path>>(
         for alignment in alignment_iter {
             assert!(!alignment.is_refskip());
             let record = alignment.record();
-            if read_cache.should_skip(&record) {
-                continue;
-            }
             read_cache.add_mod_codes_for_record(
                 &record,
                 &mut pos_strand_observed_mod_codes,
                 &mut neg_strand_observed_mod_codes,
             );
 
-            let read_strand  = if record.is_reverse() {
+            let read_strand = if record.is_reverse() {
                 Strand::Negative
             } else {
                 Strand::Positive
@@ -439,15 +436,16 @@ pub fn process_region<T: AsRef<Path>>(
                     feature_vector.add_feature(Strand::Negative, neg_feature);
                 }
                 (Some(pos_call), None) => {
+                    assert_eq!(read_strand, Strand::Positive);
                     let pos_feature =
                         Feature::from_base_mod_call(pos_call, read_base);
                     feature_vector.add_feature(Strand::Positive, pos_feature);
                 }
                 (None, Some(neg_call)) => {
+                    assert_eq!(read_strand, Strand::Negative);
                     let neg_feature =
                         Feature::from_base_mod_call(neg_call, read_base);
                     feature_vector.add_feature(Strand::Negative, neg_feature);
-
                 }
                 (None, None) => feature_vector
                     .add_feature(read_strand, Feature::NoCall(read_base)),

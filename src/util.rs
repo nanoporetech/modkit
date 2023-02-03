@@ -97,7 +97,7 @@ impl Strand {
     pub fn opposite(&self) -> Self {
         match self {
             Strand::Positive => Strand::Negative,
-            Strand::Negative =>Strand::Positive,
+            Strand::Negative => Strand::Positive,
         }
     }
 }

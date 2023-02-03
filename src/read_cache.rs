@@ -81,7 +81,8 @@ impl<'a> ReadCache<'a> {
             (Strand::Negative, false) => &mut self.neg_reads,
             (Strand::Negative, true) => &mut self.pos_reads,
         };
-        let base_to_mod_calls = read_table.entry(record_name.to_owned())
+        let base_to_mod_calls = read_table
+            .entry(record_name.to_owned())
             .or_insert(HashMap::new());
 
         // let base_to_mod_calls = match strand {
@@ -142,7 +143,8 @@ impl<'a> ReadCache<'a> {
                 (Strand::Negative, false) => &mut self.neg_mod_codes,
                 (Strand::Negative, true) => &mut self.pos_mod_codes,
             };
-            let record_mod_codes = mod_codes_for_read.entry(record_name.to_owned())
+            let record_mod_codes = mod_codes_for_read
+                .entry(record_name.to_owned())
                 .or_insert(HashSet::new());
             // let record_mod_codes = match strand {
             //     Strand::Positive => self
@@ -368,13 +370,30 @@ mod read_cache_tests {
             DeltaListConverter::new_from_record(&record, 'C').unwrap();
         let base_mod_probs =
             base_mod_probs_from_record(&record, &converter).unwrap();
-        let read_base_mod_probs = cache
-            .reads
-            .get(&query_name)
-            .and_then(|base_to_calls| base_to_calls.get(&'C'))
-            .unwrap();
 
-        assert_eq!(base_mod_probs.len(), read_base_mod_probs.len());
+        let read_base_mod_probs = match record.is_reverse() {
+            true => cache
+                .neg_reads
+                .get(&query_name)
+                .and_then(|base_to_calls| base_to_calls.get(&'C'))
+                .unwrap(),
+            false => cache
+                .pos_reads
+                .get(&query_name)
+                .and_then(|base_to_calls| base_to_calls.get(&'C'))
+                .unwrap(),
+        };
+
+        // let read_base_mod_probs = cache
+        //     .pos_reads
+        //     .get(&query_name)
+        //     .and_then(|base_to_calls| base_to_calls.get(&'C'))
+        //     .unwrap();
+
+        assert_eq!(
+            base_mod_probs.pos_to_base_mod_probs.len(),
+            read_base_mod_probs.len()
+        );
         for (ref_pos, _probs) in read_base_mod_probs.iter() {
             assert!(ref_pos >= &0);
             let forward_read_pos = forward_aligned_pairs.get(ref_pos).unwrap();
