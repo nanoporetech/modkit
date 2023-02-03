@@ -3,7 +3,7 @@ use crate::mod_base_code::{DnaBase, ModCode};
 use crate::read_cache::ReadCache;
 use crate::util::{record_is_secondary, Strand};
 use itertools::Itertools;
-use log::debug;
+use log::{debug, error};
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use std::collections::{HashMap, HashSet};
@@ -15,6 +15,21 @@ enum Feature {
     Filtered,
     NoCall(DnaBase),
     ModCall(ModCode),
+}
+
+impl Feature {
+    fn from_base_mod_call(
+        base_mod_call: BaseModCall,
+        read_base: DnaBase,
+    ) -> Self {
+        match base_mod_call {
+            BaseModCall::Canonical(_) => {
+                Feature::ModCall(read_base.canonical_mod_code().unwrap())
+            }
+            BaseModCall::Modified(_, mod_code) => Feature::ModCall(mod_code),
+            BaseModCall::Filtered => Feature::Filtered,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -369,20 +384,23 @@ pub fn process_region<T: AsRef<Path>>(
         for alignment in alignment_iter {
             assert!(!alignment.is_refskip());
             let record = alignment.record();
-            // observed_mod_codes
-            //     .extend(read_cache.get_mod_codes_for_record(&record));
-            let strand = if record.is_reverse() {
-                neg_strand_observed_mod_codes
-                    .extend(read_cache.get_mod_codes_for_record(&record));
+            if read_cache.should_skip(&record) {
+                continue;
+            }
+            read_cache.add_mod_codes_for_record(
+                &record,
+                &mut pos_strand_observed_mod_codes,
+                &mut neg_strand_observed_mod_codes,
+            );
+
+            let read_strand  = if record.is_reverse() {
                 Strand::Negative
             } else {
-                pos_strand_observed_mod_codes
-                    .extend(read_cache.get_mod_codes_for_record(&record));
                 Strand::Positive
             };
 
             if alignment.is_del() {
-                feature_vector.add_feature(strand, Feature::Delete);
+                feature_vector.add_feature(read_strand, Feature::Delete);
                 continue;
             }
 
@@ -406,25 +424,34 @@ pub fn process_region<T: AsRef<Path>>(
                 continue;
             };
 
-            let feature = if let Some(mod_call) = read_cache.get_mod_call(
+            match read_cache.get_mod_call(
                 &record,
                 pos,
                 read_base.char(),
                 threshold,
             ) {
-                match mod_call {
-                    BaseModCall::Canonical(_) => Feature::ModCall(
-                        read_base.canonical_mod_code().unwrap(),
-                    ),
-                    BaseModCall::Filtered => Feature::Filtered,
-                    BaseModCall::Modified(_, mod_code) => {
-                        Feature::ModCall(mod_code)
-                    }
+                (Some(pos_call), Some(neg_call)) => {
+                    let pos_feature =
+                        Feature::from_base_mod_call(pos_call, read_base);
+                    let neg_feature =
+                        Feature::from_base_mod_call(neg_call, read_base);
+                    feature_vector.add_feature(Strand::Positive, pos_feature);
+                    feature_vector.add_feature(Strand::Negative, neg_feature);
                 }
-            } else {
-                Feature::NoCall(read_base)
-            };
-            feature_vector.add_feature(strand, feature);
+                (Some(pos_call), None) => {
+                    let pos_feature =
+                        Feature::from_base_mod_call(pos_call, read_base);
+                    feature_vector.add_feature(Strand::Positive, pos_feature);
+                }
+                (None, Some(neg_call)) => {
+                    let neg_feature =
+                        Feature::from_base_mod_call(neg_call, read_base);
+                    feature_vector.add_feature(Strand::Negative, neg_feature);
+
+                }
+                (None, None) => feature_vector
+                    .add_feature(read_strand, Feature::NoCall(read_base)),
+            }
         } // alignment loop
         position_feature_counts.insert(
             pos,

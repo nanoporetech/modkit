@@ -8,8 +8,9 @@ use crate::mod_bam::{
     collapse_mod_probs, BaseModCall, CollapseMethod, ModBaseInfo,
     SeqPosBaseModProbs,
 };
-use crate::mod_base_code::ModCode;
+use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
+use crate::util::Strand;
 
 /// Mapping of _reference position_ to base mod calls as determined by the aligned pairs for the
 /// read
@@ -18,11 +19,13 @@ type RefPosBaseModCalls = HashMap<u64, BaseModCall>; // todo use FxHasher
 // todo last position (for gc)
 pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that read
-    reads: HashMap<String, HashMap<char, RefPosBaseModCalls>>,
+    pos_reads: HashMap<String, HashMap<char, RefPosBaseModCalls>>,
+    neg_reads: HashMap<String, HashMap<char, RefPosBaseModCalls>>,
     /// these reads don't have mod tags or should be skipped for some other reason
     skip_set: HashSet<String>,
     /// mapping of read_id (query_name) to the mod codes contained in that read
-    mod_codes: HashMap<String, HashSet<ModCode>>,
+    pos_mod_codes: HashMap<String, HashSet<ModCode>>,
+    neg_mod_codes: HashMap<String, HashSet<ModCode>>,
     /// collapse method
     method: Option<&'a CollapseMethod>,
 }
@@ -31,9 +34,11 @@ impl<'a> ReadCache<'a> {
     // todo garbage collect freq
     pub(crate) fn new(method: Option<&'a CollapseMethod>) -> Self {
         Self {
-            reads: HashMap::new(),
+            pos_reads: HashMap::new(),
+            neg_reads: HashMap::new(),
             skip_set: HashSet::new(),
-            mod_codes: HashMap::new(),
+            pos_mod_codes: HashMap::new(),
+            neg_mod_codes: HashMap::new(),
             method,
         }
     }
@@ -47,11 +52,16 @@ impl<'a> ReadCache<'a> {
         record_name: &str,
         record: &bam::Record,
         seq_pos_base_mod_probs: SeqPosBaseModProbs,
+        strand: Strand,
         canonical_base: char,
     ) -> Result<(), RunError> {
+        // let record_name = util::get_query_name_string(&record)
+        //     .map_err(|e| RunError::new_input_error(e.to_string()))?;
         let aligned_pairs = util::get_aligned_pairs_forward(&record)
             .collect::<HashMap<usize, u64>>();
+
         let ref_pos_base_mod_calls = seq_pos_base_mod_probs
+            .pos_to_base_mod_probs
             .into_iter()
             // here the q_pos is the forward-oriented position
             .flat_map(|(q_pos, bmp)| {
@@ -62,11 +72,33 @@ impl<'a> ReadCache<'a> {
                 }
             })
             .collect::<HashMap<u64, BaseModCall>>();
-        let bases_to_mod_calls = self
-            .reads
-            .entry(record_name.to_owned())
+        let read_table = match (strand, record.is_reverse()) {
+            // C+C positive stranded calls
+            (Strand::Positive, false) => &mut self.pos_reads,
+            (Strand::Positive, true) => &mut self.neg_reads,
+
+            // G-C negative stranded calls (duplex)
+            (Strand::Negative, false) => &mut self.neg_reads,
+            (Strand::Negative, true) => &mut self.pos_reads,
+        };
+        let base_to_mod_calls = read_table.entry(record_name.to_owned())
             .or_insert(HashMap::new());
-        bases_to_mod_calls.insert(canonical_base, ref_pos_base_mod_calls);
+
+        // let base_to_mod_calls = match strand {
+        //     Strand::Positive => self
+        //         .pos_reads
+        //         .entry(record_name.to_owned())
+        //         .or_insert(HashMap::new()),
+        //     Strand::Negative => self
+        //         .neg_reads
+        //         .entry(record_name.to_owned())
+        //         .or_insert(HashMap::new()),
+        // };
+        // let bases_to_mod_calls = self
+        //     .reads
+        //     .entry(record_name.to_owned())
+        //     .or_insert(HashMap::new());
+        base_to_mod_calls.insert(canonical_base, ref_pos_base_mod_calls);
         Ok(())
     }
 
@@ -74,23 +106,26 @@ impl<'a> ReadCache<'a> {
     fn add_record(&mut self, record: &bam::Record) -> Result<(), RunError> {
         let record_name = util::get_query_name_string(record)
             .map_err(|e| RunError::new_input_error(e.to_string()))?;
-        let mod_base_info = ModBaseInfo::new_from_record(record)?;
 
+        let mod_base_info = ModBaseInfo::new_from_record(record)?;
         if mod_base_info.is_empty() {
             let msg = format!("record {} has no mod calls", &record_name);
             debug!("{}", &msg);
             return Err(RunError::Skipped(msg));
         }
 
-        for (converter, mut seq_base_mod_probs) in
-            mod_base_info.into_iter_base_mod_probs()
-        {
+        let (converters, mod_prob_iter) =
+            mod_base_info.into_iter_base_mod_probs();
+        for (base, strand, mut seq_base_mod_probs) in mod_prob_iter {
+            let converter = converters.get(&base).unwrap();
             if let Some(method) = &self.method {
                 seq_base_mod_probs =
                     collapse_mod_probs(seq_base_mod_probs, method);
             }
 
+            // could move this into it's own routine..?
             let mod_codes = seq_base_mod_probs
+                .pos_to_base_mod_probs
                 .values()
                 .flat_map(|base_mod_probs| {
                     base_mod_probs.mod_codes.iter().filter_map(|raw_mod_code| {
@@ -99,99 +134,204 @@ impl<'a> ReadCache<'a> {
                 })
                 .collect::<HashSet<ModCode>>();
 
-            let record_mod_codes = self
-                .mod_codes
-                .entry(record_name.to_owned())
+            let mod_codes_for_read = match (strand, record.is_reverse()) {
+                // C+C positive stranded
+                (Strand::Positive, false) => &mut self.pos_mod_codes,
+                (Strand::Positive, true) => &mut self.neg_mod_codes,
+                // G-C negative stranded
+                (Strand::Negative, false) => &mut self.neg_mod_codes,
+                (Strand::Negative, true) => &mut self.pos_mod_codes,
+            };
+            let record_mod_codes = mod_codes_for_read.entry(record_name.to_owned())
                 .or_insert(HashSet::new());
+            // let record_mod_codes = match strand {
+            //     Strand::Positive => self
+            //         .pos_mod_codes
+            //         .entry(record_name.to_owned())
+            //         .or_insert(HashSet::new()),
+            //     Strand::Negative => self
+            //         .neg_mod_codes
+            //         .entry(record_name.to_owned())
+            //         .or_insert(HashSet::new()),
+            // };
             record_mod_codes.extend(mod_codes);
+            // let record_mod_codes = self
+            //     .mod_codes
+            //     .entry((record_name.to_owned(), strand))
+            //     .or_insert(HashSet::new());
 
             self.add_modbase_probs_for_record_and_canonical_base(
                 &record_name,
                 record,
                 seq_base_mod_probs,
+                strand,
                 converter.canonical_base,
             )?;
         }
         Ok(())
     }
 
+    #[inline]
+    fn filter_base_mod_call(
+        base_mod_call: &BaseModCall,
+        threshold: f32,
+    ) -> BaseModCall {
+        match base_mod_call {
+            BaseModCall::Canonical(p) | BaseModCall::Modified(p, _) => {
+                if *p > threshold {
+                    *base_mod_call
+                } else {
+                    BaseModCall::Filtered
+                }
+            }
+            BaseModCall::Filtered => *base_mod_call,
+        }
+    }
+
+    #[inline]
+    fn get_mod_call_from_mapping(
+        strand_calls: &HashMap<char, RefPosBaseModCalls>,
+        canonical_base: char,
+        position: u32,
+        threshold: f32,
+    ) -> Option<BaseModCall> {
+        strand_calls
+            .get(&canonical_base)
+            .and_then(|ref_pos_mod_calls| {
+                ref_pos_mod_calls
+                    .get(&(position as u64))
+                    .map(|base_mod_call| {
+                        Self::filter_base_mod_call(base_mod_call, threshold)
+                    })
+            })
+    }
+
     /// Get the mod call for a reference position from a read. If this read is
     /// in the cache, look it up, if not parse the tags, add it to the cache
-    /// and return the mod call (if present).
+    /// and return the mod call (if present). (+ strand, - strand) calls
+    /// returned
     pub(crate) fn get_mod_call(
         &mut self,
         record: &bam::Record,
         position: u32,
         canonical_base: char, // todo make this DnaBase
         threshold: f32,
-    ) -> Option<BaseModCall> {
+    ) -> (Option<BaseModCall>, Option<BaseModCall>) {
         let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
         if self.skip_set.contains(&read_id) {
-            None
+            (None, None)
         } else {
-            if let Some(canonical_base_to_calls) = self.reads.get(&read_id) {
-                // todo(arand) this is ugly, make it easier to follow or at least comment up the
-                //  logic also maybe remove the need for the read cache all together?
-                canonical_base_to_calls.get(&canonical_base).and_then(
-                    |ref_pos_mod_base_calls| {
-                        ref_pos_mod_base_calls.get(&(position as u64)).map(
-                            |base_mod_call| match base_mod_call {
-                                BaseModCall::Canonical(p)
-                                | BaseModCall::Modified(p, _) => {
-                                    if *p > threshold {
-                                        *base_mod_call
-                                    } else {
-                                        BaseModCall::Filtered
-                                    }
-                                }
-                                BaseModCall::Filtered => *base_mod_call,
-                            },
-                        )
-                    },
-                )
-            } else {
-                match self.add_record(record) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        debug!(
-                            "read {read_id} failed to get mod tags {}",
-                            err.to_string()
-                        );
-                        self.skip_set.insert(read_id);
+            match (self.pos_reads.get(&read_id), self.neg_reads.get(&read_id)) {
+                (Some(pos_base_mod_calls), Some(neg_base_mod_calls)) => (
+                    Self::get_mod_call_from_mapping(
+                        pos_base_mod_calls,
+                        canonical_base,
+                        position,
+                        threshold,
+                    ),
+                    Self::get_mod_call_from_mapping(
+                        neg_base_mod_calls,
+                        canonical_base,
+                        position,
+                        threshold,
+                    ),
+                ),
+                (Some(pos_base_mod_calls), None) => (
+                    Self::get_mod_call_from_mapping(
+                        pos_base_mod_calls,
+                        canonical_base,
+                        position,
+                        threshold,
+                    ),
+                    None,
+                ),
+                (None, Some(neg_base_mod_calls)) => (
+                    None,
+                    Self::get_mod_call_from_mapping(
+                        neg_base_mod_calls,
+                        canonical_base,
+                        position,
+                        threshold,
+                    ),
+                ),
+                (None, None) => {
+                    match self.add_record(record) {
+                        Ok(_) => {}
+                        Err(run_error) => {
+                            debug!(
+                                "read {read_id} failed to get mod tags {}",
+                                run_error.to_string()
+                            );
+                            self.skip_set.insert(read_id.clone());
+                        }
                     }
+                    assert!(
+                        self.skip_set.contains(&read_id)
+                            || self.pos_reads.contains_key(&read_id)
+                            || self.neg_reads.contains_key(&read_id)
+                    );
+                    self.get_mod_call(
+                        record,
+                        position,
+                        canonical_base,
+                        threshold,
+                    )
                 }
-                self.get_mod_call(record, position, canonical_base, threshold)
             }
         }
     }
 
-    pub(crate) fn get_mod_codes_for_record(
+    pub(crate) fn should_skip(&self, record: &bam::Record) -> bool {
+        let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
+        self.skip_set.contains(&read_id)
+    }
+
+    pub(crate) fn add_mod_codes_for_record(
         &mut self,
         record: &bam::Record,
-    ) -> HashSet<ModCode> {
+        pos_strand_mod_codes: &mut HashSet<ModCode>,
+        neg_strand_mod_codes: &mut HashSet<ModCode>,
+    ) {
         let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
         if self.skip_set.contains(&read_id) {
-            HashSet::new()
+            return;
         } else {
-            if let Some(mod_codes) = self.mod_codes.get(&read_id) {
-                mod_codes.iter().map(|mc| *mc).collect()
-            } else {
-                match self.add_record(record) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        debug!(
-                            "read {read_id} failed to get mod tags {}",
-                            err.to_string()
-                        );
-                        self.skip_set.insert(read_id.clone());
-                    }
+            match (
+                self.pos_mod_codes.get(&read_id),
+                self.neg_mod_codes.get(&read_id),
+            ) {
+                (Some(pos_codes), Some(neg_codes)) => {
+                    pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
+                    neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
                 }
-                assert!(
-                    self.skip_set.contains(&read_id)
-                        || self.mod_codes.contains_key(&read_id),
-                    "should have been added..."
-                );
-                self.get_mod_codes_for_record(record)
+                (Some(pos_codes), None) => {
+                    pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
+                }
+                (None, Some(neg_codes)) => {
+                    neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
+                }
+                (None, None) => {
+                    match self.add_record(record) {
+                        Ok(_) => {}
+                        Err(run_error) => {
+                            debug!(
+                                "read {read_id} failed to get mod tags {}",
+                                run_error.to_string()
+                            );
+                            self.skip_set.insert(read_id.clone());
+                        }
+                    }
+                    assert!(
+                        self.skip_set.contains(&read_id)
+                            || self.pos_mod_codes.contains_key(&read_id)
+                            || self.neg_mod_codes.contains_key(&read_id)
+                    );
+                    self.add_mod_codes_for_record(
+                        record,
+                        pos_strand_mod_codes,
+                        neg_strand_mod_codes,
+                    );
+                }
             }
         }
     }

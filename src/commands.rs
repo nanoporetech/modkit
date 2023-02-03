@@ -140,13 +140,14 @@ fn adjust_mod_probs(
     let mut mm_agg = String::new();
     let mut ml_agg = Vec::new();
 
-    for (converter, mut seq_pos_mod_probs) in
-        mod_base_info.into_iter_base_mod_probs()
-    {
+    let (converters, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
+    for (base, strand, mut seq_pos_mod_probs) in mod_prob_iter {
+        let converter = converters.get(&base).unwrap();
         for method in methods {
             seq_pos_mod_probs = collapse_mod_probs(seq_pos_mod_probs, method);
         }
-        let (mm, mut ml) = format_mm_ml_tag(seq_pos_mod_probs, &converter);
+        let (mm, mut ml) =
+            format_mm_ml_tag(seq_pos_mod_probs, strand, converter);
         mm_agg.push_str(&mm);
         ml_agg.extend_from_slice(&mut ml);
     }

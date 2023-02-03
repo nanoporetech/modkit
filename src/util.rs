@@ -93,6 +93,13 @@ impl Strand {
             Strand::Negative => '-',
         }
     }
+
+    pub fn opposite(&self) -> Self {
+        match self {
+            Strand::Positive => Strand::Negative,
+            Strand::Negative =>Strand::Positive,
+        }
+    }
 }
 
 pub fn record_is_secondary(record: &bam::Record) -> bool {

@@ -93,6 +93,7 @@ pub fn sample_modbase_probs(
             let seq_pos_base_mod_probs =
                 base_mod_probs_from_record(&record, &converter)?;
             let mut mod_probs = seq_pos_base_mod_probs
+                .pos_to_base_mod_probs
                 .iter()
                 .map(|(_pos, base_mod_probs)| {
                     match base_mod_probs.base_mod_call() {
