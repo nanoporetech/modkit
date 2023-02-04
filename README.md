@@ -58,7 +58,7 @@ Options:
 
 ## pileup
 ```bash
-Pileup (combine) mod calls across genomic positions
+Pileup (combine) mod calls across genomic positions. Produces bedMethyl formatted file. Schema and description of fields can be found in schema.yaml.
 
 Usage: modkit pileup [OPTIONS] <IN_BAM> <OUT_BED>
 

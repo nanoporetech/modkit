@@ -41,7 +41,9 @@ pub enum Commands {
     /// Update mod tags, changes Mm/Ml-style tags to MM/ML-style. Also
     /// allows to change the mode to '?' or '.' instead of implicitly '.'
     UpdateTags(Update),
-    /// Pileup (combine) mod calls across genomic positions.
+    /// Pileup (combine) mod calls across genomic positions. Produces bedMethyl
+    /// formatted file. Schema and description of fields can be found in
+    /// schema.yaml
     Pileup(ModBamPileup),
     /// Get an estimate of the distribution of mod-base prediction probabilities
     SampleProbs(SampleModBaseProbs),

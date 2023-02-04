@@ -1,7 +1,5 @@
 use crate::errs::RunError;
-use crate::mod_bam::{
-    BaseModCall, ModBaseInfo,
-};
+use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util::{record_is_secondary, Strand};
 use indicatif::{ProgressBar, ProgressStyle};

@@ -1,7 +1,5 @@
 use crate::errs::{InputError, RunError};
-use crate::mod_bam::{
-    BaseModCall, ModBaseInfo,
-};
+use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::util::record_is_secondary;
 use anyhow::Context;
 use indicatif::{ProgressBar, ProgressStyle};

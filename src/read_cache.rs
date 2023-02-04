@@ -8,7 +8,7 @@ use crate::mod_bam::{
     collapse_mod_probs, BaseModCall, CollapseMethod, ModBaseInfo,
     SeqPosBaseModProbs, SkipMode,
 };
-use crate::mod_base_code::{ModCode};
+use crate::mod_base_code::ModCode;
 use crate::util;
 use crate::util::Strand;
 

@@ -4,7 +4,7 @@ use crate::read_cache::ReadCache;
 
 use crate::util::{record_is_secondary, Strand};
 use itertools::Itertools;
-use log::{debug};
+use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use std::collections::{HashMap, HashSet};
