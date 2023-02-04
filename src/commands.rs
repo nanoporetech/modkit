@@ -352,7 +352,7 @@ pub struct ModBamPileup {
     combine: bool,
 
     /// Secret API: collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
-    #[arg(long, group = "combine_args", hide = true, value_parser)]
+    #[arg(long, group = "combine_args", hide_short_help = true, value_parser)]
     collapse: Option<char>,
     /// Method to use to collapse mod calls, 'norm', 'dist'.
     #[arg(

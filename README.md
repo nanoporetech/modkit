@@ -105,6 +105,9 @@ Options:
       --combine
           Combine mod calls, all counts of modified bases are summed together
 
+      --collapse <COLLAPSE>
+          Secret API: collapse _in_situ_. Arg is the method to use {'norm', 'dist'}
+
       --method <METHOD>
           Method to use to collapse mod calls, 'norm', 'dist'
           
