@@ -32,7 +32,7 @@ use crate::thresholds::{
 };
 use crate::util;
 use crate::util::record_is_secondary;
-use crate::writers::{BEDWriter, BedMethylWriter, OutWriter, TsvWriter};
+use crate::writers::{BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -89,7 +89,8 @@ pub struct Adjust {
     /// number of threads to use
     #[arg(short, long = "ff", default_value_t = false)]
     fail_fast: bool,
-    /// Method to use to collapse mod calls, 'norm', 'dist'.
+    /// Method to use to collapse mod calls, 'norm', 'dist'. A full description
+    /// of the methods can be found in collapse.md
     #[arg(
         long,
         default_value_t = String::from("norm"),
@@ -353,10 +354,11 @@ pub struct ModBamPileup {
     #[arg(long, default_value_t = false, group = "combine_args")]
     combine: bool,
 
-    /// Secret API: collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
+    /// Collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
     #[arg(long, group = "combine_args", hide_short_help = true, value_parser)]
     collapse: Option<char>,
-    /// Method to use to collapse mod calls, 'norm', 'dist'.
+    /// Method to use to collapse mod calls, 'norm', 'dist'. A full description
+    /// of the methods can be found in collapse.md
     #[arg(
         long,
         default_value_t = String::from("norm"),
@@ -366,10 +368,6 @@ pub struct ModBamPileup {
     )]
     #[arg(long)]
     method: String,
-
-    /// Output BED format (for visualization)
-    #[arg(long, default_value_t = false)]
-    output_bed: bool,
 
     /// Force allow implicit-canonical mode. By default modkit does not allow
     /// pileup with the implicit mode ('.', or omitted). The `update-tags`
@@ -515,11 +513,8 @@ impl ModBamPileup {
         let out_fp = std::fs::File::create(out_fp_str)
             .context("failed to make output file")
             .map_err(|e| e.to_string())?;
-        let mut writer: Box<dyn OutWriter<ModBasePileup>> = if self.output_bed {
-            Box::new(BEDWriter::new(BufWriter::new(out_fp)))
-        } else {
-            Box::new(BedMethylWriter::new(BufWriter::new(out_fp)))
-        };
+
+        let mut writer = BedMethylWriter::new(BufWriter::new(out_fp));
         for result in rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {

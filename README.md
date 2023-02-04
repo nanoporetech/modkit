@@ -33,7 +33,7 @@ Options:
       --ignore <IGNORE>              mod base code to ignore/remove [default: h]
   -t, --threads <THREADS>            number of threads to use [default: 4]
   -f, --ff                           number of threads to use
-      --method <METHOD>              Method to use to collapse mod calls, 'norm', 'dist' [default: norm]
+      --method <METHOD>              Method to use to collapse mod calls, 'norm', 'dist'. A full description of the methods can be found in collapse.md [default: norm]
       --convert <CONVERT> <CONVERT>  Convert one mod-tag to another, summing the probabilities together if the retained mod tag is already present
       --log-filepath <LOG_FILEPATH>  Output debug logs to file at this path
   -h, --help                         Print help information
@@ -58,7 +58,7 @@ Options:
 
 ## pileup
 ```bash
-Pileup (combine) mod calls across genomic positions. Produces bedMethyl formatted file. Schema and description of fields can be found in schema.yaml.
+Pileup (combine) mod calls across genomic positions. Produces bedMethyl formatted file. Schema and description of fields can be found in schema.yaml
 
 Usage: modkit pileup [OPTIONS] <IN_BAM> <OUT_BED>
 
@@ -106,15 +106,12 @@ Options:
           Combine mod calls, all counts of modified bases are summed together
 
       --collapse <COLLAPSE>
-          Secret API: collapse _in_situ_. Arg is the method to use {'norm', 'dist'}
+          Collapse _in_situ_. Arg is the method to use {'norm', 'dist'}
 
       --method <METHOD>
-          Method to use to collapse mod calls, 'norm', 'dist'
+          Method to use to collapse mod calls, 'norm', 'dist'. A full description of the methods can be found in collapse.md
           
           [default: norm]
-
-      --output-bed
-          Output BED format (for visualization)
 
       --force-allow-implicit
           Force allow implicit-canonical mode. By default modkit does not allow pileup with the implicit mode ('.', or omitted). The `update-tags` subcommand is provided to update tags to the new mode, however if the user would like to assume that residues with no probability associated canonical, this option will allow that behavior
