@@ -127,7 +127,7 @@ Get an estimate of the distribution of mod-base prediction probabilities
 Usage: modkit sample-probs [OPTIONS] <IN_BAM>
 
 Arguments:
-  <IN_BAM>  Input BAM, should be sorted and have associated index
+  <IN_BAM>  Input BAM with base modification tags
 
 Options:
   -f, --sampling-frac <SAMPLING_FRAC>  Sample fraction [default: 0.1]

@@ -549,7 +549,7 @@ fn parse_percentiles(
 
 #[derive(Args)]
 pub struct SampleModBaseProbs {
-    /// Input BAM, should be sorted and have associated index
+    /// Input BAM with base modification tags
     in_bam: PathBuf,
     /// Sample fraction
     #[arg(short = 'f', long, default_value_t = 0.1)]
