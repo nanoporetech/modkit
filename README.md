@@ -32,7 +32,7 @@ Arguments:
 Options:
       --ignore <IGNORE>              mod base code to ignore/remove [default: h]
   -t, --threads <THREADS>            number of threads to use [default: 4]
-  -f, --ff                           number of threads to use
+  -f, --ff                           Fast fail, stop processing at the first invalid sequence record. Default behavior is to continue and report failed/skipped records at the end
       --method <METHOD>              Method to use to collapse mod calls, 'norm', 'dist'. A full description of the methods can be found in collapse.md [default: norm]
       --convert <CONVERT> <CONVERT>  Convert one mod-tag to another, summing the probabilities together if the retained mod tag is already present
       --log-filepath <LOG_FILEPATH>  Output debug logs to file at this path

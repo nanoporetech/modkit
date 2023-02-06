@@ -86,7 +86,8 @@ pub struct Adjust {
     /// number of threads to use
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
-    /// number of threads to use
+    /// Fast fail, stop processing at the first invalid sequence record. Default
+    /// behavior is to continue and report failed/skipped records at the end.
     #[arg(short, long = "ff", default_value_t = false)]
     fail_fast: bool,
     /// Method to use to collapse mod calls, 'norm', 'dist'. A full description
