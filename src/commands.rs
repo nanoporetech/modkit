@@ -370,6 +370,17 @@ pub struct ModBamPileup {
     #[arg(long)]
     method: String,
 
+    /// For bedMethyl output, separate columns with only tabs. Default is
+    /// to use tabs for the first 10 fields and spaces thereafter. The
+    /// default behavior is more likely to be compatible with genome viewers.
+    /// Enabling this option may make it easier to parse the output with
+    /// tabular data handlers that expect a single kind of separator.
+    #[arg(long, conflicts_with = "bedgraph", default_value_t = false)]
+    only_tabs: bool,
+
+    #[arg(long, conflicts_with = "only_tabs")]
+    bedgraph: bool,
+
     /// Force allow implicit-canonical mode. By default modkit does not allow
     /// pileup with the implicit mode ('.', or omitted). The `update-tags`
     /// subcommand is provided to update tags to the new mode, however if
@@ -515,7 +526,8 @@ impl ModBamPileup {
             .context("failed to make output file")
             .map_err(|e| e.to_string())?;
 
-        let mut writer = BedMethylWriter::new(BufWriter::new(out_fp));
+        let mut writer =
+            BedMethylWriter::new(BufWriter::new(out_fp), self.only_tabs);
         for result in rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {

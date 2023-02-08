@@ -10,24 +10,44 @@ pub trait OutWriter<T> {
 
 pub struct BedMethylWriter {
     buf_writer: BufWriter<File>,
+    tabs_and_spaces: bool,
 }
 
 impl BedMethylWriter {
-    pub fn new(buf_writer: BufWriter<File>) -> Self {
-        Self { buf_writer }
+    pub fn new(buf_writer: BufWriter<File>, tabs_and_spaces: bool) -> Self {
+        Self {
+            buf_writer,
+            tabs_and_spaces,
+        }
     }
 }
 
 impl OutWriter<ModBasePileup> for BedMethylWriter {
     fn write(&mut self, item: ModBasePileup) -> Result<u64, String> {
         let mut rows_written = 0;
-        let sep = '\t';
+        let tab = '\t';
+        let space = if self.tabs_and_spaces { tab } else { ' ' };
         for (pos, feature_counts) in item.iter_counts() {
             for feature_count in feature_counts {
                 let row = format!(
-                    "{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
-                    {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}\
-                    {sep}{}{sep}\n",
+                    "{}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}\n",
                     item.chrom_name,
                     pos,
                     pos + 1,

@@ -117,7 +117,7 @@ fn test_mod_pileup_no_filt() {
         "-i",
         "25", // use small interval to make sure chunking works
         "--no-filtering",
-        "--output-bed",
+        "--only-tabs",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
@@ -126,7 +126,7 @@ fn test_mod_pileup_no_filt() {
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
-        "tests/resources/modbam.modpileup_nofilt.bed",
+        "tests/resources/modbam.modpileup_nofilt.methyl.bed",
     );
 }
 
@@ -144,9 +144,9 @@ fn test_mod_pileup_with_filt() {
         "1.0",
         "-p",
         "0.25",
+        "--only-tabs",
         "--seed",
         "42",
-        "--output-bed",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
@@ -155,18 +155,18 @@ fn test_mod_pileup_with_filt() {
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
-        "tests/resources/modbam.modpileup_filt025.bed",
+        "tests/resources/modbam.modpileup_filt025.methyl.bed",
     );
 }
 
 #[test]
 fn test_mod_pileup_combine() {
-    let test_adjusted_bam = std::env::temp_dir().join("test_combined.bam");
+    let test_adjusted_bam = std::env::temp_dir().join("test_combined.bed");
     let pileup_args = [
         "pileup",
         "--combine",
         "--no-filtering",
-        "--output-bed",
+        "--only-tabs",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_adjusted_bam.to_str().unwrap(),
     ];
@@ -175,7 +175,7 @@ fn test_mod_pileup_combine() {
 
     check_against_expected_text_file(
         test_adjusted_bam.to_str().unwrap(),
-        "tests/resources/modbam.modpileup_combined.bed",
+        "tests/resources/modbam.modpileup_combined.methyl.bed",
     );
 }
 
@@ -303,12 +303,14 @@ fn test_pileup_old_tags() {
     run_modkit(&[
         "pileup",
         "--no-filtering",
+        "--only-tabs",
         updated_file.to_str().unwrap(),
         out_file.to_str().unwrap(),
     ]);
+    assert!(out_file.exists());
     check_against_expected_text_file(
         out_file.to_str().unwrap(),
-        "tests/resources/pileup-old-tags-regressiontest.bed",
+        "tests/resources/pileup-old-tags-regressiontest.methyl.bed",
     );
 }
 
