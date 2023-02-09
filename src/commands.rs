@@ -378,6 +378,11 @@ pub struct ModBamPileup {
     #[arg(long, conflicts_with = "bedgraph", default_value_t = false)]
     only_tabs: bool,
 
+    /// Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html.
+    /// For this setting, specify a directory for output files to be make in.
+    /// Two files for each modification will be produced, one for the postiive strand
+    /// and one for the negative strand. So for 5mC (m) and 5hmC (h) there will be 4 files
+    /// produced.
     #[arg(long, conflicts_with = "only_tabs", default_value_t = false)]
     bedgraph: bool,
 

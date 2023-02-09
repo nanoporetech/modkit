@@ -8,7 +8,7 @@ Usage: modkit <COMMAND>
 Commands:
   adjust-mods   Collapse N-way base modification calls to (N-1)-way
   update-tags   Update mod tags, changes Mm/Ml-style tags to MM/ML-style. Also allows to change the mode to '?' or '.' instead of implicitly '.'
-  pileup        Pileup (combine) mod calls across genomic positions
+  pileup        Pileup (combine) mod calls across genomic positions. Produces bedMethyl formatted file. Schema and description of fields can be found in schema.yaml
   sample-probs  Get an estimate of the distribution of mod-base prediction probabilities
   summary       Summarize the mod tags present in a BAM and get basic statistics
   motif-bed     Create BED file with all locations of a motif
@@ -16,7 +16,6 @@ Commands:
 
 Options:
   -h, --help  Print help information
-
 ```
 
 ## adjust-mods
@@ -112,6 +111,12 @@ Options:
           Method to use to collapse mod calls, 'norm', 'dist'. A full description of the methods can be found in collapse.md
           
           [default: norm]
+
+      --only-tabs
+          For bedMethyl output, separate columns with only tabs. Default is to use tabs for the first 10 fields and spaces thereafter. The default behavior is more likely to be compatible with genome viewers. Enabling this option may make it easier to parse the output with tabular data handlers that expect a single kind of separator
+
+      --bedgraph
+          Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html. For this setting, specify a directory for output files to be make in. Two files for each modification will be produced, one for the postiive strand and one for the negative strand. So for 5mC (m) and 5hmC (h) there will be 4 files produced
 
       --force-allow-implicit
           Force allow implicit-canonical mode. By default modkit does not allow pileup with the implicit mode ('.', or omitted). The `update-tags` subcommand is provided to update tags to the new mode, however if the user would like to assume that residues with no probability associated canonical, this option will allow that behavior
