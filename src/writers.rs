@@ -1,12 +1,12 @@
-use crate::mod_pileup::{ModBasePileup, PileupFeatureCounts};
+use crate::mod_pileup::{ModBasePileup};
 use crate::summarize::ModSummary;
 use crate::util::Strand;
 use anyhow::Context;
-use log::{debug, error};
+
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 
 pub trait OutWriter<T> {
     fn write(&mut self, item: T) -> Result<u64, String>;

@@ -116,6 +116,9 @@ Options:
       --force-allow-implicit
           Force allow implicit-canonical mode. By default modkit does not allow pileup with the implicit mode ('.', or omitted). The `update-tags` subcommand is provided to update tags to the new mode, however if the user would like to assume that residues with no probability associated canonical, this option will allow that behavior
 
+      --region <REGION>
+          Process only the specified region of the BAM when performing pileup. Format should be <chrom_name>:<start>-<end>
+
   -h, --help
           Print help information (use `-h` for a summary)
 ```

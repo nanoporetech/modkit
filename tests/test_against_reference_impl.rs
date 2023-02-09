@@ -473,3 +473,28 @@ fn test_mod_adjust_convert_sum_probs_rename() {
         .and_then(|counts| counts.get(&ModCode::m));
     assert!(converted_m_calls.is_none());
 }
+
+#[test]
+fn test_pileup_with_region() {
+    let temp_file = std::env::temp_dir().join("test_pileup_with_region.bed");
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    assert!(exe.exists());
+
+    let args = [
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "--no-filtering",
+        "--region",
+        "oligo_1512_adapters:0-50",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+    ];
+
+    run_modkit(&args);
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/modbam.modpileup_nofilt_oligo_1512_adapters_10_50.bed",
+    );
+}

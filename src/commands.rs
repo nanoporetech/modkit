@@ -14,7 +14,7 @@ use log::{debug, info};
 use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
-use rust_htslib::bam::Read;
+use rust_htslib::bam::{HeaderView, Read};
 
 use crate::errs::{InputError, RunError};
 use crate::interval_chunks::IntervalChunks;
@@ -31,7 +31,7 @@ use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
 };
 use crate::util;
-use crate::util::record_is_secondary;
+use crate::util::{record_is_secondary, Region};
 use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
@@ -386,9 +386,62 @@ pub struct ModBamPileup {
     /// canonical, this option will allow that behavior.
     #[arg(long, hide_short_help = true, default_value_t = false)]
     force_allow_implicit: bool,
+
+    /// Process only the specified region of the BAM when performing pileup.
+    /// Format should be <chrom_name>:<start>-<end>.
+    #[arg(long)]
+    region: Option<String>,
+}
+
+#[derive(Debug)]
+struct Target {
+    tid: u32,
+    start: u32,
+    length: u32,
+    name: String,
+}
+
+impl Target {
+    fn new(tid: u32, start: u32, length: u32, name: String) -> Self {
+        Self {
+            tid,
+            start,
+            length,
+            name,
+        }
+    }
 }
 
 impl ModBamPileup {
+    fn get_targets(
+        &self,
+        header: &HeaderView,
+        region: Option<Region>,
+    ) -> Vec<Target> {
+        (0..header.target_count())
+            .filter_map(|tid| {
+                let chrom_name =
+                    String::from_utf8(header.tid2name(tid).to_vec()).unwrap_or("???".to_owned());
+                if let Some(region) = &region {
+                    if chrom_name == region.name {
+                        Some(Target::new(tid, region.start, region.length(), chrom_name))
+                    } else {
+                        None
+                    }
+                } else {
+                    match header.target_len(tid) {
+                        Some(size) => Some(Target::new(tid, 0, size as u32, chrom_name)),
+                        None => {
+                            debug!("> no size information for {chrom_name} (tid: {tid})");
+                            None
+                        }
+                    }
+                }
+
+            })
+            .collect::<Vec<Target>>()
+    }
+
     fn run(&self) -> AnyhowResult<(), String> {
         let _handle = init_logging(self.log_filepath.as_ref());
         // do this first so we fail when the file isn't readable
@@ -432,19 +485,13 @@ impl ModBamPileup {
 
         info!("Using filter threshold {}", threshold);
 
-        let tids = (0..header.target_count())
-            .filter_map(|tid| {
-                let chrom_name =
-                    String::from_utf8(header.tid2name(tid).to_vec()).unwrap_or("???".to_owned());
-                match header.target_len(tid) {
-                    Some(size) => Some((tid, size as u32, chrom_name)),
-                    None => {
-                        debug!("> no size information for {chrom_name} (tid: {tid})");
-                        None
-                    }
-                }
-            })
-            .collect::<Vec<(u32, u32, String)>>();
+        let region = if let Some(raw_region) = &self.region {
+            info!("parsing region {raw_region}");
+            Some(Region::parse_str(raw_region)?)
+        } else {
+            None
+        };
+        let tids = self.get_targets(&header, region);
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -472,16 +519,21 @@ impl ModBamPileup {
         let force_allow = self.force_allow_implicit;
         thread::spawn(move || {
             pool.install(|| {
-                for (tid, size, ref_name) in tids {
-                    let intervals = IntervalChunks::new(size, interval_size, 0)
-                        .collect::<Vec<(u32, u32)>>();
+                for target in tids {
+                    let intervals = IntervalChunks::new(
+                        target.start,
+                        target.length,
+                        interval_size,
+                        0,
+                    )
+                    .collect::<Vec<(u32, u32)>>();
                     let n_intervals = intervals.len();
                     let interval_progress = master_progress.add(
                         ProgressBar::new(n_intervals as u64)
                             .with_style(sty.clone()),
                     );
                     interval_progress
-                        .set_message(format!("processing {}", ref_name));
+                        .set_message(format!("processing {}", &target.name));
                     let mut result: Vec<Result<ModBasePileup, String>> = vec![];
                     let (res, _) = rayon::join(
                         || {
@@ -491,7 +543,7 @@ impl ModBamPileup {
                                 .map(|(start, end)| {
                                     process_region(
                                         &in_bam_fp,
-                                        tid,
+                                        target.tid,
                                         start,
                                         end,
                                         threshold,

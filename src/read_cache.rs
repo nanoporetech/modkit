@@ -139,7 +139,7 @@ impl<'a> ReadCache<'a> {
             {
                 let msg = format!(
                     "record {} has un-allowed mode ({:?}), use \
-                '--force-implicit' or 'modkit update-tags --mode ambiguous'",
+                '--force-allow-implicit' or 'modkit update-tags --mode ambiguous'",
                     &record_name, seq_pos_probs.skip_mode
                 );
                 return Err(RunError::Skipped(msg));
