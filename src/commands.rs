@@ -32,7 +32,7 @@ use crate::thresholds::{
 };
 use crate::util;
 use crate::util::record_is_secondary;
-use crate::writers::{BedMethylWriter, OutWriter, TsvWriter};
+use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -378,7 +378,7 @@ pub struct ModBamPileup {
     #[arg(long, conflicts_with = "bedgraph", default_value_t = false)]
     only_tabs: bool,
 
-    #[arg(long, conflicts_with = "only_tabs")]
+    #[arg(long, conflicts_with = "only_tabs", default_value_t = false)]
     bedgraph: bool,
 
     /// Force allow implicit-canonical mode. By default modkit does not allow
@@ -522,12 +522,18 @@ impl ModBamPileup {
         });
 
         let out_fp_str = self.out_bed.clone();
-        let out_fp = std::fs::File::create(out_fp_str)
-            .context("failed to make output file")
-            .map_err(|e| e.to_string())?;
+        let mut writer: Box<dyn OutWriter<ModBasePileup>> = if self.bedgraph {
+            Box::new(BedGraphWriter::new(out_fp_str)?)
+        } else {
+            let out_fp = std::fs::File::create(out_fp_str)
+                .context("failed to make output file")
+                .map_err(|e| e.to_string())?;
+            Box::new(BedMethylWriter::new(
+                BufWriter::new(out_fp),
+                self.only_tabs,
+            ))
+        };
 
-        let mut writer =
-            BedMethylWriter::new(BufWriter::new(out_fp), self.only_tabs);
         for result in rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {
