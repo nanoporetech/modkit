@@ -217,8 +217,6 @@ fn test_mod_pileup_collapse() {
         "25", // use small interval to make sure chunking works
         "--collapse",
         "h",
-        "--method",
-        "norm",
         "--no-filtering",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_restricted_bed.to_str().unwrap(),

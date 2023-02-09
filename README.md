@@ -105,12 +105,7 @@ Options:
           Combine mod calls, all counts of modified bases are summed together
 
       --collapse <COLLAPSE>
-          Collapse _in_situ_. Arg is the method to use {'norm', 'dist'}
-
-      --method <METHOD>
-          Method to use to collapse mod calls, 'norm', 'dist'. A full description of the methods can be found in collapse.md
-          
-          [default: norm]
+          Collapse _in_situ_ by redistributing base modification probability equally  across other options. For example, if collapsing 'h', with 'm' and canonical options, half of the probability of 'h' will be added to both 'm' and 'C'. A full description of the methods can be found in collapse.md
 
       --only-tabs
           For bedMethyl output, separate columns with only tabs. Default is to use tabs for the first 10 fields and spaces thereafter. The default behavior is more likely to be compatible with genome viewers. Enabling this option may make it easier to parse the output with tabular data handlers that expect a single kind of separator

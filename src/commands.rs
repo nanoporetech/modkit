@@ -355,20 +355,13 @@ pub struct ModBamPileup {
     #[arg(long, default_value_t = false, group = "combine_args")]
     combine: bool,
 
-    /// Collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
+    /// Collapse _in_situ_ by redistributing base modification probability
+    /// equally  across other options. For example, if collapsing 'h', with 'm'
+    /// and canonical options, half of the probability of 'h' will be added to
+    /// both 'm' and 'C'. A full description of the methods can be found in
+    /// collapse.md
     #[arg(long, group = "combine_args", hide_short_help = true, value_parser)]
     collapse: Option<char>,
-    /// Method to use to collapse mod calls, 'norm', 'dist'. A full description
-    /// of the methods can be found in collapse.md
-    #[arg(
-        long,
-        default_value_t = String::from("norm"),
-        value_parser = check_collapse_method,
-        requires = "collapse",
-        hide_short_help = true,
-    )]
-    #[arg(long)]
-    method: String,
 
     /// For bedMethyl output, separate columns with only tabs. Default is
     /// to use tabs for the first 10 fields and spaces thereafter. The
@@ -408,8 +401,7 @@ impl ModBamPileup {
             (true, _) => PileupNumericOptions::Combine,
             (_, Some(raw_mod_code)) => {
                 let mod_code = ModCode::parse_raw_mod_code(*raw_mod_code)?;
-                let method =
-                    CollapseMethod::parse_str(self.method.as_str(), mod_code)?;
+                let method = CollapseMethod::ReDistribute(mod_code);
                 PileupNumericOptions::Collapse(method)
             }
         };
