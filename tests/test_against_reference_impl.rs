@@ -47,7 +47,7 @@ fn test_adjust_output(
     check_file_path: &str,
 ) {
     let temp_file = std::env::temp_dir().join(output_path);
-    let args = ["adjust-mods", input_path, temp_file.to_str().unwrap()];
+    let args = ["adjust-mods", "--ignore", "h", "--method", "norm", input_path, temp_file.to_str().unwrap()];
     run_modkit(&args);
     assert!(temp_file.exists());
 

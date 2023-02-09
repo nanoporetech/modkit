@@ -94,7 +94,7 @@ pub struct Adjust {
     /// of the methods can be found in collapse.md
     #[arg(
         long,
-        default_value_t = String::from("norm"),
+        default_value_t = String::from("dist"),
         value_parser = check_collapse_method,
         requires = "ignore",
     )]
