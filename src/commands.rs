@@ -31,7 +31,7 @@ use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
 };
 use crate::util;
-use crate::util::{record_is_secondary, Region};
+use crate::util::{add_modkit_pg_records, record_is_secondary, Region};
 use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
@@ -196,7 +196,8 @@ impl Adjust {
             bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
         let threads = self.threads;
         reader.set_threads(threads).map_err(|e| e.to_string())?;
-        let header = bam::Header::from_template(reader.header());
+        let mut header = bam::Header::from_template(reader.header());
+        add_modkit_pg_records(&mut header);
         let mut out_bam =
             bam::Writer::from_path(out_fp, &header, bam::Format::Bam)
                 .map_err(|e| e.to_string())?;
@@ -781,7 +782,9 @@ impl Update {
         let mut reader =
             bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
         reader.set_threads(threads).map_err(|e| e.to_string())?;
-        let header = bam::Header::from_template(reader.header());
+        let mut header = bam::Header::from_template(reader.header());
+        add_modkit_pg_records(&mut header);
+
         let mut out_bam =
             bam::Writer::from_path(out_fp, &header, bam::Format::Bam)
                 .map_err(|e| e.to_string())?;
