@@ -223,7 +223,6 @@ impl Adjust {
             conversions
                 .into_iter()
                 .map(|(to_mod_code, from_mod_codes)| {
-                    // let canonical_base = to_mod_code.canonical_base();
                     let method = CollapseMethod::Convert {
                         to: to_mod_code,
                         from: from_mod_codes,
@@ -243,7 +242,6 @@ impl Adjust {
                     out_fp.to_str().unwrap_or("???")
                 )
             );
-            // let canonical_base = mod_code_to_remove.canonical_base();
             let method =
                 CollapseMethod::parse_str(&self.method, mod_code_to_remove)?;
             vec![method]

@@ -61,8 +61,6 @@ impl<'a> ReadCache<'a> {
         mod_strand: Strand,
         canonical_base: char,
     ) -> Result<(), RunError> {
-        // let record_name = util::get_query_name_string(&record)
-        //     .map_err(|e| RunError::new_input_error(e.to_string()))?;
         let aligned_pairs = util::get_aligned_pairs_forward(&record)
             .collect::<HashMap<usize, u64>>();
 
@@ -82,37 +80,10 @@ impl<'a> ReadCache<'a> {
             Strand::Positive => &mut self.pos_reads,
             Strand::Negative => &mut self.neg_reads,
         };
-
-        // let read_table = match (mod_strand, record.is_reverse()) {
-        //     // C+C positive stranded calls
-        //     (Strand::Positive, false) => &mut self.pos_reads,
-        //     (Strand::Positive, true) => &mut self.neg_reads,
-        //
-        //     // G-C negative stranded calls (duplex)
-        //     (Strand::Negative, false) => &mut self.neg_reads,
-        //     (Strand::Negative, true) => {
-        //         debug!("??");
-        //         &mut self.pos_reads
-        //     },
-        // };
         let base_to_mod_calls = read_table
             .entry(record_name.to_owned())
             .or_insert(HashMap::new());
 
-        // let base_to_mod_calls = match strand {
-        //     Strand::Positive => self
-        //         .pos_reads
-        //         .entry(record_name.to_owned())
-        //         .or_insert(HashMap::new()),
-        //     Strand::Negative => self
-        //         .neg_reads
-        //         .entry(record_name.to_owned())
-        //         .or_insert(HashMap::new()),
-        // };
-        // let bases_to_mod_calls = self
-        //     .reads
-        //     .entry(record_name.to_owned())
-        //     .or_insert(HashMap::new());
         base_to_mod_calls.insert(
             canonical_base,
             (ref_pos_base_mod_calls, seq_pos_base_mod_probs.skip_mode),
@@ -458,7 +429,7 @@ mod read_cache_tests {
     #[test]
     fn test_read_cache_stack_overflow_empty_tags() {
         let mut reader =
-            BamReader::from_path("tests/resources/empty-tags.bam").unwrap();
+            BamReader::from_path("tests/resources/empty-tags.sorted.bam").unwrap();
 
         let mut cache = ReadCache::new(None, false);
         for r in reader.records() {
