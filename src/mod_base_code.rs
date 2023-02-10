@@ -67,7 +67,7 @@ impl ModCode {
         }
     }
 
-    pub fn get_any_mod_code(raw_dna_base: char) -> Option<ModCode> {
+    pub fn get_ambig_modcode(raw_dna_base: char) -> Option<ModCode> {
         match raw_dna_base {
             'C' => Some(ModCode::anyC),
             'A' => Some(ModCode::anyA),

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use anyhow::{Context, Result as AnyhowResult};
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{
     MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle,
@@ -20,24 +20,30 @@ use crate::errs::{InputError, RunError};
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
-    base_mod_probs_from_record, collapse_mod_probs, format_mm_ml_tag,
-    CollapseMethod, DeltaListConverter,
+    collapse_mod_probs, format_mm_ml_tag, CollapseMethod, ModBaseInfo,
+    SkipMode, ML_TAGS, MM_TAGS,
 };
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::ModCode;
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::motif_bed;
 use crate::summarize::summarize_modbam;
 use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
 };
+use crate::util;
 use crate::util::record_is_secondary;
-use crate::writers::{BEDWriter, BedMethylWriter, OutWriter, TsvWriter};
+use crate::writers::{BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
 pub enum Commands {
     /// Collapse N-way base modification calls to (N-1)-way
     AdjustMods(Adjust),
-    /// Pileup (combine) mod calls across genomic positions.
+    /// Update mod tags, changes Mm/Ml-style tags to MM/ML-style. Also
+    /// allows to change the mode to '?' or '.' instead of implicitly '.'
+    UpdateTags(Update),
+    /// Pileup (combine) mod calls across genomic positions. Produces bedMethyl
+    /// formatted file. Schema and description of fields can be found in
+    /// schema.yaml
     Pileup(ModBamPileup),
     /// Get an estimate of the distribution of mod-base prediction probabilities
     SampleProbs(SampleModBaseProbs),
@@ -55,6 +61,7 @@ impl Commands {
             Self::SampleProbs(x) => x.run(),
             Self::Summary(x) => x.run(),
             Self::MotifBed(x) => x.run(),
+            Self::UpdateTags(x) => x.run(),
         }
     }
 }
@@ -79,10 +86,12 @@ pub struct Adjust {
     /// number of threads to use
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
-    /// number of threads to use
+    /// Fast fail, stop processing at the first invalid sequence record. Default
+    /// behavior is to continue and report failed/skipped records at the end.
     #[arg(short, long = "ff", default_value_t = false)]
     fail_fast: bool,
-    /// Method to use to collapse mod calls, 'norm', 'dist'.
+    /// Method to use to collapse mod calls, 'norm', 'dist'. A full description
+    /// of the methods can be found in collapse.md
     #[arg(
         long,
         default_value_t = String::from("norm"),
@@ -94,7 +103,6 @@ pub struct Adjust {
     /// the retained mod tag is already present.
     #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
     convert: Option<Vec<char>>,
-
     /// Output debug logs to file at this path
     #[arg(long)]
     log_filepath: Option<PathBuf>,
@@ -122,54 +130,60 @@ pub(crate) fn get_spinner() -> ProgressBar {
 
 type CliResult<T> = Result<T, RunError>;
 
-fn adjust_mod_probs(
-    mut record: bam::Record,
-    methods: &[(DnaBase, CollapseMethod)],
-) -> CliResult<bam::Record> {
+fn record_is_valid(record: &bam::Record) -> Result<(), RunError> {
     if record_is_secondary(&record) {
         return Err(RunError::new_skipped("not primary"));
     }
     if record.seq_len() == 0 {
         return Err(RunError::new_failed("seq is zero length"));
     }
+    Ok(())
+}
 
-    for (canonical_base, method) in methods.iter() {
-        let converter = DeltaListConverter::new_from_record(
-            &record,
-            canonical_base.char(),
-        )?;
-        let probs_for_positions = base_mod_probs_from_record(
-            &record,
-            &converter,
-            canonical_base.char(),
-        )?;
-        let collapsed_probs_for_positions =
-            collapse_mod_probs(probs_for_positions, method);
-        let (mm, ml) = format_mm_ml_tag(
-            collapsed_probs_for_positions,
-            canonical_base.char(),
-            &converter,
-        );
+fn adjust_mod_probs(
+    mut record: bam::Record,
+    methods: &[CollapseMethod],
+) -> CliResult<bam::Record> {
+    let _ok = record_is_valid(&record)?;
 
-        record
-            .remove_aux("MM".as_bytes())
-            .expect("failed to remove MM tag");
-        record
-            .remove_aux("ML".as_bytes())
-            .expect("failed to remove ML tag");
-        let mm = Aux::String(&mm);
-        let ml_arr: AuxArray<u8> = {
-            let sl = &ml;
-            sl.into()
-        };
-        let ml = Aux::ArrayU8(ml_arr);
-        record
-            .push_aux("MM".as_bytes(), mm)
-            .expect("failed to add MM tag");
-        record
-            .push_aux("ML".as_bytes(), ml)
-            .expect("failed to add ML tag");
+    let mod_base_info = ModBaseInfo::new_from_record(&record)?;
+    let mm_style = mod_base_info.mm_style;
+    let ml_style = mod_base_info.ml_style;
+
+    let mut mm_agg = String::new();
+    let mut ml_agg = Vec::new();
+
+    let (converters, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
+    for (base, strand, mut seq_pos_mod_probs) in mod_prob_iter {
+        let converter = converters.get(&base).unwrap();
+        for method in methods {
+            seq_pos_mod_probs = collapse_mod_probs(seq_pos_mod_probs, method);
+        }
+        let (mm, mut ml) =
+            format_mm_ml_tag(seq_pos_mod_probs, strand, converter);
+        mm_agg.push_str(&mm);
+        ml_agg.extend_from_slice(&mut ml);
     }
+
+    record
+        .remove_aux(mm_style.as_bytes())
+        .expect("failed to remove MM tag");
+    record
+        .remove_aux(ml_style.as_bytes())
+        .expect("failed to remove ML tag");
+    let mm = Aux::String(&mm_agg);
+    let ml_arr: AuxArray<u8> = {
+        let sl = &ml_agg;
+        sl.into()
+    };
+    let ml = Aux::ArrayU8(ml_arr);
+    record
+        .push_aux(mm_style.as_bytes(), mm)
+        .expect("failed to add MM tag");
+    record
+        .push_aux(ml_style.as_bytes(), ml)
+        .expect("failed to add ML tag");
+
     Ok(record)
 }
 
@@ -178,7 +192,6 @@ impl Adjust {
         let _handle = init_logging(self.log_filepath.as_ref());
         let fp = &self.in_bam;
         let out_fp = &self.out_bam;
-        // let canonical_base = self.canonical_base;
         let mut reader =
             bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
         let threads = self.threads;
@@ -209,15 +222,15 @@ impl Adjust {
             conversions
                 .into_iter()
                 .map(|(to_mod_code, from_mod_codes)| {
-                    let canonical_base = to_mod_code.canonical_base();
+                    // let canonical_base = to_mod_code.canonical_base();
                     let method = CollapseMethod::Convert {
                         to: to_mod_code,
                         from: from_mod_codes,
                     };
 
-                    (canonical_base, method)
+                    method
                 })
-                .collect::<Vec<(DnaBase, CollapseMethod)>>()
+                .collect::<Vec<CollapseMethod>>()
         } else {
             let mod_code_to_remove = ModCode::parse_raw_mod_code(self.ignore)?;
             info!(
@@ -229,10 +242,10 @@ impl Adjust {
                     out_fp.to_str().unwrap_or("???")
                 )
             );
-            let canonical_base = mod_code_to_remove.canonical_base();
+            // let canonical_base = mod_code_to_remove.canonical_base();
             let method =
                 CollapseMethod::parse_str(&self.method, mod_code_to_remove)?;
-            vec![(canonical_base, method)]
+            vec![method]
         };
 
         let spinner = get_spinner();
@@ -242,12 +255,15 @@ impl Adjust {
         let mut total_skipped = 0usize;
         for (i, result) in reader.records().enumerate() {
             if let Ok(record) = result {
+                let record_name = util::get_query_name_string(&record)
+                    .unwrap_or("???".to_owned());
                 match adjust_mod_probs(record, &methods) {
                     Err(RunError::BadInput(InputError(err)))
                     | Err(RunError::Failed(err)) => {
                         if fail_fast {
                             return Err(err.to_string());
                         } else {
+                            debug!("read {} failed, {}", record_name, err);
                             total_failed += 1;
                         }
                     }
@@ -262,6 +278,7 @@ impl Adjust {
                                     err.to_string()
                                 ));
                             } else {
+                                debug!("failed to write {}", err);
                                 total_failed += 1;
                             }
                         } else {
@@ -282,7 +299,9 @@ impl Adjust {
 
         info!(
             "done, {} records processed, {} failed, {} skipped",
-            total, total_failed, total_skipped
+            total + 1,
+            total_failed,
+            total_skipped
         );
         Ok(())
     }
@@ -336,23 +355,28 @@ pub struct ModBamPileup {
     #[arg(long, default_value_t = false, group = "combine_args")]
     combine: bool,
 
-    /// Secret API: collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
-    #[arg(long, group = "combine_args", hide = true, value_parser)]
+    /// Collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
+    #[arg(long, group = "combine_args", hide_short_help = true, value_parser)]
     collapse: Option<char>,
-    /// Method to use to collapse mod calls, 'norm', 'dist'.
+    /// Method to use to collapse mod calls, 'norm', 'dist'. A full description
+    /// of the methods can be found in collapse.md
     #[arg(
         long,
         default_value_t = String::from("norm"),
         value_parser = check_collapse_method,
         requires = "collapse",
-        hide = true,
+        hide_short_help = true,
     )]
     #[arg(long)]
     method: String,
 
-    /// Output BED format (for visualization)
-    #[arg(long, default_value_t = false)]
-    output_bed: bool,
+    /// Force allow implicit-canonical mode. By default modkit does not allow
+    /// pileup with the implicit mode ('.', or omitted). The `update-tags`
+    /// subcommand is provided to update tags to the new mode, however if
+    /// the user would like to assume that residues with no probability associated
+    /// canonical, this option will allow that behavior.
+    #[arg(long, hide_short_help = true, default_value_t = false)]
+    force_allow_implicit: bool,
 }
 
 impl ModBamPileup {
@@ -437,6 +461,7 @@ impl ModBamPileup {
         let write_progress = master_progress.add(get_spinner());
         write_progress.set_message("rows written");
 
+        let force_allow = self.force_allow_implicit;
         thread::spawn(move || {
             pool.install(|| {
                 for (tid, size, ref_name) in tids {
@@ -463,6 +488,7 @@ impl ModBamPileup {
                                         end,
                                         threshold,
                                         &pileup_options,
+                                        force_allow,
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()
@@ -488,11 +514,8 @@ impl ModBamPileup {
         let out_fp = std::fs::File::create(out_fp_str)
             .context("failed to make output file")
             .map_err(|e| e.to_string())?;
-        let mut writer: Box<dyn OutWriter<ModBasePileup>> = if self.output_bed {
-            Box::new(BEDWriter::new(BufWriter::new(out_fp)))
-        } else {
-            Box::new(BedMethylWriter::new(BufWriter::new(out_fp)))
-        };
+
+        let mut writer = BedMethylWriter::new(BufWriter::new(out_fp));
         for result in rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {
@@ -526,7 +549,7 @@ fn parse_percentiles(
 
 #[derive(Args)]
 pub struct SampleModBaseProbs {
-    /// Input BAM, should be sorted and have associated index
+    /// Input BAM with base modification tags
     in_bam: PathBuf,
     /// Sample fraction
     #[arg(short = 'f', long, default_value_t = 0.1)]
@@ -595,6 +618,150 @@ pub struct MotifBed {
 impl MotifBed {
     fn run(&self) -> Result<(), String> {
         motif_bed(&self.fasta, &self.motif, self.offset);
+        Ok(())
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[allow(non_camel_case_types)]
+enum ModMode {
+    ambiguous,
+    implicit,
+}
+
+impl ModMode {
+    fn to_skip_mode(self) -> SkipMode {
+        match self {
+            Self::ambiguous => SkipMode::Ambiguous,
+            Self::implicit => SkipMode::ProbModified,
+        }
+    }
+}
+
+#[derive(Args)]
+pub struct Update {
+    /// BAM file to collapse mod call from
+    in_bam: PathBuf,
+    /// File path to new BAM file
+    out_bam: PathBuf,
+    /// Mode, change mode to this value, options {'ambiguous', 'implicit'}.
+    /// See spec at: https://samtools.github.io/hts-specs/SAMtags.pdf.
+    /// 'ambiguous' ('?') means residues without explicit modification
+    /// probabilities will not be assumed canonical or modified. 'implicit'
+    /// means residues without explicit modification probabilities are
+    /// assumed to be canonical.
+    #[arg(short, long, value_enum)]
+    mode: Option<ModMode>,
+    /// number of threads to use
+    #[arg(short, long, default_value_t = 4)]
+    threads: usize,
+    /// Output debug logs to file at this path
+    #[arg(long)]
+    log_filepath: Option<PathBuf>,
+}
+
+fn update_mod_tags(
+    mut record: bam::Record,
+    new_mode: Option<SkipMode>,
+) -> CliResult<bam::Record> {
+    let _ok = record_is_valid(&record)?;
+    let mod_base_info = ModBaseInfo::new_from_record(&record)?;
+    let mm_style = mod_base_info.mm_style;
+    let ml_style = mod_base_info.ml_style;
+
+    let mut mm_agg = String::new();
+    let mut ml_agg = Vec::new();
+
+    let (converters, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
+    for (base, strand, mut seq_pos_mod_probs) in mod_prob_iter {
+        let converter = converters.get(&base).unwrap();
+        if let Some(mode) = new_mode {
+            seq_pos_mod_probs.skip_mode = mode;
+        }
+        let (mm, mut ml) =
+            format_mm_ml_tag(seq_pos_mod_probs, strand, converter);
+        mm_agg.push_str(&mm);
+        ml_agg.extend_from_slice(&mut ml);
+    }
+    record
+        .remove_aux(mm_style.as_bytes())
+        .expect("failed to remove MM tag");
+    record
+        .remove_aux(ml_style.as_bytes())
+        .expect("failed to remove ML tag");
+    let mm = Aux::String(&mm_agg);
+    let ml_arr: AuxArray<u8> = {
+        let sl = &ml_agg;
+        sl.into()
+    };
+    let ml = Aux::ArrayU8(ml_arr);
+    record
+        .push_aux(MM_TAGS[0].as_bytes(), mm)
+        .expect("failed to add MM tag");
+    record
+        .push_aux(ML_TAGS[0].as_bytes(), ml)
+        .expect("failed to add ML tag");
+
+    Ok(record)
+}
+
+impl Update {
+    fn run(&self) -> Result<(), String> {
+        let _handle = init_logging(self.log_filepath.as_ref());
+        let fp = &self.in_bam;
+        let out_fp = &self.out_bam;
+        let threads = self.threads;
+        let mut reader =
+            bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
+        reader.set_threads(threads).map_err(|e| e.to_string())?;
+        let header = bam::Header::from_template(reader.header());
+        let mut out_bam =
+            bam::Writer::from_path(out_fp, &header, bam::Format::Bam)
+                .map_err(|e| e.to_string())?;
+        let spinner = get_spinner();
+
+        spinner.set_message("Updating ModBAM");
+        let mut total = 0usize;
+        let mut total_failed = 0usize;
+        let mut total_skipped = 0usize;
+
+        for (i, result) in reader.records().enumerate() {
+            if let Ok(record) = result {
+                let record_name = util::get_query_name_string(&record)
+                    .unwrap_or("???".to_owned());
+                match update_mod_tags(
+                    record,
+                    self.mode.map(|m| m.to_skip_mode()),
+                ) {
+                    Err(RunError::BadInput(InputError(err)))
+                    | Err(RunError::Failed(err)) => {
+                        debug!("read {} failed, {}", record_name, err);
+                        total_failed += 1;
+                    }
+                    Err(RunError::Skipped(_reason)) => {
+                        total_skipped += 1;
+                    }
+                    Ok(record) => {
+                        if let Err(err) = out_bam.write(&record) {
+                            debug!("failed to write {}", err);
+                            total_failed += 1;
+                        } else {
+                            spinner.inc(1);
+                            total = i;
+                        }
+                    }
+                }
+            } else {
+                total_failed += 1;
+            }
+        }
+
+        spinner.finish_and_clear();
+
+        info!(
+            "done, {} records processed, {} failed, {} skipped",
+            total, total_failed, total_skipped
+        );
         Ok(())
     }
 }

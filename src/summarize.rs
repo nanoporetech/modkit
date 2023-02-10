@@ -1,10 +1,7 @@
 use crate::errs::RunError;
-use crate::mod_bam::{
-    base_mod_probs_from_record, get_canonical_bases_with_mod_calls,
-    BaseModCall, DeltaListConverter,
-};
+use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::mod_base_code::{DnaBase, ModCode};
-use crate::util::record_is_secondary;
+use crate::util::{record_is_secondary, Strand};
 use indicatif::{ProgressBar, ProgressStyle};
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
@@ -40,12 +37,7 @@ pub fn summarize_modbam<T: AsRef<Path>>(
         .filter(|record| !record_is_secondary(&record))
         // skip records with empty sequences
         .filter(|record| record.seq_len() > 0)
-        // pull out the canonical bases in the MM tags, drop records that fail to parse
-        .filter_map(|record| {
-            get_canonical_bases_with_mod_calls(&record)
-                .map(|bases| (bases, record))
-                .ok()
-        });
+        .filter_map(|record| ModBaseInfo::new_from_record(&record).ok());
 
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -66,52 +58,43 @@ pub fn summarize_modbam<T: AsRef<Path>>(
     spinner.set_message("records processed");
 
     let mut total_reads_used = 0;
-    let mut mod_called_bases = HashSet::new();
+    let mod_called_bases = HashSet::new();
     let mut reads_with_mod_calls = HashMap::new();
     let mut mod_call_counts = HashMap::new();
-    for (i, (canonical_bases, record)) in record_iter.enumerate() {
-        for canonical_base in canonical_bases {
-            mod_called_bases.insert(canonical_base);
+    for (i, modbase_info) in record_iter.enumerate() {
+        if modbase_info.is_empty() {
+            continue;
+        }
+
+        let (_converters, prob_iter) = modbase_info.into_iter_base_mod_probs();
+        for (canonical_base, strand, seq_pos_mod_probs) in prob_iter {
+            let canonical_base = match (DnaBase::parse(canonical_base), strand)
+            {
+                (Err(_), _) => continue,
+                (Ok(dna_base), Strand::Positive) => dna_base,
+                (Ok(dna_base), Strand::Negative) => dna_base.complement(),
+            };
+            let count = reads_with_mod_calls.entry(canonical_base).or_insert(0);
+            *count += 1;
             let mod_counts = mod_call_counts
                 .entry(canonical_base)
                 .or_insert(HashMap::new());
-
-            let converter = DeltaListConverter::new_from_record(
-                &record,
-                canonical_base.char(),
-            )?;
-            match base_mod_probs_from_record(
-                &record,
-                &converter,
-                canonical_base.char(),
-            ) {
-                Ok(seq_pos_base_mod_probs) => {
-                    let count =
-                        reads_with_mod_calls.entry(canonical_base).or_insert(0);
-                    *count += 1;
-
-                    for (_position, base_mod_probs) in seq_pos_base_mod_probs {
-                        match base_mod_probs.base_mod_call() {
-                            BaseModCall::Canonical(_p) => {
-                                let count = mod_counts
-                                    .entry(
-                                        canonical_base
-                                            .canonical_mod_code()
-                                            .unwrap(),
-                                    )
-                                    .or_insert(0);
-                                *count += 1;
-                            }
-                            BaseModCall::Modified(_p, mod_code) => {
-                                let count =
-                                    mod_counts.entry(mod_code).or_insert(0);
-                                *count += 1;
-                            }
-                            BaseModCall::Filtered => {}
-                        }
+            for (_position, base_mod_probs) in
+                seq_pos_mod_probs.pos_to_base_mod_probs
+            {
+                match base_mod_probs.base_mod_call() {
+                    BaseModCall::Canonical(_p) => {
+                        let count = mod_counts
+                            .entry(canonical_base.canonical_mod_code().unwrap())
+                            .or_insert(0);
+                        *count += 1;
                     }
+                    BaseModCall::Modified(_p, mod_code) => {
+                        let count = mod_counts.entry(mod_code).or_insert(0);
+                        *count += 1;
+                    }
+                    BaseModCall::Filtered => {}
                 }
-                Err(_err) => {}
             }
         }
         total_reads_used = i;

@@ -1,6 +1,7 @@
 use crate::mod_bam::{BaseModCall, CollapseMethod};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::read_cache::ReadCache;
+
 use crate::util::{record_is_secondary, Strand};
 use itertools::Itertools;
 use log::debug;
@@ -15,6 +16,21 @@ enum Feature {
     Filtered,
     NoCall(DnaBase),
     ModCall(ModCode),
+}
+
+impl Feature {
+    fn from_base_mod_call(
+        base_mod_call: BaseModCall,
+        read_base: DnaBase,
+    ) -> Self {
+        match base_mod_call {
+            BaseModCall::Canonical(_) => Feature::ModCall(
+                read_base.canonical_mod_code().expect("shold get base"),
+            ),
+            BaseModCall::Modified(_, mod_code) => Feature::ModCall(mod_code),
+            BaseModCall::Filtered => Feature::Filtered,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -86,10 +102,26 @@ impl FeatureVector {
         Self::default()
     }
 
-    pub(crate) fn add_feature(&mut self, strand: Strand, feature: Feature) {
-        match strand {
-            Strand::Positive => self.pos_tally.add_feature(feature),
-            Strand::Negative => self.neg_tally.add_feature(feature),
+    pub(crate) fn add_feature(
+        &mut self,
+        read_strand: Strand,
+        feature: Feature,
+        feature_strand: Strand,
+    ) {
+        match (read_strand, feature_strand) {
+            (Strand::Positive, Strand::Positive) => {
+                self.pos_tally.add_feature(feature)
+            }
+            (Strand::Negative, Strand::Positive) => {
+                self.neg_tally.add_feature(feature)
+            }
+
+            (Strand::Positive, Strand::Negative) => {
+                self.neg_tally.add_feature(feature)
+            }
+            (Strand::Negative, Strand::Negative) => {
+                self.pos_tally.add_feature(feature)
+            }
         }
     }
 
@@ -329,6 +361,7 @@ pub fn process_region<T: AsRef<Path>>(
     end_pos: u32,
     threshold: f32,
     pileup_numeric_options: &PileupNumericOptions,
+    force_allow: bool,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -343,8 +376,10 @@ pub fn process_region<T: AsRef<Path>>(
         ))
         .map_err(|e| e.to_string())?;
 
-    let mut read_cache =
-        ReadCache::new(pileup_numeric_options.get_collapse_method());
+    let mut read_cache = ReadCache::new(
+        pileup_numeric_options.get_collapse_method(),
+        force_allow,
+    );
     let mut position_feature_counts = HashMap::new();
     let pileup_iter = PileupIter::new(bam_reader.pileup(), start_pos, end_pos);
     for pileup in pileup_iter {
@@ -369,20 +404,24 @@ pub fn process_region<T: AsRef<Path>>(
         for alignment in alignment_iter {
             assert!(!alignment.is_refskip());
             let record = alignment.record();
-            // observed_mod_codes
-            //     .extend(read_cache.get_mod_codes_for_record(&record));
-            let strand = if record.is_reverse() {
-                neg_strand_observed_mod_codes
-                    .extend(read_cache.get_mod_codes_for_record(&record));
+            read_cache.add_mod_codes_for_record(
+                &record,
+                &mut pos_strand_observed_mod_codes,
+                &mut neg_strand_observed_mod_codes,
+            );
+
+            let read_strand = if record.is_reverse() {
                 Strand::Negative
             } else {
-                pos_strand_observed_mod_codes
-                    .extend(read_cache.get_mod_codes_for_record(&record));
                 Strand::Positive
             };
 
             if alignment.is_del() {
-                feature_vector.add_feature(strand, Feature::Delete);
+                feature_vector.add_feature(
+                    read_strand,
+                    Feature::Delete,
+                    Strand::Positive,
+                );
                 continue;
             }
 
@@ -406,25 +445,57 @@ pub fn process_region<T: AsRef<Path>>(
                 continue;
             };
 
-            let feature = if let Some(mod_call) = read_cache.get_mod_call(
+            match read_cache.get_mod_call(
                 &record,
                 pos,
                 read_base.char(),
                 threshold,
             ) {
-                match mod_call {
-                    BaseModCall::Canonical(_) => Feature::ModCall(
-                        read_base.canonical_mod_code().unwrap(),
-                    ),
-                    BaseModCall::Filtered => Feature::Filtered,
-                    BaseModCall::Modified(_, mod_code) => {
-                        Feature::ModCall(mod_code)
-                    }
+                (Some(pos_call), Some(neg_call)) => {
+                    let pos_feature =
+                        Feature::from_base_mod_call(pos_call, read_base);
+                    let neg_feature = Feature::from_base_mod_call(
+                        neg_call,
+                        read_base.complement(),
+                    );
+                    feature_vector.add_feature(
+                        read_strand,
+                        pos_feature,
+                        Strand::Positive,
+                    );
+                    feature_vector.add_feature(
+                        read_strand,
+                        neg_feature,
+                        Strand::Negative,
+                    );
                 }
-            } else {
-                Feature::NoCall(read_base)
-            };
-            feature_vector.add_feature(strand, feature);
+                (Some(pos_call), None) => {
+                    let pos_feature =
+                        Feature::from_base_mod_call(pos_call, read_base);
+                    feature_vector.add_feature(
+                        read_strand,
+                        pos_feature,
+                        Strand::Positive,
+                    );
+                }
+                (None, Some(neg_call)) => {
+                    let neg_feature = Feature::from_base_mod_call(
+                        neg_call,
+                        read_base.complement(),
+                    );
+
+                    feature_vector.add_feature(
+                        read_strand,
+                        neg_feature,
+                        Strand::Negative,
+                    );
+                }
+                (None, None) => feature_vector.add_feature(
+                    read_strand,
+                    Feature::NoCall(read_base),
+                    Strand::Positive,
+                ),
+            }
         } // alignment loop
         position_feature_counts.insert(
             pos,
@@ -455,13 +526,41 @@ mod mod_pileup_tests {
         let pos_observed_mods = HashSet::from([ModCode::m, ModCode::h]);
         let neg_observed_mods = HashSet::new();
         let mut fv = FeatureVector::new();
-        fv.add_feature(Strand::Positive, Feature::NoCall(DnaBase::A));
-        fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::C));
-        fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::m));
-        fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::m));
-        fv.add_feature(Strand::Positive, Feature::NoCall(DnaBase::C));
-        fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
+        fv.add_feature(
+            Strand::Positive,
+            Feature::NoCall(DnaBase::A),
+            Strand::Positive,
+        );
+        fv.add_feature(
+            Strand::Positive,
+            Feature::ModCall(ModCode::C),
+            Strand::Positive,
+        );
+        fv.add_feature(
+            Strand::Positive,
+            Feature::ModCall(ModCode::m),
+            Strand::Positive,
+        );
+        fv.add_feature(
+            Strand::Positive,
+            Feature::ModCall(ModCode::m),
+            Strand::Positive,
+        );
+        fv.add_feature(
+            Strand::Positive,
+            Feature::NoCall(DnaBase::C),
+            Strand::Positive,
+        );
+        fv.add_feature(
+            Strand::Negative,
+            Feature::NoCall(DnaBase::G),
+            Strand::Positive,
+        );
+        fv.add_feature(
+            Strand::Negative,
+            Feature::NoCall(DnaBase::G),
+            Strand::Positive,
+        );
         let counts = fv.decode(
             &pos_observed_mods,
             &neg_observed_mods,
@@ -476,10 +575,26 @@ mod mod_pileup_tests {
         }
         let mut fv = FeatureVector::new();
         let neg_observed_mods = HashSet::from([ModCode::m, ModCode::h]);
-        fv.add_feature(Strand::Positive, Feature::ModCall(ModCode::C));
-        fv.add_feature(Strand::Negative, Feature::ModCall(ModCode::m));
-        fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
-        fv.add_feature(Strand::Negative, Feature::NoCall(DnaBase::G));
+        fv.add_feature(
+            Strand::Positive,
+            Feature::ModCall(ModCode::C),
+            Strand::Positive,
+        );
+        fv.add_feature(
+            Strand::Negative,
+            Feature::ModCall(ModCode::m),
+            Strand::Positive,
+        );
+        fv.add_feature(
+            Strand::Negative,
+            Feature::NoCall(DnaBase::G),
+            Strand::Positive,
+        );
+        fv.add_feature(
+            Strand::Negative,
+            Feature::NoCall(DnaBase::G),
+            Strand::Positive,
+        );
         let counts = fv.decode(
             &pos_observed_mods,
             &neg_observed_mods,

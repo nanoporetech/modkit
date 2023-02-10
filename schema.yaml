@@ -53,7 +53,7 @@ columns:
       description: included for compatibility 
   - color:
       type: str
-      description: included for compatibility, always 0,0,0
+      description: included for compatibility, always 255,0,0
   - filtered_coverage:
       type: int
       description: see definitions

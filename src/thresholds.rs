@@ -1,8 +1,5 @@
 use crate::errs::{InputError, RunError};
-use crate::mod_bam::{
-    base_mod_probs_from_record, get_canonical_bases_with_mod_calls,
-    BaseModCall, DeltaListConverter,
-};
+use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::util::record_is_secondary;
 use anyhow::Context;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -58,11 +55,7 @@ pub fn sample_modbase_probs(
             }
         })
         // pull out the canonical bases in the MM tags, drop records that fail to parse
-        .filter_map(|record| {
-            get_canonical_bases_with_mod_calls(&record)
-                .map(|bases| (bases, record))
-                .ok()
-        });
+        .filter_map(|record| ModBaseInfo::new_from_record(&record).ok());
 
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -84,18 +77,14 @@ pub fn sample_modbase_probs(
 
     let mut probs = Vec::new();
     let mut record_count = 0usize;
-    for (canonical_bases, record) in record_iter {
-        for canonical_base in canonical_bases {
-            let converter = DeltaListConverter::new_from_record(
-                &record,
-                canonical_base.char(),
-            )?;
-            let seq_pos_base_mod_probs = base_mod_probs_from_record(
-                &record,
-                &converter,
-                canonical_base.char(),
-            )?;
+    for modbase_info in record_iter {
+        if modbase_info.is_empty() {
+            continue;
+        }
+        let (_converters, prob_iter) = modbase_info.into_iter_base_mod_probs();
+        for (_canonical_base, _strand, seq_pos_base_mod_probs) in prob_iter {
             let mut mod_probs = seq_pos_base_mod_probs
+                .pos_to_base_mod_probs
                 .iter()
                 .map(|(_pos, base_mod_probs)| {
                     match base_mod_probs.base_mod_call() {

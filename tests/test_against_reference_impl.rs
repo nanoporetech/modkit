@@ -1,4 +1,5 @@
-use std::io::Read as StdRead;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read as StdRead};
 use std::process::Output;
 
 use mod_kit::mod_bam::parse_raw_mod_tags;
@@ -244,7 +245,8 @@ fn test_adjust_to_no_mods() {
     let mut reader =
         bam::Reader::from_path(test_ignore_h_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
-        let (mm, _ml) = parse_raw_mod_tags(&record).unwrap().unwrap();
+        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
+        let mm = raw_mod_tags.get_raw_mm();
         assert!(mm.starts_with("C+m?"));
     }
     let second_adjust_args = [
@@ -258,8 +260,82 @@ fn test_adjust_to_no_mods() {
     let mut reader =
         bam::Reader::from_path(test_both_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
-        let (mm, _ml) = parse_raw_mod_tags(&record).unwrap().unwrap();
+        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
+        let mm = raw_mod_tags.get_raw_mm();
         assert!(mm.starts_with("C+C?"));
+    }
+}
+
+#[test]
+fn test_pileup_no_mod_calls() {
+    let empty_bedfile =
+        std::env::temp_dir().join("test_pileup_no_mod_calls_outbed.bed");
+    let args = [
+        "pileup",
+        "--no-filtering",
+        "tests/resources/empty-tags.sorted.bam",
+        empty_bedfile.to_str().unwrap(),
+    ];
+
+    run_modkit(&args);
+
+    let reader = BufReader::new(File::open(empty_bedfile).unwrap());
+    let lines = reader.lines().collect::<Vec<Result<String, _>>>();
+    assert_eq!(lines.len(), 0);
+}
+
+#[test]
+fn test_pileup_old_tags() {
+    let updated_file =
+        std::env::temp_dir().join("test_pileup_old_tags_updated.bam");
+    run_modkit(&[
+        "update-tags",
+        "tests/resources/HG002_small.ch20._other.sorted.bam",
+        "--mode",
+        "ambiguous",
+        updated_file.to_str().unwrap(),
+    ]);
+    assert!(updated_file.exists());
+    bam::index::build(updated_file.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    let out_file = std::env::temp_dir().join("test_pileup_old_tags.bed");
+    run_modkit(&[
+        "pileup",
+        "--no-filtering",
+        updated_file.to_str().unwrap(),
+        out_file.to_str().unwrap(),
+    ]);
+    check_against_expected_text_file(
+        out_file.to_str().unwrap(),
+        "tests/resources/pileup-old-tags-regressiontest.bed",
+    );
+}
+
+#[test]
+fn test_adjust_convert_old_tags() {
+    let out_file =
+        std::env::temp_dir().join("test_adjust_convert_old_tags.bam");
+    let args = [
+        "adjust-mods",
+        "--convert",
+        "m",
+        "C",
+        "tests/resources/HG002_small.ch20._other.sorted.bam",
+        out_file.to_str().unwrap(),
+    ];
+
+    run_modkit(&args);
+    let mut reader =
+        bam::Reader::from_path(out_file.to_str().unwrap()).unwrap();
+    for record in reader.records().map(|r| r.expect("should parse record")) {
+        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
+        assert!(!raw_mod_tags.mm_is_new_style());
+        assert!(!raw_mod_tags.ml_is_new_style());
+        let mm = raw_mod_tags.get_raw_mm();
+        if !mm.is_empty() {
+            assert!(mm.starts_with("C+C,"), "wrong: {mm}");
+        }
     }
 }
 
