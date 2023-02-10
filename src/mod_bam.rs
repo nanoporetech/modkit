@@ -435,12 +435,15 @@ impl BaseModPositions {
 }
 
 fn combine_positions_to_probs(
+    record: &bam::Record,
     agg: &mut SeqPosBaseModProbs,
     to_add: SeqPosBaseModProbs,
 ) -> Result<(), InputError> {
     if agg.skip_mode != to_add.skip_mode {
+        let record_name =
+            util::get_query_name_string(record).unwrap_or("???".to_string());
         Err(InputError::new(&format!(
-            "two skip modes ({} and {}) do not match",
+            "record: {record_name}, two skip modes ({} and {}) do not match",
             agg.skip_mode.char().unwrap_or('.'),
             to_add.skip_mode.char().unwrap_or('.')
         )))
@@ -486,6 +489,7 @@ impl SeqPosBaseModProbs {
 }
 
 pub fn extract_mod_probs(
+    record: &bam::Record,
     raw_mm: &str,
     mod_quals: &[u16],
     converter: &DeltaListConverter,
@@ -509,6 +513,7 @@ pub fn extract_mod_probs(
             )
             .unwrap(); // todo(arand) remove this unwrap
             combine_positions_to_probs(
+                record,
                 &mut positions_to_probs,
                 base_mod_probs,
             )?;
@@ -734,12 +739,13 @@ impl ModBaseInfo {
         };
 
         let forward_sequence = util::get_forward_sequence(record)?;
-        Self::new(&raw_mod_tags, &forward_sequence)
+        Self::new(&raw_mod_tags, &forward_sequence, record)
     }
 
     pub fn new(
         raw_mod_tags: &RawModTags,
         forward_seq: &str,
+        record: &bam::Record,
     ) -> Result<Self, RunError> {
         let mm = &raw_mod_tags.raw_mm;
         let raw_ml = &raw_mod_tags.raw_ml;
@@ -773,7 +779,11 @@ impl ModBaseInfo {
             if let Some(positions_to_probs) =
                 seq_base_mod_probs.get_mut(&base_mod_positions.canonical_base)
             {
-                combine_positions_to_probs(positions_to_probs, base_mod_probs)?;
+                combine_positions_to_probs(
+                    record,
+                    positions_to_probs,
+                    base_mod_probs,
+                )?;
             } else {
                 seq_base_mod_probs
                     .insert(base_mod_positions.canonical_base, base_mod_probs);
@@ -901,7 +911,7 @@ pub fn base_mod_probs_from_record(
         }
     };
 
-    extract_mod_probs(&mm, &ml, &converter)
+    extract_mod_probs(record, &mm, &ml, &converter)
         .map_err(|input_err| RunError::BadInput(input_err))
 }
 
@@ -1269,7 +1279,8 @@ mod mod_bam_tests {
         let converter = DeltaListConverter::new(dna, canonical_base);
 
         let positions_to_probs =
-            extract_mod_probs(tag, &quals, &converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &converter)
+                .unwrap();
 
         assert_eq!(positions_to_probs.pos_to_base_mod_probs.len(), 3);
         let mut found_positions = Vec::new();
@@ -1289,7 +1300,8 @@ mod mod_bam_tests {
         let quals = vec![1, 1, 1, 200, 200, 200];
 
         let positions_to_probs_1 =
-            extract_mod_probs(tag, &quals, &converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &converter)
+                .unwrap();
 
         assert_eq!(positions_to_probs, positions_to_probs_1);
     }
@@ -1303,7 +1315,8 @@ mod mod_bam_tests {
         let converter = DeltaListConverter::new(dna, canonical_base);
 
         let positions_to_probs =
-            extract_mod_probs(tag, &quals, &converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &converter)
+                .unwrap();
         assert_eq!(positions_to_probs.pos_to_base_mod_probs.len(), 3);
         for (_pos, base_mod_probs) in
             positions_to_probs.pos_to_base_mod_probs.iter()
@@ -1315,7 +1328,8 @@ mod mod_bam_tests {
         let tag = "C+hm?,0,1,0;A+a?,0,1,0;";
         let quals = vec![1, 1, 1, 1, 1, 1, 200, 200, 200];
         let positions_to_probs_comb =
-            extract_mod_probs(tag, &quals, &converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &converter)
+                .unwrap();
         assert_eq!(
             positions_to_probs_comb.pos_to_base_mod_probs.len(),
             positions_to_probs.pos_to_base_mod_probs.len()
@@ -1346,10 +1360,20 @@ mod mod_bam_tests {
         let c_quals = vec![1, 100, 1, 100, 1, 100]; // interleaved!
         let a_quals = vec![200, 200, 200];
 
-        let c_expected_seq_pos_base_mod_probs =
-            extract_mod_probs(c_tag, &c_quals, &c_converter).unwrap();
-        let a_expected_seq_pos_base_mod_probs =
-            extract_mod_probs(a_tag, &a_quals, &a_converter).unwrap();
+        let c_expected_seq_pos_base_mod_probs = extract_mod_probs(
+            &bam::Record::new(),
+            c_tag,
+            &c_quals,
+            &c_converter,
+        )
+        .unwrap();
+        let a_expected_seq_pos_base_mod_probs = extract_mod_probs(
+            &bam::Record::new(),
+            a_tag,
+            &a_quals,
+            &a_converter,
+        )
+        .unwrap();
 
         let c_expected = BaseModProbs {
             mod_codes: indexset! { 'h', 'm' },
@@ -1394,7 +1418,8 @@ mod mod_bam_tests {
         let tag = "C+h?,0,1,0;A+a?,0,1,0;C+m?,0,1,0;";
         let quals = vec![1, 1, 1, 200, 200, 200, 100, 100, 100];
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
-        let obs_mod_base_info = ModBaseInfo::new(&raw_mod_tags, dna).unwrap();
+        let obs_mod_base_info =
+            ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
         assert_eq!(
             obs_mod_base_info.pos_seq_base_mod_probs.get(&'C').unwrap(),
             &c_expected_seq_pos_base_mod_probs
@@ -1405,16 +1430,19 @@ mod mod_bam_tests {
         );
 
         let obs_base_mod_probs =
-            extract_mod_probs(tag, &quals, &c_converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &c_converter)
+                .unwrap();
         assert_eq!(&obs_base_mod_probs, &c_expected_seq_pos_base_mod_probs);
         let obs_base_mod_probs =
-            extract_mod_probs(tag, &quals, &a_converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &a_converter)
+                .unwrap();
         assert_eq!(&obs_base_mod_probs, &a_expected_seq_pos_base_mod_probs);
 
         let tag = "C+h?,0,1,0;C+m?,0,1,0;A+a?,0,1,0;";
         let quals = vec![1, 1, 1, 100, 100, 100, 200, 200, 200];
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
-        let obs_mod_base_info = ModBaseInfo::new(&raw_mod_tags, dna).unwrap();
+        let obs_mod_base_info =
+            ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
         assert_eq!(
             obs_mod_base_info.pos_seq_base_mod_probs.get(&'C').unwrap(),
             &c_expected_seq_pos_base_mod_probs
@@ -1425,17 +1453,20 @@ mod mod_bam_tests {
         );
 
         let obs_base_mod_probs =
-            extract_mod_probs(tag, &quals, &c_converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &c_converter)
+                .unwrap();
         assert_eq!(&obs_base_mod_probs, &c_expected_seq_pos_base_mod_probs);
         let obs_base_mod_probs =
-            extract_mod_probs(tag, &quals, &a_converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &a_converter)
+                .unwrap();
         assert_eq!(&obs_base_mod_probs, &a_expected_seq_pos_base_mod_probs);
 
         // test with the mods "combined"
         let tag = "C+hm?,0,1,0;A+a?,0,1,0;";
         let quals = vec![1, 100, 1, 100, 1, 100, 200, 200, 200];
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
-        let obs_mod_base_info = ModBaseInfo::new(&raw_mod_tags, dna).unwrap();
+        let obs_mod_base_info =
+            ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
         assert_eq!(
             obs_mod_base_info.pos_seq_base_mod_probs.get(&'C').unwrap(),
             &c_expected_seq_pos_base_mod_probs
@@ -1445,10 +1476,12 @@ mod mod_bam_tests {
             &a_expected_seq_pos_base_mod_probs
         );
         let obs_base_mod_probs =
-            extract_mod_probs(tag, &quals, &c_converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &c_converter)
+                .unwrap();
         assert_eq!(&obs_base_mod_probs, &c_expected_seq_pos_base_mod_probs);
         let obs_base_mod_probs =
-            extract_mod_probs(tag, &quals, &a_converter).unwrap();
+            extract_mod_probs(&bam::Record::new(), tag, &quals, &a_converter)
+                .unwrap();
         assert_eq!(&obs_base_mod_probs, &a_expected_seq_pos_base_mod_probs);
     }
 
@@ -1459,7 +1492,7 @@ mod mod_bam_tests {
         let tag = "C+h?,1,1,0;C+m?,1,1,0;G-h?,1,2,0;G-m?,1,2,0";
         let quals = vec![100, 100, 100, 1, 1, 1, 150, 150, 150, 2, 2, 2];
         let tags = RawModTags::new(tag, &quals, true);
-        let info = ModBaseInfo::new(&tags, dna).unwrap();
+        let info = ModBaseInfo::new(&tags, dna, &bam::Record::new()).unwrap();
         let (_converters, iterator) = info.into_iter_base_mod_probs();
         for (c, strand, probs) in iterator {
             if c == 'C' {
