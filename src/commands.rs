@@ -14,7 +14,7 @@ use log::{debug, info};
 use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
-use rust_htslib::bam::Read;
+use rust_htslib::bam::{HeaderView, Read};
 
 use crate::errs::{InputError, RunError};
 use crate::interval_chunks::IntervalChunks;
@@ -31,8 +31,8 @@ use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
 };
 use crate::util;
-use crate::util::record_is_secondary;
-use crate::writers::{BedMethylWriter, OutWriter, TsvWriter};
+use crate::util::{add_modkit_pg_records, record_is_secondary, Region};
+use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -94,7 +94,7 @@ pub struct Adjust {
     /// of the methods can be found in collapse.md
     #[arg(
         long,
-        default_value_t = String::from("norm"),
+        default_value_t = String::from("dist"),
         value_parser = check_collapse_method,
         requires = "ignore",
     )]
@@ -196,7 +196,8 @@ impl Adjust {
             bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
         let threads = self.threads;
         reader.set_threads(threads).map_err(|e| e.to_string())?;
-        let header = bam::Header::from_template(reader.header());
+        let mut header = bam::Header::from_template(reader.header());
+        add_modkit_pg_records(&mut header);
         let mut out_bam =
             bam::Writer::from_path(out_fp, &header, bam::Format::Bam)
                 .map_err(|e| e.to_string())?;
@@ -222,7 +223,6 @@ impl Adjust {
             conversions
                 .into_iter()
                 .map(|(to_mod_code, from_mod_codes)| {
-                    // let canonical_base = to_mod_code.canonical_base();
                     let method = CollapseMethod::Convert {
                         to: to_mod_code,
                         from: from_mod_codes,
@@ -242,7 +242,6 @@ impl Adjust {
                     out_fp.to_str().unwrap_or("???")
                 )
             );
-            // let canonical_base = mod_code_to_remove.canonical_base();
             let method =
                 CollapseMethod::parse_str(&self.method, mod_code_to_remove)?;
             vec![method]
@@ -355,20 +354,29 @@ pub struct ModBamPileup {
     #[arg(long, default_value_t = false, group = "combine_args")]
     combine: bool,
 
-    /// Collapse _in_situ_. Arg is the method to use {'norm', 'dist'}.
+    /// Collapse _in_situ_ by redistributing base modification probability
+    /// equally  across other options. For example, if collapsing 'h', with 'm'
+    /// and canonical options, half of the probability of 'h' will be added to
+    /// both 'm' and 'C'. A full description of the methods can be found in
+    /// collapse.md
     #[arg(long, group = "combine_args", hide_short_help = true, value_parser)]
     collapse: Option<char>,
-    /// Method to use to collapse mod calls, 'norm', 'dist'. A full description
-    /// of the methods can be found in collapse.md
-    #[arg(
-        long,
-        default_value_t = String::from("norm"),
-        value_parser = check_collapse_method,
-        requires = "collapse",
-        hide_short_help = true,
-    )]
-    #[arg(long)]
-    method: String,
+
+    /// For bedMethyl output, separate columns with only tabs. Default is
+    /// to use tabs for the first 10 fields and spaces thereafter. The
+    /// default behavior is more likely to be compatible with genome viewers.
+    /// Enabling this option may make it easier to parse the output with
+    /// tabular data handlers that expect a single kind of separator.
+    #[arg(long, conflicts_with = "bedgraph", default_value_t = false)]
+    only_tabs: bool,
+
+    /// Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html.
+    /// For this setting, specify a directory for output files to be make in.
+    /// Two files for each modification will be produced, one for the postiive strand
+    /// and one for the negative strand. So for 5mC (m) and 5hmC (h) there will be 4 files
+    /// produced.
+    #[arg(long, conflicts_with = "only_tabs", default_value_t = false)]
+    bedgraph: bool,
 
     /// Force allow implicit-canonical mode. By default modkit does not allow
     /// pileup with the implicit mode ('.', or omitted). The `update-tags`
@@ -377,9 +385,62 @@ pub struct ModBamPileup {
     /// canonical, this option will allow that behavior.
     #[arg(long, hide_short_help = true, default_value_t = false)]
     force_allow_implicit: bool,
+
+    /// Process only the specified region of the BAM when performing pileup.
+    /// Format should be <chrom_name>:<start>-<end>.
+    #[arg(long)]
+    region: Option<String>,
+}
+
+#[derive(Debug)]
+struct Target {
+    tid: u32,
+    start: u32,
+    length: u32,
+    name: String,
+}
+
+impl Target {
+    fn new(tid: u32, start: u32, length: u32, name: String) -> Self {
+        Self {
+            tid,
+            start,
+            length,
+            name,
+        }
+    }
 }
 
 impl ModBamPileup {
+    fn get_targets(
+        &self,
+        header: &HeaderView,
+        region: Option<Region>,
+    ) -> Vec<Target> {
+        (0..header.target_count())
+            .filter_map(|tid| {
+                let chrom_name =
+                    String::from_utf8(header.tid2name(tid).to_vec()).unwrap_or("???".to_owned());
+                if let Some(region) = &region {
+                    if chrom_name == region.name {
+                        Some(Target::new(tid, region.start, region.length(), chrom_name))
+                    } else {
+                        None
+                    }
+                } else {
+                    match header.target_len(tid) {
+                        Some(size) => Some(Target::new(tid, 0, size as u32, chrom_name)),
+                        None => {
+                            debug!("> no size information for {chrom_name} (tid: {tid})");
+                            None
+                        }
+                    }
+                }
+
+            })
+            .collect::<Vec<Target>>()
+    }
+
     fn run(&self) -> AnyhowResult<(), String> {
         let _handle = init_logging(self.log_filepath.as_ref());
         // do this first so we fail when the file isn't readable
@@ -392,8 +453,7 @@ impl ModBamPileup {
             (true, _) => PileupNumericOptions::Combine,
             (_, Some(raw_mod_code)) => {
                 let mod_code = ModCode::parse_raw_mod_code(*raw_mod_code)?;
-                let method =
-                    CollapseMethod::parse_str(self.method.as_str(), mod_code)?;
+                let method = CollapseMethod::ReDistribute(mod_code);
                 PileupNumericOptions::Collapse(method)
             }
         };
@@ -424,19 +484,13 @@ impl ModBamPileup {
 
         info!("Using filter threshold {}", threshold);
 
-        let tids = (0..header.target_count())
-            .filter_map(|tid| {
-                let chrom_name =
-                    String::from_utf8(header.tid2name(tid).to_vec()).unwrap_or("???".to_owned());
-                match header.target_len(tid) {
-                    Some(size) => Some((tid, size as u32, chrom_name)),
-                    None => {
-                        debug!("> no size information for {chrom_name} (tid: {tid})");
-                        None
-                    }
-                }
-            })
-            .collect::<Vec<(u32, u32, String)>>();
+        let region = if let Some(raw_region) = &self.region {
+            info!("parsing region {raw_region}");
+            Some(Region::parse_str(raw_region)?)
+        } else {
+            None
+        };
+        let tids = self.get_targets(&header, region);
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -464,16 +518,21 @@ impl ModBamPileup {
         let force_allow = self.force_allow_implicit;
         thread::spawn(move || {
             pool.install(|| {
-                for (tid, size, ref_name) in tids {
-                    let intervals = IntervalChunks::new(size, interval_size, 0)
-                        .collect::<Vec<(u32, u32)>>();
+                for target in tids {
+                    let intervals = IntervalChunks::new(
+                        target.start,
+                        target.length,
+                        interval_size,
+                        0,
+                    )
+                    .collect::<Vec<(u32, u32)>>();
                     let n_intervals = intervals.len();
                     let interval_progress = master_progress.add(
                         ProgressBar::new(n_intervals as u64)
                             .with_style(sty.clone()),
                     );
                     interval_progress
-                        .set_message(format!("processing {}", ref_name));
+                        .set_message(format!("processing {}", &target.name));
                     let mut result: Vec<Result<ModBasePileup, String>> = vec![];
                     let (res, _) = rayon::join(
                         || {
@@ -483,7 +542,7 @@ impl ModBamPileup {
                                 .map(|(start, end)| {
                                     process_region(
                                         &in_bam_fp,
-                                        tid,
+                                        target.tid,
                                         start,
                                         end,
                                         threshold,
@@ -511,11 +570,18 @@ impl ModBamPileup {
         });
 
         let out_fp_str = self.out_bed.clone();
-        let out_fp = std::fs::File::create(out_fp_str)
-            .context("failed to make output file")
-            .map_err(|e| e.to_string())?;
+        let mut writer: Box<dyn OutWriter<ModBasePileup>> = if self.bedgraph {
+            Box::new(BedGraphWriter::new(out_fp_str)?)
+        } else {
+            let out_fp = std::fs::File::create(out_fp_str)
+                .context("failed to make output file")
+                .map_err(|e| e.to_string())?;
+            Box::new(BedMethylWriter::new(
+                BufWriter::new(out_fp),
+                self.only_tabs,
+            ))
+        };
 
-        let mut writer = BedMethylWriter::new(BufWriter::new(out_fp));
         for result in rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {
@@ -714,7 +780,9 @@ impl Update {
         let mut reader =
             bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
         reader.set_threads(threads).map_err(|e| e.to_string())?;
-        let header = bam::Header::from_template(reader.header());
+        let mut header = bam::Header::from_template(reader.header());
+        add_modkit_pg_records(&mut header);
+
         let mut out_bam =
             bam::Writer::from_path(out_fp, &header, bam::Format::Bam)
                 .map_err(|e| e.to_string())?;

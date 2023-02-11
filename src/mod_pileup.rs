@@ -33,7 +33,7 @@ impl Feature {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct PileupFeatureCounts {
     pub strand: Strand,
     pub filtered_coverage: u32,

@@ -1,8 +1,12 @@
 use crate::mod_pileup::ModBasePileup;
 use crate::summarize::ModSummary;
+use crate::util::Strand;
 use anyhow::Context;
+
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 
 pub trait OutWriter<T> {
     fn write(&mut self, item: T) -> Result<u64, String>;
@@ -10,24 +14,44 @@ pub trait OutWriter<T> {
 
 pub struct BedMethylWriter {
     buf_writer: BufWriter<File>,
+    tabs_and_spaces: bool,
 }
 
 impl BedMethylWriter {
-    pub fn new(buf_writer: BufWriter<File>) -> Self {
-        Self { buf_writer }
+    pub fn new(buf_writer: BufWriter<File>, tabs_and_spaces: bool) -> Self {
+        Self {
+            buf_writer,
+            tabs_and_spaces,
+        }
     }
 }
 
 impl OutWriter<ModBasePileup> for BedMethylWriter {
     fn write(&mut self, item: ModBasePileup) -> Result<u64, String> {
         let mut rows_written = 0;
-        let sep = '\t';
+        let tab = '\t';
+        let space = if self.tabs_and_spaces { tab } else { ' ' };
         for (pos, feature_counts) in item.iter_counts() {
             for feature_count in feature_counts {
                 let row = format!(
-                    "{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}\
-                    {}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}\
-                    {sep}{}{sep}\n",
+                    "{}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{tab}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}{space}\
+                    {}\n",
                     item.chrom_name,
                     pos,
                     pos + 1,
@@ -54,6 +78,78 @@ impl OutWriter<ModBasePileup> for BedMethylWriter {
                 rows_written += 1;
             }
         }
+        Ok(rows_written)
+    }
+}
+
+pub struct BedGraphWriter {
+    out_dir: PathBuf,
+    router: HashMap<(char, Strand), BufWriter<File>>,
+}
+
+impl BedGraphWriter {
+    pub fn new(out_dir: PathBuf) -> Result<Self, String> {
+        if out_dir.is_file() {
+            Err("out dir cannot be a file, needs to be a directory".to_owned())
+        } else {
+            if !out_dir.exists() {
+                std::fs::create_dir_all(out_dir.clone())
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(Self {
+                out_dir,
+                router: HashMap::new(),
+            })
+        }
+    }
+
+    fn get_writer_for_modstrand(
+        &mut self,
+        strand: Strand,
+        raw_mod_code: char,
+    ) -> &mut BufWriter<File> {
+        self.router
+            .entry((raw_mod_code, strand))
+            .or_insert_with(|| {
+                let strand_label = match strand {
+                    Strand::Positive => "positive",
+                    Strand::Negative => "negative",
+                };
+                let fp = self.out_dir.join(format!(
+                    "{}_{}.bedgraph",
+                    raw_mod_code, strand_label
+                ));
+                let fh = File::create(fp).unwrap();
+                BufWriter::new(fh)
+            })
+    }
+}
+
+impl OutWriter<ModBasePileup> for BedGraphWriter {
+    fn write(&mut self, item: ModBasePileup) -> Result<u64, String> {
+        let mut rows_written = 0;
+        let tab = '\t';
+        for (pos, feature_counts) in item.iter_counts() {
+            for feature_count in feature_counts {
+                let fh = self.get_writer_for_modstrand(
+                    feature_count.strand,
+                    feature_count.raw_mod_code,
+                );
+                let row = format!(
+                    "{}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}\n",
+                    item.chrom_name,
+                    pos,
+                    pos + 1,
+                    feature_count.fraction_modified
+                );
+                fh.write(row.as_bytes()).unwrap();
+                rows_written += 1;
+            }
+        }
+
         Ok(rows_written)
     }
 }

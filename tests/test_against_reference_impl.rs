@@ -47,7 +47,15 @@ fn test_adjust_output(
     check_file_path: &str,
 ) {
     let temp_file = std::env::temp_dir().join(output_path);
-    let args = ["adjust-mods", input_path, temp_file.to_str().unwrap()];
+    let args = [
+        "adjust-mods",
+        "--ignore",
+        "h",
+        "--method",
+        "norm",
+        input_path,
+        temp_file.to_str().unwrap(),
+    ];
     run_modkit(&args);
     assert!(temp_file.exists());
 
@@ -117,7 +125,7 @@ fn test_mod_pileup_no_filt() {
         "-i",
         "25", // use small interval to make sure chunking works
         "--no-filtering",
-        "--output-bed",
+        "--only-tabs",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
@@ -126,7 +134,7 @@ fn test_mod_pileup_no_filt() {
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
-        "tests/resources/modbam.modpileup_nofilt.bed",
+        "tests/resources/modbam.modpileup_nofilt.methyl.bed",
     );
 }
 
@@ -144,9 +152,9 @@ fn test_mod_pileup_with_filt() {
         "1.0",
         "-p",
         "0.25",
+        "--only-tabs",
         "--seed",
         "42",
-        "--output-bed",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
@@ -155,18 +163,18 @@ fn test_mod_pileup_with_filt() {
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
-        "tests/resources/modbam.modpileup_filt025.bed",
+        "tests/resources/modbam.modpileup_filt025.methyl.bed",
     );
 }
 
 #[test]
 fn test_mod_pileup_combine() {
-    let test_adjusted_bam = std::env::temp_dir().join("test_combined.bam");
+    let test_adjusted_bam = std::env::temp_dir().join("test_combined.bed");
     let pileup_args = [
         "pileup",
         "--combine",
         "--no-filtering",
-        "--output-bed",
+        "--only-tabs",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_adjusted_bam.to_str().unwrap(),
     ];
@@ -175,7 +183,7 @@ fn test_mod_pileup_combine() {
 
     check_against_expected_text_file(
         test_adjusted_bam.to_str().unwrap(),
-        "tests/resources/modbam.modpileup_combined.bed",
+        "tests/resources/modbam.modpileup_combined.methyl.bed",
     );
 }
 
@@ -217,8 +225,6 @@ fn test_mod_pileup_collapse() {
         "25", // use small interval to make sure chunking works
         "--collapse",
         "h",
-        "--method",
-        "norm",
         "--no-filtering",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_restricted_bed.to_str().unwrap(),
@@ -303,12 +309,14 @@ fn test_pileup_old_tags() {
     run_modkit(&[
         "pileup",
         "--no-filtering",
+        "--only-tabs",
         updated_file.to_str().unwrap(),
         out_file.to_str().unwrap(),
     ]);
+    assert!(out_file.exists());
     check_against_expected_text_file(
         out_file.to_str().unwrap(),
-        "tests/resources/pileup-old-tags-regressiontest.bed",
+        "tests/resources/pileup-old-tags-regressiontest.methyl.bed",
     );
 }
 
@@ -472,4 +480,29 @@ fn test_mod_adjust_convert_sum_probs_rename() {
         .get(&DnaBase::C)
         .and_then(|counts| counts.get(&ModCode::m));
     assert!(converted_m_calls.is_none());
+}
+
+#[test]
+fn test_pileup_with_region() {
+    let temp_file = std::env::temp_dir().join("test_pileup_with_region.bed");
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    assert!(exe.exists());
+
+    let args = [
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "--no-filtering",
+        "--region",
+        "oligo_1512_adapters:0-50",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+    ];
+
+    run_modkit(&args);
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/modbam.modpileup_nofilt_oligo_1512_adapters_10_50.bed",
+    );
 }

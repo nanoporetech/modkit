@@ -6,12 +6,17 @@ pub struct IntervalChunks {
 }
 
 impl IntervalChunks {
-    pub fn new(seq_len: u32, chunk_size: u32, overlap: u32) -> Self {
+    pub fn new(
+        start: u32,
+        seq_len: u32,
+        chunk_size: u32,
+        overlap: u32,
+    ) -> Self {
         Self {
-            seq_len,
+            seq_len: start + seq_len,
             chunk_size,
             overlap,
-            curr: 0,
+            curr: start,
         }
     }
 }
@@ -66,7 +71,7 @@ mod interval_chunks_tests {
     #[test]
     fn test_interval_chunks() {
         let seq = "ABCDEF".chars().collect::<Vec<char>>();
-        let mut ic = IntervalChunks::new(seq.len() as u32, 3, 1);
+        let mut ic = IntervalChunks::new(0, seq.len() as u32, 3, 1);
         let (s, e) = ic.next().unwrap();
         assert_eq!(s, 0);
         assert_eq!(e, 3);

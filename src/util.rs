@@ -1,3 +1,4 @@
+use rust_htslib::bam::header::HeaderRecord;
 use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Aux};
 use std::string::FromUtf8Error;
 
@@ -104,4 +105,95 @@ impl Strand {
 
 pub fn record_is_secondary(record: &bam::Record) -> bool {
     record.is_supplementary() || record.is_secondary() || record.is_duplicate()
+}
+
+#[derive(Debug)]
+pub struct Region {
+    pub name: String,
+    pub start: u32,
+    pub end: u32,
+}
+
+impl Region {
+    pub fn length(&self) -> u32 {
+        self.end - self.start
+    }
+
+    pub fn parse_str(raw: &str) -> Result<Self, InputError> {
+        let mut splitted = raw.split(':');
+        let chrom_name = splitted
+            .nth(0)
+            .ok_or(InputError::new("failed to parse region {raw}"))?;
+        let start_end = splitted.collect::<Vec<&str>>();
+        if start_end.len() != 1 {
+            return Err(InputError::new("failed to parse region {raw}"));
+        } else {
+            let start_end = start_end[0];
+            let splitted = start_end
+                .split('-')
+                .map(|x| {
+                    x.parse::<u32>()
+                        .map_err(|e| InputError::new(&e.to_string()))
+                })
+                .collect::<Result<Vec<u32>, _>>()?;
+            if splitted.len() != 2 {
+                return Err(InputError::new("failed to parse region {raw}"));
+            } else {
+                let start = splitted[0];
+                let end = splitted[1];
+                if end <= start {
+                    return Err(InputError::new(
+                        "failed to parse region {raw}, end must be after start",
+                    ));
+                }
+                Ok(Self {
+                    name: chrom_name.to_owned(),
+                    start,
+                    end,
+                })
+            }
+        }
+    }
+}
+
+pub fn add_modkit_pg_records(header: &mut bam::Header) {
+    let header_map = header.to_hashmap();
+    let (id, pp) = if let Some(pg_tags) = header_map.get("PG") {
+        let modkit_invocations = pg_tags.iter().filter_map(|tags| {
+            tags.get("ID").and_then(|v| {
+                if v.contains("modkit") {
+                    let last_run = v.split('.').nth(1).unwrap_or("0");
+                    last_run.parse::<usize>().ok()
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some(latest_run_number) = modkit_invocations.max() {
+            let pp = if latest_run_number > 0 {
+                Some(format!("modkit.{}", latest_run_number))
+            } else {
+                Some(format!("modkit"))
+            };
+            (format!("modkit.{}", latest_run_number + 1), pp)
+        } else {
+            (format!("modkit"), None)
+        }
+    } else {
+        (format!("modkit"), None)
+    };
+
+    let command_line = std::env::args().collect::<Vec<String>>();
+    let command_line = command_line.join(" ");
+    let version = env!("CARGO_PKG_VERSION");
+    let mut modkit_header_record = HeaderRecord::new("PG".as_bytes());
+    modkit_header_record.push_tag("ID".as_bytes(), &id);
+    modkit_header_record.push_tag("PN".as_bytes(), &"modkit".to_owned());
+    modkit_header_record.push_tag("VN".as_bytes(), &version.to_owned());
+    if let Some(pp) = pp {
+        modkit_header_record.push_tag("PP".as_bytes(), &pp);
+    }
+    modkit_header_record.push_tag("CL".as_bytes(), &command_line);
+
+    header.push_record(&modkit_header_record);
 }
