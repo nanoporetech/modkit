@@ -1,6 +1,6 @@
 stages:
   - format
-#  - test
+  - test
 
 before_script:
   - apt-get update && apt-get install -y cmake
@@ -10,12 +10,11 @@ format:
   image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
   stage: format
   script:
-    - echo "running in rust docker..?"
     - cargo fmt --check
 
-#test:
-#  # 1.67.1
-#  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
-#  stage: test
-#  script:
-#    - cargo test
+test:
+  # 1.67.1
+  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
+  stage: test
+  script:
+    - cargo test
