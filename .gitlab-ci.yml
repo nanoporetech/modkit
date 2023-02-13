@@ -19,10 +19,22 @@ test:
   script:
     - cargo test
 
-build_release:
+build_release_linux:
   # 1.67.1
   image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
   script:
+    - cargo build --release
+  when: manual
+  artifacts:
+    paths:
+      - target/release/modkit
+
+build_release_1604:
+  image: ubuntu@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6
+  script:
+    - apt-get update && apt-get install -y curl build-essential cmake
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source $HOME/.cargo/env
     - cargo build --release
   when: manual
   artifacts:
