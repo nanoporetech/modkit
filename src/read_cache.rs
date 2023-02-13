@@ -429,7 +429,8 @@ mod read_cache_tests {
     #[test]
     fn test_read_cache_stack_overflow_empty_tags() {
         let mut reader =
-            BamReader::from_path("tests/resources/empty-tags.sorted.bam").unwrap();
+            BamReader::from_path("tests/resources/empty-tags.sorted.bam")
+                .unwrap();
 
         let mut cache = ReadCache::new(None, false);
         for r in reader.records() {
