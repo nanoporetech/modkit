@@ -1,29 +1,43 @@
-# This file is a template, and might need editing before it works on your project.
-# To contribute improvements to CI/CD templates, please follow the Development guide at:
-# https://docs.gitlab.com/ee/development/cicd/templates.html
-# This specific template is located at:
-# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Rust.gitlab-ci.yml
+stages:
+  - format
+  - test
 
-# Official language image. Look for the different tagged releases at:
-# https://hub.docker.com/r/library/rust/tags/
-image: "rust:latest"
+before_script:
+  - apt-get update && apt-get install -y cmake
 
-# Optional: Pick zero or more services to be used on all builds.
-# Only needed when using a docker container to run your tests in.
-# Check out: http://docs.gitlab.com/ee/ci/docker/using_docker_images.html#what-is-a-service
-# services:
-#   - mysql:latest
-#   - redis:latest
-#   - postgres:latest
-
-# Optional: Install a C compiler, cmake and git into the container.
-# You will often need this when you (or any of your dependencies) depends on C code.
-# before_script:
-#   - apt-get update -yqq
-#   - apt-get install -yqq --no-install-recommends build-essential
-
-# Use cargo to test the project
-test:cargo:
+format:
+  # 1.67.1
+  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
+  stage: format
   script:
-    - rustc --version && cargo --version  # Print version info for debugging
-    - cargo test --workspace --verbose
+    - cargo fmt --check
+
+test:
+  # 1.67.1
+  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
+  stage: test
+  script:
+    - cargo test
+
+build_release_linux:
+  # 1.67.1
+  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
+  script:
+    - cargo build --release
+  when: manual
+  artifacts:
+    paths:
+      - target/release/modkit
+
+build_release_1604:
+  image: ubuntu@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6
+  script:
+    - apt-get update && apt-get install -y curl build-essential cmake
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source $HOME/.cargo/env
+    - cargo build --release
+  when: manual
+  artifacts:
+    paths:
+      - target/release/modkit
+
