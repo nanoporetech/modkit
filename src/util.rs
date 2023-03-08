@@ -3,6 +3,7 @@ use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Aux};
 use std::string::FromUtf8Error;
 
 use crate::errs::{InputError, RunError};
+use derive_new::new;
 
 pub(crate) fn get_aligned_pairs_forward(
     record: &bam::Record,
@@ -105,6 +106,14 @@ impl Strand {
 
 pub fn record_is_secondary(record: &bam::Record) -> bool {
     record.is_supplementary() || record.is_secondary() || record.is_duplicate()
+}
+
+#[derive(Debug, new)]
+pub struct ReferenceRecord {
+    pub tid: u32,
+    pub start: u32,
+    pub length: u32,
+    pub name: String,
 }
 
 #[derive(Debug)]

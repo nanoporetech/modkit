@@ -2,7 +2,9 @@ use crate::mod_bam::{BaseModCall, CollapseMethod};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::read_cache::ReadCache;
 
+use crate::motif_bed::MotifLocations;
 use crate::util::{record_is_secondary, Strand};
+use derive_new::new;
 use itertools::Itertools;
 use log::debug;
 use rust_htslib::bam;
@@ -65,10 +67,6 @@ struct Tally {
 }
 
 impl Tally {
-    // fn new() -> Self {
-    //     Self::default()
-    // }
-
     fn add_feature(&mut self, feature: Feature) {
         match feature {
             Feature::Filtered => self.n_filtered += 1,
@@ -102,26 +100,49 @@ impl FeatureVector {
         Self::default()
     }
 
+    /// Add counts to the tally.
     pub(crate) fn add_feature(
         &mut self,
-        read_strand: Strand,
+        alignment_strand: Strand,
         feature: Feature,
-        feature_strand: Strand,
+        read_strand: Strand,
+        strand_rule: &StrandRule,
     ) {
-        match (read_strand, feature_strand) {
-            (Strand::Positive, Strand::Positive) => {
-                self.pos_tally.add_feature(feature)
-            }
-            (Strand::Negative, Strand::Positive) => {
-                self.neg_tally.add_feature(feature)
-            }
+        match strand_rule {
+            StrandRule::Both => match (alignment_strand, read_strand) {
+                (Strand::Positive, Strand::Positive) => {
+                    self.pos_tally.add_feature(feature)
+                }
+                (Strand::Negative, Strand::Positive) => {
+                    self.neg_tally.add_feature(feature)
+                }
 
-            (Strand::Positive, Strand::Negative) => {
-                self.neg_tally.add_feature(feature)
-            }
-            (Strand::Negative, Strand::Negative) => {
-                self.pos_tally.add_feature(feature)
-            }
+                (Strand::Positive, Strand::Negative) => {
+                    self.neg_tally.add_feature(feature)
+                }
+                (Strand::Negative, Strand::Negative) => {
+                    self.pos_tally.add_feature(feature)
+                }
+            },
+            StrandRule::Positive => match (alignment_strand, read_strand) {
+                (Strand::Positive, Strand::Positive) => {
+                    self.pos_tally.add_feature(feature)
+                }
+                (Strand::Negative, Strand::Negative) => {
+                    self.pos_tally.add_feature(feature)
+                }
+                _ => {}
+            },
+            StrandRule::Negative => match (alignment_strand, read_strand) {
+                (Strand::Negative, Strand::Positive) => {
+                    self.neg_tally.add_feature(feature)
+                }
+
+                (Strand::Positive, Strand::Negative) => {
+                    self.neg_tally.add_feature(feature)
+                }
+                _ => {}
+            },
         }
     }
 
@@ -278,28 +299,53 @@ impl FeatureVector {
     }
 }
 
+enum StrandRule {
+    Positive,
+    Negative,
+    Both,
+}
+
+#[derive(new)]
+struct StrandPileup {
+    pub(crate) bam_pileup: bam::pileup::Pileup,
+    strand_rule: StrandRule,
+}
+
 struct PileupIter<'a> {
     pileups: bam::pileup::Pileups<'a, bam::IndexedReader>,
     start_pos: u32,
     end_pos: u32,
+    motif_locations: Option<HashMap<u32, Strand>>,
 }
 
 impl<'a> PileupIter<'a> {
     fn new(
         pileups: bam::pileup::Pileups<'a, bam::IndexedReader>,
+        target_id: u32,
         start_pos: u32,
         end_pos: u32,
+        motif_locations: Option<&MotifLocations>,
     ) -> Self {
+        let locations = motif_locations.map(|mls| {
+            let locations = mls.get_locations_unchecked(target_id);
+            locations
+                .clone()
+                .into_iter()
+                .filter(|(pos, _strand)| *pos >= start_pos && *pos < end_pos)
+                .collect()
+        });
+
         Self {
             pileups,
             start_pos,
             end_pos,
+            motif_locations: locations,
         }
     }
 }
 
 impl<'a> Iterator for PileupIter<'a> {
-    type Item = bam::pileup::Pileup;
+    type Item = StrandPileup;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut pileup: Option<Self::Item> = None;
@@ -312,8 +358,24 @@ impl<'a> Iterator for PileupIter<'a> {
                 // advance into region we're looking at
                 continue;
             } else {
-                pileup = Some(plp);
-                break;
+                match &self.motif_locations {
+                    Some(locations) => {
+                        if let Some(strand) = locations.get(&plp.pos()) {
+                            let strand_rule = match strand {
+                                Strand::Positive => StrandRule::Positive,
+                                Strand::Negative => StrandRule::Negative,
+                            };
+                            pileup = Some(StrandPileup::new(plp, strand_rule));
+                            break;
+                        } else {
+                            continue;
+                        }
+                    }
+                    None => {
+                        pileup = Some(StrandPileup::new(plp, StrandRule::Both));
+                        break;
+                    }
+                }
             }
         }
         pileup
@@ -362,6 +424,7 @@ pub fn process_region<T: AsRef<Path>>(
     threshold: f32,
     pileup_numeric_options: &PileupNumericOptions,
     force_allow: bool,
+    motif_locations: Option<&MotifLocations>,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -381,26 +444,33 @@ pub fn process_region<T: AsRef<Path>>(
         force_allow,
     );
     let mut position_feature_counts = HashMap::new();
-    let pileup_iter = PileupIter::new(bam_reader.pileup(), start_pos, end_pos);
+    let pileup_iter = PileupIter::new(
+        bam_reader.pileup(),
+        chrom_tid,
+        start_pos,
+        end_pos,
+        motif_locations,
+    );
     for pileup in pileup_iter {
         let mut feature_vector = FeatureVector::new();
         let mut pos_strand_observed_mod_codes = HashSet::new();
         let mut neg_strand_observed_mod_codes = HashSet::new();
         // let mut observed_mod_codes = HashSet::new();
-        let pos = pileup.pos();
+        let pos = pileup.bam_pileup.pos();
 
-        let alignment_iter = pileup.alignments().filter_map(|alignment| {
-            if alignment.is_refskip() {
-                None
-            } else {
-                let record = alignment.record();
-                if record_is_secondary(&record) || record.seq_len() == 0 {
+        let alignment_iter =
+            pileup.bam_pileup.alignments().filter_map(|alignment| {
+                if alignment.is_refskip() {
                     None
                 } else {
-                    Some(alignment)
+                    let record = alignment.record();
+                    if record_is_secondary(&record) || record.seq_len() == 0 {
+                        None
+                    } else {
+                        Some(alignment)
+                    }
                 }
-            }
-        });
+            });
         for alignment in alignment_iter {
             assert!(!alignment.is_refskip());
             let record = alignment.record();
@@ -410,7 +480,8 @@ pub fn process_region<T: AsRef<Path>>(
                 &mut neg_strand_observed_mod_codes,
             );
 
-            let read_strand = if record.is_reverse() {
+            // alignment stand is the strand the read is aligned to
+            let alignment_strand = if record.is_reverse() {
                 Strand::Negative
             } else {
                 Strand::Positive
@@ -418,9 +489,10 @@ pub fn process_region<T: AsRef<Path>>(
 
             if alignment.is_del() {
                 feature_vector.add_feature(
-                    read_strand,
+                    alignment_strand,
                     Feature::Delete,
                     Strand::Positive,
+                    &pileup.strand_rule,
                 );
                 continue;
             }
@@ -451,6 +523,18 @@ pub fn process_region<T: AsRef<Path>>(
                 read_base.char(),
                 threshold,
             ) {
+                // a read can report on the read-positive or read-negative
+                // strand (see the docs for .get_mod_call above) so the
+                // pos_call and neg_call below are _read oriented_, the
+                // `read_strand` in add_feature (see the docs there too)
+                // is meant to pass along the information regarding which
+                // strand of a read the feature belongs to. In almost all
+                // cases this is Positive, because we sequence single
+                // stranded DNA. However, for duplex and other double-
+                // stranded techs, you could have a read with a mod call on
+                // the negative strand. You must pass along the
+                // `alignment_strand` so that everything can be oriented to
+                // the positive strand of the reference.
                 (Some(pos_call), Some(neg_call)) => {
                     let pos_feature =
                         Feature::from_base_mod_call(pos_call, read_base);
@@ -459,23 +543,26 @@ pub fn process_region<T: AsRef<Path>>(
                         read_base.complement(),
                     );
                     feature_vector.add_feature(
-                        read_strand,
+                        alignment_strand,
                         pos_feature,
                         Strand::Positive,
+                        &pileup.strand_rule,
                     );
                     feature_vector.add_feature(
-                        read_strand,
+                        alignment_strand,
                         neg_feature,
                         Strand::Negative,
+                        &pileup.strand_rule,
                     );
                 }
                 (Some(pos_call), None) => {
                     let pos_feature =
                         Feature::from_base_mod_call(pos_call, read_base);
                     feature_vector.add_feature(
-                        read_strand,
+                        alignment_strand,
                         pos_feature,
                         Strand::Positive,
+                        &pileup.strand_rule,
                     );
                 }
                 (None, Some(neg_call)) => {
@@ -485,15 +572,17 @@ pub fn process_region<T: AsRef<Path>>(
                     );
 
                     feature_vector.add_feature(
-                        read_strand,
+                        alignment_strand,
                         neg_feature,
                         Strand::Negative,
+                        &pileup.strand_rule,
                     );
                 }
                 (None, None) => feature_vector.add_feature(
-                    read_strand,
+                    alignment_strand,
                     Feature::NoCall(read_base),
                     Strand::Positive,
+                    &pileup.strand_rule,
                 ),
             }
         } // alignment loop
@@ -517,12 +606,13 @@ pub fn process_region<T: AsRef<Path>>(
 mod mod_pileup_tests {
     use crate::mod_pileup::{
         DnaBase, Feature, FeatureVector, ModCode, PileupNumericOptions,
+        StrandRule,
     };
     use crate::util::Strand;
     use std::collections::HashSet;
 
     #[test]
-    fn test_feature_vector() {
+    fn test_feature_vector_basic() {
         let pos_observed_mods = HashSet::from([ModCode::m, ModCode::h]);
         let neg_observed_mods = HashSet::new();
         let mut fv = FeatureVector::new();
@@ -530,36 +620,43 @@ mod mod_pileup_tests {
             Strand::Positive,
             Feature::NoCall(DnaBase::A),
             Strand::Positive,
+            &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Positive,
             Feature::ModCall(ModCode::C),
             Strand::Positive,
+            &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Positive,
             Feature::ModCall(ModCode::m),
             Strand::Positive,
+            &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Positive,
             Feature::ModCall(ModCode::m),
             Strand::Positive,
+            &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Positive,
             Feature::NoCall(DnaBase::C),
             Strand::Positive,
+            &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Negative,
             Feature::NoCall(DnaBase::G),
             Strand::Positive,
+            &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Negative,
             Feature::NoCall(DnaBase::G),
             Strand::Positive,
+            &StrandRule::Both,
         );
         let counts = fv.decode(
             &pos_observed_mods,
@@ -579,21 +676,25 @@ mod mod_pileup_tests {
             Strand::Positive,
             Feature::ModCall(ModCode::C),
             Strand::Positive,
+            &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Negative,
             Feature::ModCall(ModCode::m),
             Strand::Positive,
+            &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Negative,
             Feature::NoCall(DnaBase::G),
             Strand::Positive,
+            &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Negative,
             Feature::NoCall(DnaBase::G),
             Strand::Positive,
+            &StrandRule::Both,
         );
         let counts = fv.decode(
             &pos_observed_mods,
@@ -605,5 +706,34 @@ mod mod_pileup_tests {
             .iter()
             .filter(|c| c.strand == Strand::Negative)
             .for_each(|c| assert_eq!(c.n_diff, 2));
+    }
+
+    #[test]
+    fn test_feature_vector_with_strand_rules() {
+        let mut fv = FeatureVector::new();
+        let pos_observed_mods = HashSet::from([ModCode::m]);
+        fv.add_feature(
+            Strand::Positive,
+            Feature::ModCall(ModCode::m),
+            Strand::Positive,
+            &StrandRule::Positive,
+        );
+        // this feature should be ignored because it's on the wrong
+        // strand
+        fv.add_feature(
+            Strand::Negative,
+            Feature::ModCall(ModCode::m),
+            Strand::Positive,
+            &StrandRule::Positive,
+        );
+        let counts = fv.decode(
+            &pos_observed_mods,
+            &HashSet::new(),
+            &PileupNumericOptions::Passthrough,
+        );
+        assert_eq!(counts.len(), 1);
+        let count = &counts[0];
+        // change alignment strand to Positive and this will be 2
+        assert_eq!(count.n_modified, 1);
     }
 }

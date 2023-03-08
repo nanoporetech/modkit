@@ -222,7 +222,11 @@ impl<'a> ReadCache<'a> {
     /// Get the mod call for a reference position from a read. If this read is
     /// in the cache, look it up, if not parse the tags, add it to the cache
     /// and return the mod call (if present). (+ strand, - strand) calls
-    /// returned
+    /// returned, in this case the strand is the strand of the read. So most
+    /// of the time this is positive, because reads are single stranded DNA.
+    /// In the case of duplex or any situation where there is a reporting of a
+    /// modification on the opposite strand (or both) you can get negative
+    /// strand calls or positive and negative strand calls.
     pub(crate) fn get_mod_call(
         &mut self,
         record: &bam::Record,
