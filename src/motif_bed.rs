@@ -5,10 +5,13 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result as AnyhowResult};
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
+use indicatif::{
+    ParallelProgressIterator, ProgressBar, ProgressIterator, ProgressStyle,
+};
 use rayon::prelude::*;
 use regex::Regex;
 
-use crate::util::{ReferenceRecord, Strand};
+use crate::util::{get_spinner, ReferenceRecord, Strand};
 
 fn iupac_to_regex(pattern: &str) -> String {
     let mut regex = String::new();
@@ -186,8 +189,11 @@ impl MotifLocations {
         name_to_tid: &HashMap<&str, u32>,
     ) -> AnyhowResult<Self> {
         let reader = FastaReader::from_file(fasta_fp)?;
+        let records_progress = get_spinner();
+        records_progress.set_message("Reading reference sequences");
         let seqs_and_target_ids = reader
             .records()
+            .progress_with(records_progress)
             .filter_map(|res| res.ok())
             .filter_map(|record| {
                 name_to_tid.get(record.id()).map(|tid| (record, *tid))
@@ -199,8 +205,20 @@ impl MotifLocations {
             })
             .collect::<Vec<(String, u32)>>();
 
+        let motif_progress = ProgressBar::new(seqs_and_target_ids.len() as u64);
+        let sty = ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.red/yellow} {pos:>7}/{len:7} {msg}",
+        )
+        .unwrap()
+        .progress_chars("##-");
+        motif_progress.set_style(sty);
+        motif_progress.set_message(format!(
+            "finding {} motifs",
+            regex_motif.forward_pattern.as_str()
+        ));
         let tid_to_motif_positions = seqs_and_target_ids
             .into_par_iter()
+            .progress_with(motif_progress)
             .map(|(seq, tid)| {
                 let positions = find_motif_hits(&seq, &regex_motif)
                     .into_iter()

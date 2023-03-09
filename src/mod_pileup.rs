@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use derive_new::new;
@@ -377,7 +377,8 @@ fn combine_strand_features(
         let neg_features = position_feature_counts.remove(&neg_position);
         match (pos_features, neg_features) {
             (Some(pos_feats), Some(neg_feats)) => {
-                let mut grouped_by_mod_code = HashMap::new();
+                // important to use b-tree map here so that ordering is deterministic
+                let mut grouped_by_mod_code = BTreeMap::new();
                 for feature_counts in
                     pos_feats.into_iter().chain(neg_feats.into_iter())
                 {

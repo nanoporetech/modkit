@@ -4,6 +4,27 @@ use std::string::FromUtf8Error;
 
 use crate::errs::{InputError, RunError};
 use derive_new::new;
+use indicatif::{ProgressBar, ProgressStyle};
+
+pub(crate) fn get_spinner() -> ProgressBar {
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.blue} [{elapsed_precise}] {pos} {msg}",
+        )
+        .unwrap()
+        .tick_strings(&[
+            "▹▹▹▹▹",
+            "▸▹▹▹▹",
+            "▹▸▹▹▹",
+            "▹▹▸▹▹",
+            "▹▹▹▸▹",
+            "▹▹▹▹▸",
+            "▪▪▪▪▪",
+        ]),
+    );
+    spinner
+}
 
 pub(crate) fn get_aligned_pairs_forward(
     record: &bam::Record,

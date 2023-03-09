@@ -85,7 +85,7 @@ fn test_mod_pileup_combine() {
     let test_adjusted_bam = std::env::temp_dir().join("test_combined.bed");
     let pileup_args = [
         "pileup",
-        "--combine",
+        "--combine-mods",
         "--no-filtering",
         "--only-tabs",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
@@ -271,5 +271,47 @@ fn test_pileup_duplex_reads() {
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
         "tests/resources/duplex_modbam_pileup_nofilt.bed",
+    );
+}
+
+#[test]
+fn test_cpg_motif_filtering() {
+    let temp_file = std::env::temp_dir().join("test_cpg_motif_filtering.bed");
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+        "--no-filtering",
+        "--cpg",
+        "--reference-fasta",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+    ])
+    .unwrap();
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/bc_anchored_10_reads_nofilt_cg_motif.bed",
+    );
+}
+
+#[test]
+fn test_cpg_motif_filtering_strand_combine() {
+    let temp_file = std::env::temp_dir()
+        .join("test_cpg_motif_filtering_strand_combine.bed");
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+        "--no-filtering",
+        "-i",
+        "91",
+        "--cpg",
+        "--combine-strands",
+        "--reference-fasta",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+    ])
+    .unwrap();
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/bc_anchored_10_reads_nofilt_cg_motif_strand_combine.bed",
     );
 }

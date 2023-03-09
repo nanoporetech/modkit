@@ -32,7 +32,8 @@ use crate::thresholds::{
 };
 use crate::util;
 use crate::util::{
-    add_modkit_pg_records, record_is_secondary, ReferenceRecord, Region,
+    add_modkit_pg_records, get_spinner, record_is_secondary, ReferenceRecord,
+    Region,
 };
 use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter, TsvWriter};
 
@@ -108,26 +109,6 @@ pub struct Adjust {
     /// Output debug logs to file at this path
     #[arg(long)]
     log_filepath: Option<PathBuf>,
-}
-
-pub(crate) fn get_spinner() -> ProgressBar {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.blue} [{elapsed_precise}] {pos} {msg}",
-        )
-        .unwrap()
-        .tick_strings(&[
-            "▹▹▹▹▹",
-            "▸▹▹▹▹",
-            "▹▸▹▹▹",
-            "▹▹▸▹▹",
-            "▹▹▹▸▹",
-            "▹▹▹▹▸",
-            "▪▪▪▪▪",
-        ]),
-    );
-    spinner
 }
 
 type CliResult<T> = Result<T, RunError>;
@@ -354,10 +335,10 @@ pub struct ModBamPileup {
 
     /// Combine mod calls, all counts of modified bases are summed together.
     #[arg(long, default_value_t = false, group = "combine_args")]
-    combine: bool,
+    combine_mods: bool,
 
     /// Collapse _in_situ_ by redistributing base modification probability
-    /// equally  across other options. For example, if collapsing 'h', with 'm'
+    /// equally across other options. For example, if collapsing 'h', with 'm'
     /// and canonical options, half of the probability of 'h' will be added to
     /// both 'm' and 'C'. A full description of the methods can be found in
     /// collapse.md
@@ -393,13 +374,18 @@ pub struct ModBamPileup {
     #[arg(long)]
     region: Option<String>,
 
-    #[arg(long, requires = "offset")]
-    motif: Option<String>,
-    #[arg(long, requires = "reference_fasta")]
-    offset: Option<usize>,
-    #[arg(long)]
+    /// Only output counts at CpG motifs. Requires a reference sequence to be
+    /// provided.
+    #[arg(long, requires = "reference_fasta", default_value_t = false)]
+    cpg: bool,
+
+    /// Reference sequence in FASTA format. Required for CpG motif filtering.
+    #[arg(long, short = 'r')]
     reference_fasta: Option<PathBuf>,
-    #[arg(long, requires = "motif", default_value_t = false)]
+
+    /// When performing CpG analysis, sum the counts from the positive and
+    /// negative strands into the counts for the positive strand.
+    #[arg(long, requires = "cpg", default_value_t = false)]
     combine_strands: bool,
 }
 
@@ -440,7 +426,7 @@ impl ModBamPileup {
             .map_err(|e| e.to_string())
             .map(|reader| reader.header().to_owned())?;
 
-        let pileup_options = match (self.combine, &self.collapse) {
+        let pileup_options = match (self.combine_mods, &self.collapse) {
             (false, None) => PileupNumericOptions::Passthrough,
             (true, _) => PileupNumericOptions::Combine,
             (_, Some(raw_mod_code)) => {
@@ -490,30 +476,29 @@ impl ModBamPileup {
             .map_err(|e| e.to_string())?;
 
         let tids = self.get_targets(&header, region);
-        let (motif_locations, tids) =
-            match (&self.motif, &self.offset, &self.reference_fasta) {
-                (Some(raw_motif), Some(offset), Some(fasta_fp)) => {
-                    let regex_motif =
-                        RegexMotif::parse_string(raw_motif, *offset)
-                            .map_err(|e| e.to_string())?;
-                    let names_to_tid = tids
-                        .iter()
-                        .map(|target| (target.name.as_str(), target.tid))
-                        .collect::<HashMap<&str, u32>>();
-                    let motif_locations = pool.install(|| {
-                        MotifLocations::from_fasta(
-                            fasta_fp,
-                            regex_motif,
-                            &names_to_tid,
-                        )
-                        .map_err(|e| e.to_string())
-                    })?;
-                    let filtered_tids =
-                        motif_locations.filter_reference_records(tids);
-                    (Some(motif_locations), filtered_tids)
-                }
-                _ => (None, tids),
-            };
+        let (motif_locations, tids) = if self.cpg {
+            let fasta_fp = self
+                .reference_fasta
+                .as_ref()
+                .ok_or("reference fasta is required for CpG")?;
+            let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
+            debug!("filtering output to only CpG motifs");
+            if self.combine_strands {
+                debug!("combining + and - strand counts");
+            }
+            let names_to_tid = tids
+                .iter()
+                .map(|target| (target.name.as_str(), target.tid))
+                .collect::<HashMap<&str, u32>>();
+            let motif_locations = pool.install(|| {
+                MotifLocations::from_fasta(fasta_fp, regex_motif, &names_to_tid)
+                    .map_err(|e| e.to_string())
+            })?;
+            let filtered_tids = motif_locations.filter_reference_records(tids);
+            (Some(motif_locations), filtered_tids)
+        } else {
+            (None, tids)
+        };
 
         let (snd, rx) = bounded(1_000); // todo figure out sane default for this?
         let in_bam_fp = self.in_bam.clone();
@@ -521,7 +506,7 @@ impl ModBamPileup {
 
         let master_progress = MultiProgress::new();
         let sty = ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+            "[{elapsed_precise}] {bar:40.green/yellow} {pos:>7}/{len:7} {msg}",
         )
         .unwrap()
         .progress_chars("##-");
@@ -534,6 +519,13 @@ impl ModBamPileup {
 
         let force_allow = self.force_allow_implicit;
         let combine_strands = self.combine_strands;
+
+        let interval_style = ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+        )
+        .unwrap()
+        .progress_chars("##-");
+
         thread::spawn(move || {
             pool.install(|| {
                 for target in tids {
@@ -548,7 +540,7 @@ impl ModBamPileup {
                     let n_intervals = intervals.len();
                     let interval_progress = master_progress.add(
                         ProgressBar::new(n_intervals as u64)
-                            .with_style(sty.clone()),
+                            .with_style(interval_style.clone()),
                     );
                     interval_progress
                         .set_message(format!("processing {}", &target.name));
