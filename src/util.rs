@@ -154,10 +154,12 @@ impl Region {
         let mut splitted = raw.split(':');
         let chrom_name = splitted
             .nth(0)
-            .ok_or(InputError::new("failed to parse region {raw}"))?;
+            .ok_or(InputError::new(&format!("failed to parse region {raw}")))?;
         let start_end = splitted.collect::<Vec<&str>>();
         if start_end.len() != 1 {
-            return Err(InputError::new("failed to parse region {raw}"));
+            return Err(InputError::new(&format!(
+                "failed to parse region {raw}"
+            )));
         } else {
             let start_end = start_end[0];
             let splitted = start_end
@@ -168,14 +170,16 @@ impl Region {
                 })
                 .collect::<Result<Vec<u32>, _>>()?;
             if splitted.len() != 2 {
-                return Err(InputError::new("failed to parse region {raw}"));
+                return Err(InputError::new(&format!(
+                    "failed to parse region {raw}"
+                )));
             } else {
                 let start = splitted[0];
                 let end = splitted[1];
                 if end <= start {
-                    return Err(InputError::new(
-                        "failed to parse region {raw}, end must be after start",
-                    ));
+                    return Err(InputError::new(&format!(
+                        "failed to parse region {raw}, end must be after start"
+                    )));
                 }
                 Ok(Self {
                     name: chrom_name.to_owned(),
