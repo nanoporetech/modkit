@@ -55,16 +55,18 @@ fn motif_rev_comp(motif: &str) -> String {
     reverse_complement
 }
 
-#[derive(new)]
+#[derive(Debug, new)]
 pub struct RegexMotif {
     forward_pattern: Regex,
     reverse_pattern: Regex,
-    forward_offset: usize,
-    reverse_offset: usize,
+    pub forward_offset: usize,
+    pub reverse_offset: usize,
+    pub length: usize,
 }
 
 impl RegexMotif {
     pub fn parse_string(raw_motif: &str, offset: usize) -> AnyhowResult<Self> {
+        let length = raw_motif.len();
         let motif = iupac_to_regex(raw_motif);
         let re = Regex::new(&motif)?;
         let rc_motif = motif_rev_comp(&motif);
@@ -73,7 +75,7 @@ impl RegexMotif {
             .len()
             .checked_sub(offset + 1)
             .ok_or(anyhow!("motif not long enough for offset {}", offset))?;
-        Ok(Self::new(re, rc_re, offset, rc_offset))
+        Ok(Self::new(re, rc_re, offset, rc_offset, length))
     }
 
     fn is_palendrome(&self) -> bool {
@@ -146,7 +148,9 @@ pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize) {
     let rc_re = Regex::new(&rc_motif).unwrap();
     let rc_offset = motif_raw.len().checked_sub(offset + 1).unwrap();
 
-    let regex_motif = RegexMotif::new(re, rc_re, offset, rc_offset);
+    // todo make a test, then refactor to use parse_str
+    let regex_motif =
+        RegexMotif::new(re, rc_re, offset, rc_offset, motif_raw.len());
 
     let file = std::fs::File::open(path).expect("Could not open file");
     let reader = BufReader::new(file);
@@ -172,12 +176,13 @@ pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize) {
 
 pub struct MotifLocations {
     tid_to_motif_positions: HashMap<u32, HashMap<u32, Strand>>,
+    motif: RegexMotif,
 }
 
 impl MotifLocations {
     pub fn from_fasta(
         fasta_fp: &PathBuf,
-        regex_motif: &RegexMotif,
+        regex_motif: RegexMotif,
         name_to_tid: &HashMap<&str, u32>,
     ) -> AnyhowResult<Self> {
         let reader = FastaReader::from_file(fasta_fp)?;
@@ -197,23 +202,25 @@ impl MotifLocations {
         let tid_to_motif_positions = seqs_and_target_ids
             .into_par_iter()
             .map(|(seq, tid)| {
-                let positions = find_motif_hits(&seq, regex_motif)
+                let positions = find_motif_hits(&seq, &regex_motif)
                     .into_iter()
                     .map(|(pos, strand)| (pos as u32, strand))
                     .collect::<HashMap<u32, Strand>>();
                 (tid, positions)
             })
             .collect();
+
         Ok(Self {
             tid_to_motif_positions,
+            motif: regex_motif,
         })
     }
 
-    pub fn filter_targets(
+    pub fn filter_reference_records(
         &self,
-        targets: Vec<ReferenceRecord>,
+        reference_records: Vec<ReferenceRecord>,
     ) -> Vec<ReferenceRecord> {
-        targets
+        reference_records
             .into_iter()
             .filter(|target| {
                 self.tid_to_motif_positions.contains_key(&target.tid)
@@ -227,5 +234,26 @@ impl MotifLocations {
         target_id: u32,
     ) -> &HashMap<u32, Strand> {
         self.tid_to_motif_positions.get(&target_id).unwrap()
+    }
+
+    pub fn motif_length(&self) -> usize {
+        self.motif.length
+    }
+
+    pub fn motif(&self) -> &RegexMotif {
+        &self.motif
+    }
+}
+
+#[cfg(test)]
+mod motif_bed_tests {
+    use crate::motif_bed::RegexMotif;
+
+    #[test]
+    fn test_regex_motif() {
+        let regex_motif = RegexMotif::parse_string("CCWGG", 1).unwrap();
+        assert_eq!(regex_motif.reverse_offset, 3);
+        let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
+        assert_eq!(regex_motif.reverse_offset, 1);
     }
 }

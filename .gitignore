@@ -5,3 +5,8 @@
 data
 data/*
 exclude-file.txt
+.DS_Store
+benches/
+ci.Dockerfile
+push-remote.sh
+tmp/

@@ -399,6 +399,8 @@ pub struct ModBamPileup {
     offset: Option<usize>,
     #[arg(long)]
     reference_fasta: Option<PathBuf>,
+    #[arg(long, requires = "motif", default_value_t = false)]
+    combine_strands: bool,
 }
 
 impl ModBamPileup {
@@ -501,12 +503,13 @@ impl ModBamPileup {
                     let motif_locations = pool.install(|| {
                         MotifLocations::from_fasta(
                             fasta_fp,
-                            &regex_motif,
+                            regex_motif,
                             &names_to_tid,
                         )
                         .map_err(|e| e.to_string())
                     })?;
-                    let filtered_tids = motif_locations.filter_targets(tids);
+                    let filtered_tids =
+                        motif_locations.filter_reference_records(tids);
                     (Some(motif_locations), filtered_tids)
                 }
                 _ => (None, tids),
@@ -530,6 +533,7 @@ impl ModBamPileup {
         write_progress.set_message("rows written");
 
         let force_allow = self.force_allow_implicit;
+        let combine_strands = self.combine_strands;
         thread::spawn(move || {
             pool.install(|| {
                 for target in tids {
@@ -537,7 +541,8 @@ impl ModBamPileup {
                         target.start,
                         target.length,
                         interval_size,
-                        0,
+                        target.tid,
+                        motif_locations.as_ref(),
                     )
                     .collect::<Vec<(u32, u32)>>();
                     let n_intervals = intervals.len();
@@ -562,6 +567,7 @@ impl ModBamPileup {
                                         threshold,
                                         &pileup_options,
                                         force_allow,
+                                        combine_strands,
                                         motif_locations.as_ref(),
                                     )
                                 })

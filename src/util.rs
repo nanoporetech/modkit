@@ -75,8 +75,9 @@ pub(crate) fn get_tag<T>(
     })
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, Default)]
 pub enum Strand {
+    #[default]
     Positive,
     Negative,
 }

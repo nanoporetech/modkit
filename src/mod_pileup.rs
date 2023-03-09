@@ -1,16 +1,17 @@
-use crate::mod_bam::{BaseModCall, CollapseMethod};
-use crate::mod_base_code::{DnaBase, ModCode};
-use crate::read_cache::ReadCache;
-
-use crate::motif_bed::MotifLocations;
-use crate::util::{record_is_secondary, Strand};
-use derive_new::new;
-use itertools::Itertools;
-use log::debug;
-use rust_htslib::bam;
-use rust_htslib::bam::{FetchDefinition, Read};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+use derive_new::new;
+use itertools::Itertools;
+use log::{debug, error};
+use rust_htslib::bam;
+use rust_htslib::bam::{FetchDefinition, Read};
+
+use crate::mod_bam::{BaseModCall, CollapseMethod};
+use crate::mod_base_code::{DnaBase, ModCode};
+use crate::motif_bed::{MotifLocations, RegexMotif};
+use crate::read_cache::ReadCache;
+use crate::util::{record_is_secondary, Strand};
 
 #[derive(Debug, Copy, Clone)]
 enum Feature {
@@ -27,7 +28,7 @@ impl Feature {
     ) -> Self {
         match base_mod_call {
             BaseModCall::Canonical(_) => Feature::ModCall(
-                read_base.canonical_mod_code().expect("shold get base"),
+                read_base.canonical_mod_code().expect("should get base"),
             ),
             BaseModCall::Modified(_, mod_code) => Feature::ModCall(mod_code),
             BaseModCall::Filtered => Feature::Filtered,
@@ -35,7 +36,7 @@ impl Feature {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, new, Default)]
 pub struct PileupFeatureCounts {
     pub strand: Strand,
     pub filtered_coverage: u32,
@@ -48,6 +49,51 @@ pub struct PileupFeatureCounts {
     pub n_filtered: u32,
     pub n_diff: u32,
     pub n_nocall: u32,
+}
+
+impl PileupFeatureCounts {
+    fn new_empty(strand: Strand, raw_mod_code: char) -> Self {
+        Self {
+            strand,
+            raw_mod_code,
+            ..Default::default()
+        }
+    }
+
+    fn combine_counts_ignore_strand(self, other: Self) -> Self {
+        if self.raw_mod_code != other.raw_mod_code {
+            error!(
+                "shouldn't be combining counts with different mod codes!\
+            {} vs {}",
+                self.raw_mod_code, other.raw_mod_code
+            );
+        }
+        let n_modified = self.n_modified + other.n_modified;
+        let n_canonical = self.n_canonical + other.n_canonical;
+        let n_other_modified = self.n_other_modified + other.n_other_modified;
+        let filtered_coverage =
+            self.filtered_coverage + other.filtered_coverage;
+        let n_delete = self.n_delete + other.n_delete;
+        let n_filtered = self.n_filtered + other.n_filtered;
+        let n_diff = self.n_diff + other.n_diff;
+        let n_nocall = self.n_nocall + other.n_nocall;
+
+        let fraction_modified = n_modified as f32 / filtered_coverage as f32;
+
+        Self::new(
+            self.strand,
+            filtered_coverage,
+            self.raw_mod_code,
+            fraction_modified,
+            n_canonical,
+            n_modified,
+            n_other_modified,
+            n_delete,
+            n_filtered,
+            n_diff,
+            n_nocall,
+        )
+    }
 }
 
 #[allow(non_snake_case)]
@@ -101,6 +147,7 @@ impl FeatureVector {
     }
 
     /// Add counts to the tally.
+    // TODO properly document
     pub(crate) fn add_feature(
         &mut self,
         alignment_strand: Strand,
@@ -186,6 +233,7 @@ impl FeatureVector {
                 }
             }
             PileupNumericOptions::Combine => {
+                // todo maybe want a check for seen the mod here?
                 let n_modified = n_h + n_m;
                 let percent_modified =
                     n_modified as f32 / filtered_coverage as f32;
@@ -242,7 +290,7 @@ impl FeatureVector {
             });
         }
 
-        // + strand C-mods
+        // + and - strand C-mods
         if (tally.n_modcall_h + tally.n_modcall_m + tally.n_modcall_C) > 0 {
             let n_canonical = tally.n_modcall_C;
             let n_nocall = tally.n_basecall_C;
@@ -299,6 +347,111 @@ impl FeatureVector {
     }
 }
 
+fn combine_strand_features(
+    positions: Option<&HashMap<u32, Strand>>,
+    motif: Option<&RegexMotif>,
+    mut position_feature_counts: HashMap<u32, Vec<PileupFeatureCounts>>,
+) -> HashMap<u32, Vec<PileupFeatureCounts>> {
+    if positions.is_none() || motif.is_none() {
+        error!(
+            "asked to combine feature counts with no motif information present"
+        );
+        return position_feature_counts;
+    }
+
+    let positions = positions.unwrap();
+    let motif = motif.unwrap();
+    let positions_to_combine =
+        positions.iter().filter_map(|(pos, strand)| match strand {
+            Strand::Positive => {
+                let offset =
+                    (motif.reverse_offset - motif.forward_offset) as u32;
+                Some((*pos, pos + offset))
+            }
+            Strand::Negative => None,
+        });
+
+    let mut combined_position_feature_counts = HashMap::new();
+    for (pos_position, neg_position) in positions_to_combine {
+        let pos_features = position_feature_counts.remove(&pos_position);
+        let neg_features = position_feature_counts.remove(&neg_position);
+        match (pos_features, neg_features) {
+            (Some(pos_feats), Some(neg_feats)) => {
+                let mut grouped_by_mod_code = HashMap::new();
+                for feature_counts in
+                    pos_feats.into_iter().chain(neg_feats.into_iter())
+                {
+                    let feats_for_mod_code = grouped_by_mod_code
+                        .entry(feature_counts.raw_mod_code)
+                        .or_insert(Vec::new());
+                    feats_for_mod_code.push(feature_counts);
+                }
+                let combined = grouped_by_mod_code
+                    .into_iter()
+                    .map(|(mod_code, feature_counts)| {
+                        feature_counts.into_iter().fold(
+                            PileupFeatureCounts::new_empty(
+                                Strand::Positive,
+                                mod_code,
+                            ),
+                            |acc, next| acc.combine_counts_ignore_strand(next),
+                        )
+                    })
+                    .collect::<Vec<PileupFeatureCounts>>();
+                combined_position_feature_counts.insert(pos_position, combined);
+            }
+            (None, Some(neg_feats)) => {
+                let strand_switched_feats = neg_feats
+                    .into_iter()
+                    .map(|f| {
+                        PileupFeatureCounts::new(
+                            Strand::Positive,
+                            f.filtered_coverage,
+                            f.raw_mod_code,
+                            f.fraction_modified,
+                            f.n_canonical,
+                            f.n_modified,
+                            f.n_other_modified,
+                            f.n_delete,
+                            f.n_filtered,
+                            f.n_diff,
+                            f.n_nocall,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                combined_position_feature_counts
+                    .insert(pos_position, strand_switched_feats);
+            }
+            (Some(pos_feats), None) => {
+                combined_position_feature_counts
+                    .insert(pos_position, pos_feats);
+            }
+            (None, None) => {}
+        }
+    }
+
+    combined_position_feature_counts
+}
+
+fn get_motif_locations_for_region(
+    motif_locations: &MotifLocations,
+    reference_id: u32,
+    start_pos: u32,
+    end_pos: u32,
+) -> HashMap<u32, Strand> {
+    motif_locations
+        .get_locations_unchecked(reference_id)
+        .iter()
+        .filter_map(|(pos, strand)| {
+            if pos >= &start_pos && pos < &end_pos {
+                Some((*pos, *strand))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 enum StrandRule {
     Positive,
     Negative,
@@ -315,31 +468,21 @@ struct PileupIter<'a> {
     pileups: bam::pileup::Pileups<'a, bam::IndexedReader>,
     start_pos: u32,
     end_pos: u32,
-    motif_locations: Option<HashMap<u32, Strand>>,
+    motif_locations: Option<&'a HashMap<u32, Strand>>,
 }
 
 impl<'a> PileupIter<'a> {
     fn new(
         pileups: bam::pileup::Pileups<'a, bam::IndexedReader>,
-        target_id: u32,
         start_pos: u32,
         end_pos: u32,
-        motif_locations: Option<&MotifLocations>,
+        motif_locations: Option<&'a HashMap<u32, Strand>>,
     ) -> Self {
-        let locations = motif_locations.map(|mls| {
-            let locations = mls.get_locations_unchecked(target_id);
-            locations
-                .clone()
-                .into_iter()
-                .filter(|(pos, _strand)| *pos >= start_pos && *pos < end_pos)
-                .collect()
-        });
-
         Self {
             pileups,
             start_pos,
             end_pos,
-            motif_locations: locations,
+            motif_locations,
         }
     }
 }
@@ -424,6 +567,7 @@ pub fn process_region<T: AsRef<Path>>(
     threshold: f32,
     pileup_numeric_options: &PileupNumericOptions,
     force_allow: bool,
+    combine_strands: bool,
     motif_locations: Option<&MotifLocations>,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
@@ -439,6 +583,10 @@ pub fn process_region<T: AsRef<Path>>(
         ))
         .map_err(|e| e.to_string())?;
 
+    let motif_positions = motif_locations.map(|mls| {
+        get_motif_locations_for_region(mls, chrom_tid, start_pos, end_pos)
+    });
+
     let mut read_cache = ReadCache::new(
         pileup_numeric_options.get_collapse_method(),
         force_allow,
@@ -446,16 +594,15 @@ pub fn process_region<T: AsRef<Path>>(
     let mut position_feature_counts = HashMap::new();
     let pileup_iter = PileupIter::new(
         bam_reader.pileup(),
-        chrom_tid,
+        // chrom_tid,
         start_pos,
         end_pos,
-        motif_locations,
+        motif_positions.as_ref(),
     );
     for pileup in pileup_iter {
         let mut feature_vector = FeatureVector::new();
         let mut pos_strand_observed_mod_codes = HashSet::new();
         let mut neg_strand_observed_mod_codes = HashSet::new();
-        // let mut observed_mod_codes = HashSet::new();
         let pos = pileup.bam_pileup.pos();
 
         let alignment_iter =
@@ -596,6 +743,16 @@ pub fn process_region<T: AsRef<Path>>(
         );
     } // position loop
 
+    let position_feature_counts = if combine_strands {
+        combine_strand_features(
+            motif_positions.as_ref(),
+            motif_locations.map(|mls| mls.motif()),
+            position_feature_counts,
+        )
+    } else {
+        position_feature_counts
+    };
+
     Ok(ModBasePileup {
         chrom_name,
         position_feature_counts,
@@ -604,12 +761,13 @@ pub fn process_region<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod mod_pileup_tests {
+    use std::collections::HashSet;
+
     use crate::mod_pileup::{
         DnaBase, Feature, FeatureVector, ModCode, PileupNumericOptions,
         StrandRule,
     };
     use crate::util::Strand;
-    use std::collections::HashSet;
 
     #[test]
     fn test_feature_vector_basic() {
