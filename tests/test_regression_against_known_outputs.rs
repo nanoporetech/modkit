@@ -1,99 +1,19 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read as StdRead};
-use std::process::Output;
 
-use mod_kit::mod_bam::parse_raw_mod_tags;
-use mod_kit::mod_base_code::{DnaBase, ModCode};
-use mod_kit::summarize::summarize_modbam;
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
 
+use common::run_modkit;
+use mod_kit::mod_bam::parse_raw_mod_tags;
+
+mod common;
+
 #[test]
 fn test_help() {
+    let pileup_help_args = ["pileup", "--help"];
     let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    assert!(exe.exists());
-
-    let help = std::process::Command::new(exe)
-        .arg("adjust-mods")
-        .arg("--help")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap()
-        .wait_with_output()
-        .unwrap();
-    assert!(help.status.success());
-}
-
-fn run_modkit(args: &[&str]) -> Output {
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    assert!(exe.exists());
-
-    let output = std::process::Command::new(exe)
-        .args(args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap()
-        .wait_with_output()
-        .unwrap();
-    assert!(output.status.success(), "failed to run {:?}", args);
-    output
-}
-
-fn test_adjust_output(
-    input_path: &str,
-    output_path: &str,
-    check_file_path: &str,
-) {
-    let temp_file = std::env::temp_dir().join(output_path);
-    let args = [
-        "adjust-mods",
-        "--ignore",
-        "h",
-        "--method",
-        "norm",
-        input_path,
-        temp_file.to_str().unwrap(),
-    ];
-    run_modkit(&args);
-    assert!(temp_file.exists());
-
-    let mut test_bam = bam::Reader::from_path(temp_file).unwrap();
-    let mut ref_bam = bam::Reader::from_path(check_file_path).unwrap();
-    for (test_res, ref_res) in test_bam.records().zip(ref_bam.records()) {
-        let test_record = test_res.unwrap();
-        let ref_record = ref_res.unwrap();
-        assert_eq!(ref_record, test_record);
-    }
-}
-
-#[test]
-fn test_adjust_canonical() {
-    test_adjust_output(
-        "tests/resources/input_C.bam",
-        "test_C.bam",
-        "tests/resources/ref_out_C_auto.bam",
-    );
-}
-
-#[test]
-fn test_adjust_methyl() {
-    test_adjust_output(
-        "tests/resources/input_5mC.bam",
-        "test_5mC.bam",
-        "tests/resources/ref_out_5mC_auto.bam",
-    );
-}
-
-#[test]
-fn test_adjust_no_tags() {
-    let temp_file = std::env::temp_dir().join("test_out_no_tags.bam");
-    run_modkit(&[
-        "adjust-mods",
-        "tests/resources/input_C_no_tags.bam",
-        temp_file.to_str().unwrap(),
-    ]);
+    let _out = run_modkit(exe, &pileup_help_args).unwrap();
 }
 
 fn check_against_expected_text_file(output_fp: &str, expected_fp: &str) {
@@ -130,7 +50,8 @@ fn test_mod_pileup_no_filt() {
         temp_file.to_str().unwrap(),
     ];
 
-    run_modkit(&args);
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    run_modkit(exe, &args).unwrap();
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
@@ -159,7 +80,8 @@ fn test_mod_pileup_with_filt() {
         temp_file.to_str().unwrap(),
     ];
 
-    run_modkit(&args);
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    run_modkit(exe, &args).unwrap();
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
@@ -178,7 +100,8 @@ fn test_mod_pileup_combine() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_adjusted_bam.to_str().unwrap(),
     ];
-    run_modkit(&pileup_args);
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    run_modkit(exe, &pileup_args).unwrap();
     assert!(test_adjusted_bam.exists());
 
     check_against_expected_text_file(
@@ -198,7 +121,8 @@ fn test_mod_pileup_collapse() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_collapsed_bam.to_str().unwrap(),
     ];
-    run_modkit(&collapse_args);
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    run_modkit(exe, &collapse_args).unwrap();
     assert!(test_collapsed_bam.exists());
     bam::index::build(
         test_collapsed_bam.clone(),
@@ -216,7 +140,7 @@ fn test_mod_pileup_collapse() {
         test_collapsed_bam.to_str().unwrap(),
         test_collapsed_bed.to_str().unwrap(),
     ];
-    run_modkit(&pileup_args);
+    run_modkit(exe, &pileup_args).unwrap();
     assert!(test_collapsed_bed.exists());
 
     let pileup_args = [
@@ -229,7 +153,7 @@ fn test_mod_pileup_collapse() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_restricted_bed.to_str().unwrap(),
     ];
-    run_modkit(&pileup_args);
+    run_modkit(exe, &pileup_args).unwrap();
     assert!(test_restricted_bed.exists());
     check_against_expected_text_file(
         test_restricted_bed.to_str().unwrap(),
@@ -238,6 +162,7 @@ fn test_mod_pileup_collapse() {
 }
 #[test]
 fn test_adjust_to_no_mods() {
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
     let test_ignore_h_bam =
         std::env::temp_dir().join("test_adjust_to_no_mods_ignore_h.bam");
     let test_both_bam =
@@ -247,7 +172,7 @@ fn test_adjust_to_no_mods() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_ignore_h_bam.to_str().unwrap(),
     ];
-    run_modkit(&first_adjust_args);
+    run_modkit(exe, &first_adjust_args).unwrap();
     let mut reader =
         bam::Reader::from_path(test_ignore_h_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
@@ -262,7 +187,7 @@ fn test_adjust_to_no_mods() {
         test_ignore_h_bam.to_str().unwrap(),
         test_both_bam.to_str().unwrap(),
     ];
-    run_modkit(&second_adjust_args);
+    run_modkit(exe, &second_adjust_args).unwrap();
     let mut reader =
         bam::Reader::from_path(test_both_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
@@ -283,7 +208,8 @@ fn test_pileup_no_mod_calls() {
         empty_bedfile.to_str().unwrap(),
     ];
 
-    run_modkit(&args);
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    run_modkit(exe, &args).unwrap();
 
     let reader = BufReader::new(File::open(empty_bedfile).unwrap());
     let lines = reader.lines().collect::<Vec<Result<String, _>>>();
@@ -294,192 +220,39 @@ fn test_pileup_no_mod_calls() {
 fn test_pileup_old_tags() {
     let updated_file =
         std::env::temp_dir().join("test_pileup_old_tags_updated.bam");
-    run_modkit(&[
-        "update-tags",
-        "tests/resources/HG002_small.ch20._other.sorted.bam",
-        "--mode",
-        "ambiguous",
-        updated_file.to_str().unwrap(),
-    ]);
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    run_modkit(
+        exe,
+        &[
+            "update-tags",
+            "tests/resources/HG002_small.ch20._other.sorted.bam",
+            "--mode",
+            "ambiguous",
+            updated_file.to_str().unwrap(),
+        ],
+    )
+    .unwrap();
     assert!(updated_file.exists());
     bam::index::build(updated_file.clone(), None, bam::index::Type::Bai, 1)
         .unwrap();
 
     let out_file = std::env::temp_dir().join("test_pileup_old_tags.bed");
-    run_modkit(&[
-        "pileup",
-        "--no-filtering",
-        "--only-tabs",
-        updated_file.to_str().unwrap(),
-        out_file.to_str().unwrap(),
-    ]);
+    run_modkit(
+        exe,
+        &[
+            "pileup",
+            "--no-filtering",
+            "--only-tabs",
+            updated_file.to_str().unwrap(),
+            out_file.to_str().unwrap(),
+        ],
+    )
+    .unwrap();
     assert!(out_file.exists());
     check_against_expected_text_file(
         out_file.to_str().unwrap(),
         "tests/resources/pileup-old-tags-regressiontest.methyl.bed",
     );
-}
-
-#[test]
-fn test_adjust_convert_old_tags() {
-    let out_file =
-        std::env::temp_dir().join("test_adjust_convert_old_tags.bam");
-    let args = [
-        "adjust-mods",
-        "--convert",
-        "m",
-        "C",
-        "tests/resources/HG002_small.ch20._other.sorted.bam",
-        out_file.to_str().unwrap(),
-    ];
-
-    run_modkit(&args);
-    let mut reader =
-        bam::Reader::from_path(out_file.to_str().unwrap()).unwrap();
-    for record in reader.records().map(|r| r.expect("should parse record")) {
-        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
-        assert!(!raw_mod_tags.mm_is_new_style());
-        assert!(!raw_mod_tags.ml_is_new_style());
-        let mm = raw_mod_tags.get_raw_mm();
-        if !mm.is_empty() {
-            assert!(mm.starts_with("C+C,"), "wrong: {mm}");
-        }
-    }
-}
-
-#[test]
-fn test_mod_adjust_convert_sum_probs() {
-    let test_convered_bam =
-        std::env::temp_dir().join("test_convert_sum_probs.bam");
-
-    let initial_mod_summary =
-        summarize_modbam("tests/resources/bc_anchored_10_reads.sorted.bam", 1)
-            .unwrap();
-
-    let collapse_args = [
-        "adjust-mods",
-        "--convert",
-        "h",
-        "m",
-        "tests/resources/bc_anchored_10_reads.sorted.bam",
-        test_convered_bam.to_str().unwrap(),
-    ];
-    run_modkit(&collapse_args);
-
-    let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
-
-    let initial_m_calls = initial_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m))
-        .unwrap();
-    let initial_h_calls = initial_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h))
-        .unwrap();
-
-    let converted_m_calls = converted_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m))
-        .unwrap();
-    assert_eq!(*converted_m_calls, initial_m_calls + initial_h_calls);
-    let converted_h_calls = converted_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h));
-    assert!(converted_h_calls.is_none());
-}
-
-#[test]
-fn test_mod_adjust_convert_rename() {
-    let test_convered_bam =
-        std::env::temp_dir().join("test_convert_convert_rename.bam");
-
-    let initial_mod_summary =
-        summarize_modbam("tests/resources/bc_anchored_10_reads.sorted.bam", 1)
-            .unwrap();
-
-    let collapse_args = [
-        "adjust-mods",
-        "--convert",
-        "h",
-        "C",
-        "tests/resources/bc_anchored_10_reads.sorted.bam",
-        test_convered_bam.to_str().unwrap(),
-    ];
-    run_modkit(&collapse_args);
-
-    let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
-
-    let initial_h_calls = initial_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h))
-        .unwrap();
-    let converted_any_c_calls = converted_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::anyC))
-        .unwrap();
-    assert_eq!(initial_h_calls, converted_any_c_calls);
-}
-
-#[test]
-fn test_mod_adjust_convert_sum_probs_rename() {
-    let test_convered_bam =
-        std::env::temp_dir().join("test_convert_sum_probs_rename.bam");
-
-    let initial_mod_summary =
-        summarize_modbam("tests/resources/bc_anchored_10_reads.sorted.bam", 1)
-            .unwrap();
-
-    let collapse_args = [
-        "adjust-mods",
-        "--convert",
-        "h",
-        "C",
-        "--convert",
-        "m",
-        "C",
-        "tests/resources/bc_anchored_10_reads.sorted.bam",
-        test_convered_bam.to_str().unwrap(),
-    ];
-    run_modkit(&collapse_args);
-
-    let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
-
-    let initial_m_calls = initial_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m))
-        .unwrap();
-    let initial_h_calls = initial_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h))
-        .unwrap();
-
-    let converted_any_c_calls = converted_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::anyC))
-        .unwrap();
-    assert_eq!(*converted_any_c_calls, initial_m_calls + initial_h_calls);
-    let converted_h_calls = converted_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h));
-    assert!(converted_h_calls.is_none());
-    let converted_m_calls = converted_mod_summary
-        .mod_call_counts
-        .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m));
-    assert!(converted_m_calls.is_none());
 }
 
 #[test]
@@ -499,7 +272,8 @@ fn test_pileup_with_region() {
         temp_file.to_str().unwrap(),
     ];
 
-    run_modkit(&args);
+    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
+    run_modkit(exe, &args).unwrap();
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),

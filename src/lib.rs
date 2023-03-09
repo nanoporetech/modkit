@@ -13,7 +13,7 @@ mod util;
 pub mod writers;
 
 #[cfg(test)]
-mod test_utils {
+pub mod test_utils {
     use rust_htslib::faidx;
 
     pub(crate) fn dna_complement(base: char) -> Option<char> {
