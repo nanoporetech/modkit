@@ -2,7 +2,8 @@ use anyhow::{anyhow, Result as AnyhowResult};
 use std::path::Path;
 use std::process::Output;
 
-pub fn run_modkit(exe: &Path, args: &[&str]) -> AnyhowResult<Output> {
+pub fn run_modkit(args: &[&str]) -> AnyhowResult<Output> {
+    let exe = Path::new(env!("CARGO_BIN_EXE_modkit"));
     assert!(exe.exists());
 
     let output = std::process::Command::new(exe)

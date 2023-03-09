@@ -1,5 +1,4 @@
 use rust_htslib::{bam, bam::Read};
-use std::path::Path;
 
 use common::run_modkit;
 use mod_kit::mod_bam::parse_raw_mod_tags;
@@ -11,8 +10,7 @@ mod common;
 #[test]
 fn test_help() {
     let pileup_help_args = ["adjust-mods", "--help"];
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    let _out = run_modkit(exe, &pileup_help_args).unwrap();
+    let _out = run_modkit(&pileup_help_args).unwrap();
 }
 
 fn tests_adjust_output(
@@ -30,8 +28,7 @@ fn tests_adjust_output(
         input_path,
         temp_file.to_str().unwrap(),
     ];
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &args).unwrap();
+    run_modkit(&args).unwrap();
     assert!(temp_file.exists());
 
     let mut test_bam = bam::Reader::from_path(temp_file).unwrap();
@@ -64,15 +61,11 @@ fn test_adjust_methyl() {
 #[test]
 fn test_adjust_no_tags() {
     let temp_file = std::env::temp_dir().join("test_out_no_tags.bam");
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(
-        exe,
-        &[
-            "adjust-mods",
-            "tests/resources/input_C_no_tags.bam",
-            temp_file.to_str().unwrap(),
-        ],
-    )
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/input_C_no_tags.bam",
+        temp_file.to_str().unwrap(),
+    ])
     .unwrap();
 }
 
@@ -89,8 +82,7 @@ fn test_adjust_convert_old_tags() {
         out_file.to_str().unwrap(),
     ];
 
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &args).unwrap();
+    run_modkit(&args).unwrap();
     let mut reader =
         bam::Reader::from_path(out_file.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
@@ -120,8 +112,7 @@ fn test_mod_adjust_convert_sum_probs() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_convered_bam.to_str().unwrap(),
     ];
-    let exe = Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &collapse_args).unwrap();
+    run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
         summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
@@ -167,8 +158,7 @@ fn test_mod_adjust_convert_rename() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_convered_bam.to_str().unwrap(),
     ];
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &collapse_args).unwrap();
+    run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
         summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
@@ -206,8 +196,7 @@ fn test_mod_adjust_convert_sum_probs_rename() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_convered_bam.to_str().unwrap(),
     ];
-    let exe = Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &collapse_args).unwrap();
+    run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
         summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();

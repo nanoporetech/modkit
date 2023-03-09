@@ -12,20 +12,19 @@ mod common;
 #[test]
 fn test_help() {
     let pileup_help_args = ["pileup", "--help"];
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    let _out = run_modkit(exe, &pileup_help_args).unwrap();
+    let _out = run_modkit(&pileup_help_args).unwrap();
 }
 
 fn check_against_expected_text_file(output_fp: &str, expected_fp: &str) {
     let test = {
-        let mut fh = std::fs::File::open(output_fp).unwrap();
+        let mut fh = File::open(output_fp).unwrap();
         let mut buff = String::new();
         fh.read_to_string(&mut buff).unwrap();
         buff
     };
     let expected = {
         // this file was hand-checked for correctness.
-        let mut fh = std::fs::File::open(expected_fp).unwrap();
+        let mut fh = File::open(expected_fp).unwrap();
         let mut buff = String::new();
         fh.read_to_string(&mut buff).unwrap();
         buff
@@ -37,9 +36,6 @@ fn check_against_expected_text_file(output_fp: &str, expected_fp: &str) {
 #[test]
 fn test_mod_pileup_no_filt() {
     let temp_file = std::env::temp_dir().join("test_pileup_nofilt.bed");
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    assert!(exe.exists());
-
     let args = [
         "pileup",
         "-i",
@@ -50,8 +46,7 @@ fn test_mod_pileup_no_filt() {
         temp_file.to_str().unwrap(),
     ];
 
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &args).unwrap();
+    run_modkit(&args).unwrap();
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
@@ -62,9 +57,6 @@ fn test_mod_pileup_no_filt() {
 #[test]
 fn test_mod_pileup_with_filt() {
     let temp_file = std::env::temp_dir().join("test_pileup_withfilt.bed");
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    assert!(exe.exists());
-
     let args = [
         "pileup",
         "-i",
@@ -80,8 +72,7 @@ fn test_mod_pileup_with_filt() {
         temp_file.to_str().unwrap(),
     ];
 
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &args).unwrap();
+    run_modkit(&args).unwrap();
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
@@ -100,8 +91,7 @@ fn test_mod_pileup_combine() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_adjusted_bam.to_str().unwrap(),
     ];
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &pileup_args).unwrap();
+    run_modkit(&pileup_args).unwrap();
     assert!(test_adjusted_bam.exists());
 
     check_against_expected_text_file(
@@ -121,8 +111,7 @@ fn test_mod_pileup_collapse() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_collapsed_bam.to_str().unwrap(),
     ];
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &collapse_args).unwrap();
+    run_modkit(&collapse_args).unwrap();
     assert!(test_collapsed_bam.exists());
     bam::index::build(
         test_collapsed_bam.clone(),
@@ -140,7 +129,7 @@ fn test_mod_pileup_collapse() {
         test_collapsed_bam.to_str().unwrap(),
         test_collapsed_bed.to_str().unwrap(),
     ];
-    run_modkit(exe, &pileup_args).unwrap();
+    run_modkit(&pileup_args).unwrap();
     assert!(test_collapsed_bed.exists());
 
     let pileup_args = [
@@ -153,7 +142,7 @@ fn test_mod_pileup_collapse() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_restricted_bed.to_str().unwrap(),
     ];
-    run_modkit(exe, &pileup_args).unwrap();
+    run_modkit(&pileup_args).unwrap();
     assert!(test_restricted_bed.exists());
     check_against_expected_text_file(
         test_restricted_bed.to_str().unwrap(),
@@ -162,7 +151,6 @@ fn test_mod_pileup_collapse() {
 }
 #[test]
 fn test_adjust_to_no_mods() {
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
     let test_ignore_h_bam =
         std::env::temp_dir().join("test_adjust_to_no_mods_ignore_h.bam");
     let test_both_bam =
@@ -172,7 +160,7 @@ fn test_adjust_to_no_mods() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_ignore_h_bam.to_str().unwrap(),
     ];
-    run_modkit(exe, &first_adjust_args).unwrap();
+    run_modkit(&first_adjust_args).unwrap();
     let mut reader =
         bam::Reader::from_path(test_ignore_h_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
@@ -187,7 +175,7 @@ fn test_adjust_to_no_mods() {
         test_ignore_h_bam.to_str().unwrap(),
         test_both_bam.to_str().unwrap(),
     ];
-    run_modkit(exe, &second_adjust_args).unwrap();
+    run_modkit(&second_adjust_args).unwrap();
     let mut reader =
         bam::Reader::from_path(test_both_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
@@ -208,8 +196,7 @@ fn test_pileup_no_mod_calls() {
         empty_bedfile.to_str().unwrap(),
     ];
 
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &args).unwrap();
+    run_modkit(&args).unwrap();
 
     let reader = BufReader::new(File::open(empty_bedfile).unwrap());
     let lines = reader.lines().collect::<Vec<Result<String, _>>>();
@@ -220,33 +207,26 @@ fn test_pileup_no_mod_calls() {
 fn test_pileup_old_tags() {
     let updated_file =
         std::env::temp_dir().join("test_pileup_old_tags_updated.bam");
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(
-        exe,
-        &[
-            "update-tags",
-            "tests/resources/HG002_small.ch20._other.sorted.bam",
-            "--mode",
-            "ambiguous",
-            updated_file.to_str().unwrap(),
-        ],
-    )
+    run_modkit(&[
+        "update-tags",
+        "tests/resources/HG002_small.ch20._other.sorted.bam",
+        "--mode",
+        "ambiguous",
+        updated_file.to_str().unwrap(),
+    ])
     .unwrap();
     assert!(updated_file.exists());
     bam::index::build(updated_file.clone(), None, bam::index::Type::Bai, 1)
         .unwrap();
 
     let out_file = std::env::temp_dir().join("test_pileup_old_tags.bed");
-    run_modkit(
-        exe,
-        &[
-            "pileup",
-            "--no-filtering",
-            "--only-tabs",
-            updated_file.to_str().unwrap(),
-            out_file.to_str().unwrap(),
-        ],
-    )
+    run_modkit(&[
+        "pileup",
+        "--no-filtering",
+        "--only-tabs",
+        updated_file.to_str().unwrap(),
+        out_file.to_str().unwrap(),
+    ])
     .unwrap();
     assert!(out_file.exists());
     check_against_expected_text_file(
@@ -258,9 +238,6 @@ fn test_pileup_old_tags() {
 #[test]
 fn test_pileup_with_region() {
     let temp_file = std::env::temp_dir().join("test_pileup_with_region.bed");
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    assert!(exe.exists());
-
     let args = [
         "pileup",
         "-i",
@@ -272,11 +249,27 @@ fn test_pileup_with_region() {
         temp_file.to_str().unwrap(),
     ];
 
-    let exe = std::path::Path::new(env!("CARGO_BIN_EXE_modkit"));
-    run_modkit(exe, &args).unwrap();
+    run_modkit(&args).unwrap();
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
         "tests/resources/modbam.modpileup_nofilt_oligo_1512_adapters_10_50.bed",
+    );
+}
+
+#[test]
+fn test_pileup_duplex_reads() {
+    let temp_file = std::env::temp_dir().join("test_pileup_duplex_reads.bed");
+    run_modkit(&[
+        "pileup",
+        "tests/resources/duplex_modbam.sorted.bam",
+        temp_file.to_str().unwrap(),
+        "--no-filtering",
+    ])
+    .unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/duplex_modbam_pileup_nofilt.bed",
     );
 }
