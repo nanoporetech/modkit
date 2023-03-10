@@ -1,7 +1,7 @@
 # Modkit
 
 A bioinformatics tool for working with modified bases from Oxford Nanopore. Specifically for converting modBAM
-to bedMethyl files, but also manipulating modBAM files and generating summary statistics.
+to bedMethyl files using best practices, but also manipulating modBAM files and generating summary statistics.
 
 ## Creating a bedMethyl pileup from a modBam
 
@@ -12,7 +12,7 @@ read over each genomic position (a pileup).
 modkit bed path/to/reads.bam output/path/pileup.bed 
 ```
 
-No reference is required. A single file (description below) with pileup calls will be emitted. Modification
+No reference is required. A single file (description below) with pileup calls will be created. Modification
 filtering will be performed for you.
 
 Some typical options:
@@ -49,30 +49,33 @@ modkit bed path/to/reads.bam output/path/pileup.bed \
 ## bedMethyl output description
 
 ### Some definitions:
-N_mod: Number of filtered reads classified as a specific base modification.  For example, if the base
-      modification is `h` (5hmC) then this number is the number of reads classified as 5hmC.
 
-N_canonical: Number of filtered reads classified as canonical as opposed to modified. The exact base must be inferred
-      by the modification code. For example, if the modification code is `m` (5mC) then the canonical base is
-      cytosine. If the modification code is `a`, the canonical base is adenosine.
+**N_mod**: Number of filtered calls that classified a residue as a specific base modification.  For example, if
+the base modification is `h` (5hmC) then this number is the number of filtered reads with a 5hmC call aligned
+to this position.
 
-N_other_mod: Number of reads classified as modified where the canonical base is the same, but the actual modification
-      is different. For example, for a given cytosine there may be 3 reads with `h` calls, 1 with a canonical
-      call, and 2 with `m` calls. In the row for `h` N_other_mod would be 2 and in the `m` row N_other_mod
-      would be 3.
+**N_canonical**: Number of filtered calls that classified a residue canonical as opposed to modified. The exact
+base must be inferred by the modification code. For example, if the modification code is `m` (5mC) then the
+canonical base is cytosine. If the modification code is `a`, the canonical base is adenosine.
 
-filtered_coverage: N_mod + N_other_mod + N_canonical
+**N_other_mod**: Number of filtered calls that classified a residue as modified where the canonical base is the
+same, but the actual modification is different. For example, for a given cytosine there may be 3 reads with
+`h` calls, 1 with a canonical call, and 2 with `m` calls. In the row for `h` N_other_mod would be 2 and in the
+`m` row N_other_mod would be 3.
 
-N_diff: Number of reads with a base other than the canonical base for this modification. For example, in a row for
-      `h` the canonical base is cytosine, if there are 2 reads with C->A substitutions, N_diff will be 2.
+**filtered_coverage**: N_mod + N_other_mod + N_canonical
 
-N_delete: Number of reads with a delete at this position
+**N_diff**: Number of reads with a base other than the canonical base for this modification. For example, in a row
+for `h` the canonical base is cytosine, if there are 2 reads with C->A substitutions, N_diff will be 2.
 
-N_filtered: Number of reads not passing filtering (specifics TBD).
+**N_delete**: Number of reads with a delete at this position
 
-N_nocall: Number of reads aligned to this position, with the correct canonical base, but without a base modification
-      call. This can happen, for example, if the model requires a CpG dinucleotide and the read has a CG->CH 
-      substitution.
+**N_filtered**: Number of calls where the probability of the call was below the threshold. The threshold can be
+set on the command line or computed from the data (usually filtering out the lowest 10th percentile of calls).
+
+**N_nocall**: Number of reads aligned to this position, with the correct canonical base, but without a base
+modification call. This can happen, for example, if the model requires a CpG dinucleotide and the read has a
+CG->CH substitution.
 
 ### Columns in the bedMethy
 
