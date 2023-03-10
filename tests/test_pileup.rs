@@ -149,41 +149,6 @@ fn test_mod_pileup_collapse() {
         test_collapsed_bed.to_str().unwrap(),
     );
 }
-#[test]
-fn test_adjust_to_no_mods() {
-    let test_ignore_h_bam =
-        std::env::temp_dir().join("test_adjust_to_no_mods_ignore_h.bam");
-    let test_both_bam =
-        std::env::temp_dir().join("test_adjust_to_no_mods_ignore_both.bam");
-    let first_adjust_args = [
-        "adjust-mods",
-        "tests/resources/bc_anchored_10_reads.sorted.bam",
-        test_ignore_h_bam.to_str().unwrap(),
-    ];
-    run_modkit(&first_adjust_args).unwrap();
-    let mut reader =
-        bam::Reader::from_path(test_ignore_h_bam.to_str().unwrap()).unwrap();
-    for record in reader.records().map(|r| r.expect("should parse record")) {
-        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
-        let mm = raw_mod_tags.get_raw_mm();
-        assert!(mm.starts_with("C+m?"));
-    }
-    let second_adjust_args = [
-        "adjust-mods",
-        "--ignore",
-        "m",
-        test_ignore_h_bam.to_str().unwrap(),
-        test_both_bam.to_str().unwrap(),
-    ];
-    run_modkit(&second_adjust_args).unwrap();
-    let mut reader =
-        bam::Reader::from_path(test_both_bam.to_str().unwrap()).unwrap();
-    for record in reader.records().map(|r| r.expect("should parse record")) {
-        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
-        let mm = raw_mod_tags.get_raw_mm();
-        assert!(mm.starts_with("C+C?"));
-    }
-}
 
 #[test]
 fn test_pileup_no_mod_calls() {

@@ -36,7 +36,11 @@ fn tests_adjust_output(
     for (test_res, ref_res) in test_bam.records().zip(ref_bam.records()) {
         let test_record = test_res.unwrap();
         let ref_record = ref_res.unwrap();
-        assert_eq!(ref_record, test_record);
+        assert_eq!(
+            ref_record, test_record,
+            "{:?} =/= {:?}",
+            &ref_record, test_record
+        );
     }
 }
 
@@ -178,7 +182,7 @@ fn test_mod_adjust_convert_rename() {
 
 #[test]
 fn test_mod_adjust_convert_sum_probs_rename() {
-    let test_convered_bam =
+    let test_converted_bam =
         std::env::temp_dir().join("test_convert_sum_probs_rename.bam");
 
     let initial_mod_summary =
@@ -194,12 +198,12 @@ fn test_mod_adjust_convert_sum_probs_rename() {
         "m",
         "C",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
-        test_convered_bam.to_str().unwrap(),
+        test_converted_bam.to_str().unwrap(),
     ];
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
+        summarize_modbam(test_converted_bam.to_str().unwrap(), 1).unwrap();
 
     let initial_m_calls = initial_mod_summary
         .mod_call_counts
@@ -228,4 +232,40 @@ fn test_mod_adjust_convert_sum_probs_rename() {
         .get(&DnaBase::C)
         .and_then(|counts| counts.get(&ModCode::m));
     assert!(converted_m_calls.is_none());
+}
+
+#[test]
+fn test_adjust_to_no_mods() {
+    let test_ignore_h_bam =
+        std::env::temp_dir().join("test_adjust_to_no_mods_ignore_h.bam");
+    let test_both_bam =
+        std::env::temp_dir().join("test_adjust_to_no_mods_ignore_both.bam");
+    let first_adjust_args = [
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        test_ignore_h_bam.to_str().unwrap(),
+    ];
+    run_modkit(&first_adjust_args).unwrap();
+    let mut reader =
+        bam::Reader::from_path(test_ignore_h_bam.to_str().unwrap()).unwrap();
+    for record in reader.records().map(|r| r.expect("should parse record")) {
+        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
+        let mm = raw_mod_tags.get_raw_mm();
+        assert!(mm.starts_with("C+m?"));
+    }
+    let second_adjust_args = [
+        "adjust-mods",
+        "--ignore",
+        "m",
+        test_ignore_h_bam.to_str().unwrap(),
+        test_both_bam.to_str().unwrap(),
+    ];
+    run_modkit(&second_adjust_args).unwrap();
+    let mut reader =
+        bam::Reader::from_path(test_both_bam.to_str().unwrap()).unwrap();
+    for record in reader.records().map(|r| r.expect("should parse record")) {
+        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
+        let mm = raw_mod_tags.get_raw_mm();
+        assert!(mm.starts_with("C+C?"));
+    }
 }

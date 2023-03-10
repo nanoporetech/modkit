@@ -612,9 +612,9 @@ pub fn format_mm_ml_tag(
         let raw_mod_code = ModCode::get_ambig_modcode(canonical_base)
             .map(|mod_code| mod_code.char())
             .unwrap_or(canonical_base);
-        // todo use strand here
+
         mm_tag.push_str(&format!(
-            "{}{}{}{}",
+            "{}{}{}{};",
             canonical_base,
             strand.to_char(),
             raw_mod_code,
