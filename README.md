@@ -1,170 +1,129 @@
-# modkit
+# Modkit
 
-> Tools for handling modBAM files and pileups
+A bioinformatics tool for working with modified bases from Oxford Nanopore. Specifically for converting modBAM
+to bedMethyl files, but also manipulating modBAM files and generating summary statistics.
+
+## Creating a bedMethyl pileup from a modBam
+
+The most typical use case, take a BAM with modified bases (as MM/ML or Mm/Ml tags) sum the calls from every
+read over each genomic position (a pileup). 
 
 ```bash
-Usage: modkit <COMMAND>
-
-Commands:
-  adjust-mods   Collapse N-way base modification calls to (N-1)-way
-  update-tags   Update mod tags, changes Mm/Ml-style tags to MM/ML-style. Also allows to change the mode to '?' or '.' instead of implicitly '.'
-  pileup        Pileup (combine) mod calls across genomic positions. Produces bedMethyl formatted file. Schema and description of fields can be found in schema.yaml
-  sample-probs  Get an estimate of the distribution of mod-base prediction probabilities
-  summary       Summarize the mod tags present in a BAM and get basic statistics
-  motif-bed     Create BED file with all locations of a motif
-  help          Print this message or the help of the given subcommand(s)
-
-Options:
-  -h, --help  Print help information
+modkit bed path/to/reads.bam output/path/pileup.bed 
 ```
 
-## adjust-mods
+No reference is required. A single file (description below) with pileup calls will be emitted. Modification
+filtering will be performed for you.
+
+Some typical options:
+
+1. Only emit calls from reference CpG dinucleotides. This option requires a reference sequence in order to
+   locate the CpGs.
+
 ```bash
-Collapse N-way base modification calls to (N-1)-way
-
-Usage: modkit adjust-mods [OPTIONS] <IN_BAM> <OUT_BAM>
-
-Arguments:
-  <IN_BAM>   BAM file to collapse mod call from
-  <OUT_BAM>  File path to new BAM file
-
-Options:
-      --ignore <IGNORE>              mod base code to ignore/remove [default: h]
-  -t, --threads <THREADS>            number of threads to use [default: 4]
-  -f, --ff                           Fast fail, stop processing at the first invalid sequence record. Default behavior is to continue and report failed/skipped records at the end
-      --method <METHOD>              Method to use to collapse mod calls, 'norm', 'dist'. A full description of the methods can be found in collapse.md [default: norm]
-      --convert <CONVERT> <CONVERT>  Convert one mod-tag to another, summing the probabilities together if the retained mod tag is already present
-      --log-filepath <LOG_FILEPATH>  Output debug logs to file at this path
-  -h, --help                         Print help information
+modkit bed path/to/reads.bam output/path/pileup.bed --cpg --reference-fasta path/to/reference.fasta
 ```
+2. Combine 5hmC and 5mC calls into a single modified call (makes the resulting pileup directly comparable to
+   whole genome bisulfite sequencing).
 
-## update-tags
 ```bash
-Update mod tags, changes Mm/Ml-style tags to MM/ML-style. Also allows to change the mode to '?' or '.' instead of implicitly '.'
-
-Usage: modkit update-tags [OPTIONS] <IN_BAM> <OUT_BAM>
-
-Arguments:
-  <IN_BAM>   BAM file to collapse mod call from
-  <OUT_BAM>  File path to new BAM file
-
-Options:
-  -m, --mode <MODE>                  Mode, change mode to this value, options {'ambiguous', 'implicit'}. See spec at: https://samtools.github.io/hts-specs/SAMtags.pdf. 'ambiguous' ('?') means residues without explicit modification probabilities will not be assumed canonical or modified. 'implicit' means residues without explicit modification probabilities are assumed to be canonical [possible values: ambiguous, implicit]
-  -t, --threads <THREADS>            number of threads to use [default: 4]
-      --log-filepath <LOG_FILEPATH>  Output debug logs to file at this path
-  -h, --help                         Print help information
+modkit bed path/to/reads.bam output/path/pileup.bed \
+    --cpg --reference-fasta path/to/reference.fasta --combine-mods
 ```
 
-## pileup
+this operation can be performed without the reference/CpG constraint.
+
 ```bash
-Pileup (combine) mod calls across genomic positions. Produces bedMethyl formatted file. Schema and description of fields can be found in schema.yaml
-
-Usage: modkit pileup [OPTIONS] <IN_BAM> <OUT_BED>
-
-Arguments:
-  <IN_BAM>
-          Input BAM, should be sorted and have associated index
-
-  <OUT_BED>
-          Output file
-
-Options:
-  -t, --threads <THREADS>
-          Number of threads to use while processing chunks concurrently
-          
-          [default: 4]
-
-  -i, --interval-size <INTERVAL_SIZE>
-          Interval chunk size to process concurrently. Smaller interval chunk sizes will use less memory but incur more overhead
-          
-          [default: 100000]
-
-  -f, --sampling-frac <SAMPLING_FRAC>
-          Sample this fraction of the reads when estimating the `filter-percentile`. In practice, 50-100 thousand reads is sufficient to estimate the model output distribution and determine the filtering threshold
-          
-          [default: 0.1]
-
-      --seed <SEED>
-          random seed for deterministic running, default is non-deterministic
-
-      --no-filtering
-          Do not perform any filtering, include all mod base calls in output
-
-  -p, --filter-percentile <FILTER_PERCENTILE>
-          Filter (remove) mod-calls where the probability of the predicted variant is below this percentile. For example, 0.1 will filter out the lowest 10% of modification calls
-          
-          [default: 0.1]
-
-      --filter-threshold <FILTER_THRESHOLD>
-          Filter threshold, drop calls below this probability
-
-      --log-filepath <LOG_FILEPATH>
-          Output debug logs to file at this path
-
-      --combine
-          Combine mod calls, all counts of modified bases are summed together
-
-      --collapse <COLLAPSE>
-          Collapse _in_situ_ by redistributing base modification probability equally  across other options. For example, if collapsing 'h', with 'm' and canonical options, half of the probability of 'h' will be added to both 'm' and 'C'. A full description of the methods can be found in collapse.md
-
-      --only-tabs
-          For bedMethyl output, separate columns with only tabs. Default is to use tabs for the first 10 fields and spaces thereafter. The default behavior is more likely to be compatible with genome viewers. Enabling this option may make it easier to parse the output with tabular data handlers that expect a single kind of separator
-
-      --bedgraph
-          Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html. For this setting, specify a directory for output files to be make in. Two files for each modification will be produced, one for the postiive strand and one for the negative strand. So for 5mC (m) and 5hmC (h) there will be 4 files produced
-
-      --force-allow-implicit
-          Force allow implicit-canonical mode. By default modkit does not allow pileup with the implicit mode ('.', or omitted). The `update-tags` subcommand is provided to update tags to the new mode, however if the user would like to assume that residues with no probability associated canonical, this option will allow that behavior
-
-      --region <REGION>
-          Process only the specified region of the BAM when performing pileup. Format should be <chrom_name>:<start>-<end>
-
-  -h, --help
-          Print help information (use `-h` for a summary)
+modkit bed path/to/reads.bam output/path/pileup.bed --combine-mods
 ```
 
-## sample-probs
+3. Combine CpG calls on opposite strands. CpG motifs are reverse complement equivalent, so you may want to
+   combine the calls from the positive stand C with the negative strand C (reference G). This operation
+   _requires_ that you use the `--cpg` flag and specify a reference sequence.
+
 ```bash
-Get an estimate of the distribution of mod-base prediction probabilities
-
-Usage: modkit sample-probs [OPTIONS] <IN_BAM>
-
-Arguments:
-  <IN_BAM>  Input BAM with base modification tags
-
-Options:
-  -f, --sampling-frac <SAMPLING_FRAC>  Sample fraction [default: 0.1]
-  -t, --threads <THREADS>              number of threads to use reading BAM [default: 4]
-  -s, --seed <SEED>                    random seed for deterministic running, default is non-deterministic
-  -p, --percentiles <PERCENTILES>      Percentiles to calculate, space separated list [default: 0.1,0.5,0.9]
-  -h, --help                           Print help information
+modkit bed path/to/reads.bam output/path/pileup.bed \
+    --cpg --reference-fasta path/to/reference.fasta --combine-mods --combine-strands
 ```
 
-## summary
-```bash
-Summarize the mod tags present in a BAM and get basic statistics
+## bedMethyl output description
 
-Usage: modkit summary [OPTIONS] <IN_BAM>
+### Some definitions:
+N_mod: Number of filtered reads classified as a specific base modification.  For example, if the base
+      modification is `h` (5hmC) then this number is the number of reads classified as 5hmC.
 
-Arguments:
-  <IN_BAM>  Input ModBam file
+N_canonical: Number of filtered reads classified as canonical as opposed to modified. The exact base must be inferred
+      by the modification code. For example, if the modification code is `m` (5mC) then the canonical base is
+      cytosine. If the modification code is `a`, the canonical base is adenosine.
 
-Options:
-  -t, --threads <THREADS>  number of threads to use reading BAM [default: 4]
-  -h, --help               Print help information
+N_other_mod: Number of reads classified as modified where the canonical base is the same, but the actual modification
+      is different. For example, for a given cytosine there may be 3 reads with `h` calls, 1 with a canonical
+      call, and 2 with `m` calls. In the row for `h` N_other_mod would be 2 and in the `m` row N_other_mod
+      would be 3.
+
+filtered_coverage: N_mod + N_other_mod + N_canonical
+
+N_diff: Number of reads with a base other than the canonical base for this modification. For example, in a row for
+      `h` the canonical base is cytosine, if there are 2 reads with C->A substitutions, N_diff will be 2.
+
+N_delete: Number of reads with a delete at this position
+
+N_filtered: Number of reads not passing filtering (specifics TBD).
+
+N_nocall: Number of reads aligned to this position, with the correct canonical base, but without a base modification
+      call. This can happen, for example, if the model requires a CpG dinucleotide and the read has a CG->CH 
+      substitution.
+
+### Columns in the bedMethy
+
+```yaml
+columns:
+  - chrom:
+      type: str
+      description: name of reference sequence from BAM header
+  - start_pos:
+      type: int
+      description: 0-based index of modified base
+  - end_pos:
+      type: int
+      description: start_pos + 1
+  - raw_mod_code:
+      type: str
+      description: single letter code of modified base
+  - score:
+      type: int
+      description: filtered_coverage
+  - strand:
+      type: str
+      description: + for positive strand - for negative strand
+  - start_pos:
+      type: int
+      description: included for compatibility 
+  - end_pos:
+      type: int
+      description: included for compatibility 
+  - color:
+      type: str
+      description: included for compatibility, always 255,0,0
+  - filtered_coverage:
+      type: int
+      description: see definitions
+  - percent_modified:
+      type: float
+      description: N_mod / filtered_coverage
+  - N_mod:
+      type: int
+  - N_canonical:
+      type: int
+  - N_other_mod:
+      type: int
+  - N_delete:
+      type: int
+  - N_filtered:
+      type: int
+  - N_diff:
+      type: int
+  - N_nocall:
+      type: int
 ```
 
-## motif-bed
-```bash
-Create BED file with all locations of a motif
-
-Usage: modkit motif-bed <FASTA> <MOTIF> <OFFSET>
-
-Arguments:
-  <FASTA>   Input FASTA file
-  <MOTIF>   Motif to search for within FASTA
-  <OFFSET>  Offset within motif
-
-Options:
-  -h, --help  Print help information
-```
