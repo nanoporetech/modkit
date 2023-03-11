@@ -342,7 +342,13 @@ pub struct ModBamPileup {
     /// and canonical options, half of the probability of 'h' will be added to
     /// both 'm' and 'C'. A full description of the methods can be found in
     /// collapse.md
-    #[arg(long, group = "combine_args", hide_short_help = true, value_parser)]
+    #[arg(
+        long,
+        group = "combine_args",
+        conflicts_with = "cpg_preset",
+        hide_short_help = true,
+        value_parser
+    )]
     collapse: Option<char>,
 
     /// For bedMethyl output, separate columns with only tabs. Default is
@@ -376,16 +382,30 @@ pub struct ModBamPileup {
 
     /// Only output counts at CpG motifs. Requires a reference sequence to be
     /// provided.
-    #[arg(long, requires = "reference_fasta", default_value_t = false)]
+    #[arg(
+        long,
+        group = "cpg_args",
+        requires = "reference_fasta",
+        default_value_t = false
+    )]
     cpg: bool,
 
+    /// CpG with presets
+    #[arg(
+        long,
+        group = "cpg_args",
+        requires = "reference_fasta",
+        default_value_t = false
+    )]
+    cpg_preset: bool,
+
     /// Reference sequence in FASTA format. Required for CpG motif filtering.
-    #[arg(long, short = 'r')]
+    #[arg(long = "ref")]
     reference_fasta: Option<PathBuf>,
 
     /// When performing CpG analysis, sum the counts from the positive and
     /// negative strands into the counts for the positive strand.
-    #[arg(long, requires = "cpg", default_value_t = false)]
+    #[arg(long, requires = "cpg_args", default_value_t = false)]
     combine_strands: bool,
 }
 
@@ -426,13 +446,23 @@ impl ModBamPileup {
             .map_err(|e| e.to_string())
             .map(|reader| reader.header().to_owned())?;
 
-        let pileup_options = match (self.combine_mods, &self.collapse) {
-            (false, None) => PileupNumericOptions::Passthrough,
-            (true, _) => PileupNumericOptions::Combine,
-            (_, Some(raw_mod_code)) => {
-                let mod_code = ModCode::parse_raw_mod_code(*raw_mod_code)?;
-                let method = CollapseMethod::ReDistribute(mod_code);
-                PileupNumericOptions::Collapse(method)
+        let pileup_options = if self.cpg_preset {
+            if self.combine_mods {
+                PileupNumericOptions::Combine
+            } else {
+                PileupNumericOptions::Collapse(CollapseMethod::ReDistribute(
+                    ModCode::h,
+                ))
+            }
+        } else {
+            match (self.combine_mods, &self.collapse) {
+                (false, None) => PileupNumericOptions::Passthrough,
+                (true, _) => PileupNumericOptions::Combine,
+                (_, Some(raw_mod_code)) => {
+                    let mod_code = ModCode::parse_raw_mod_code(*raw_mod_code)?;
+                    let method = CollapseMethod::ReDistribute(mod_code);
+                    PileupNumericOptions::Collapse(method)
+                }
             }
         };
 
@@ -476,7 +506,7 @@ impl ModBamPileup {
             .map_err(|e| e.to_string())?;
 
         let tids = self.get_targets(&header, region);
-        let (motif_locations, tids) = if self.cpg {
+        let (motif_locations, tids) = if self.cpg || self.cpg_preset {
             let fasta_fp = self
                 .reference_fasta
                 .as_ref()
