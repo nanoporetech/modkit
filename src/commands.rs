@@ -301,18 +301,23 @@ pub struct ModBamPileup {
 
     /// Interval chunk size to process concurrently. Smaller interval chunk
     /// sizes will use less memory but incur more overhead.
-    #[arg(short = 'i', long, default_value_t = 100_000)]
+    #[arg(
+        short = 'i',
+        long,
+        default_value_t = 100_000,
+        hide_short_help = true
+    )]
     interval_size: u32,
 
     /// Sample this fraction of the reads when estimating the
     /// `filter-percentile`. In practice, 50-100 thousand reads is sufficient to
     /// estimate the model output distribution and determine the filtering
     /// threshold.
-    #[arg(short = 'f', long, default_value_t = 0.1)]
+    #[arg(short = 'f', long, default_value_t = 0.1, hide_short_help = true)]
     sampling_frac: f64,
 
     /// random seed for deterministic running, default is non-deterministic
-    #[arg(long)]
+    #[arg(long, hide_short_help = true)]
     seed: Option<u64>,
 
     /// Do not perform any filtering, include all mod base calls in output
@@ -322,11 +327,17 @@ pub struct ModBamPileup {
     /// Filter (remove) mod-calls where the probability of the predicted
     /// variant is below this percentile. For example, 0.1 will filter
     /// out the lowest 10% of modification calls.
-    #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
+    #[arg(
+        group = "thresholds",
+        short = 'p',
+        long,
+        default_value_t = 0.1,
+        hide_short_help = true
+    )]
     filter_percentile: f32,
 
     /// Filter threshold, drop calls below this probability
-    #[arg(group = "thresholds", long)]
+    #[arg(group = "thresholds", long, hide_short_help = true)]
     filter_threshold: Option<f32>,
 
     /// Output debug logs to file at this path
@@ -356,7 +367,12 @@ pub struct ModBamPileup {
     /// default behavior is more likely to be compatible with genome viewers.
     /// Enabling this option may make it easier to parse the output with
     /// tabular data handlers that expect a single kind of separator.
-    #[arg(long, conflicts_with = "bedgraph", default_value_t = false)]
+    #[arg(
+        long,
+        conflicts_with = "bedgraph",
+        default_value_t = false,
+        hide_short_help = true
+    )]
     only_tabs: bool,
 
     /// Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html.
@@ -364,7 +380,12 @@ pub struct ModBamPileup {
     /// Two files for each modification will be produced, one for the postiive strand
     /// and one for the negative strand. So for 5mC (m) and 5hmC (h) there will be 4 files
     /// produced.
-    #[arg(long, conflicts_with = "only_tabs", default_value_t = false)]
+    #[arg(
+        long,
+        conflicts_with = "only_tabs",
+        default_value_t = false,
+        hide_short_help = true
+    )]
     bedgraph: bool,
 
     /// Force allow implicit-canonical mode. By default modkit does not allow
@@ -372,7 +393,12 @@ pub struct ModBamPileup {
     /// subcommand is provided to update tags to the new mode, however if
     /// the user would like to assume that residues with no probability associated
     /// canonical, this option will allow that behavior.
-    #[arg(long, hide_short_help = true, default_value_t = false)]
+    #[arg(
+        long,
+        hide_short_help = true,
+        default_value_t = false,
+        hide_short_help = true
+    )]
     force_allow_implicit: bool,
 
     /// Process only the specified region of the BAM when performing pileup.
@@ -390,7 +416,7 @@ pub struct ModBamPileup {
     )]
     cpg: bool,
 
-    /// CpG with presets
+    /// CpG mode with presets for comparing 5mC frequencies to other data.
     #[arg(
         long,
         group = "cpg_args",

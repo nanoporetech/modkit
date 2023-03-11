@@ -248,7 +248,7 @@ fn test_cpg_motif_filtering() {
         temp_file.to_str().unwrap(),
         "--no-filtering",
         "--cpg",
-        "--reference-fasta",
+        "--ref",
         "tests/resources/CGI_ladder_3.6kb_ref.fa",
     ])
     .unwrap();
@@ -271,7 +271,7 @@ fn test_cpg_motif_filtering_strand_combine() {
         "91",
         "--cpg",
         "--combine-strands",
-        "--reference-fasta",
+        "--ref",
         "tests/resources/CGI_ladder_3.6kb_ref.fa",
     ])
     .unwrap();
