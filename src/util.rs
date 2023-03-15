@@ -3,6 +3,28 @@ use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Aux};
 use std::string::FromUtf8Error;
 
 use crate::errs::{InputError, RunError};
+use derive_new::new;
+use indicatif::{ProgressBar, ProgressStyle};
+
+pub(crate) fn get_spinner() -> ProgressBar {
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.blue} [{elapsed_precise}] {pos} {msg}",
+        )
+        .unwrap()
+        .tick_strings(&[
+            "▹▹▹▹▹",
+            "▸▹▹▹▹",
+            "▹▸▹▹▹",
+            "▹▹▸▹▹",
+            "▹▹▹▸▹",
+            "▹▹▹▹▸",
+            "▪▪▪▪▪",
+        ]),
+    );
+    spinner
+}
 
 pub(crate) fn get_aligned_pairs_forward(
     record: &bam::Record,
@@ -74,8 +96,9 @@ pub(crate) fn get_tag<T>(
     })
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, Default)]
 pub enum Strand {
+    #[default]
     Positive,
     Negative,
 }
@@ -107,6 +130,14 @@ pub fn record_is_secondary(record: &bam::Record) -> bool {
     record.is_supplementary() || record.is_secondary() || record.is_duplicate()
 }
 
+#[derive(Debug, new)]
+pub struct ReferenceRecord {
+    pub tid: u32,
+    pub start: u32,
+    pub length: u32,
+    pub name: String,
+}
+
 #[derive(Debug)]
 pub struct Region {
     pub name: String,
@@ -123,10 +154,12 @@ impl Region {
         let mut splitted = raw.split(':');
         let chrom_name = splitted
             .nth(0)
-            .ok_or(InputError::new("failed to parse region {raw}"))?;
+            .ok_or(InputError::new(&format!("failed to parse region {raw}")))?;
         let start_end = splitted.collect::<Vec<&str>>();
         if start_end.len() != 1 {
-            return Err(InputError::new("failed to parse region {raw}"));
+            return Err(InputError::new(&format!(
+                "failed to parse region {raw}"
+            )));
         } else {
             let start_end = start_end[0];
             let splitted = start_end
@@ -137,14 +170,16 @@ impl Region {
                 })
                 .collect::<Result<Vec<u32>, _>>()?;
             if splitted.len() != 2 {
-                return Err(InputError::new("failed to parse region {raw}"));
+                return Err(InputError::new(&format!(
+                    "failed to parse region {raw}"
+                )));
             } else {
                 let start = splitted[0];
                 let end = splitted[1];
                 if end <= start {
-                    return Err(InputError::new(
-                        "failed to parse region {raw}, end must be after start",
-                    ));
+                    return Err(InputError::new(&format!(
+                        "failed to parse region {raw}, end must be after start"
+                    )));
                 }
                 Ok(Self {
                     name: chrom_name.to_owned(),

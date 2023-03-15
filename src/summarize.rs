@@ -103,6 +103,7 @@ pub fn summarize_modbam<T: AsRef<Path>>(
 
     let mut mod_called_bases = mod_called_bases.into_iter().collect::<Vec<_>>();
     mod_called_bases.sort();
+    spinner.finish_and_clear();
 
     Ok(ModSummary {
         mod_called_bases,

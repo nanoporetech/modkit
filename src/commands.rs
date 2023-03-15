@@ -25,13 +25,16 @@ use crate::mod_bam::{
 };
 use crate::mod_base_code::ModCode;
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
-use crate::motif_bed::motif_bed;
+use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
 use crate::summarize::summarize_modbam;
 use crate::thresholds::{
     calc_threshold_from_bam, sample_modbase_probs, Percentiles,
 };
 use crate::util;
-use crate::util::{add_modkit_pg_records, record_is_secondary, Region};
+use crate::util::{
+    add_modkit_pg_records, get_spinner, record_is_secondary, ReferenceRecord,
+    Region,
+};
 use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
@@ -106,26 +109,6 @@ pub struct Adjust {
     /// Output debug logs to file at this path
     #[arg(long)]
     log_filepath: Option<PathBuf>,
-}
-
-pub(crate) fn get_spinner() -> ProgressBar {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.blue} [{elapsed_precise}] {pos} {msg}",
-        )
-        .unwrap()
-        .tick_strings(&[
-            "▹▹▹▹▹",
-            "▸▹▹▹▹",
-            "▹▸▹▹▹",
-            "▹▹▸▹▹",
-            "▹▹▹▸▹",
-            "▹▹▹▹▸",
-            "▪▪▪▪▪",
-        ]),
-    );
-    spinner
 }
 
 type CliResult<T> = Result<T, RunError>;
@@ -352,10 +335,10 @@ pub struct ModBamPileup {
 
     /// Combine mod calls, all counts of modified bases are summed together.
     #[arg(long, default_value_t = false, group = "combine_args")]
-    combine: bool,
+    combine_mods: bool,
 
     /// Collapse _in_situ_ by redistributing base modification probability
-    /// equally  across other options. For example, if collapsing 'h', with 'm'
+    /// equally across other options. For example, if collapsing 'h', with 'm'
     /// and canonical options, half of the probability of 'h' will be added to
     /// both 'm' and 'C'. A full description of the methods can be found in
     /// collapse.md
@@ -390,25 +373,20 @@ pub struct ModBamPileup {
     /// Format should be <chrom_name>:<start>-<end>.
     #[arg(long)]
     region: Option<String>,
-}
 
-#[derive(Debug)]
-struct Target {
-    tid: u32,
-    start: u32,
-    length: u32,
-    name: String,
-}
+    /// Only output counts at CpG motifs. Requires a reference sequence to be
+    /// provided.
+    #[arg(long, requires = "reference_fasta", default_value_t = false)]
+    cpg: bool,
 
-impl Target {
-    fn new(tid: u32, start: u32, length: u32, name: String) -> Self {
-        Self {
-            tid,
-            start,
-            length,
-            name,
-        }
-    }
+    /// Reference sequence in FASTA format. Required for CpG motif filtering.
+    #[arg(long, short = 'r')]
+    reference_fasta: Option<PathBuf>,
+
+    /// When performing CpG analysis, sum the counts from the positive and
+    /// negative strands into the counts for the positive strand.
+    #[arg(long, requires = "cpg", default_value_t = false)]
+    combine_strands: bool,
 }
 
 impl ModBamPileup {
@@ -416,20 +394,20 @@ impl ModBamPileup {
         &self,
         header: &HeaderView,
         region: Option<Region>,
-    ) -> Vec<Target> {
+    ) -> Vec<ReferenceRecord> {
         (0..header.target_count())
             .filter_map(|tid| {
                 let chrom_name =
                     String::from_utf8(header.tid2name(tid).to_vec()).unwrap_or("???".to_owned());
                 if let Some(region) = &region {
                     if chrom_name == region.name {
-                        Some(Target::new(tid, region.start, region.length(), chrom_name))
+                        Some(ReferenceRecord::new(tid, region.start, region.length(), chrom_name))
                     } else {
                         None
                     }
                 } else {
                     match header.target_len(tid) {
-                        Some(size) => Some(Target::new(tid, 0, size as u32, chrom_name)),
+                        Some(size) => Some(ReferenceRecord::new(tid, 0, size as u32, chrom_name)),
                         None => {
                             debug!("> no size information for {chrom_name} (tid: {tid})");
                             None
@@ -438,7 +416,7 @@ impl ModBamPileup {
                 }
 
             })
-            .collect::<Vec<Target>>()
+            .collect::<Vec<ReferenceRecord>>()
     }
 
     fn run(&self) -> AnyhowResult<(), String> {
@@ -448,7 +426,7 @@ impl ModBamPileup {
             .map_err(|e| e.to_string())
             .map(|reader| reader.header().to_owned())?;
 
-        let pileup_options = match (self.combine, &self.collapse) {
+        let pileup_options = match (self.combine_mods, &self.collapse) {
             (false, None) => PileupNumericOptions::Passthrough,
             (true, _) => PileupNumericOptions::Combine,
             (_, Some(raw_mod_code)) => {
@@ -490,7 +468,6 @@ impl ModBamPileup {
         } else {
             None
         };
-        let tids = self.get_targets(&header, region);
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -498,13 +475,38 @@ impl ModBamPileup {
             .with_context(|| "failed to make threadpool")
             .map_err(|e| e.to_string())?;
 
+        let tids = self.get_targets(&header, region);
+        let (motif_locations, tids) = if self.cpg {
+            let fasta_fp = self
+                .reference_fasta
+                .as_ref()
+                .ok_or("reference fasta is required for CpG")?;
+            let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
+            debug!("filtering output to only CpG motifs");
+            if self.combine_strands {
+                debug!("combining + and - strand counts");
+            }
+            let names_to_tid = tids
+                .iter()
+                .map(|target| (target.name.as_str(), target.tid))
+                .collect::<HashMap<&str, u32>>();
+            let motif_locations = pool.install(|| {
+                MotifLocations::from_fasta(fasta_fp, regex_motif, &names_to_tid)
+                    .map_err(|e| e.to_string())
+            })?;
+            let filtered_tids = motif_locations.filter_reference_records(tids);
+            (Some(motif_locations), filtered_tids)
+        } else {
+            (None, tids)
+        };
+
         let (snd, rx) = bounded(1_000); // todo figure out sane default for this?
         let in_bam_fp = self.in_bam.clone();
         let interval_size = self.interval_size;
 
         let master_progress = MultiProgress::new();
         let sty = ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+            "[{elapsed_precise}] {bar:40.green/yellow} {pos:>7}/{len:7} {msg}",
         )
         .unwrap()
         .progress_chars("##-");
@@ -516,6 +518,14 @@ impl ModBamPileup {
         write_progress.set_message("rows written");
 
         let force_allow = self.force_allow_implicit;
+        let combine_strands = self.combine_strands;
+
+        let interval_style = ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+        )
+        .unwrap()
+        .progress_chars("##-");
+
         thread::spawn(move || {
             pool.install(|| {
                 for target in tids {
@@ -523,13 +533,14 @@ impl ModBamPileup {
                         target.start,
                         target.length,
                         interval_size,
-                        0,
+                        target.tid,
+                        motif_locations.as_ref(),
                     )
                     .collect::<Vec<(u32, u32)>>();
                     let n_intervals = intervals.len();
                     let interval_progress = master_progress.add(
                         ProgressBar::new(n_intervals as u64)
-                            .with_style(sty.clone()),
+                            .with_style(interval_style.clone()),
                     );
                     interval_progress
                         .set_message(format!("processing {}", &target.name));
@@ -548,6 +559,8 @@ impl ModBamPileup {
                                         threshold,
                                         &pileup_options,
                                         force_allow,
+                                        combine_strands,
+                                        motif_locations.as_ref(),
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()

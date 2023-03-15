@@ -205,7 +205,8 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
                 ));
             }
             report.push_str(&format!(
-                "total_mod_calls\t{}\n",
+                "{}_total_mod_calls\t{}\n",
+                canonical_base.char(),
                 total_calls as u64
             ));
         }
