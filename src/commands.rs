@@ -39,15 +39,15 @@ use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Pileup (combine) mod calls across genomic positions. Produces bedMethyl
+    /// formatted file. Schema and description of fields can be found in
+    /// schema.yaml
+    Pileup(ModBamPileup),
     /// Collapse N-way base modification calls to (N-1)-way
     AdjustMods(Adjust),
     /// Update mod tags, changes Mm/Ml-style tags to MM/ML-style. Also
     /// allows to change the mode to '?' or '.' instead of implicitly '.'
     UpdateTags(Update),
-    /// Pileup (combine) mod calls across genomic positions. Produces bedMethyl
-    /// formatted file. Schema and description of fields can be found in
-    /// schema.yaml
-    Pileup(ModBamPileup),
     /// Get an estimate of the distribution of mod-base prediction probabilities
     SampleProbs(SampleModBaseProbs),
     /// Summarize the mod tags present in a BAM and get basic statistics
@@ -291,13 +291,19 @@ impl Adjust {
 
 #[derive(Args)]
 pub struct ModBamPileup {
-    /// Input BAM, should be sorted and have associated index
+    /// Input BAM, should be sorted and have associated index available.
     in_bam: PathBuf,
+
     /// Output file
     out_bed: PathBuf,
+
     /// Number of threads to use while processing chunks concurrently.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
+
+    /// Output debug logs to file at this path
+    #[arg(long)]
+    log_filepath: Option<PathBuf>,
 
     /// Interval chunk size to process concurrently. Smaller interval chunk
     /// sizes will use less memory but incur more overhead.
@@ -324,9 +330,9 @@ pub struct ModBamPileup {
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
 
-    /// Filter (remove) mod-calls where the probability of the predicted
+    /// Filter out mod-calls where the probability of the predicted
     /// variant is below this percentile. For example, 0.1 will filter
-    /// out the lowest 10% of modification calls.
+    /// out the 10% lowest confidence modification calls.
     #[arg(
         group = "thresholds",
         short = 'p',
@@ -336,30 +342,16 @@ pub struct ModBamPileup {
     )]
     filter_percentile: f32,
 
-    /// Filter threshold, drop calls below this probability
+    /// Filter threshold, drop calls below this probability.
     #[arg(group = "thresholds", long, hide_short_help = true)]
     filter_threshold: Option<f32>,
-
-    /// Output debug logs to file at this path
-    #[arg(long)]
-    log_filepath: Option<PathBuf>,
-
-    /// Combine mod calls, all counts of modified bases are summed together.
-    #[arg(long, default_value_t = false, group = "combine_args")]
-    combine_mods: bool,
 
     /// Collapse _in_situ_ by redistributing base modification probability
     /// equally across other options. For example, if collapsing 'h', with 'm'
     /// and canonical options, half of the probability of 'h' will be added to
     /// both 'm' and 'C'. A full description of the methods can be found in
     /// collapse.md
-    #[arg(
-        long,
-        group = "combine_args",
-        conflicts_with = "cpg_preset",
-        hide_short_help = true,
-        value_parser
-    )]
+    #[arg(long, group = "combine_args", hide = true, value_parser)]
     collapse: Option<char>,
 
     /// For bedMethyl output, separate columns with only tabs. Default is
@@ -408,30 +400,35 @@ pub struct ModBamPileup {
 
     /// Only output counts at CpG motifs. Requires a reference sequence to be
     /// provided.
-    #[arg(
-        long,
-        group = "cpg_args",
-        requires = "reference_fasta",
-        default_value_t = false
-    )]
+    #[arg(long, requires = "reference_fasta", default_value_t = false)]
     cpg: bool,
-
-    /// CpG mode with presets for comparing 5mC frequencies to other data.
-    #[arg(
-        long,
-        group = "cpg_args",
-        requires = "reference_fasta",
-        default_value_t = false
-    )]
-    cpg_preset: bool,
 
     /// Reference sequence in FASTA format. Required for CpG motif filtering.
     #[arg(long = "ref")]
     reference_fasta: Option<PathBuf>,
 
+    /// Prepare data for comparison to whole genome bisulfite sequencing runs.
+    /// This setting will ignore modification calls other than 5mC.
+    #[arg(
+        long,
+        requires = "cpg",
+        conflicts_with = "combine_mods",
+        default_value_t = false
+    )]
+    bisulfite: bool,
+
+    /// Combine mod calls, all counts of modified bases are summed together.
+    #[arg(
+        long,
+        default_value_t = false,
+        group = "combine_args",
+        hide_short_help = true
+    )]
+    combine_mods: bool,
+
     /// When performing CpG analysis, sum the counts from the positive and
     /// negative strands into the counts for the positive strand.
-    #[arg(long, requires = "cpg_args", default_value_t = false)]
+    #[arg(long, requires = "cpg", default_value_t = false)]
     combine_strands: bool,
 }
 
@@ -472,7 +469,7 @@ impl ModBamPileup {
             .map_err(|e| e.to_string())
             .map(|reader| reader.header().to_owned())?;
 
-        let pileup_options = if self.cpg_preset {
+        let pileup_options = if self.bisulfite {
             if self.combine_mods {
                 PileupNumericOptions::Combine
             } else {
@@ -532,7 +529,7 @@ impl ModBamPileup {
             .map_err(|e| e.to_string())?;
 
         let tids = self.get_targets(&header, region);
-        let (motif_locations, tids) = if self.cpg || self.cpg_preset {
+        let (motif_locations, tids) = if self.cpg {
             let fasta_fp = self
                 .reference_fasta
                 .as_ref()

@@ -1,11 +1,8 @@
+use rust_htslib::bam;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read as StdRead};
 
-use rust_htslib::bam;
-use rust_htslib::bam::Read;
-
 use common::run_modkit;
-use mod_kit::mod_bam::parse_raw_mod_tags;
 
 mod common;
 
