@@ -7,8 +7,8 @@ to bedMethyl files using best practices, but also manipulating modBAM files and 
 
 ## Creating a bedMethyl pileup from a modBam
 
-The most typical use case, take a BAM with modified bases (as MM/ML or Mm/Ml tags) and sum the calls from
-every read over each genomic position (a pileup). 
+The most typical use case, take a BAM with modified bases (as MM/ML or Mm/Ml tags) and sum the base
+modification calls from every read over each genomic position (a pileup). 
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed 
