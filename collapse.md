@@ -1,13 +1,20 @@
-# Details on removing modification calls from BAMs and bedMethyl files.
+# Removing modification calls from BAMs.
 
-
-BAM and bedMethyl files containing multiple base modifications may not be acceptable inputs for some
-downstream tools. To address this issue, `modkit` implements 2 methods for removing one or more DNA base
-modification call from a BAM as well as a command line flag to simply combine all modification calls when
-performing a pileup.
+There may be multiple possible base modifications to a specific canonical base, for example cytosine has four
+known modified variants. As technologies are increasingly able to detect these chemical moieties, not all
+downstream tools may be capable of accepting them, or you may want to convert your data to make it comparable
+to other data with less specific resolution. To address this issue, `modkit` implements methods for removing
+one or more DNA base modification call from a BAM as well as a command line flag to simply combine all
+modification calls when performing a pileup to generate a bedMethyl file.
 
 
 ## Removing DNA base modification probabilities.
+
+BAM records containing probabilities for multiple base modifications at each residue can be transformed to
+ignore one (or more) of the predicted base modifications. For example, if a BAM file contains 5hmC and 5mC
+probabilities, the total probability is necessarily distributed over 5mC $`p_m`$, 5hmC $`p_h`$, and canonical
+C, $`p_{C}`$. Described below are the two implemented methods to reduce the dimensionality of the probability
+distribution by one or more predicted base modification class.
 
 ### Distribute method: `dist`
 

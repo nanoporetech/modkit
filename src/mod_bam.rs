@@ -819,25 +819,6 @@ impl ModBaseInfo {
             },
         );
         (self.converters, pos_iter.chain(neg_iter))
-
-        // let mut seq_mod_probs = self
-        //     .seq_base_mod_probs
-        //     .into_iter()
-        //     .collect::<Vec<(char, SeqPosBaseModProbs)>>();
-        // let mut converters = self
-        //     .converters
-        //     .into_iter()
-        //     .collect::<Vec<(char, DeltaListConverter)>>();
-        // assert_eq!(seq_mod_probs.len(), converters.len());
-        //
-        // seq_mod_probs.sort_by(|(a, _), (b, _)| a.cmp(b));
-        // converters.sort_by(|(a, _), (b, _)| a.cmp(b));
-        // seq_mod_probs.into_iter().zip(converters).map(
-        //     |((a, probs), (b, converter))| {
-        //         assert_eq!(a, b);
-        //         (converter, probs)
-        //     },
-        // )
     }
 
     pub(crate) fn is_empty(&self) -> bool {

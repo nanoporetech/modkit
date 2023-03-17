@@ -1,3 +1,7 @@
 # modkit, subcommand documentation
 
+The goal of `modkit` is to enable easy and correct manipulation of BAM files containing modified base
+information (modBAMs). The various sub-commands and tools available in `modkit` are described below.
+This information can be obtained by invoking the long help (`--help`) for each command.
+
 > Advanced usage information.

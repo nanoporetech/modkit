@@ -39,16 +39,19 @@ use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter, TsvWriter};
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Pileup (combine) mod calls across genomic positions. Produces bedMethyl
-    /// formatted file. Schema and description of fields can be found in
-    /// schema.yaml
+    /// Tabulates base modification calls across genomic positions. This command
+    /// produces a bedMethyl formatted file. Schema and description of fields can
+    /// be found in the README.
     Pileup(ModBamPileup),
-    /// Collapse N-way base modification calls to (N-1)-way
+    /// Performs various operations on BAM files containing base modification
+    /// information, such as converting base modification codes and ignoring
+    /// modification calls. Produces a BAM output file.
     AdjustMods(Adjust),
-    /// Update mod tags, changes Mm/Ml-style tags to MM/ML-style. Also
-    /// allows to change the mode to '?' or '.' instead of implicitly '.'
+    /// Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag from
+    /// silent '.' to '?' or '.'.
     UpdateTags(Update),
-    /// Get an estimate of the distribution of mod-base prediction probabilities
+    /// Calculate an estimate of the distribution of mod-base prediction
+    /// probabilities distribution.
     SampleProbs(SampleModBaseProbs),
     /// Summarize the mod tags present in a BAM and get basic statistics
     Summary(ModSummarize),
@@ -79,14 +82,16 @@ fn check_collapse_method(raw_method: &str) -> Result<String, String> {
 
 #[derive(Args)]
 pub struct Adjust {
-    /// BAM file to collapse mod call from
+    /// BAM file to collapse mod call from.
     in_bam: PathBuf,
-    /// File path to new BAM file
+    /// File path to new BAM file to be created.
     out_bam: PathBuf,
-    /// mod base code to ignore/remove
+    /// Modified base code to ignore/remove, see
+    /// https://samtools.github.io/hts-specs/SAMtags.pdf for details on
+    /// the modified base codes.
     #[arg(long, conflicts_with = "convert", default_value_t = 'h')]
     ignore: char,
-    /// number of threads to use
+    /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
     /// Fast fail, stop processing at the first invalid sequence record. Default
@@ -94,7 +99,7 @@ pub struct Adjust {
     #[arg(short, long = "ff", default_value_t = false)]
     fail_fast: bool,
     /// Method to use to collapse mod calls, 'norm', 'dist'. A full description
-    /// of the methods can be found in collapse.md
+    /// of the methods can be found in collapse.md.
     #[arg(
         long,
         default_value_t = String::from("dist"),
@@ -106,7 +111,7 @@ pub struct Adjust {
     /// the retained mod tag is already present.
     #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
     convert: Option<Vec<char>>,
-    /// Output debug logs to file at this path
+    /// Output debug logs to file at this path.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
 }
@@ -294,14 +299,15 @@ pub struct ModBamPileup {
     /// Input BAM, should be sorted and have associated index available.
     in_bam: PathBuf,
 
-    /// Output file
+    /// Output file to write results into.
     out_bed: PathBuf,
 
     /// Number of threads to use while processing chunks concurrently.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
 
-    /// Output debug logs to file at this path
+    /// Specify a file for debug logs to be written to, otherwise ignore them.
+    /// Setting a file is recommended.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
 
@@ -322,11 +328,12 @@ pub struct ModBamPileup {
     #[arg(short = 'f', long, default_value_t = 0.1, hide_short_help = true)]
     sampling_frac: f64,
 
-    /// random seed for deterministic running, default is non-deterministic
+    /// Set a random seed for deterministic running, the default is non-deterministic.
     #[arg(long, hide_short_help = true)]
     seed: Option<u64>,
 
-    /// Do not perform any filtering, include all mod base calls in output
+    /// Do not perform any filtering, include all mod base calls in output. See
+    /// filtering.md for details on filtering.
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
 
@@ -350,11 +357,11 @@ pub struct ModBamPileup {
     /// equally across other options. For example, if collapsing 'h', with 'm'
     /// and canonical options, half of the probability of 'h' will be added to
     /// both 'm' and 'C'. A full description of the methods can be found in
-    /// collapse.md
-    #[arg(long, group = "combine_args", hide = true, value_parser)]
+    /// collapse.md.
+    #[arg(long, group = "combine_args", hide = true)]
     collapse: Option<char>,
 
-    /// For bedMethyl output, separate columns with only tabs. Default is
+    /// For bedMethyl output, separate columns with only tabs. The default is
     /// to use tabs for the first 10 fields and spaces thereafter. The
     /// default behavior is more likely to be compatible with genome viewers.
     /// Enabling this option may make it easier to parse the output with
@@ -369,7 +376,7 @@ pub struct ModBamPileup {
 
     /// Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html.
     /// For this setting, specify a directory for output files to be make in.
-    /// Two files for each modification will be produced, one for the postiive strand
+    /// Two files for each modification will be produced, one for the positive strand
     /// and one for the negative strand. So for 5mC (m) and 5hmC (h) there will be 4 files
     /// produced.
     #[arg(
@@ -381,10 +388,11 @@ pub struct ModBamPileup {
     bedgraph: bool,
 
     /// Force allow implicit-canonical mode. By default modkit does not allow
-    /// pileup with the implicit mode ('.', or omitted). The `update-tags`
-    /// subcommand is provided to update tags to the new mode, however if
-    /// the user would like to assume that residues with no probability associated
-    /// canonical, this option will allow that behavior.
+    /// pileup with the implicit mode ('.', or silent). The `update-tags`
+    /// subcommand is provided to update tags to the new mode. This option allows
+    /// the interpretation of implicit mode tags: residues without modified
+    /// base probability will be interpreted as being the non-modified base.
+    /// We do not recommend using this option.
     #[arg(
         long,
         hide_short_help = true,
@@ -408,7 +416,8 @@ pub struct ModBamPileup {
     reference_fasta: Option<PathBuf>,
 
     /// Prepare data for comparison to whole genome bisulfite sequencing runs.
-    /// This setting will ignore modification calls other than 5mC.
+    /// This setting will ignore modification calls other than 5mC, by removing
+    /// them using the redistribute method described in collapse.md.
     #[arg(
         long,
         requires = "cpg",
@@ -417,7 +426,8 @@ pub struct ModBamPileup {
     )]
     bisulfite: bool,
 
-    /// Combine mod calls, all counts of modified bases are summed together.
+    /// Combine mod calls, all counts of modified bases are summed together. See
+    /// collapse.md for details.
     #[arg(
         long,
         default_value_t = false,
@@ -681,18 +691,19 @@ fn parse_percentiles(
 
 #[derive(Args)]
 pub struct SampleModBaseProbs {
-    /// Input BAM with base modification tags
+    /// Input BAM with modified base tags.
     in_bam: PathBuf,
-    /// Sample fraction
+    /// Fraction of reads to sample, for example 0.1 will sample
+    /// 1/10th of the reads.
     #[arg(short = 'f', long, default_value_t = 0.1)]
     sampling_frac: f64,
-    /// number of threads to use reading BAM
+    /// Number of threads to use reading BAM.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
-    /// random seed for deterministic running, default is non-deterministic
+    /// Random seed for deterministic running, the default is non-deterministic.
     #[arg(short, long)]
     seed: Option<u64>,
-    /// Percentiles to calculate, space separated list
+    /// Percentiles to calculate, a space separated list of floats.
     #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
     percentiles: String,
 }
@@ -720,9 +731,9 @@ impl SampleModBaseProbs {
 
 #[derive(Args)]
 pub struct ModSummarize {
-    /// Input ModBam file
+    /// Input ModBam file.
     in_bam: PathBuf,
-    /// number of threads to use reading BAM
+    /// Number of threads to use reading BAM.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
 }
@@ -743,7 +754,7 @@ pub struct MotifBed {
     fasta: PathBuf,
     /// Motif to search for within FASTA
     motif: String,
-    /// Offset within motif
+    /// Offset within motif.
     offset: usize,
 }
 
@@ -772,9 +783,9 @@ impl ModMode {
 
 #[derive(Args)]
 pub struct Update {
-    /// BAM file to collapse mod call from
+    /// BAM file to update modified base tags in.
     in_bam: PathBuf,
-    /// File path to new BAM file
+    /// File path to new BAM file to be created.
     out_bam: PathBuf,
     /// Mode, change mode to this value, options {'ambiguous', 'implicit'}.
     /// See spec at: https://samtools.github.io/hts-specs/SAMtags.pdf.
@@ -784,10 +795,10 @@ pub struct Update {
     /// assumed to be canonical.
     #[arg(short, long, value_enum)]
     mode: Option<ModMode>,
-    /// number of threads to use
+    /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
-    /// Output debug logs to file at this path
+    /// Output debug logs to file at this path.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
 }

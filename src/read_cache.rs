@@ -148,28 +148,14 @@ impl<'a> ReadCache<'a> {
             let record_mod_codes = mod_codes_for_read
                 .entry(record_name.to_owned())
                 .or_insert(HashSet::new());
-            // let record_mod_codes = match strand {
-            //     Strand::Positive => self
-            //         .pos_mod_codes
-            //         .entry(record_name.to_owned())
-            //         .or_insert(HashSet::new()),
-            //     Strand::Negative => self
-            //         .neg_mod_codes
-            //         .entry(record_name.to_owned())
-            //         .or_insert(HashSet::new()),
-            // };
             record_mod_codes.extend(mod_codes);
-            // let record_mod_codes = self
-            //     .mod_codes
-            //     .entry((record_name.to_owned(), strand))
-            //     .or_insert(HashSet::new());
 
             self.add_modbase_probs_for_record_and_canonical_base(
                 &record_name,
                 record,
                 seq_base_mod_probs,
                 mod_strand,
-                converter.canonical_base,
+                converter.canonical_base, // todo(ar) don't need this here? can use base directly
             )?;
         }
         Ok(())
