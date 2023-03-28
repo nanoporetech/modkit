@@ -77,21 +77,23 @@ CG->CH substitution.
 | column | name              | description                                                                                                 | type  |
 |--------|-------------------|-------------------------------------------------------------------------------------------------------------|-------|
 | 1      | chrom             | name of reference sequence from BAM header                                                                  | str   |
-| 2      | start_pos         | included for compatibility                                                                                  | int   |
-| 3      | end_pos           | included for compatibility                                                                                  | int   |
+| 2      | start_pos         | 0-based start position                                                                                      | int   |
+| 3      | end_pos           | 0-based exclusive end position                                                                              | int   |
 | 4      | raw_mod_code      | single letter code of modified base                                                                         | str   |
 | 5      | score             | filtered_coverage                                                                                           | int   |
 | 6      | strand            | + for positive strand - for negative strand                                                                 | str   |
-| 7      | color             | included for compatibility, always 255,0,0                                                                  | str   |
-| 8      | filtered_coverage | see definitions                                                                                             | int   |
-| 9      | percent_modified  | N_mod / filtered_coverage                                                                                   | float |
-| 10     | N_mod             | Number of filtered calls for raw_mod_code.                                                                  | int   |
-| 11     | N_canonical       | Number of filtered calls for a canonical residue.                                                           | int   |
-| 12     | N_other_mod       | Number of filtered calls for a modification other than raw_mod_code.                                        | int   |
-| 13     | N_delete          | Number of reads with a deletion at this reference position.                                                 | int   |
-| 14     | N_filtered        | Number of calls that were filtered out.                                                                     | int   |
-| 15     | N_diff            | Number of reads with a base other than the reference sequence canonical base corresponding to raw_mod_code. | int   |
-| 16     | N_nocall          | Number of reads with no base modification information at this reference position.                           | int   |
+| 7      | start_pos         | included for compatibility                                                                                  | int   |
+| 8      | end_pos           | included for compatibility                                                                                  | int   |
+| 9      | color             | included for compatibility, always 255,0,0                                                                  | str   |
+| 10     | filtered_coverage | see definitions                                                                                             | int   |
+| 11     | percent_modified  | N_mod / filtered_coverage                                                                                   | float |
+| 12     | N_mod             | Number of filtered calls for raw_mod_code.                                                                  | int   |
+| 13     | N_canonical       | Number of filtered calls for a canonical residue.                                                           | int   |
+| 14     | N_other_mod       | Number of filtered calls for a modification other than raw_mod_code.                                        | int   |
+| 15     | N_delete          | Number of reads with a deletion at this reference position.                                                 | int   |
+| 16     | N_filtered        | Number of calls that were filtered out.                                                                     | int   |
+| 17     | N_diff            | Number of reads with a base other than the reference sequence canonical base corresponding to raw_mod_code. | int   |
+| 18     | N_nocall          | Number of reads with no base modification information at this reference position.                           | int   |
 
 
 
