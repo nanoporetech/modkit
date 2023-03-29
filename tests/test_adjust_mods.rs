@@ -104,9 +104,13 @@ fn test_mod_adjust_convert_sum_probs() {
     let test_convered_bam =
         std::env::temp_dir().join("test_convert_sum_probs.bam");
 
-    let initial_mod_summary =
-        summarize_modbam("tests/resources/bc_anchored_10_reads.sorted.bam", 1)
-            .unwrap();
+    let initial_mod_summary = summarize_modbam(
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        1,
+        0f32,
+        None,
+    )
+    .unwrap();
 
     let collapse_args = [
         "adjust-mods",
@@ -119,7 +123,8 @@ fn test_mod_adjust_convert_sum_probs() {
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
+        summarize_modbam(test_convered_bam.to_str().unwrap(), 1, 0f32, None)
+            .unwrap();
 
     let initial_m_calls = initial_mod_summary
         .mod_call_counts
@@ -150,9 +155,13 @@ fn test_mod_adjust_convert_rename() {
     let test_convered_bam =
         std::env::temp_dir().join("test_convert_convert_rename.bam");
 
-    let initial_mod_summary =
-        summarize_modbam("tests/resources/bc_anchored_10_reads.sorted.bam", 1)
-            .unwrap();
+    let initial_mod_summary = summarize_modbam(
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        1,
+        0f32,
+        None,
+    )
+    .unwrap();
 
     let collapse_args = [
         "adjust-mods",
@@ -165,7 +174,8 @@ fn test_mod_adjust_convert_rename() {
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
+        summarize_modbam(test_convered_bam.to_str().unwrap(), 1, 0f32, None)
+            .unwrap();
 
     let initial_h_calls = initial_mod_summary
         .mod_call_counts
@@ -185,9 +195,13 @@ fn test_mod_adjust_convert_sum_probs_rename() {
     let test_converted_bam =
         std::env::temp_dir().join("test_convert_sum_probs_rename.bam");
 
-    let initial_mod_summary =
-        summarize_modbam("tests/resources/bc_anchored_10_reads.sorted.bam", 1)
-            .unwrap();
+    let initial_mod_summary = summarize_modbam(
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        1,
+        0f32,
+        None,
+    )
+    .unwrap();
 
     let collapse_args = [
         "adjust-mods",
@@ -203,7 +217,8 @@ fn test_mod_adjust_convert_sum_probs_rename() {
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_converted_bam.to_str().unwrap(), 1).unwrap();
+        summarize_modbam(test_converted_bam.to_str().unwrap(), 1, 0f32, None)
+            .unwrap();
 
     let initial_m_calls = initial_mod_summary
         .mod_call_counts

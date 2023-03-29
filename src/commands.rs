@@ -72,6 +72,23 @@ impl Commands {
     }
 }
 
+fn get_threshold_from_options(
+    no_filtering: bool,
+    user_threshold: Option<f32>,
+) -> Option<f32> {
+    if no_filtering {
+        Some(0f32)
+    } else if let Some(user_threshold) = user_threshold {
+        info!(
+            "Using user-defined threshold probability: {}",
+            user_threshold
+        );
+        Some(user_threshold)
+    } else {
+        None
+    }
+}
+
 fn check_collapse_method(raw_method: &str) -> Result<String, String> {
     match raw_method {
         "norm" => Ok(raw_method.to_owned()),
@@ -498,29 +515,18 @@ impl ModBamPileup {
                 }
             }
         };
-
-        let threshold = if self.no_filtering {
-            0f32
-        } else if let Some(user_threshold) = self.filter_threshold {
-            info!(
-                "Using user-defined threshold probability: {}",
-                user_threshold
-            );
-            user_threshold
-        } else {
-            info!(
-                "Determining filter threshold probability using sampling \
-                frequency {}",
-                self.sampling_frac
-            );
-            // todo need to calc threshold based on collapsed probs
-            calc_threshold_from_bam(
+        let threshold = match get_threshold_from_options(
+            self.no_filtering,
+            self.filter_threshold,
+        ) {
+            Some(t) => t,
+            None => calc_threshold_from_bam(
                 &self.in_bam,
                 self.threads,
                 self.sampling_frac,
                 self.filter_percentile,
                 self.seed,
-            )?
+            )?,
         };
 
         info!("Using filter threshold {}", threshold);
@@ -736,12 +742,61 @@ pub struct ModSummarize {
     /// Number of threads to use reading BAM.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
+    /// Specify a file for debug logs to be written to, otherwise ignore them.
+    /// Setting a file is recommended.
+    #[arg(long)]
+    log_filepath: Option<PathBuf>,
+    /// Filter out mod-calls where the probability of the predicted
+    /// variant is below this percentile. For example, 0.1 will filter
+    /// out the 10% lowest confidence modification calls.
+    #[arg(group = "thresholds", long, default_value_t = 0.1)]
+    filter_percentile: f32,
+    /// Filter threshold, drop calls below this probability.
+    #[arg(group = "thresholds", long)]
+    filter_threshold: Option<f32>,
+    /// Sample this fraction of the reads when estimating the
+    /// `filter-percentile`. In practice, 50-100 thousand reads is sufficient to
+    /// estimate the model output distribution and determine the filtering
+    /// threshold.
+    #[arg(short = 'f', long, default_value_t = 0.1, hide_short_help = true)]
+    sampling_frac: f64,
+    /// Set a random seed for deterministic running, the default is non-deterministic.
+    #[arg(long, hide_short_help = true)]
+    seed: Option<u64>,
+    /// Do not perform any filtering, include all mod base calls in output. See
+    /// filtering.md for details on filtering.
+    #[arg(group = "thresholds", long, default_value_t = false)]
+    no_filtering: bool,
+    /// Set a maximum number of reads to process.
+    #[arg(short = 'n', long)]
+    num_reads: Option<usize>,
 }
 
 impl ModSummarize {
     pub fn run(&self) -> AnyhowResult<(), String> {
-        let mod_summary = summarize_modbam(&self.in_bam, self.threads)
-            .map_err(|e| e.to_string())?;
+        let _handle = init_logging(self.log_filepath.as_ref());
+        let threshold = match get_threshold_from_options(
+            self.no_filtering,
+            self.filter_threshold,
+        ) {
+            Some(t) => t,
+            None => calc_threshold_from_bam(
+                &self.in_bam,
+                self.threads,
+                self.sampling_frac,
+                self.filter_percentile,
+                self.seed,
+            )?,
+        };
+        info!("filter threshold {threshold}");
+
+        let mod_summary = summarize_modbam(
+            &self.in_bam,
+            self.threads,
+            threshold,
+            self.num_reads,
+        )
+        .map_err(|e| e.to_string())?;
         let mut writer = TsvWriter::new();
         writer.write(mod_summary).map_err(|e| e.to_string())?;
         Ok(())

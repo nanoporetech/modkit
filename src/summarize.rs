@@ -5,20 +5,22 @@ use crate::util::{record_is_secondary, Strand};
 use indicatif::{ProgressBar, ProgressStyle};
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Debug)]
 pub struct ModSummary {
-    pub mod_called_bases: Vec<DnaBase>,
     pub reads_with_mod_calls: HashMap<DnaBase, u64>,
     pub mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
+    pub filtered_mod_calls: HashMap<DnaBase, HashMap<ModCode, u64>>,
     pub total_reads_used: usize,
 }
 
 pub fn summarize_modbam<T: AsRef<Path>>(
     bam_fp: T,
     threads: usize,
+    threshold: f32,
+    num_reads: Option<usize>,
 ) -> Result<ModSummary, RunError> {
     let mut reader = bam::Reader::from_path(bam_fp)
         .map_err(|e| RunError::new_input_error(e.to_string()))?;
@@ -39,28 +41,39 @@ pub fn summarize_modbam<T: AsRef<Path>>(
         .filter(|record| record.seq_len() > 0)
         .filter_map(|record| ModBaseInfo::new_from_record(&record).ok());
 
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.blue} [{elapsed_precise}] {pos} {msg}",
+    let spinner = if let Some(n) = num_reads {
+        let sty = ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:40.green/yellow} {pos:>7}/{len:7} {msg}",
         )
         .unwrap()
-        .tick_strings(&[
-            "▹▹▹▹▹",
-            "▸▹▹▹▹",
-            "▹▸▹▹▹",
-            "▹▹▸▹▹",
-            "▹▹▹▸▹",
-            "▹▹▹▹▸",
-            "▪▪▪▪▪",
-        ]),
-    );
+        .progress_chars("##-");
+        ProgressBar::new(n as u64).with_style(sty)
+    } else {
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(
+            ProgressStyle::with_template(
+                "{spinner:.blue} [{elapsed_precise}] {pos} {msg}",
+            )
+            .unwrap()
+            .tick_strings(&[
+                "▹▹▹▹▹",
+                "▸▹▹▹▹",
+                "▹▸▹▹▹",
+                "▹▹▸▹▹",
+                "▹▹▹▸▹",
+                "▹▹▹▹▸",
+                "▪▪▪▪▪",
+            ]),
+        );
+        spinner
+    };
+
     spinner.set_message("records processed");
 
     let mut total_reads_used = 0;
-    let mod_called_bases = HashSet::new();
     let mut reads_with_mod_calls = HashMap::new();
     let mut mod_call_counts = HashMap::new();
+    let mut filtered_mod_calls = HashMap::new();
     for (i, modbase_info) in record_iter.enumerate() {
         if modbase_info.is_empty() {
             continue;
@@ -79,36 +92,57 @@ pub fn summarize_modbam<T: AsRef<Path>>(
             let mod_counts = mod_call_counts
                 .entry(canonical_base)
                 .or_insert(HashMap::new());
+            let filtered_counts = filtered_mod_calls
+                .entry(canonical_base)
+                .or_insert(HashMap::new());
             for (_position, base_mod_probs) in
                 seq_pos_mod_probs.pos_to_base_mod_probs
             {
-                match base_mod_probs.base_mod_call() {
-                    BaseModCall::Canonical(_p) => {
-                        let count = mod_counts
-                            .entry(canonical_base.canonical_mod_code().unwrap())
-                            .or_insert(0);
-                        *count += 1;
+                let count = match base_mod_probs.base_mod_call() {
+                    BaseModCall::Canonical(p) => {
+                        if p > threshold {
+                            mod_counts
+                                .entry(
+                                    canonical_base
+                                        .canonical_mod_code()
+                                        .unwrap(),
+                                )
+                                .or_insert(0)
+                        } else {
+                            filtered_counts
+                                .entry(
+                                    canonical_base
+                                        .canonical_mod_code()
+                                        .unwrap(),
+                                )
+                                .or_insert(0)
+                        }
                     }
-                    BaseModCall::Modified(_p, mod_code) => {
-                        let count = mod_counts.entry(mod_code).or_insert(0);
-                        *count += 1;
+                    BaseModCall::Modified(p, mod_code) => {
+                        if p > threshold {
+                            mod_counts.entry(mod_code).or_insert(0)
+                        } else {
+                            filtered_counts.entry(mod_code).or_insert(0)
+                        }
                     }
-                    BaseModCall::Filtered => {}
-                }
+                    BaseModCall::Filtered => panic!("unreachable"),
+                };
+                *count += 1;
             }
         }
         total_reads_used = i;
         spinner.inc(1);
+        let done = num_reads.map(|n| i >= n).unwrap_or(false);
+        if done {
+            break;
+        }
     }
-
-    let mut mod_called_bases = mod_called_bases.into_iter().collect::<Vec<_>>();
-    mod_called_bases.sort();
     spinner.finish_and_clear();
 
     Ok(ModSummary {
-        mod_called_bases,
         reads_with_mod_calls,
         mod_call_counts,
+        filtered_mod_calls,
         total_reads_used: total_reads_used + 1,
     })
 }

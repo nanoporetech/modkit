@@ -170,8 +170,8 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
     fn write(&mut self, item: ModSummary) -> Result<u64, String> {
         let mut report = String::new();
         let mod_called_bases = item
-            .mod_called_bases
-            .iter()
+            .mod_call_counts
+            .keys()
             .map(|d| d.char().to_string())
             .collect::<Vec<String>>()
             .join(",");
@@ -185,12 +185,22 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
         }
         for (canonical_base, mod_counts) in item.mod_call_counts {
             let total_calls = mod_counts.values().sum::<u64>() as f64;
+            let total_filtered_calls = item
+                .filtered_mod_calls
+                .get(&canonical_base)
+                .map(|filtered_counts| filtered_counts.values().sum::<u64>())
+                .unwrap_or(0);
             for (mod_code, counts) in mod_counts {
                 let label = if mod_code.is_canonical() {
                     format!("unmodified")
                 } else {
                     format!("modified_{}", mod_code.char())
                 };
+                let filtered = *item
+                    .filtered_mod_calls
+                    .get(&canonical_base)
+                    .and_then(|filtered_counts| filtered_counts.get(&mod_code))
+                    .unwrap_or(&0);
                 report.push_str(&format!(
                     "{}_calls_{}\t{}\n",
                     canonical_base.char(),
@@ -203,11 +213,22 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
                     label,
                     counts as f64 / total_calls
                 ));
+                report.push_str(&format!(
+                    "{}_filtered_{}\t{}\n",
+                    canonical_base.char(),
+                    label,
+                    filtered
+                ));
             }
             report.push_str(&format!(
                 "{}_total_mod_calls\t{}\n",
                 canonical_base.char(),
                 total_calls as u64
+            ));
+            report.push_str(&format!(
+                "{}_total_filtered_mod_calls\t{}\n",
+                canonical_base.char(),
+                total_filtered_calls
             ));
         }
 
