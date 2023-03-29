@@ -432,16 +432,16 @@ pub struct ModBamPileup {
     #[arg(long = "ref")]
     reference_fasta: Option<PathBuf>,
 
-    /// Prepare data for comparison to whole genome bisulfite sequencing runs.
-    /// This setting will ignore modification calls other than 5mC, by removing
-    /// them using the redistribute method described in collapse.md.
+    /// Optional preset options for specific applications.
+    /// traditional: Prepares bedMethyl analogous to that generated from other technologies
+    /// for the analysis of 5mC modified bases. Shorthand for --mod 5mC --cpg
+    /// --combine-strands --collapse.
     #[arg(
         long,
-        requires = "cpg",
-        conflicts_with = "combine_mods",
-        default_value_t = false
+        requires = "reference_fasta",
+        conflicts_with_all = ["combine_mods", "cpg", "combine_strands", "collapse"],
     )]
-    bisulfite: bool,
+    preset: Option<Presets>,
 
     /// Combine mod calls, all counts of modified bases are summed together. See
     /// collapse.md for details.
@@ -496,25 +496,28 @@ impl ModBamPileup {
             .map_err(|e| e.to_string())
             .map(|reader| reader.header().to_owned())?;
 
-        let pileup_options = if self.bisulfite {
-            if self.combine_mods {
-                PileupNumericOptions::Combine
-            } else {
+        let (pileup_options, combine_strands) = match self.preset {
+            Some(Presets::traditional) => (
                 PileupNumericOptions::Collapse(CollapseMethod::ReDistribute(
                     ModCode::h,
-                ))
-            }
-        } else {
-            match (self.combine_mods, &self.collapse) {
-                (false, None) => PileupNumericOptions::Passthrough,
-                (true, _) => PileupNumericOptions::Combine,
-                (_, Some(raw_mod_code)) => {
-                    let mod_code = ModCode::parse_raw_mod_code(*raw_mod_code)?;
-                    let method = CollapseMethod::ReDistribute(mod_code);
-                    PileupNumericOptions::Collapse(method)
-                }
+                )),
+                true,
+            ),
+            None => {
+                let options = match (self.combine_mods, &self.collapse) {
+                    (false, None) => PileupNumericOptions::Passthrough,
+                    (true, _) => PileupNumericOptions::Combine,
+                    (_, Some(raw_mod_code)) => {
+                        let mod_code =
+                            ModCode::parse_raw_mod_code(*raw_mod_code)?;
+                        let method = CollapseMethod::ReDistribute(mod_code);
+                        PileupNumericOptions::Collapse(method)
+                    }
+                };
+                (options, self.combine_strands)
             }
         };
+
         let threshold = match get_threshold_from_options(
             self.no_filtering,
             self.filter_threshold,
@@ -545,14 +548,21 @@ impl ModBamPileup {
             .map_err(|e| e.to_string())?;
 
         let tids = self.get_targets(&header, region);
-        let (motif_locations, tids) = if self.cpg {
+        let use_cpg_motifs = self.cpg
+            || self
+                .preset
+                .map(|preset| match preset {
+                    Presets::traditional => true,
+                })
+                .unwrap_or(false);
+        let (motif_locations, tids) = if use_cpg_motifs {
             let fasta_fp = self
                 .reference_fasta
                 .as_ref()
                 .ok_or("reference fasta is required for CpG")?;
             let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
             debug!("filtering output to only CpG motifs");
-            if self.combine_strands {
+            if combine_strands {
                 debug!("combining + and - strand counts");
             }
             let names_to_tid = tids
@@ -587,7 +597,6 @@ impl ModBamPileup {
         write_progress.set_message("rows written");
 
         let force_allow = self.force_allow_implicit;
-        let combine_strands = self.combine_strands;
 
         let interval_style = ProgressStyle::with_template(
             "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
@@ -818,6 +827,12 @@ impl MotifBed {
         motif_bed(&self.fasta, &self.motif, self.offset);
         Ok(())
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[allow(non_camel_case_types)]
+enum Presets {
+    traditional,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]

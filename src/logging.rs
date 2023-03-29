@@ -1,4 +1,4 @@
-use log::LevelFilter;
+use log::{debug, LevelFilter};
 use log4rs::append::console::{ConsoleAppender, Target};
 use log4rs::append::file::FileAppender;
 use log4rs::config::{Appender, Root};
@@ -10,7 +10,9 @@ use std::path::PathBuf;
 pub fn init_logging(log_fp: Option<&PathBuf>) -> Handle {
     let level = LevelFilter::Info;
 
-    let file_endcoder = Box::new(PatternEncoder::new("[{f}::{L}][{l}] {m}{n}"));
+    let file_endcoder = Box::new(PatternEncoder::new(
+        "[{f}::{L}][{d(%Y-%m-%d %H:%M:%S)}][{l}] {m}{n}",
+    ));
     let console_encoder = Box::new(PatternEncoder::new("> {m}{n}"));
     let stderr = ConsoleAppender::builder()
         .encoder(console_encoder)
@@ -48,6 +50,7 @@ pub fn init_logging(log_fp: Option<&PathBuf>) -> Handle {
     };
 
     let handle = log4rs::init_config(config).expect("failed to init logging");
-
+    let command_line = std::env::args().collect::<Vec<String>>().join(" ");
+    debug!("command line: {command_line}");
     handle
 }

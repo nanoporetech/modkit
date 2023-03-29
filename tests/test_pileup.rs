@@ -277,3 +277,41 @@ fn test_cpg_motif_filtering_strand_combine() {
         "tests/resources/bc_anchored_10_reads_nofilt_cg_motif_strand_combine.bed",
     );
 }
+
+#[test]
+fn test_presets_traditional_same_as_options() {
+    let preset_temp_file = std::env::temp_dir()
+        .join("test_presets_traditional_same_as_options.bed");
+    let options_temp_file = std::env::temp_dir()
+        .join("test_presets_traditional_same_as_options2.bed");
+
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        preset_temp_file.to_str().unwrap(),
+        "--no-filtering",
+        "--preset",
+        "traditional",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+    ])
+    .unwrap();
+
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        options_temp_file.to_str().unwrap(),
+        "--cpg",
+        "--no-filtering",
+        "--collapse",
+        "h",
+        "--combine-strands",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+    ])
+    .unwrap();
+    check_against_expected_text_file(
+        preset_temp_file.to_str().unwrap(),
+        options_temp_file.to_str().unwrap(),
+    );
+}
