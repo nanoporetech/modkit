@@ -3,6 +3,7 @@ use log::error;
 use mod_kit::commands::Commands;
 
 #[derive(Parser)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
