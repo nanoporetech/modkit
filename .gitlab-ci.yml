@@ -1,43 +1,139 @@
 stages:
   - format
   - test
+  - pre-release
+  - release
 
 before_script:
   - apt-get update && apt-get install -y cmake
 
-format:
+.install_gh_cli: &install_gh_cli |
+  type -p curl >/dev/null || (apt update && sudo apt install curl -y)
+  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+  && apt update \
+  && apt install gh -y
+
+.setup-gh-push: &setup_gh_push |
+  apt-get update -qq && apt-get install -y -qq git git-lfs python3-dev python3-pip
+  echo ${MODKIT_BOT_GH_KEY} | gh auth login --with-token
+  gh auth setup-git
+  echo "set up gitHub"
+  git clone https://github.com/epi2me-labs/github_release.git
+  pushd github_release
+  pip install -r requirements.txt
+  python3 setup.py install
+  echo "setup github_release"
+  popd
+  echo "$(pwd)"
+
+.changelog: &check_changelog
+  - TAGVER=${CI_COMMIT_TAG}
+  - MATCHES=$(grep -c "## \[${TAGVER}\]" CHANGELOG.md || exit 0)
+  - >
+    if [[ "${MATCHES}" != "1" ]]; then
+      echo "[check_tag_version] Expected one match to '${CI_COMMIT_TAG}' in CHANGELOG, found ${MATCHES}"
+      exit 1
+    else
+      echo "[check_tag_version] Found CHANGELOG.md entry for tag"
+    fi
+  - echo "Finished version check"
+
+.check_tag_version: &check_tag_version |
+  CRATE_VER="v"$(cargo r -- --version | cut -f 2 -d ' ')
+  TAGVER=${CI_COMMIT_TAG}
+    if [[ "${CRATE_VER}" != "${TAGVER}" ]]; then
+        echo "[check_tag_version] Mismatching TAG and PACKAGE versions:"
+        echo " -     TAG:'$TAGVER'"
+        echo " - PACKAGE:'$CRATE_VER'"
+        exit 1
+    else
+        echo "[check_tag_version] TAG and CRATE versions agree: '${CRATE_VER}'"
+    fi
+
+.rust_image: &rust_image
   # 1.67.1
   image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
+
+.ubuntu_1604_image: &ub16_image
+  image: ubuntu@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6
+
+format:
+  # 1.67.1
+  <<: *rust_image
   stage: format
   script:
     - cargo fmt --check
 
 test:
   # 1.67.1
-  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
+  <<: *rust_image
   stage: test
   script:
     - cargo test
 
-build_release_linux:
+#.build_release_linux: &build_release_linux
+#  # 1.67.1
+#  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
+#  script:
+#    - cargo build --release
+#
+
+.build_modkit_1604: &build_modkit_1604 |
+  apt-get update && apt-get install -y curl build-essential cmake
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  source $HOME/.cargo/env
+  cargo build --release
+
+prerelease_checks:
+  stage: pre-release
+  <<: *rust_image
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$/'
+  script:
+    - *check_tag_version
+    - *check_changelog
+
+
+manual_build_modkit_linux:
+  <<: *rust_image
+  when: manual
+  script:
+    - cargo build --release
+  artifacts:
+    paths:
+      - target/release/modkit
+
+
+manual_build_modkit_linux_1604:
+  <<: *ub16_image
+  when: manual
+  script:
+    - *build_modkit_1604
+    - cargo build --release
+  artifacts:
+    paths:
+      - target/release/modkit
+
+
+deploy_linux_artefact:
   # 1.67.1
-  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
+  <<: *rust_image
+  stage: release
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$/'
   script:
+    - *install_gh_cli
+    - *setup_gh_push
     - cargo build --release
-  when: manual
-  artifacts:
-    paths:
-      - target/release/modkit
-
-build_release_1604:
-  image: ubuntu@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6
-  script:
-    - apt-get update && apt-get install -y curl build-essential cmake
-    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    - source $HOME/.cargo/env
-    - cargo build --release
-  when: manual
-  artifacts:
-    paths:
-      - target/release/modkit
-
+    - echo "ready to push $(ls target/release/modkit)"
+    - mkdir dist
+    - cp *.md dist/
+    - cp target/release/modkit dist/
+    - echo "contents if distribution $(ls dist/)"
+    - tar -cvzf modkit.tar.gz dist/
+    - ls modkit.tar.gz
+    - echo "pushing bits"
+    - github_release modkit ${CI_COMMIT_TAG} CHANGELOG.md ${MODKIT_BOT_GH_KEY} --artifacts modkit.tar.gz
+    - echo "finished"
