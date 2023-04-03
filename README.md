@@ -5,6 +5,18 @@
 A bioinformatics tool for working with modified bases from Oxford Nanopore. Specifically for converting modBAM
 to bedMethyl files using best practices, but also manipulating modBAM files and generating summary statistics.
 
+## Installation
+
+Downloadable pre-compiled binaries are provided for macOS and linux under the "releases" tab. To build
+`modkit` locally the recommended way is to use (cargo)[https://www.rust-lang.org/learn/get-started].
+
+```bash
+git clone https://github.com/nanoporetech/modkit.git
+cd modkit
+cargo install --path .
+# or cargo install --git https://github.com/nanoporetech/modkit.git
+```
+
 ## Creating a bedMethyl pileup from a modBam
 
 The most typical use case is to take a BAM with modified bases (as MM/ML or Mm/Ml tags) and sum the base
@@ -19,24 +31,25 @@ Modification filtering will be performed for you (for details see `filtering.md`
 
 Some typical options:
 
-1. Only emit counts from reference CpG dinucleotides. This option requires a reference sequence in order to
-   locate the CpGs in the reference.
+1. Only emit counts from reference CpG dinucleotides. This option, however, requires a reference sequence in
+   order to locate the CpGs in the reference.
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta
 ```
-2. Prepare bedMethyl for direct comparison to whole genome bisulfite data.
+
+2. Use `traditional` preset for strand-aggregated 5mCpG-only output.
 
 ```bash
-modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta --bisulfite
+modkit pileup path/to/reads.bam output/path/pileup.bed --ref path/to/reference.fasta --preset traditional
 ```
 
-The `--bisulfite` option will restrict output to only locations where there is a CG dinucleotide in the
-reference _as well as_ ignore any modification calls that are not 5mC. For example, if you have 5hmC calls in
-your data, they will be ignored by applying the default redistribute method (see collapse.md). No
-strand-aggregation is performed (see below for how to enable that). This option is equivalent to running
-`adjust-mods` with the `--ignore h` option on your BAM file before performing the pileup algorithm (see
-advanced_usage.md for details).
+The `--preset traditional` option will restrict output to only locations where there is a CG dinucleotide in
+the reference _as well as_ ignore any modification calls that are not 5mC. For example, if you have 5hmC calls
+in your data, they will be ignored by applying the default redistribute method (see collapse.md).
+Strand-aggregation is also performed *(summing counts into the positive strand). This option is short hand for
+`modkit pileup --cpg --ref <reference.fasta> --collapse h --combine-strands`.  For more information on the
+individual options see the advanced_usage.md document.
 
 ## bedMethyl output description
 
@@ -81,7 +94,7 @@ CG->CH substitution.
 | 3      | end_pos           | 0-based exclusive end position                                                                              | int   |
 | 4      | raw_mod_code      | single letter code of modified base                                                                         | str   |
 | 5      | score             | filtered_coverage                                                                                           | int   |
-| 6      | strand            | + for positive strand - for negative strand                                                                 | str   |
+| 6      | strand            | '+' for positive strand '-' for negative strand, '.' when strands are combined                              | str   |
 | 7      | start_pos         | included for compatibility                                                                                  | int   |
 | 8      | end_pos           | included for compatibility                                                                                  | int   |
 | 9      | color             | included for compatibility, always 255,0,0                                                                  | str   |
@@ -108,28 +121,26 @@ modkit pileup path/to/reads.bam output/path/pileup.bed --combine-mods
 
 2. CpG motifs are reverse complement equivalent. The following example combines the calls from the positive
    stand C with the negative strand C (reference G). This operation _requires_ that you use the `--cpg` flag
-   and specify a reference sequence.
+   and specify a reference sequence. The strand field will be marked as '.' indicating that the strand
+   information has been lost.
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta \
-    --combine-strands <--bisulfite> 
+    --combine-strands  
 ```
 
 3. Produce a bedGraph for each modification in the BAM file file. Counts for the positive and negative strands
-   will be put in separate files. Can also be combined with `--cpg` and `--combine-strands` options.
+   will be put in separate files. Can also be combined with `--cpg` and `--combine-strands` options. The
+   `--prefix [str]` option allows specification of a prefix to the output file names.
 
 ```bash
-modkit pileup path/to/reads.bam output/directory/path --bedgraph
+modkit pileup path/to/reads.bam output/directory/path --bedgraph <--prefix string>
 ```
 
 
 ## Terms and Licence
 
-This is a research release provided under the terms of the Oxford Nanopore Technologies' Public Licence.
-Research releases are provided as technology demonstrators to provide early access to features or stimulate
-Community development of tools. Feature requests, improvements, and discussions are welcome and can be
-implemented by forking and pull requests. Research releases may be unstable and subject to rapid change by
-Oxford Nanopore Technologies.
+TODO
 
 **Licence and Copyright**
 

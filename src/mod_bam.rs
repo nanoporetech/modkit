@@ -307,6 +307,7 @@ impl DeltaListConverter {
             assert!(finger < self.cumulative_counts.len());
             while self.cumulative_counts[finger] <= (*d + n_skips) {
                 finger += 1;
+                // TODO(arand) this should error and not panic
                 assert!(
                     finger < self.cumulative_counts.len(),
                     "{:?} >= {:?},\ndelta_list: {:?}\ncumulative counts: {:?}",

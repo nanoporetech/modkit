@@ -1,10 +1,14 @@
-use rust_htslib::bam::header::HeaderRecord;
-use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Aux};
 use std::string::FromUtf8Error;
 
-use crate::errs::{InputError, RunError};
 use derive_new::new;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::debug;
+use rust_htslib::bam::{
+    self, ext::BamRecordExtensions, header::HeaderRecord, record::Aux,
+    HeaderView,
+};
+
+use crate::errs::{InputError, RunError};
 
 pub(crate) fn get_spinner() -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
@@ -24,6 +28,30 @@ pub(crate) fn get_spinner() -> ProgressBar {
         ]),
     );
     spinner
+}
+
+fn get_master_progress_bar_style() -> ProgressStyle {
+    ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:40.green/yellow} {pos:>7}/{len:7} {msg}",
+    )
+    .unwrap()
+    .progress_chars("##-")
+}
+
+fn get_subroutine_progress_bar_style() -> ProgressStyle {
+    ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:40.blue/cyan} {pos:>7}/{len:7} {msg}",
+    )
+    .unwrap()
+    .progress_chars("##-")
+}
+
+pub(crate) fn get_master_progress_bar(n: usize) -> ProgressBar {
+    ProgressBar::new(n as u64).with_style(get_master_progress_bar_style())
+}
+
+pub(crate) fn get_subroutine_progress_bar(n: usize) -> ProgressBar {
+    ProgressBar::new(n as u64).with_style(get_subroutine_progress_bar_style())
 }
 
 pub(crate) fn get_aligned_pairs_forward(
@@ -101,6 +129,7 @@ pub enum Strand {
     #[default]
     Positive,
     Negative,
+    // Unknown
 }
 
 impl Strand {
@@ -130,6 +159,34 @@ pub fn record_is_secondary(record: &bam::Record) -> bool {
     record.is_supplementary() || record.is_secondary() || record.is_duplicate()
 }
 
+pub(crate) fn get_targets(
+    header: &HeaderView,
+    region: Option<&Region>,
+) -> Vec<ReferenceRecord> {
+    (0..header.target_count())
+        .filter_map(|tid| {
+            let chrom_name =
+                String::from_utf8(header.tid2name(tid).to_vec()).unwrap_or("???".to_owned());
+            if let Some(region) = &region {
+                if chrom_name == region.name {
+                    Some(ReferenceRecord::new(tid, region.start, region.length(), chrom_name))
+                } else {
+                    None
+                }
+            } else {
+                match header.target_len(tid) {
+                    Some(size) => Some(ReferenceRecord::new(tid, 0, size as u32, chrom_name)),
+                    None => {
+                        debug!("> no size information for {chrom_name} (tid: {tid})");
+                        None
+                    }
+                }
+            }
+
+        })
+        .collect::<Vec<ReferenceRecord>>()
+}
+
 #[derive(Debug, new)]
 pub struct ReferenceRecord {
     pub tid: u32,
@@ -150,7 +207,7 @@ impl Region {
         self.end - self.start
     }
 
-    pub fn parse_str(raw: &str) -> Result<Self, InputError> {
+    fn parse_raw_with_start_and_end(raw: &str) -> Result<Self, InputError> {
         let mut splitted = raw.split(':');
         let chrom_name = splitted
             .nth(0)
@@ -186,6 +243,36 @@ impl Region {
                     start,
                     end,
                 })
+            }
+        }
+    }
+
+    pub fn parse_str(
+        raw: &str,
+        header: &HeaderView,
+    ) -> Result<Self, InputError> {
+        if raw.contains(':') {
+            Self::parse_raw_with_start_and_end(raw)
+        } else {
+            let target_id = (0..header.target_count()).find_map(|tid| {
+                String::from_utf8(header.tid2name(tid).to_vec())
+                    .ok()
+                    .and_then(
+                        |contig| if &contig == raw { Some(tid) } else { None },
+                    )
+            });
+            let target_length =
+                target_id.and_then(|tid| header.target_len(tid));
+            if let Some(len) = target_length {
+                Ok(Self {
+                    name: raw.to_owned(),
+                    start: 0,
+                    end: len as u32,
+                })
+            } else {
+                Err(InputError::new(&format!(
+                    "failed to find matching contig for {raw}"
+                )))
             }
         }
     }

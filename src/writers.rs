@@ -1,7 +1,7 @@
 use crate::mod_pileup::ModBasePileup;
 use crate::summarize::ModSummary;
 use crate::util::Strand;
-use anyhow::Context;
+use anyhow::{anyhow, Context, Result as AnyhowResult};
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -9,7 +9,7 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
 pub trait OutWriter<T> {
-    fn write(&mut self, item: T) -> Result<u64, String>;
+    fn write(&mut self, item: T) -> AnyhowResult<u64>;
 }
 
 pub struct BedMethylWriter {
@@ -27,7 +27,7 @@ impl BedMethylWriter {
 }
 
 impl OutWriter<ModBasePileup> for BedMethylWriter {
-    fn write(&mut self, item: ModBasePileup) -> Result<u64, String> {
+    fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
         let mut rows_written = 0;
         let tab = '\t';
         let space = if self.tabs_and_spaces { tab } else { ' ' };
@@ -73,8 +73,7 @@ impl OutWriter<ModBasePileup> for BedMethylWriter {
                 );
                 self.buf_writer
                     .write(row.as_bytes())
-                    .with_context(|| "failed to write row")
-                    .map_err(|e| e.to_string())?;
+                    .with_context(|| "failed to write row")?;
                 rows_written += 1;
             }
         }
@@ -88,13 +87,12 @@ pub struct BedGraphWriter {
 }
 
 impl BedGraphWriter {
-    pub fn new(out_dir: PathBuf) -> Result<Self, String> {
+    pub fn new(out_dir: PathBuf) -> AnyhowResult<Self> {
         if out_dir.is_file() {
-            Err("out dir cannot be a file, needs to be a directory".to_owned())
+            Err(anyhow!("out dir cannot be a file, needs to be a directory"))
         } else {
             if !out_dir.exists() {
-                std::fs::create_dir_all(out_dir.clone())
-                    .map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(out_dir.clone())?;
             }
             Ok(Self {
                 out_dir,
@@ -126,7 +124,7 @@ impl BedGraphWriter {
 }
 
 impl OutWriter<ModBasePileup> for BedGraphWriter {
-    fn write(&mut self, item: ModBasePileup) -> Result<u64, String> {
+    fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
         let mut rows_written = 0;
         let tab = '\t';
         for (pos, feature_counts) in item.iter_counts() {
@@ -167,7 +165,7 @@ impl TsvWriter<std::io::Stdout> {
 }
 
 impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
-    fn write(&mut self, item: ModSummary) -> Result<u64, String> {
+    fn write(&mut self, item: ModSummary) -> AnyhowResult<u64> {
         let mut report = String::new();
         let mod_called_bases = item
             .mod_call_counts
@@ -237,9 +235,7 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
             item.total_reads_used
         ));
 
-        self.buf_writer
-            .write(report.as_bytes())
-            .map_err(|e| e.to_string())?;
+        self.buf_writer.write(report.as_bytes())?;
         Ok(1)
     }
 }

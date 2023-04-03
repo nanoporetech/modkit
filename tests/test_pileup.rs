@@ -133,7 +133,7 @@ fn test_mod_pileup_collapse() {
         "pileup",
         "-i",
         "25", // use small interval to make sure chunking works
-        "--collapse",
+        "--ignore",
         "h",
         "--no-filtering",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
@@ -303,7 +303,7 @@ fn test_presets_traditional_same_as_options() {
         options_temp_file.to_str().unwrap(),
         "--cpg",
         "--no-filtering",
-        "--collapse",
+        "--ignore",
         "h",
         "--combine-strands",
         "--ref",

@@ -17,14 +17,12 @@ fn tests_adjust_output(
     input_path: &str,
     output_path: &str,
     check_file_path: &str,
-) {
+) -> Result<(), (bam::Record, bam::Record)> {
     let temp_file = std::env::temp_dir().join(output_path);
     let args = [
         "adjust-mods",
         "--ignore",
         "h",
-        "--method",
-        "norm",
         input_path,
         temp_file.to_str().unwrap(),
     ];
@@ -36,12 +34,13 @@ fn tests_adjust_output(
     for (test_res, ref_res) in test_bam.records().zip(ref_bam.records()) {
         let test_record = test_res.unwrap();
         let ref_record = ref_res.unwrap();
-        assert_eq!(
-            ref_record, test_record,
-            "{:?} =/= {:?}",
-            &ref_record, test_record
-        );
+        if test_record == ref_record {
+            continue;
+        } else {
+            return Err((test_record, ref_record));
+        }
     }
+    Ok(())
 }
 
 #[test]
@@ -50,7 +49,8 @@ fn test_adjust_canonical() {
         "tests/resources/input_C.bam",
         "test_C.bam",
         "tests/resources/ref_out_C_auto.bam",
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -59,7 +59,8 @@ fn test_adjust_methyl() {
         "tests/resources/input_5mC.bam",
         "test_5mC.bam",
         "tests/resources/ref_out_5mC_auto.bam",
-    );
+    )
+    .unwrap();
 }
 
 #[test]

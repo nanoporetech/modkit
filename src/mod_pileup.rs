@@ -595,7 +595,6 @@ pub fn process_region<T: AsRef<Path>>(
     let mut position_feature_counts = HashMap::new();
     let pileup_iter = PileupIter::new(
         bam_reader.pileup(),
-        // chrom_tid,
         start_pos,
         end_pos,
         motif_positions.as_ref(),
