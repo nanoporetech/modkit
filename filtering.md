@@ -10,9 +10,9 @@ first determining the value of $`\mathcal{q}`$ for the lowest n-th percentile of
 default).  The threshold value is typically an estimate because the base modification probabilities are
 sampled from a subset of the reads. In practice, 10-50 thousand reads are sufficient to make this estimate.
 All calls can be used to calculate the exact value, but the approximation usually gives the same value. When
-using `pileup` a region to sample the reads from can be specified with the `--sample-region` option. The
-`sample-probs` sub-command (with or without `--region`) is specifically taylored to investigate model
-confidence values at different percentiles.
+using `pileup`, a region to sample the reads from can be specified with the `--sample-region` option. The
+`sample-probs` sub-command is specifically taylored to investigate model confidence values at different
+percentiles.
 
 Once a threshold value has been determined base modification calls with a confidence value less than this
 number will not be counted.  Determination of the threshold value can be performed on the fly (by sampling,

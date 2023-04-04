@@ -139,11 +139,9 @@ modkit pileup path/to/reads.bam output/directory/path --bedgraph <--prefix strin
 ```
 
 
-## Terms and Licence
-
-TODO
-
 **Licence and Copyright**
 
-© 2023 Oxford Nanopore Technologies Ltd.  Modkit is distributed under the terms of the Oxford Nanopore
-Technologies' Public Licence.
+(c) 2023 Oxford Nanopore Technologies Ltd.
+
+Modkit is distributed under the terms of the Oxford Nanopore Technologies, Ltd. Public License, v. 1.0.
+If a copy of the License was not distributed with this file, You can obtain one at http://nanoporetech.com
