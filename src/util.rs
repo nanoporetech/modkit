@@ -129,7 +129,6 @@ pub enum Strand {
     #[default]
     Positive,
     Negative,
-    // Unknown
 }
 
 impl Strand {

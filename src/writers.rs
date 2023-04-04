@@ -1,6 +1,5 @@
 use crate::mod_pileup::ModBasePileup;
 use crate::summarize::ModSummary;
-use crate::util::Strand;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 
 use std::collections::HashMap;
@@ -57,7 +56,7 @@ impl OutWriter<ModBasePileup> for BedMethylWriter {
                     pos + 1,
                     feature_count.raw_mod_code,
                     feature_count.filtered_coverage,
-                    feature_count.strand.to_char(),
+                    feature_count.raw_strand,
                     pos,
                     pos + 1,
                     "255,0,0",
@@ -82,12 +81,16 @@ impl OutWriter<ModBasePileup> for BedMethylWriter {
 }
 
 pub struct BedGraphWriter {
+    prefix: Option<String>,
     out_dir: PathBuf,
-    router: HashMap<(char, Strand), BufWriter<File>>,
+    router: HashMap<(char, char), BufWriter<File>>,
 }
 
 impl BedGraphWriter {
-    pub fn new(out_dir: PathBuf) -> AnyhowResult<Self> {
+    pub fn new(
+        out_dir: PathBuf,
+        prefix: Option<&String>,
+    ) -> AnyhowResult<Self> {
         if out_dir.is_file() {
             Err(anyhow!("out dir cannot be a file, needs to be a directory"))
         } else {
@@ -95,6 +98,7 @@ impl BedGraphWriter {
                 std::fs::create_dir_all(out_dir.clone())?;
             }
             Ok(Self {
+                prefix: prefix.map(|s| s.to_owned()),
                 out_dir,
                 router: HashMap::new(),
             })
@@ -103,20 +107,24 @@ impl BedGraphWriter {
 
     fn get_writer_for_modstrand(
         &mut self,
-        strand: Strand,
+        strand: char,
         raw_mod_code: char,
     ) -> &mut BufWriter<File> {
         self.router
             .entry((raw_mod_code, strand))
             .or_insert_with(|| {
                 let strand_label = match strand {
-                    Strand::Positive => "positive",
-                    Strand::Negative => "negative",
+                    '+' => "positive",
+                    '-' => "negative",
+                    '.' => "combined",
+                    _ => "_unknown",
                 };
-                let fp = self.out_dir.join(format!(
-                    "{}_{}.bedgraph",
-                    raw_mod_code, strand_label
-                ));
+                let filename = if let Some(p) = &self.prefix {
+                    format!("{}_{}_{}.bedgraph", p, raw_mod_code, strand_label)
+                } else {
+                    format!("{}_{}.bedgraph", raw_mod_code, strand_label)
+                };
+                let fp = self.out_dir.join(filename);
                 let fh = File::create(fp).unwrap();
                 BufWriter::new(fh)
             })
@@ -130,7 +138,7 @@ impl OutWriter<ModBasePileup> for BedGraphWriter {
         for (pos, feature_counts) in item.iter_counts() {
             for feature_count in feature_counts {
                 let fh = self.get_writer_for_modstrand(
-                    feature_count.strand,
+                    feature_count.raw_strand,
                     feature_count.raw_mod_code,
                 );
                 let row = format!(

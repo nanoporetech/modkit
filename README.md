@@ -7,7 +7,7 @@ to bedMethyl files using best practices, but also manipulating modBAM files and 
 
 ## Installation
 
-Downloadable pre-compiled binaries are provided for macOS and linux under the "releases" tab. To build
+Downloadable pre-compiled binaries are provided for linux under the "releases" tab. To build
 `modkit` locally the recommended way is to use (cargo)[https://www.rust-lang.org/learn/get-started].
 
 ```bash

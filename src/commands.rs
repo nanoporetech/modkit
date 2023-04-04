@@ -467,7 +467,6 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     only_tabs: bool,
-
     /// Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html.
     /// For this setting, specify a directory for output files to be make in.
     /// Two files for each modification will be produced, one for the positive strand
@@ -480,6 +479,10 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     bedgraph: bool,
+    /// Prefix to prepend on bedgraph output file names. Without this option the files
+    /// will be <mod_code>_<strand>.bedgraph
+    #[arg(long, requires = "bedgraph")]
+    prefix: Option<String>,
 }
 
 impl ModBamPileup {
@@ -522,6 +525,20 @@ impl ModBamPileup {
                 (options, self.combine_strands)
             }
         };
+
+        // setup the writer here so we fail before doing any work (if there are problems).
+        let out_fp_str = self.out_bed.clone();
+        let mut writer: Box<dyn OutWriter<ModBasePileup>> = if self.bedgraph {
+            Box::new(BedGraphWriter::new(out_fp_str, self.prefix.as_ref())?)
+        } else {
+            let out_fp = std::fs::File::create(out_fp_str)
+                .context("failed to make output file")?;
+            Box::new(BedMethylWriter::new(
+                BufWriter::new(out_fp),
+                self.only_tabs,
+            ))
+        };
+
         let threshold = get_threshold_from_options(
             &self.in_bam,
             self.threads,
@@ -653,18 +670,6 @@ impl ModBamPileup {
                 tid_progress.finish_and_clear();
             });
         });
-
-        let out_fp_str = self.out_bed.clone();
-        let mut writer: Box<dyn OutWriter<ModBasePileup>> = if self.bedgraph {
-            Box::new(BedGraphWriter::new(out_fp_str)?)
-        } else {
-            let out_fp = std::fs::File::create(out_fp_str)
-                .context("failed to make output file")?;
-            Box::new(BedMethylWriter::new(
-                BufWriter::new(out_fp),
-                self.only_tabs,
-            ))
-        };
 
         for result in rx.into_iter() {
             match result {
