@@ -8,7 +8,7 @@ before_script:
   - apt-get update && apt-get install -y cmake
 
 .install_gh_cli: &install_gh_cli |
-  type -p curl >/dev/null || (apt update && sudo apt install curl -y)
+  type -p curl >/dev/null || (apt update && apt install curl -y)
   curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
   && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
@@ -73,18 +73,10 @@ test:
   script:
     - cargo test
 
-#.build_release_linux: &build_release_linux
-#  # 1.67.1
-#  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
-#  script:
-#    - cargo build --release
-#
-
-.build_modkit_1604: &build_modkit_1604 |
-  apt-get update && apt-get install -y curl build-essential cmake
+.install_rust_1604: &install_rust_1604 |
+  apt-get update && apt-get install -y curl build-essential cmake apt-transport-https
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   source $HOME/.cargo/env
-  cargo build --release
 
 prerelease_checks:
   stage: pre-release
@@ -110,7 +102,7 @@ manual_build_modkit_linux_1604:
   <<: *ub16_image
   when: manual
   script:
-    - *build_modkit_1604
+    - *install_rust_1604
     - cargo build --release
   artifacts:
     paths:
@@ -132,8 +124,9 @@ deploy_linux_artefact:
     - cp *.md dist/
     - cp target/release/modkit dist/
     - echo "contents if distribution $(ls dist/)"
-    - tar -cvzf modkit.tar.gz dist/
-    - ls modkit.tar.gz
+    - tar -cvzf modkit_$(arch).tar.gz dist/
+    - ls modkit_$(arch).tar.gz
     - echo "pushing bits"
-    - github_release modkit ${CI_COMMIT_TAG} CHANGELOG.md ${MODKIT_BOT_GH_KEY} --artifacts modkit.tar.gz
+    - github_release modkit ${CI_COMMIT_TAG} CHANGELOG.md ${MODKIT_BOT_GH_KEY} --artifacts modkit_$(arch).tar.gz
     - echo "finished"
+
