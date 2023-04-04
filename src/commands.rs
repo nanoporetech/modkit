@@ -10,7 +10,7 @@ use crossbeam_channel::bounded;
 use indicatif::{
     MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle,
 };
-use log::{debug, info};
+use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
@@ -352,7 +352,12 @@ pub struct ModBamPileup {
     /// evenly across the region given. This option is useful for large BAM files.
     /// In practice, 10-50 thousand reads is sufficient to estimate the model output
     /// distribution and determine the filtering threshold.
-    #[arg(group = "sampling_options", long, default_value_t = 10_042)]
+    #[arg(
+        group = "sampling_options",
+        short = 'n',
+        long,
+        default_value_t = 10_042
+    )]
     num_reads: usize,
     /// Sample this fraction of the reads when estimating the filter-percentile.
     /// In practice, 50-100 thousand reads is sufficient to estimate the model output
@@ -552,7 +557,16 @@ impl ModBamPileup {
             sampling_region.as_ref().or(region.as_ref()),
         )?;
 
-        info!("Using filter threshold {}", threshold);
+        match (threshold * 100f32).ceil() as usize {
+            0..=60 => error!(
+                "Threshold of {threshold} is very low. Consider increasing the \
+                filter-percentile or specifying a higher threshold."),
+            61..=70 => warn!(
+                "Threshold of {threshold} is low. Consider increasing the \
+                filter-percentile or specifying a higher threshold."
+            ),
+            _ => info!("Using filter threshold {}.", threshold),
+        }
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -815,14 +829,13 @@ pub struct ModSummarize {
     /// Setting a file is recommended.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
+
     /// Filter out mod-calls where the probability of the predicted
     /// variant is below this percentile. For example, 0.1 will filter
     /// out the 10% lowest confidence modification calls.
-    #[arg(group = "thresholds", long, default_value_t = 0.1)]
-    filter_percentile: f32,
-    /// Filter threshold, drop calls below this probability.
-    #[arg(group = "thresholds", long)]
-    filter_threshold: Option<f32>,
+    /// Set a maximum number of reads to process.
+    #[arg(short = 'n', long)]
+    num_reads: Option<usize>,
     /// Sample this fraction of the reads when estimating the
     /// `filter-percentile`. In practice, 50-100 thousand reads is sufficient to
     /// estimate the model output distribution and determine the filtering
@@ -836,9 +849,15 @@ pub struct ModSummarize {
     /// filtering.md for details on filtering.
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
-    /// Set a maximum number of reads to process.
-    #[arg(short = 'n', long)]
-    num_reads: Option<usize>,
+
+    /// Filter out modified base calls where the probability of the predicted
+    /// variant is below this confidence percentile. For example, 0.1 will filter
+    /// out the 10% lowest confidence modification calls.
+    #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
+    filter_percentile: f32,
+    /// Filter threshold, drop calls below this probability.
+    #[arg(group = "thresholds", long)]
+    filter_threshold: Option<f32>,
 }
 
 impl ModSummarize {

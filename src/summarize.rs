@@ -1,8 +1,9 @@
 use crate::errs::RunError;
-use crate::mod_bam::{BaseModCall, ModBaseInfo};
+use crate::mod_bam::BaseModCall;
 use crate::mod_base_code::{DnaBase, ModCode};
-use crate::util::{record_is_secondary, Strand};
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::thresholds::modbase_records;
+use crate::util::{get_master_progress_bar, get_spinner, Strand};
+
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
 use std::collections::HashMap;
@@ -31,41 +32,11 @@ pub fn summarize_modbam<T: AsRef<Path>>(
         ))
     })?;
 
-    let record_iter = reader
-        .records()
-        // skip records that fail to parse htslib
-        .filter_map(|res| res.ok())
-        // skip non-primary
-        .filter(|record| !record_is_secondary(&record))
-        // skip records with empty sequences
-        .filter(|record| record.seq_len() > 0)
-        .filter_map(|record| ModBaseInfo::new_from_record(&record).ok());
-
+    let record_iter = modbase_records(reader.records());
     let spinner = if let Some(n) = num_reads {
-        let sty = ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.green/yellow} {pos:>7}/{len:7} {msg}",
-        )
-        .unwrap()
-        .progress_chars("##-");
-        ProgressBar::new(n as u64).with_style(sty)
+        get_master_progress_bar(n)
     } else {
-        let spinner = ProgressBar::new_spinner();
-        spinner.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.blue} [{elapsed_precise}] {pos} {msg}",
-            )
-            .unwrap()
-            .tick_strings(&[
-                "▹▹▹▹▹",
-                "▸▹▹▹▹",
-                "▹▸▹▹▹",
-                "▹▹▸▹▹",
-                "▹▹▹▸▹",
-                "▹▹▹▹▸",
-                "▪▪▪▪▪",
-            ]),
-        );
-        spinner
+        get_spinner()
     };
 
     spinner.set_message("records processed");

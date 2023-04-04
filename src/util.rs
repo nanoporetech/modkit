@@ -1,5 +1,7 @@
+use anyhow::anyhow;
 use std::string::FromUtf8Error;
 
+use anyhow::Result as AnyhowResult;
 use derive_new::new;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::debug;
@@ -274,6 +276,34 @@ impl Region {
                 )))
             }
         }
+    }
+
+    pub fn get_fetch_definition(
+        &self,
+        header: &HeaderView,
+    ) -> AnyhowResult<bam::FetchDefinition> {
+        let tid = (0..header.target_count())
+            .find_map(|tid| {
+                String::from_utf8(header.tid2name(tid).to_vec())
+                    .ok()
+                    .and_then(|chrom| {
+                        if &chrom == &self.name {
+                            Some(tid)
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .ok_or(anyhow!(
+                "failed to find target ID for chrom {}",
+                self.name.as_str()
+            ))?;
+        let tid = tid as i32;
+        Ok(bam::FetchDefinition::Region(
+            tid,
+            self.start as i64,
+            self.end as i64,
+        ))
     }
 }
 

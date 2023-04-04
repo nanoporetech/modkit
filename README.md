@@ -14,13 +14,14 @@ Downloadable pre-compiled binaries are provided for linux under the "releases" t
 git clone https://github.com/nanoporetech/modkit.git
 cd modkit
 cargo install --path .
-# or cargo install --git https://github.com/nanoporetech/modkit.git
+# or
+cargo install --git https://github.com/nanoporetech/modkit.git
 ```
 
 ## Creating a bedMethyl pileup from a modBam
 
 The most typical use case is to take a BAM with modified bases (as MM/ML or Mm/Ml tags) and sum the base
-modification calls from every read over each reference genomic position (a pileup). 
+modification calls from every read over each reference genomic position (make a pileup). 
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed 
