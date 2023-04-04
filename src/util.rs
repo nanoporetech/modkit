@@ -58,10 +58,9 @@ pub(crate) fn get_subroutine_progress_bar(n: usize) -> ProgressBar {
 
 pub(crate) fn get_aligned_pairs_forward(
     record: &bam::Record,
-) -> impl Iterator<Item = (usize, u64)> + '_ {
+) -> impl Iterator<Item = AnyhowResult<(usize, u64)>> + '_ {
     let read_length = record.seq_len();
     record.aligned_pairs().map(move |pair| {
-        assert_eq!(pair.len(), 2);
         let q_pos = pair[0] as usize;
         let q_pos = if record.is_reverse() {
             read_length
@@ -70,12 +69,17 @@ pub(crate) fn get_aligned_pairs_forward(
         } else {
             Some(q_pos)
         };
-        assert!(q_pos.is_some(), "pair {:?} is invalid", pair);
+        if q_pos.is_none() || pair[1] < 0 {
+            let read_id = get_query_name_string(&record)
+                .unwrap_or("failed-to-parse-utf8".to_owned());
+            debug!("record {read_id} has invalid aligned pair {:?}", pair);
+            return Err(anyhow!("pair {:?} is invalid", pair));
+        }
 
         let r_pos = pair[1];
         assert!(r_pos >= 0);
         let r_pos = r_pos as u64;
-        (q_pos.unwrap(), r_pos)
+        Ok((q_pos.unwrap(), r_pos))
     })
 }
 

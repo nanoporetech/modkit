@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use log::debug;
+use log::{debug, error};
 use rust_htslib::bam;
 
 use crate::errs::RunError;
@@ -62,6 +62,7 @@ impl<'a> ReadCache<'a> {
         canonical_base: char,
     ) -> Result<(), RunError> {
         let aligned_pairs = util::get_aligned_pairs_forward(&record)
+            .filter_map(|ap| ap.ok())
             .collect::<HashMap<usize, u64>>();
 
         let ref_pos_base_mod_calls = seq_pos_base_mod_probs
@@ -268,10 +269,16 @@ impl<'a> ReadCache<'a> {
                             self.skip_set.insert(read_id.clone());
                         }
                     }
+                    if !(self.skip_set.contains(&read_id)
+                        || self.pos_reads.contains_key(&read_id)
+                        || self.neg_reads.contains_key(&read_id))
+                    {
+                        error!("didn't add failed read id to skip sets, likely a bug");
+                    }
                     assert!(
                         self.skip_set.contains(&read_id)
                             || self.pos_reads.contains_key(&read_id)
-                            || self.neg_reads.contains_key(&read_id)
+                            || self.neg_reads.contains_key(&read_id),
                     );
                     self.get_mod_call(
                         record,
@@ -316,6 +323,12 @@ impl<'a> ReadCache<'a> {
                             self.skip_set.insert(read_id.clone());
                         }
                     }
+                    if !(self.skip_set.contains(&read_id)
+                        || self.pos_reads.contains_key(&read_id)
+                        || self.neg_reads.contains_key(&read_id))
+                    {
+                        error!("didn't add failed read id to skip sets, likely a bug");
+                    }
                     assert!(
                         self.skip_set.contains(&read_id)
                             || self.pos_mod_codes.contains_key(&read_id)
@@ -352,6 +365,7 @@ mod read_cache_tests {
 
         // mapping of _reference position_ to forward read position
         let forward_aligned_pairs = util::get_aligned_pairs_forward(&record)
+            .filter_map(|r| r.ok())
             .map(|(forward_q_pos, r_pos)| (r_pos, forward_q_pos))
             .collect::<HashMap<u64, usize>>();
 

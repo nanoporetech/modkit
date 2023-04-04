@@ -217,7 +217,7 @@ impl Adjust {
         let methods = if let Some(convert) = &self.convert {
             let mut conversions = HashMap::new();
             for chunk in convert.chunks(2) {
-                assert_eq!(chunk.len(), 2);
+                debug_assert_eq!(chunk.len(), 2);
                 let from = ModCode::parse_raw_mod_code(chunk[0])?;
                 let to = ModCode::parse_raw_mod_code(chunk[1])?;
                 let froms = conversions.entry(to).or_insert(HashSet::new());

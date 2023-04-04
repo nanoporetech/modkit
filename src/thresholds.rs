@@ -4,19 +4,20 @@ use anyhow::{anyhow, Context, Result as AnyhowResult};
 use log::info;
 use rust_htslib::bam::{self, Read as _};
 
-use crate::errs::{InputError, RunError};
+use crate::errs::RunError;
 use crate::interval_processor::{
     run_sampled_region_processor, Indicator, IntervalProcessor, RecordSampler,
 };
 use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::util::{record_is_secondary, Region};
 
-fn percentile_linear_interp(xs: &[f32], q: f32) -> Result<f32, InputError> {
+fn percentile_linear_interp(xs: &[f32], q: f32) -> AnyhowResult<f32> {
     if xs.len() < 2 {
-        Err(InputError::new(
-            "not enough data points to calculate percentile",
-        ))
+        Err(anyhow!("not enough data points to calculate percentile",))
     } else {
+        if q > 1.0 {
+            return Err(anyhow!("quantile must be less than 1.0 got {q}"));
+        }
         assert!(q <= 1.0);
         let l = xs.len() as f32;
         let left = (l * q).floor();
@@ -169,12 +170,12 @@ impl Percentiles {
     pub fn new(
         probs: &mut [f32],
         desired_percentiles: &[f32],
-    ) -> Result<Self, InputError> {
+    ) -> AnyhowResult<Self> {
         probs.sort_by(|x, y| x.partial_cmp(y).unwrap());
         let qs = desired_percentiles
             .iter()
             .map(|q| percentile_linear_interp(&probs, *q).map(|p| (*q, p)))
-            .collect::<Result<Vec<(f32, f32)>, InputError>>()?;
+            .collect::<Result<Vec<(f32, f32)>, _>>()?;
         Ok(Self { qs })
     }
 

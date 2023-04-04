@@ -21,10 +21,11 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 ## Creating a bedMethyl pileup from a modBam
 
 The most typical use case is to take a BAM with modified bases (as MM/ML or Mm/Ml tags) and sum the base
-modification calls from every read over each reference genomic position (make a pileup). 
+modification calls from every read over each reference genomic position (make a pileup). Specifying a log
+file is optional, but recommended.
 
 ```bash
-modkit pileup path/to/reads.bam output/path/pileup.bed 
+modkit pileup path/to/reads.bam output/path/pileup.bed [--log-filepath pileup.log]
 ```
 
 No reference sequence is required. A single file (description below) with pileup calls will be created.
@@ -36,13 +37,16 @@ Some typical options:
    order to locate the CpGs in the reference.
 
 ```bash
-modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta
+modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta [--log-filepath pileup.log]
 ```
 
 2. Use `traditional` preset for strand-aggregated 5mCpG-only output.
 
 ```bash
-modkit pileup path/to/reads.bam output/path/pileup.bed --ref path/to/reference.fasta --preset traditional
+modkit pileup path/to/reads.bam output/path/pileup.bed \
+  --ref path/to/reference.fasta \
+  --preset traditional \
+  [--log-filepath pileup.log]
 ```
 
 The `--preset traditional` option will restrict output to only locations where there is a CG dinucleotide in
