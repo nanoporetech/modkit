@@ -15,8 +15,9 @@ ignore one (or more) of the predicted base modifications. For example, if a BAM 
 probabilities, the total probability is necessarily distributed over 5mC $p_m$, 5hmC $p_h$, and canonical
 C, $p_{C}$.
 
-Take for example a 3-way modification call for C, 5mC, and 5hmC, the probabilities of each being $`p_{C}`$,
-$`p_{m}`$, $`p_{h}`$, respectively. To remove the 5hmC probability one method is to distribute evenly the probability mass of $p_{h}$ across the other two bases. In this example, the updates are $p_C \leftarrow p_C + (\frac{p_h}{2})$ and $p_m\leftarrow p_m + (\frac{p_h}{2})$.
+Take for example a 3-way modification call for C, 5mC, and 5hmC, the probabilities of each being $p_{C}$,
+$p_{m}$, $p_{h}$, respectively. To remove the 5hmC probability one method is to distribute evenly the
+probability mass of $p_{h}$ across the other two bases. In this example, the updates are $p_C \leftarrow p_C + (\frac{p_h}{2})$ and $p_m\leftarrow p_m + (\frac{p_h}{2})$.
 
 
 ### Combining multiple base modifications into a single count.

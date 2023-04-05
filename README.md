@@ -81,9 +81,9 @@ the canonical base is cytosine. If the modification code is `a`, the canonical b
 * N<sub>other mod</sub> - Number of calls passing filters that were classified as modified, but where the modification is different from the listed base (and the corresponding canonical base is equal). For example, for a given cytosine there may be 3 reads with
 `h` calls, 1 with a canonical call, and 2 with `m` calls. In the bedMethyl row for `h` N<sub>other_mod</sub> would be 2. In the
 `m` row N<sub>other_mod</sub> would be 3.
-* N<sub>cover</sub> - the valid coverage. N<sub>cover</sub> = N<sub>mod</sub> + N<sub>other_mod</sub> + N<sub>canonical</sub>, also used as the `score` in the bedMethyl
+* N<sub>valid_cov</sub> - the valid coverage. N<sub>valid_cov</sub> = N<sub>mod</sub> + N<sub>other_mod</sub> + N<sub>canonical</sub>, also used as the `score` in the bedMethyl
 * N<sub>diff</sub> - Number of reads with a base other than the canonical base for this modification. For example, in a row
-for `h` the canonical base is cytosine, if there are 2 reads with C->A substitutions, N<sub>diff</diff> will be 2.
+for `h` the canonical base is cytosine, if there are 2 reads with C->A substitutions, N<sub>diff</sub> will be 2.
 * N<sub>delete</sub> - Number of reads with a deletion at this reference position
 * N<sub>filtered</sub> - Number of calls where the probability of the call was below the threshold. The threshold can be
 set on the command line or computed from the data (usually filtering out the lowest 10th percentile of calls).
@@ -93,26 +93,26 @@ CG->CH substitution such that no modification call was produced by the basecalle
 
 ### bedMethyl column descriptions
 
-| column | name                   | description                                                                                                 | type  |
-|--------|------------------------|-------------------------------------------------------------------------------------------------------------|-------|
-| 1      | chrom                  | name of reference sequence from BAM header                                                                  | str   |
-| 2      | start position         | 0-based start position                                                                                      | int   |
-| 3      | end position           | 0-based exclusive end position                                                                              | int   |
-| 4      | modified base code     | single letter code for modified base                                                                        | str   |
-| 5      | score                  | Equal to N<sub>fcover</sub>.                                                                                | int   |
-| 6      | strand                 | '+' for positive strand '-' for negative strand, '.' when strands are combined                              | str   |
-| 7      | start position         | included for compatibility                                                                                  | int   |
-| 8      | end position           | included for compatibility                                                                                  | int   |
-| 9      | color                  | included for compatibility, always 255,0,0                                                                  | str   |
-| 10     | N<sub>cover</sub>      | See definitions above.                                                                                      | int   |
-| 11     | fraction modified      | N<sub>mod</sub> / N<sub>fcover</sub>                                                                        | float |
-| 12     | N<sub>mod</sub>        | See definitions above.                                                                                      | int   |
-| 13     | N<sub>canonical</sub>  | See definitions above.                                                                                      | int   |
-| 14     | N<sub>other_mod</sub>  | See definitions above.                                                                                      | int   |
-| 15     | N<sub>delete</sub>     | See definitions above.                                                                                      | int   |
-| 16     | N<sub>filtered</sub>   | See definitions above.                                                                                      | int   |
-| 17     | N<sub>diff</sub>       | See definitions above.                                                                                      | int   |
-| 18     | N<sub>nocall</sub>     | See definitions above.                                                                                      | int   |
+| column | name                  | description                                                                    | type  |
+|--------|-----------------------|--------------------------------------------------------------------------------|-------|
+| 1      | chrom                 | name of reference sequence from BAM header                                     | str   |
+| 2      | start position        | 0-based start position                                                         | int   |
+| 3      | end position          | 0-based exclusive end position                                                 | int   |
+| 4      | modified base code    | single letter code for modified base                                           | str   |
+| 5      | score                 | Equal to N<sub>valid_cov</sub>.                                                | int   |
+| 6      | strand                | '+' for positive strand '-' for negative strand, '.' when strands are combined | str   |
+| 7      | start position        | included for compatibility                                                     | int   |
+| 8      | end position          | included for compatibility                                                     | int   |
+| 9      | color                 | included for compatibility, always 255,0,0                                     | str   |
+| 10     | N<sub>valid_cov</sub> | See definitions above.                                                         | int   |
+| 11     | fraction modified     | N<sub>mod</sub> / N<sub>valid_cov</sub>                                        | float |
+| 12     | N<sub>mod</sub>       | See definitions above.                                                         | int   |
+| 13     | N<sub>canonical</sub> | See definitions above.                                                         | int   |
+| 14     | N<sub>other_mod</sub> | See definitions above.                                                         | int   |
+| 15     | N<sub>delete</sub>    | See definitions above.                                                         | int   |
+| 16     | N<sub>filtered</sub>  | See definitions above.                                                         | int   |
+| 17     | N<sub>diff</sub>      | See definitions above.                                                         | int   |
+| 18     | N<sub>nocall</sub>    | See definitions above.                                                         | int   |
 
 
 ## Advanced usage examples
