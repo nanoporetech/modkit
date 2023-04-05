@@ -4,8 +4,8 @@ Modified base calls are qualified with a probability that is contained in the ML
 [SAM tags specification](https://samtools.github.io/hts-specs/SAMtags.pdf). We calculate the confidence that the model
 has in the base modification prediction as $\mathcal{q} = argmax(\textbf{P})$ where $\textbf{P}$ is the
 vector of probabilities for each modification. For example, given a model that can classify canonical
-cytosine, 5mC, and 5hmC, $\textbf{P}$ is $[P_{C}, P_m, P_h]$, and $\mathcal{q}$ will be $\mathcal{q} =
-argmax(P_{C}, P_m, P_h)$, the maximum of the three probabilities.
+cytosine, 5mC, and 5hmC, $\textbf{P}$ is $[P_{C}, P_m, P_h]$, and $\mathcal{q}$ will be
+$\mathcal{q} = argmax(P_{C}, P_m, P_h)$, the maximum of the three probabilities.
 
 Filtering in `modkit` is performed by
 first determining the value of $\mathcal{q}$ for the lowest n-th percentile of calls (10th percentile by
