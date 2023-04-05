@@ -10,3 +10,5 @@ benches/
 ci.Dockerfile
 push-remote.sh
 tmp/
+dist
+dist/
