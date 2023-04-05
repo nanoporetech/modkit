@@ -7,8 +7,11 @@ to bedMethyl files using best practices, but also manipulating modBAM files and 
 
 ## Installation
 
-Downloadable pre-compiled binaries are provided for linux under the "releases" tab. To build
-`modkit` locally the recommended way is to use (cargo)[https://www.rust-lang.org/learn/get-started].
+Pre-compiled binaries are provided for Linux from the [release page](https://github.com/nanoporetech/modkit/releases). We recommend the use of these in most circumstances.
+
+### Building from source
+
+The provided packages should be used where possible. We understand that some users may wish to compile the software from its source code. To build `modkit` from source [cargo](https://www.rust-lang.org/learn/get-started) should be used.
 
 ```bash
 git clone https://github.com/nanoporetech/modkit.git
@@ -18,134 +21,128 @@ cargo install --path .
 cargo install --git https://github.com/nanoporetech/modkit.git
 ```
 
-## Creating a bedMethyl pileup from a modBam
+## Usage
 
-The most typical use case is to take a BAM with modified bases (as MM/ML or Mm/Ml tags) and sum the base
-modification calls from every read over each reference genomic position (make a pileup). Specifying a log
-file is optional, but recommended.
+Modkit comprises a suite of tools for manipulating modified-base data stored in [BAM](http://www.htslib.org/) files. Modified base information is stored in the `MM` and `ML` tags (see section 1.7 of the [SAM tags](https://samtools.github.io/hts-specs/SAMtags.pdf) specification). These tags are produced by contemporary basecallers of data from Oxford Nanopore Technologies sequencing platforms.
 
-```bash
-modkit pileup path/to/reads.bam output/path/pileup.bed [--log-filepath pileup.log]
-```
+### Constructing bedMethyl tables
 
-No reference sequence is required. A single file (description below) with pileup calls will be created.
-Modification filtering will be performed for you (for details see `filtering.md`).
+A primary use of `modkit` is to create summary counts of modified and unmodified bases in an extended [bedMethyl](https://www.encodeproject.org/data-standards/wgbs/) format. bedMethyl files tabulate the counts of base modifications from every sequencing read over each reference genomic position.
 
-Some typical options:
-
-1. Only emit counts from reference CpG dinucleotides. This option, however, requires a reference sequence in
-   order to locate the CpGs in the reference.
+In its simplest form `modkit` creates a bedMethyl file using the following:
 
 ```bash
-modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta [--log-filepath pileup.log]
+modkit pileup path/to/reads.bam output/path/pileup.bed --log-filepath pileup.log
 ```
 
-2. Use `traditional` preset for strand-aggregated 5mCpG-only output.
+No reference sequence is required. A single file (described [below](#description-of-bedmethyl-output)) with base count summaries will be created. The final argument here specifies an optional log file output.
+
+The program perform best-practices filtering and manipulation of the raw data stored in the input file. For further details see [filtering modified-base calls](./filtering.md).
+
+For user convenience the counting process can be modulated using several additional transforms and filters. The most basic of these is to report only counts from reference CpG dinucleotides. This option requires a reference sequence in order to locate the CpGs in the reference:
+
+```bash
+modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta
+```
+
+The program also contains a range of presets which combine several options for ease of use. The `traditional` preset,
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed \
   --ref path/to/reference.fasta \
-  --preset traditional \
-  [--log-filepath pileup.log]
+  --preset traditional
 ```
 
-The `--preset traditional` option will restrict output to only locations where there is a CG dinucleotide in
-the reference _as well as_ ignore any modification calls that are not 5mC. For example, if you have 5hmC calls
-in your data, they will be ignored by applying the default redistribute method (see collapse.md).
-Strand-aggregation is also performed *(summing counts into the positive strand). This option is short hand for
-`modkit pileup --cpg --ref <reference.fasta> --collapse h --combine-strands`.  For more information on the
-individual options see the advanced_usage.md document.
+performs three transforms:
+* restricts output to locations where there is a CG dinucleotide in
+the reference,
+* reports only a C and 5mC counts, using procedures to take into account counts of other forms of cytosine modification (notably 5hmC), and
+* aggregates data across strands. The strand field od the output will be marked as '.' indicating that the strand information has been lost.
 
-## bedMethyl output description
+Using this option is equivalent to running with the options:
+
+```bash
+modkit pileup --cpg --ref <reference.fasta> --collapse h --combine-strands
+```
+
+For more information on the individual options see the [Advanced Usage](./advanced_usage.md) help document.
+
+## Description of bedMethyl output
 
 Below is a description of the bedMethyl columns generated by `modkit pileup`. A brief description of the
 bedMethyl specification can be found on [Encode](https://www.encodeproject.org/data-standards/wgbs/).
 
 ### Definitions:
 
-**N_mod**: Number of filtered calls that classified a residue as with a specific base modification.  For
-example, if the base modification is `h` (5hmC) then this number is the number of filtered reads with a 5hmC
-call aligned to this reference position.
-
-**N_canonical**: Number of filtered calls that classified a residue as canonical as opposed to modified. The
+* N<sub>mod</sub> - Number of calls passing filters that were classified as a residue with a specified base modification.
+* N<sub>canonical</sub> - Number of calls passing filters were classified as the canonical base rather than modified. The
 exact base must be inferred by the modification code. For example, if the modification code is `m` (5mC) then
 the canonical base is cytosine. If the modification code is `a`, the canonical base is adenosine.
-
-**N_other_mod**: Number of filtered calls that classified a residue as modified where the canonical base is the
-same, but the actual modification is different. For example, for a given cytosine there may be 3 reads with
-`h` calls, 1 with a canonical call, and 2 with `m` calls. In the row for `h` N_other_mod would be 2 and in the
-`m` row N_other_mod would be 3.
-
-**filtered_coverage**: N_mod + N_other_mod + N_canonical, also used as the `score` in the bedMethyl
-
-**N_diff**: Number of reads with a base other than the canonical base for this modification. For example, in a row
-for `h` the canonical base is cytosine, if there are 2 reads with C->A substitutions, N_diff will be 2.
-
-**N_delete**: Number of reads with a delete at this reference position
-
-**N_filtered**: Number of calls where the probability of the call was below the threshold. The threshold can be
+* N<sub>other mod</sub> - Number of calls passing filters that were classified as modified, but where the modification is different from the listed base (and the corresponding canonical base is equal). For example, for a given cytosine there may be 3 reads with
+`h` calls, 1 with a canonical call, and 2 with `m` calls. In the bedMethyl row for `h` N<sub>other_mod</sub> would be 2. In the
+`m` row N<sub>other_mod</sub> would be 3.
+* N<sub>cover</sub> - the valid coverage. N<sub>cover</sub> = N<sub>mod</sub> + N<sub>other_mod</sub> + N<sub>canonical</sub>, also used as the `score` in the bedMethyl
+* N<sub>diff</sub> - Number of reads with a base other than the canonical base for this modification. For example, in a row
+for `h` the canonical base is cytosine, if there are 2 reads with C->A substitutions, N<sub>diff</diff> will be 2.
+* N<sub>delete</sub> - Number of reads with a deletion at this reference position
+* N<sub>filtered</sub> - Number of calls where the probability of the call was below the threshold. The threshold can be
 set on the command line or computed from the data (usually filtering out the lowest 10th percentile of calls).
-
-**N_nocall**: Number of reads aligned to this reference position, with the correct canonical base, but without a base
+* N<sub>nocall</sub> - Number of reads aligned to this reference position, with the correct canonical base, but without a base
 modification call. This can happen, for example, if the model requires a CpG dinucleotide and the read has a
-CG->CH substitution.
+CG->CH substitution such that no modification call was produced by the basecaller.
 
 ### bedMethyl column descriptions
 
-| column | name              | description                                                                                                 | type  |
-|--------|-------------------|-------------------------------------------------------------------------------------------------------------|-------|
-| 1      | chrom             | name of reference sequence from BAM header                                                                  | str   |
-| 2      | start_pos         | 0-based start position                                                                                      | int   |
-| 3      | end_pos           | 0-based exclusive end position                                                                              | int   |
-| 4      | raw_mod_code      | single letter code of modified base                                                                         | str   |
-| 5      | score             | filtered_coverage                                                                                           | int   |
-| 6      | strand            | '+' for positive strand '-' for negative strand, '.' when strands are combined                              | str   |
-| 7      | start_pos         | included for compatibility                                                                                  | int   |
-| 8      | end_pos           | included for compatibility                                                                                  | int   |
-| 9      | color             | included for compatibility, always 255,0,0                                                                  | str   |
-| 10     | filtered_coverage | see definitions                                                                                             | int   |
-| 11     | percent_modified  | N_mod / filtered_coverage                                                                                   | float |
-| 12     | N_mod             | Number of filtered calls for raw_mod_code.                                                                  | int   |
-| 13     | N_canonical       | Number of filtered calls for a canonical residue.                                                           | int   |
-| 14     | N_other_mod       | Number of filtered calls for a modification other than raw_mod_code.                                        | int   |
-| 15     | N_delete          | Number of reads with a deletion at this reference position.                                                 | int   |
-| 16     | N_filtered        | Number of calls that were filtered out.                                                                     | int   |
-| 17     | N_diff            | Number of reads with a base other than the reference sequence canonical base corresponding to raw_mod_code. | int   |
-| 18     | N_nocall          | Number of reads with no base modification information at this reference position.                           | int   |
-
+| column | name                   | description                                                                                                 | type  |
+|--------|------------------------|-------------------------------------------------------------------------------------------------------------|-------|
+| 1      | chrom                  | name of reference sequence from BAM header                                                                  | str   |
+| 2      | start position         | 0-based start position                                                                                      | int   |
+| 3      | end position           | 0-based exclusive end position                                                                              | int   |
+| 4      | modified base code     | single letter code for modified base                                                                        | str   |
+| 5      | score                  | Equal to N<sub>fcover</sub>.                                                                                | int   |
+| 6      | strand                 | '+' for positive strand '-' for negative strand, '.' when strands are combined                              | str   |
+| 7      | start position         | included for compatibility                                                                                  | int   |
+| 8      | end position           | included for compatibility                                                                                  | int   |
+| 9      | color                  | included for compatibility, always 255,0,0                                                                  | str   |
+| 10     | N<sub>cover</sub>      | See definitions above.                                                                                      | int   |
+| 11     | fraction modified      | N<sub>mod</sub> / N<sub>fcover</sub>                                                                        | float |
+| 12     | N<sub>mod</sub>        | See definitions above.                                                                                      | int   |
+| 13     | N<sub>canonical</sub>  | See definitions above.                                                                                      | int   |
+| 14     | N<sub>other_mod</sub>  | See definitions above.                                                                                      | int   |
+| 15     | N<sub>delete</sub>     | See definitions above.                                                                                      | int   |
+| 16     | N<sub>filtered</sub>   | See definitions above.                                                                                      | int   |
+| 17     | N<sub>diff</sub>       | See definitions above.                                                                                      | int   |
+| 18     | N<sub>nocall</sub>     | See definitions above.                                                                                      | int   |
 
 
 ## Advanced usage examples
 
-1. Combine multiple base modification calls into one, for example if your data has 5hmC and 5mC
-   this will combine the counts into a `C` (any mod) count.
+For complete usage instructions please see the command-line help of the program or the [Advanced usage](./advanced_usage.md) help documentation. Some more commonly required examples are provided below.
+
+To combine multiple base modification calls into one, for example to combine basecalls for both 5hmC and 5mC into a count for "all cytosine modifications" (with code `C`) the `--combine-mods` option can be used:
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed --combine-mods
 ```
 
-2. CpG motifs are reverse complement equivalent. The following example combines the calls from the positive
-   stand C with the negative strand C (reference G). This operation _requires_ that you use the `--cpg` flag
-   and specify a reference sequence. The strand field will be marked as '.' indicating that the strand
-   information has been lost.
+In standard usage the `--preset traditional` option can be used as outlined in the [Usage](#usage) section. By more directly specifying individual options we can perform something similar without loss of information for 5hmC data stored in the input file: 
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta \
     --combine-strands  
 ```
 
-3. Produce a bedGraph for each modification in the BAM file file. Counts for the positive and negative strands
-   will be put in separate files. Can also be combined with `--cpg` and `--combine-strands` options. The
-   `--prefix [str]` option allows specification of a prefix to the output file names.
+To produce a bedGraph file for each modification in the BAM file the `--bedgraph` option can be given. Counts for the positive and negative strands will be put in separate files.
 
 ```bash
 modkit pileup path/to/reads.bam output/directory/path --bedgraph <--prefix string>
 ```
 
+The option `--prefix [str]` parameter allows specification of a prefix to the output file names.
 
 **Licence and Copyright**
 
-(c) 2023 Oxford Nanopore Technologies Ltd.
+(c) 2023 Oxford Nanopore Technologies Plc.
 
 Modkit is distributed under the terms of the Oxford Nanopore Technologies, Ltd. Public License, v. 1.0.
 If a copy of the License was not distributed with this file, You can obtain one at http://nanoporetech.com
