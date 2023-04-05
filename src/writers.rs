@@ -145,11 +145,13 @@ impl OutWriter<ModBasePileup> for BedGraphWriter {
                     "{}{tab}\
                      {}{tab}\
                      {}{tab}\
+                     {}{tab}\
                      {}\n",
                     item.chrom_name,
                     pos,
                     pos + 1,
-                    feature_count.fraction_modified
+                    feature_count.fraction_modified,
+                    feature_count.filtered_coverage,
                 );
                 fh.write(row.as_bytes()).unwrap();
                 rows_written += 1;

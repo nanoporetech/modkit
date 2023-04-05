@@ -96,7 +96,9 @@ pub fn summarize_modbam<T: AsRef<Path>>(
                             filtered_counts.entry(mod_code).or_insert(0)
                         }
                     }
-                    BaseModCall::Filtered => panic!("unreachable"),
+                    BaseModCall::Filtered => {
+                        unreachable!("should not encounter filtered calls")
+                    }
                 };
                 *count += 1;
             }

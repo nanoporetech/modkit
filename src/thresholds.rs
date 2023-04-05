@@ -98,7 +98,7 @@ impl ModbaseProbSampler {
                                 BaseModCall::Modified(p, _) => p,
                                 BaseModCall::Canonical(p) => p,
                                 BaseModCall::Filtered => {
-                                    panic!(
+                                    unreachable!(
                                         "should not encounter filtered calls"
                                     )
                                 }
