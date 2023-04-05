@@ -79,3 +79,5 @@ impl std::fmt::Debug for RunError {
         write!(f, "{}", self)
     }
 }
+
+impl Error for RunError {}

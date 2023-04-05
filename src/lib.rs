@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod errs;
 pub mod interval_chunks;
+pub mod interval_processor;
 pub mod logging;
 pub mod mod_bam;
 pub mod mod_base_code;

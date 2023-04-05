@@ -4,6 +4,7 @@ use crate::util;
 use crate::util::{get_tag, Strand};
 use indexmap::{indexset, IndexSet};
 
+use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
 use std::collections::{HashMap, HashSet};
@@ -211,7 +212,11 @@ impl BaseModProbs {
                     mod_codes.insert(*mod_code);
                     probs.push(new_prob);
                 }
-                assert!((check_total - 100f32) < 0.00001);
+                if check_total - 100f32 > 0.00001 {
+                    debug!(
+                        "total probability {check_total} did not re-normalize"
+                    )
+                }
 
                 Self { mod_codes, probs }
             }
@@ -286,7 +291,7 @@ impl DeltaListConverter {
             })
             .collect::<Vec<u32>>();
 
-        assert_eq!(cumulative_counts.len(), read_sequence.len());
+        debug_assert_eq!(cumulative_counts.len(), read_sequence.len());
         Self {
             cumulative_counts,
             canonical_base: base,
@@ -307,7 +312,7 @@ impl DeltaListConverter {
             assert!(finger < self.cumulative_counts.len());
             while self.cumulative_counts[finger] <= (*d + n_skips) {
                 finger += 1;
-                assert!(
+                debug_assert!(
                     finger < self.cumulative_counts.len(),
                     "{:?} >= {:?},\ndelta_list: {:?}\ncumulative counts: {:?}",
                     finger,
@@ -315,6 +320,9 @@ impl DeltaListConverter {
                     delta_list,
                     self.cumulative_counts
                 );
+                if finger >= self.cumulative_counts.len() {
+                    return Err(InputError::new("malformed MM delta list"));
+                }
             }
             positions.push(finger);
             n_skips += d + 1;
@@ -543,7 +551,7 @@ fn get_base_mod_probs(
 
     let mut positions_to_probs = HashMap::<usize, BaseModProbs>::new();
     let stride = base_mod_positions.stride();
-    assert_eq!(probs.len() / stride, positions.len());
+    debug_assert_eq!(probs.len() / stride, positions.len());
     for (chunk, position) in probs.chunks(stride).zip(positions) {
         assert_eq!(chunk.len(), stride);
         for (i, mod_base_code) in
@@ -819,32 +827,13 @@ impl ModBaseInfo {
             },
         );
         (self.converters, pos_iter.chain(neg_iter))
-
-        // let mut seq_mod_probs = self
-        //     .seq_base_mod_probs
-        //     .into_iter()
-        //     .collect::<Vec<(char, SeqPosBaseModProbs)>>();
-        // let mut converters = self
-        //     .converters
-        //     .into_iter()
-        //     .collect::<Vec<(char, DeltaListConverter)>>();
-        // assert_eq!(seq_mod_probs.len(), converters.len());
-        //
-        // seq_mod_probs.sort_by(|(a, _), (b, _)| a.cmp(b));
-        // converters.sort_by(|(a, _), (b, _)| a.cmp(b));
-        // seq_mod_probs.into_iter().zip(converters).map(
-        //     |((a, probs), (b, converter))| {
-        //         assert_eq!(a, b);
-        //         (converter, probs)
-        //     },
-        // )
     }
 
     pub(crate) fn is_empty(&self) -> bool {
         if self.pos_seq_base_mod_probs.is_empty()
             && self.neg_seq_base_mod_probs.is_empty()
         {
-            assert!(self.converters.is_empty());
+            debug_assert!(self.converters.is_empty());
             true
         } else {
             false

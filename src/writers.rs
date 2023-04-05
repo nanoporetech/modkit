@@ -1,7 +1,6 @@
 use crate::mod_pileup::ModBasePileup;
 use crate::summarize::ModSummary;
-use crate::util::Strand;
-use anyhow::Context;
+use anyhow::{anyhow, Context, Result as AnyhowResult};
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -9,7 +8,7 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
 pub trait OutWriter<T> {
-    fn write(&mut self, item: T) -> Result<u64, String>;
+    fn write(&mut self, item: T) -> AnyhowResult<u64>;
 }
 
 pub struct BedMethylWriter {
@@ -27,7 +26,7 @@ impl BedMethylWriter {
 }
 
 impl OutWriter<ModBasePileup> for BedMethylWriter {
-    fn write(&mut self, item: ModBasePileup) -> Result<u64, String> {
+    fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
         let mut rows_written = 0;
         let tab = '\t';
         let space = if self.tabs_and_spaces { tab } else { ' ' };
@@ -57,7 +56,7 @@ impl OutWriter<ModBasePileup> for BedMethylWriter {
                     pos + 1,
                     feature_count.raw_mod_code,
                     feature_count.filtered_coverage,
-                    feature_count.strand.to_char(),
+                    feature_count.raw_strand,
                     pos,
                     pos + 1,
                     "255,0,0",
@@ -73,8 +72,7 @@ impl OutWriter<ModBasePileup> for BedMethylWriter {
                 );
                 self.buf_writer
                     .write(row.as_bytes())
-                    .with_context(|| "failed to write row")
-                    .map_err(|e| e.to_string())?;
+                    .with_context(|| "failed to write row")?;
                 rows_written += 1;
             }
         }
@@ -83,20 +81,24 @@ impl OutWriter<ModBasePileup> for BedMethylWriter {
 }
 
 pub struct BedGraphWriter {
+    prefix: Option<String>,
     out_dir: PathBuf,
-    router: HashMap<(char, Strand), BufWriter<File>>,
+    router: HashMap<(char, char), BufWriter<File>>,
 }
 
 impl BedGraphWriter {
-    pub fn new(out_dir: PathBuf) -> Result<Self, String> {
+    pub fn new(
+        out_dir: PathBuf,
+        prefix: Option<&String>,
+    ) -> AnyhowResult<Self> {
         if out_dir.is_file() {
-            Err("out dir cannot be a file, needs to be a directory".to_owned())
+            Err(anyhow!("out dir cannot be a file, needs to be a directory"))
         } else {
             if !out_dir.exists() {
-                std::fs::create_dir_all(out_dir.clone())
-                    .map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(out_dir.clone())?;
             }
             Ok(Self {
+                prefix: prefix.map(|s| s.to_owned()),
                 out_dir,
                 router: HashMap::new(),
             })
@@ -105,20 +107,24 @@ impl BedGraphWriter {
 
     fn get_writer_for_modstrand(
         &mut self,
-        strand: Strand,
+        strand: char,
         raw_mod_code: char,
     ) -> &mut BufWriter<File> {
         self.router
             .entry((raw_mod_code, strand))
             .or_insert_with(|| {
                 let strand_label = match strand {
-                    Strand::Positive => "positive",
-                    Strand::Negative => "negative",
+                    '+' => "positive",
+                    '-' => "negative",
+                    '.' => "combined",
+                    _ => "_unknown",
                 };
-                let fp = self.out_dir.join(format!(
-                    "{}_{}.bedgraph",
-                    raw_mod_code, strand_label
-                ));
+                let filename = if let Some(p) = &self.prefix {
+                    format!("{}_{}_{}.bedgraph", p, raw_mod_code, strand_label)
+                } else {
+                    format!("{}_{}.bedgraph", raw_mod_code, strand_label)
+                };
+                let fp = self.out_dir.join(filename);
                 let fh = File::create(fp).unwrap();
                 BufWriter::new(fh)
             })
@@ -126,24 +132,26 @@ impl BedGraphWriter {
 }
 
 impl OutWriter<ModBasePileup> for BedGraphWriter {
-    fn write(&mut self, item: ModBasePileup) -> Result<u64, String> {
+    fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
         let mut rows_written = 0;
         let tab = '\t';
         for (pos, feature_counts) in item.iter_counts() {
             for feature_count in feature_counts {
                 let fh = self.get_writer_for_modstrand(
-                    feature_count.strand,
+                    feature_count.raw_strand,
                     feature_count.raw_mod_code,
                 );
                 let row = format!(
                     "{}{tab}\
                      {}{tab}\
                      {}{tab}\
+                     {}{tab}\
                      {}\n",
                     item.chrom_name,
                     pos,
                     pos + 1,
-                    feature_count.fraction_modified
+                    feature_count.fraction_modified,
+                    feature_count.filtered_coverage,
                 );
                 fh.write(row.as_bytes()).unwrap();
                 rows_written += 1;
@@ -167,11 +175,11 @@ impl TsvWriter<std::io::Stdout> {
 }
 
 impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
-    fn write(&mut self, item: ModSummary) -> Result<u64, String> {
+    fn write(&mut self, item: ModSummary) -> AnyhowResult<u64> {
         let mut report = String::new();
         let mod_called_bases = item
-            .mod_called_bases
-            .iter()
+            .mod_call_counts
+            .keys()
             .map(|d| d.char().to_string())
             .collect::<Vec<String>>()
             .join(",");
@@ -185,12 +193,22 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
         }
         for (canonical_base, mod_counts) in item.mod_call_counts {
             let total_calls = mod_counts.values().sum::<u64>() as f64;
+            let total_filtered_calls = item
+                .filtered_mod_calls
+                .get(&canonical_base)
+                .map(|filtered_counts| filtered_counts.values().sum::<u64>())
+                .unwrap_or(0);
             for (mod_code, counts) in mod_counts {
                 let label = if mod_code.is_canonical() {
                     format!("unmodified")
                 } else {
                     format!("modified_{}", mod_code.char())
                 };
+                let filtered = *item
+                    .filtered_mod_calls
+                    .get(&canonical_base)
+                    .and_then(|filtered_counts| filtered_counts.get(&mod_code))
+                    .unwrap_or(&0);
                 report.push_str(&format!(
                     "{}_calls_{}\t{}\n",
                     canonical_base.char(),
@@ -203,11 +221,22 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
                     label,
                     counts as f64 / total_calls
                 ));
+                report.push_str(&format!(
+                    "{}_filtered_{}\t{}\n",
+                    canonical_base.char(),
+                    label,
+                    filtered
+                ));
             }
             report.push_str(&format!(
                 "{}_total_mod_calls\t{}\n",
                 canonical_base.char(),
                 total_calls as u64
+            ));
+            report.push_str(&format!(
+                "{}_total_filtered_mod_calls\t{}\n",
+                canonical_base.char(),
+                total_filtered_calls
             ));
         }
 
@@ -216,9 +245,7 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
             item.total_reads_used
         ));
 
-        self.buf_writer
-            .write(report.as_bytes())
-            .map_err(|e| e.to_string())?;
+        self.buf_writer.write(report.as_bytes())?;
         Ok(1)
     }
 }

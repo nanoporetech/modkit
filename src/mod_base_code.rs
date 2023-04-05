@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result as AnyhowResult};
 use log::debug;
 
 #[allow(non_camel_case_types)]
@@ -19,16 +20,14 @@ pub enum ModCode {
 }
 
 impl ModCode {
-    pub(crate) fn parse_raw_mod_code(
-        raw_mod_code: char,
-    ) -> Result<Self, String> {
+    pub(crate) fn parse_raw_mod_code(raw_mod_code: char) -> AnyhowResult<Self> {
         match raw_mod_code {
             'a' => Ok(Self::a),
             'h' => Ok(Self::h),
             'm' => Ok(Self::m),
             'C' => Ok(Self::anyC),
             'A' => Ok(Self::anyA),
-            _ => Err(format!("no mod code for {raw_mod_code}")),
+            _ => Err(anyhow!("no mod code for {raw_mod_code}")),
         }
     }
 

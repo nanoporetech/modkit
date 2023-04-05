@@ -38,7 +38,7 @@ impl Feature {
 
 #[derive(Debug, Copy, Clone, new, Default)]
 pub struct PileupFeatureCounts {
-    pub strand: Strand,
+    pub raw_strand: char,
     pub filtered_coverage: u32,
     pub raw_mod_code: char,
     pub fraction_modified: f32,
@@ -52,9 +52,9 @@ pub struct PileupFeatureCounts {
 }
 
 impl PileupFeatureCounts {
-    fn new_empty(strand: Strand, raw_mod_code: char) -> Self {
+    fn new_empty(raw_strand: char, raw_mod_code: char) -> Self {
         Self {
-            strand,
+            raw_strand,
             raw_mod_code,
             ..Default::default()
         }
@@ -81,7 +81,7 @@ impl PileupFeatureCounts {
         let fraction_modified = n_modified as f32 / filtered_coverage as f32;
 
         Self::new(
-            self.strand,
+            self.raw_strand,
             filtered_coverage,
             self.raw_mod_code,
             fraction_modified,
@@ -147,7 +147,6 @@ impl FeatureVector {
     }
 
     /// Add counts to the tally.
-    // TODO properly document
     pub(crate) fn add_feature(
         &mut self,
         alignment_strand: Strand,
@@ -217,7 +216,7 @@ impl FeatureVector {
                         let percent_modified =
                             n_modified as f32 / filtered_coverage as f32;
                         counts.push(PileupFeatureCounts {
-                            strand,
+                            raw_strand: strand.to_char(),
                             filtered_coverage,
                             raw_mod_code: mod_code.char(),
                             fraction_modified: percent_modified,
@@ -238,7 +237,7 @@ impl FeatureVector {
                 let percent_modified =
                     n_modified as f32 / filtered_coverage as f32;
                 counts.push(PileupFeatureCounts {
-                    strand,
+                    raw_strand: strand.to_char(),
                     filtered_coverage,
                     raw_mod_code: ModCode::C.char(),
                     fraction_modified: percent_modified,
@@ -276,7 +275,7 @@ impl FeatureVector {
                 + tally.n_modcall_m
                 + tally.n_modcall_h;
             counts.push(PileupFeatureCounts {
-                strand,
+                raw_strand: strand.to_char(),
                 filtered_coverage,
                 raw_mod_code,
                 fraction_modified: percent_modified,
@@ -391,10 +390,8 @@ fn combine_strand_features(
                     .into_iter()
                     .map(|(mod_code, feature_counts)| {
                         feature_counts.into_iter().fold(
-                            PileupFeatureCounts::new_empty(
-                                Strand::Positive,
-                                mod_code,
-                            ),
+                            // use unknown/ambiguous strand because we're combining
+                            PileupFeatureCounts::new_empty('.', mod_code),
                             |acc, next| acc.combine_counts_ignore_strand(next),
                         )
                     })
@@ -406,7 +403,8 @@ fn combine_strand_features(
                     .into_iter()
                     .map(|f| {
                         PileupFeatureCounts::new(
-                            Strand::Positive,
+                            // use unknown/ambiguous strand because we're combining
+                            '.',
                             f.filtered_coverage,
                             f.raw_mod_code,
                             f.fraction_modified,
@@ -595,7 +593,6 @@ pub fn process_region<T: AsRef<Path>>(
     let mut position_feature_counts = HashMap::new();
     let pileup_iter = PileupIter::new(
         bam_reader.pileup(),
-        // chrom_tid,
         start_pos,
         end_pos,
         motif_positions.as_ref(),
@@ -827,7 +824,7 @@ mod mod_pileup_tests {
             assert_eq!(pileup_counts.filtered_coverage, 3);
             assert_eq!(pileup_counts.n_nocall, 1);
             assert_eq!(pileup_counts.n_diff, 1);
-            assert_eq!(pileup_counts.strand, Strand::Positive);
+            assert_eq!(pileup_counts.raw_strand, Strand::Positive.to_char());
         }
         let mut fv = FeatureVector::new();
         let neg_observed_mods = HashSet::from([ModCode::m, ModCode::h]);
@@ -863,7 +860,7 @@ mod mod_pileup_tests {
         assert_eq!(counts.len(), 4);
         counts
             .iter()
-            .filter(|c| c.strand == Strand::Negative)
+            .filter(|c| c.raw_strand == Strand::Negative.to_char())
             .for_each(|c| assert_eq!(c.n_diff, 2));
     }
 

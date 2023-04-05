@@ -17,14 +17,12 @@ fn tests_adjust_output(
     input_path: &str,
     output_path: &str,
     check_file_path: &str,
-) {
+) -> Result<(), (bam::Record, bam::Record)> {
     let temp_file = std::env::temp_dir().join(output_path);
     let args = [
         "adjust-mods",
         "--ignore",
         "h",
-        "--method",
-        "norm",
         input_path,
         temp_file.to_str().unwrap(),
     ];
@@ -36,12 +34,13 @@ fn tests_adjust_output(
     for (test_res, ref_res) in test_bam.records().zip(ref_bam.records()) {
         let test_record = test_res.unwrap();
         let ref_record = ref_res.unwrap();
-        assert_eq!(
-            ref_record, test_record,
-            "{:?} =/= {:?}",
-            &ref_record, test_record
-        );
+        if test_record == ref_record {
+            continue;
+        } else {
+            return Err((test_record, ref_record));
+        }
     }
+    Ok(())
 }
 
 #[test]
@@ -50,7 +49,8 @@ fn test_adjust_canonical() {
         "tests/resources/input_C.bam",
         "test_C.bam",
         "tests/resources/ref_out_C_auto.bam",
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -59,7 +59,8 @@ fn test_adjust_methyl() {
         "tests/resources/input_5mC.bam",
         "test_5mC.bam",
         "tests/resources/ref_out_5mC_auto.bam",
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -104,9 +105,13 @@ fn test_mod_adjust_convert_sum_probs() {
     let test_convered_bam =
         std::env::temp_dir().join("test_convert_sum_probs.bam");
 
-    let initial_mod_summary =
-        summarize_modbam("tests/resources/bc_anchored_10_reads.sorted.bam", 1)
-            .unwrap();
+    let initial_mod_summary = summarize_modbam(
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        1,
+        0f32,
+        None,
+    )
+    .unwrap();
 
     let collapse_args = [
         "adjust-mods",
@@ -119,7 +124,8 @@ fn test_mod_adjust_convert_sum_probs() {
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
+        summarize_modbam(test_convered_bam.to_str().unwrap(), 1, 0f32, None)
+            .unwrap();
 
     let initial_m_calls = initial_mod_summary
         .mod_call_counts
@@ -150,9 +156,13 @@ fn test_mod_adjust_convert_rename() {
     let test_convered_bam =
         std::env::temp_dir().join("test_convert_convert_rename.bam");
 
-    let initial_mod_summary =
-        summarize_modbam("tests/resources/bc_anchored_10_reads.sorted.bam", 1)
-            .unwrap();
+    let initial_mod_summary = summarize_modbam(
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        1,
+        0f32,
+        None,
+    )
+    .unwrap();
 
     let collapse_args = [
         "adjust-mods",
@@ -165,7 +175,8 @@ fn test_mod_adjust_convert_rename() {
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1).unwrap();
+        summarize_modbam(test_convered_bam.to_str().unwrap(), 1, 0f32, None)
+            .unwrap();
 
     let initial_h_calls = initial_mod_summary
         .mod_call_counts
@@ -185,9 +196,13 @@ fn test_mod_adjust_convert_sum_probs_rename() {
     let test_converted_bam =
         std::env::temp_dir().join("test_convert_sum_probs_rename.bam");
 
-    let initial_mod_summary =
-        summarize_modbam("tests/resources/bc_anchored_10_reads.sorted.bam", 1)
-            .unwrap();
+    let initial_mod_summary = summarize_modbam(
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        1,
+        0f32,
+        None,
+    )
+    .unwrap();
 
     let collapse_args = [
         "adjust-mods",
@@ -203,7 +218,8 @@ fn test_mod_adjust_convert_sum_probs_rename() {
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_converted_bam.to_str().unwrap(), 1).unwrap();
+        summarize_modbam(test_converted_bam.to_str().unwrap(), 1, 0f32, None)
+            .unwrap();
 
     let initial_m_calls = initial_mod_summary
         .mod_call_counts

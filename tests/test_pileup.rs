@@ -1,11 +1,8 @@
+use rust_htslib::bam;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read as StdRead};
 
-use rust_htslib::bam;
-use rust_htslib::bam::Read;
-
 use common::run_modkit;
-use mod_kit::mod_bam::parse_raw_mod_tags;
 
 mod common;
 
@@ -136,7 +133,7 @@ fn test_mod_pileup_collapse() {
         "pileup",
         "-i",
         "25", // use small interval to make sure chunking works
-        "--collapse",
+        "--ignore",
         "h",
         "--no-filtering",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
@@ -248,7 +245,7 @@ fn test_cpg_motif_filtering() {
         temp_file.to_str().unwrap(),
         "--no-filtering",
         "--cpg",
-        "--reference-fasta",
+        "--ref",
         "tests/resources/CGI_ladder_3.6kb_ref.fa",
     ])
     .unwrap();
@@ -271,12 +268,50 @@ fn test_cpg_motif_filtering_strand_combine() {
         "91",
         "--cpg",
         "--combine-strands",
-        "--reference-fasta",
+        "--ref",
         "tests/resources/CGI_ladder_3.6kb_ref.fa",
     ])
     .unwrap();
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
         "tests/resources/bc_anchored_10_reads_nofilt_cg_motif_strand_combine.bed",
+    );
+}
+
+#[test]
+fn test_presets_traditional_same_as_options() {
+    let preset_temp_file = std::env::temp_dir()
+        .join("test_presets_traditional_same_as_options.bed");
+    let options_temp_file = std::env::temp_dir()
+        .join("test_presets_traditional_same_as_options2.bed");
+
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        preset_temp_file.to_str().unwrap(),
+        "--no-filtering",
+        "--preset",
+        "traditional",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+    ])
+    .unwrap();
+
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        options_temp_file.to_str().unwrap(),
+        "--cpg",
+        "--no-filtering",
+        "--ignore",
+        "h",
+        "--combine-strands",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+    ])
+    .unwrap();
+    check_against_expected_text_file(
+        preset_temp_file.to_str().unwrap(),
+        options_temp_file.to_str().unwrap(),
     );
 }
