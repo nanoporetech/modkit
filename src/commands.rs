@@ -510,12 +510,15 @@ impl ModBamPileup {
         };
 
         let (pileup_options, combine_strands) = match self.preset {
-            Some(Presets::traditional) => (
-                PileupNumericOptions::Collapse(CollapseMethod::ReDistribute(
-                    ModCode::h,
-                )),
-                true,
-            ),
+            Some(Presets::traditional) => {
+                info!("ignoring mod code {}", ModCode::h.char());
+                (
+                    PileupNumericOptions::Collapse(
+                        CollapseMethod::ReDistribute(ModCode::h),
+                    ),
+                    true,
+                )
+            }
             None => {
                 let options = match (self.combine_mods, &self.ignore) {
                     (false, None) => PileupNumericOptions::Passthrough,
@@ -523,6 +526,7 @@ impl ModBamPileup {
                     (_, Some(raw_mod_code)) => {
                         let mod_code =
                             ModCode::parse_raw_mod_code(*raw_mod_code)?;
+                        info!("ignoring mod code {}", raw_mod_code);
                         let method = CollapseMethod::ReDistribute(mod_code);
                         PileupNumericOptions::Collapse(method)
                     }
