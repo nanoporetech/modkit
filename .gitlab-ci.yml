@@ -122,6 +122,7 @@ deploy_linux_artefact:
     - echo "ready to push $(ls target/release/modkit)"
     - mkdir dist
     - cp *.md dist/
+    - cp LICENCE.txt dist/
     - cp target/release/modkit dist/
     - echo "contents if distribution $(ls dist/)"
     - tar -cvzf modkit_$(arch).tar.gz dist/
@@ -130,3 +131,14 @@ deploy_linux_artefact:
     - github_release modkit ${CI_COMMIT_TAG} CHANGELOG.md ${MODKIT_BOT_GH_KEY} --artifacts modkit_$(arch).tar.gz
     - echo "finished"
 
+
+deploy_source_code:
+  <<: *rust_image
+  stage: release
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$/'
+  script:
+    - *install_gh_cli
+    - *setup_gh_push
+    - git remote add github https://github.com/nanoporetech/modkit.git
+    - git push github main -f
