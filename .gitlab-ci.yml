@@ -4,8 +4,15 @@ stages:
   - pre-release
   - release
 
-before_script:
+# snippits
+
+.install_cmake: &install_cmake
   - apt-get update && apt-get install -y cmake
+
+.install_gh_cli_centos: &install_gh_cli_centos |
+  type -p yum-config-manager >/dev/null || sudo yum install yum-utils
+  yum-config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+  yum install gh -y
 
 .install_gh_cli: &install_gh_cli |
   type -p curl >/dev/null || (apt update && apt install curl -y)
@@ -15,8 +22,7 @@ before_script:
   && apt update \
   && apt install gh -y
 
-.setup-gh-push: &setup_gh_push |
-  apt-get update -qq && apt-get install -y -qq git git-lfs python3-dev python3-pip
+.setup_github_release: &setup_gh_release |
   echo ${MODKIT_BOT_GH_KEY} | gh auth login --with-token
   gh auth setup-git
   echo "set up gitHub"
@@ -28,7 +34,11 @@ before_script:
   popd
   echo "$(pwd)"
 
-.changelog: &check_changelog
+.setup_gh_push: &setup_gh_push
+  - apt-get update -qq && apt-get install -y -qq git git-lfs python3-dev python3-pip
+  - *setup_gh_release
+
+.check_changelog: &check_changelog
   - TAGVER=${CI_COMMIT_TAG}
   - MATCHES=$(grep -c "## \[${TAGVER}\]" CHANGELOG.md || exit 0)
   - >
@@ -52,6 +62,7 @@ before_script:
         echo "[check_tag_version] TAG and CRATE versions agree: '${CRATE_VER}'"
     fi
 
+# build images
 .rust_image: &rust_image
   # 1.67.1
   image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
@@ -59,6 +70,11 @@ before_script:
 .ubuntu_1604_image: &ub16_image
   image: ubuntu@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6
 
+.centos7_image: &centos7_image
+  image: centos@sha256:be65f488b7764ad3638f236b7b515b3678369a5124c47b8d32916d6487418ea4
+
+
+# rules/stages
 format:
   # 1.67.1
   <<: *rust_image
@@ -71,10 +87,15 @@ test:
   <<: *rust_image
   stage: test
   script:
+    - *install_cmake
     - cargo test
 
 .install_rust_1604: &install_rust_1604 |
   apt-get update && apt-get install -y curl build-essential cmake apt-transport-https
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  source $HOME/.cargo/env
+
+.install_rust_centos7: &install_rust_centos7 |
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   source $HOME/.cargo/env
 
@@ -92,22 +113,44 @@ manual_build_modkit_linux:
   <<: *rust_image
   when: manual
   script:
+    - *install_cmake
     - cargo build --release
   artifacts:
     paths:
       - target/release/modkit
 
+.build_with_cmake_around: &build_with_cmake_around |
+  wget https://github.com/Kitware/CMake/releases/download/v3.26.3/cmake-3.26.3-linux-x86_64.tar.gz
+  tar zxvf cmake-3.26.3-linux-x86_64.tar.gz
+  ls cmake-3.26.3-linux-x86_64/bin
+  export PATH="$(pwd)/cmake-3.26.3-linux-x86_64/bin:$PATH"
+  cargo build --release
+  
 
-manual_build_modkit_linux_1604:
-  <<: *ub16_image
+.pack_up_dist_centos: &pack_up_dist_centos |
+  ls target/release/modkit
+  mkdir dist
+  cp *.md dist/
+  cp LICENCE.txt dist/
+  cp target/release/modkit dist/
+  echo "contents if distribution $(ls dist/)"
+  tar -cvzf modkit_centos7_x86_64.tar.gz dist/
+  ls modkit_centos7_x86_64.tar.gz
+  
+
+manual_build_modkit_linux_centos:
+  <<: *centos7_image
   when: manual
   script:
-    - *install_rust_1604
-    - cargo build --release
+    - yum groupinstall 'Development Tools' -y
+    - yum install wget -y
+    - *install_rust_centos7
+    - *build_with_cmake_around
+    - *pack_up_dist_centos
   artifacts:
     paths:
       - target/release/modkit
-
+      - modkit_centos7_x86_64.tar.gz
 
 deploy_linux_artefact:
   # 1.67.1
@@ -125,7 +168,7 @@ deploy_linux_artefact:
     - cp LICENCE.txt dist/
     - cp target/release/modkit dist/
     - echo "contents if distribution $(ls dist/)"
-    - tar -cvzf modkit_$(arch).tar.gz dist/
+    - tar -cvzf modkit_deb11_$(arch).tar.gz dist/
     - ls modkit_$(arch).tar.gz
     - echo "pushing bits"
     - github_release modkit ${CI_COMMIT_TAG} CHANGELOG.md ${MODKIT_BOT_GH_KEY} --artifacts modkit_$(arch).tar.gz
@@ -141,4 +184,4 @@ deploy_source_code:
     - *install_gh_cli
     - *setup_gh_push
     - git remote add github https://github.com/nanoporetech/modkit.git
-    - git push github main -f
+    - git push github master -f
