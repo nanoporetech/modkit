@@ -65,7 +65,7 @@ impl Commands {
             Self::Pileup(x) => x.run().map_err(|e| e.to_string()),
             Self::SampleProbs(x) => x.run().map_err(|e| e.to_string()),
             Self::Summary(x) => x.run(),
-            Self::MotifBed(x) => x.run(),
+            Self::MotifBed(x) => x.run().map_err(|e| e.to_string()),
             Self::UpdateTags(x) => x.run(),
         }
     }
@@ -908,9 +908,8 @@ pub struct MotifBed {
 }
 
 impl MotifBed {
-    fn run(&self) -> Result<(), String> {
-        motif_bed(&self.fasta, &self.motif, self.offset, self.mask);
-        Ok(())
+    fn run(&self) -> AnyhowResult<()> {
+        motif_bed(&self.fasta, &self.motif, self.offset)
     }
 }
 

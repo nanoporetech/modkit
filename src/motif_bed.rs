@@ -2,16 +2,17 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result as AnyhowResult};
+use anyhow::{anyhow, Context, Result as AnyhowResult};
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
-use indicatif::{
-    ParallelProgressIterator, ProgressBar, ProgressIterator, ProgressStyle,
-};
+use indicatif::{ParallelProgressIterator, ProgressIterator};
+use log::debug;
 use rayon::prelude::*;
-use regex::Regex;
+use regex::{Match, Regex};
 
-use crate::util::{get_spinner, ReferenceRecord, Strand};
+use crate::util::{
+    get_master_progress_bar, get_spinner, ReferenceRecord, Strand,
+};
 
 fn iupac_to_regex(pattern: &str) -> String {
     let mut regex = String::new();
@@ -58,10 +59,59 @@ fn motif_rev_comp(motif: &str) -> String {
     reverse_complement
 }
 
+struct OverlappingPatternIterator<'a> {
+    text: &'a str,
+    re: &'a Regex,
+    start: usize,
+}
+
+impl<'a> Iterator for OverlappingPatternIterator<'a> {
+    type Item = Match<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start >= self.text.len() {
+            return None;
+        }
+        match self.re.find_at(self.text, self.start) {
+            Some(m) => {
+                self.start = m.start() + 1;
+                Some(m)
+            }
+            None => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct OverlappingRegex {
+    inner: Regex,
+}
+
+impl OverlappingRegex {
+    fn new(pattern: &str) -> Result<Self, regex::Error> {
+        Regex::new(pattern).map(|re| Self { inner: re })
+    }
+
+    fn find_iter<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> OverlappingPatternIterator<'a> {
+        OverlappingPatternIterator {
+            text: &text,
+            re: &self.inner,
+            start: 0,
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        self.inner.as_str()
+    }
+}
+
 #[derive(Debug, new)]
 pub struct RegexMotif {
-    forward_pattern: Regex,
-    reverse_pattern: Regex,
+    forward_pattern: OverlappingRegex,
+    reverse_pattern: OverlappingRegex,
     pub forward_offset: usize,
     pub reverse_offset: usize,
     pub length: usize,
@@ -71,9 +121,9 @@ impl RegexMotif {
     pub fn parse_string(raw_motif: &str, offset: usize) -> AnyhowResult<Self> {
         let length = raw_motif.len();
         let motif = iupac_to_regex(raw_motif);
-        let re = Regex::new(&motif)?;
+        let re = OverlappingRegex::new(&motif)?;
         let rc_motif = motif_rev_comp(&motif);
-        let rc_re = Regex::new(&rc_motif)?;
+        let rc_re = OverlappingRegex::new(&rc_motif)?;
         let rc_offset = raw_motif
             .len()
             .checked_sub(offset + 1)
@@ -144,24 +194,32 @@ fn process_record(header: &str, seq: &str, regex_motif: &RegexMotif) {
     }
 }
 
-pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize, mask: bool) {
+pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize, mask: bool) -> AnyhowResult<()> {
     let motif = iupac_to_regex(&motif_raw);
-    let re = Regex::new(&motif).unwrap();
+    let re = OverlappingRegex::new(&motif)?;
     let rc_motif = motif_rev_comp(&motif);
-    let rc_re = Regex::new(&rc_motif).unwrap();
-    let rc_offset = motif_raw.len().checked_sub(offset + 1).unwrap();
+    let rc_re = OverlappingRegex::new(&rc_motif)?;
+    let rc_offset = motif_raw
+        .len()
+        .checked_sub(offset + 1)
+        .ok_or(anyhow!("invalid offset for motif"))?;
 
-    // todo make a test, then refactor to use parse_str
     let regex_motif =
         RegexMotif::new(re, rc_re, offset, rc_offset, motif_raw.len());
 
-    let file = std::fs::File::open(path).expect("Could not open file");
+    let file =
+        std::fs::File::open(path).context(format!("could not open file"))?;
     let reader = BufReader::new(file);
 
     let mut seq = String::new();
     let mut header = String::new();
-    for line in reader.lines() {
-        let line = line.expect("Could not read line");
+    for line in reader.lines().filter_map(|res| match res {
+        Ok(l) => Some(l),
+        Err(e) => {
+            debug!("could not read line {}", e.to_string());
+            None
+        }
+    }) {
         if line.starts_with(">") {
             if !seq.is_empty() {
                 process_record(&header, &seq, &regex_motif);
@@ -179,6 +237,7 @@ pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize, mask: bool) {
     if !seq.is_empty() {
         process_record(&header, &seq, &regex_motif);
     }
+    Ok(())
 }
 
 pub struct MotifLocations {
@@ -211,13 +270,7 @@ impl MotifLocations {
             })
             .collect::<Vec<(String, u32)>>();
 
-        let motif_progress = ProgressBar::new(seqs_and_target_ids.len() as u64);
-        let sty = ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.red/yellow} {pos:>7}/{len:7} {msg}",
-        )
-        .unwrap()
-        .progress_chars("##-");
-        motif_progress.set_style(sty);
+        let motif_progress = get_master_progress_bar(seqs_and_target_ids.len());
         motif_progress.set_message(format!(
             "finding {} motifs",
             regex_motif.forward_pattern.as_str()
@@ -271,7 +324,8 @@ impl MotifLocations {
 
 #[cfg(test)]
 mod motif_bed_tests {
-    use crate::motif_bed::RegexMotif;
+    use crate::motif_bed::{find_motif_hits, RegexMotif};
+    use crate::util::Strand;
 
     #[test]
     fn test_regex_motif() {
@@ -279,5 +333,34 @@ mod motif_bed_tests {
         assert_eq!(regex_motif.reverse_offset, 3);
         let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
         assert_eq!(regex_motif.reverse_offset, 1);
+    }
+
+    #[test]
+    fn test_overlapping_motifs() {
+        let regex_motif = RegexMotif::parse_string("CHH", 0).unwrap();
+        //               01234567
+        let dna = "AACCCCTG";
+        //                 CCC
+        //                  CCC
+        //                   CCT
+        let hits = find_motif_hits(&dna, &regex_motif);
+        assert_eq!(
+            hits,
+            vec![
+                (2, Strand::Positive),
+                (3, Strand::Positive),
+                (4, Strand::Positive),
+            ]
+        );
+        let dna = "ACCTAG";
+        let hits = find_motif_hits(&dna, &regex_motif);
+        assert_eq!(
+            hits,
+            vec![
+                (1, Strand::Positive),
+                (2, Strand::Positive),
+                (5, Strand::Negative),
+            ]
+        );
     }
 }
