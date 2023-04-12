@@ -30,8 +30,3 @@ derive-new = "0.5.9"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"
-lazy_static = "1.4.0"
-tempfile = "3.3.0"
-criterion = "0.4.0"
-lazy-regex = "2.3.1"
-onig = { version = "6", default-features = false }
