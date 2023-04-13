@@ -87,13 +87,13 @@ pub enum DnaBase {
 }
 
 impl DnaBase {
-    pub(crate) fn parse(nt: char) -> Result<Self, String> {
+    pub(crate) fn parse(nt: char) -> AnyhowResult<Self> {
         match nt {
             'A' => Ok(Self::A),
             'C' => Ok(Self::C),
             'G' => Ok(Self::G),
             'T' => Ok(Self::T),
-            _ => Err("unknown? {nt}".to_string()),
+            _ => Err(anyhow!("unknown? {nt}".to_string())),
         }
     }
 
@@ -115,15 +115,15 @@ impl DnaBase {
         }
     }
 
-    pub(crate) fn canonical_mod_code(self) -> Result<ModCode, String> {
+    pub(crate) fn canonical_mod_code(self) -> AnyhowResult<ModCode> {
         match self {
             Self::A => Ok(ModCode::A),
             Self::C => Ok(ModCode::C),
             Self::G => {
-                Err(format!("no mod code for canonical base {}", self.char()))
+                Err(anyhow!("no mod code for canonical base {}", self.char()))
             }
             Self::T => {
-                Err(format!("no mod code for canonical base {}", self.char()))
+                Err(anyhow!("no mod code for canonical base {}", self.char()))
             }
         }
     }

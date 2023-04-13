@@ -1,4 +1,5 @@
 use crate::interval_chunks::IntervalChunks;
+use crate::monoid::Moniod;
 use crate::util::{
     get_master_progress_bar, get_spinner, get_subroutine_progress_bar,
     get_targets, Region,
@@ -12,7 +13,7 @@ use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
 use std::path::PathBuf;
 
-pub(crate) struct RecordSampler {
+pub struct RecordSampler {
     pub(crate) num_reads: Option<usize>,
     pub(crate) sample_frac: Option<f64>,
     pub(crate) seed: Option<u64>,
@@ -116,12 +117,16 @@ pub trait IntervalProcessor {
         num_reads: Option<usize>,
         seed: Option<u64>,
     ) -> Self;
+
     fn process_records<T: Read>(
         &mut self,
         records: bam::Records<T>,
         chrom_length: u32,
         total_length: u64,
-    ) -> AnyhowResult<Vec<Self::Output>>;
+        start: u64,
+        end: u64,
+    ) -> AnyhowResult<Self::Output>;
+
     fn label() -> &'static str;
 }
 
@@ -133,7 +138,7 @@ fn process_interval_records<T: IntervalProcessor>(
     end: u32,
     total_length: u64,
     mut processor: T,
-) -> AnyhowResult<Vec<T::Output>> {
+) -> AnyhowResult<T::Output> {
     let mut bam_reader = bam::IndexedReader::from_path(bam_fp)?;
     bam_reader.fetch(bam::FetchDefinition::Region(
         chrom_tid as i32,
@@ -141,7 +146,13 @@ fn process_interval_records<T: IntervalProcessor>(
         end as i64,
     ))?;
     let chrom_length = end - start;
-    processor.process_records(bam_reader.records(), chrom_length, total_length)
+    processor.process_records(
+        bam_reader.records(),
+        chrom_length,
+        total_length,
+        start as u64,
+        end as u64,
+    )
 }
 
 pub fn run_sampled_region_processor<T: IntervalProcessor>(
@@ -152,9 +163,9 @@ pub fn run_sampled_region_processor<T: IntervalProcessor>(
     num_reads: Option<usize>,
     seed: Option<u64>,
     region: Option<&Region>,
-) -> AnyhowResult<Vec<T::Output>>
+) -> AnyhowResult<T::Output>
 where
-    T::Output: Send,
+    T::Output: Send + Moniod,
 {
     let reader = bam::IndexedReader::from_path(bam_fp)?;
     let header = reader.header();
@@ -165,7 +176,7 @@ where
         .num_threads(threads)
         .build()?;
 
-    let mut output_aggregator = Vec::new();
+    let mut output_aggregator = T::Output::zero();
     let master_progress = MultiProgress::new();
     let tid_progress =
         master_progress.add(get_master_progress_bar(references.len()));
@@ -193,7 +204,7 @@ where
                 .add(get_subroutine_progress_bar(intervals.len()));
             interval_progress
                 .set_message(format!("processing {}", &reference.name));
-            let mut outputs = intervals
+            let outputs = intervals
                 .into_par_iter()
                 .progress_with(interval_progress)
                 .filter_map(|(start, end)| {
@@ -209,6 +220,7 @@ where
                         Ok(ps) => Some(ps),
                         Err(er) => {
                             debug!(
+                                // todo improve error message
                                 "error sampling probs for region: {}",
                                 er.to_string()
                             );
@@ -216,13 +228,13 @@ where
                         }
                     }
                 })
-                .flatten()
-                .collect::<Vec<T::Output>>();
+                .reduce(|| T::Output::zero(), |a, b| a.op(b));
             tid_progress.inc(1);
             sampled_items.inc(outputs.len() as u64);
-            output_aggregator.append(&mut outputs);
+            output_aggregator.op_mut(outputs);
         }
     });
+
     tid_progress.finish_and_clear();
     info!("sampled {} {}", output_aggregator.len(), T::label());
     Ok(output_aggregator)

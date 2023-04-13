@@ -19,6 +19,7 @@ type RefPosBaseModCalls = HashMap<u64, BaseModCall>; // todo use FxHasher
 // todo last position (for gc)
 pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that read
+    /// organized by the canonical base (the 'char') todo: should use DnaBase here
     pos_reads: HashMap<String, HashMap<char, (RefPosBaseModCalls, SkipMode)>>,
     neg_reads: HashMap<String, HashMap<char, (RefPosBaseModCalls, SkipMode)>>,
     /// these reads don't have mod tags or should be skipped for some other reason

@@ -17,13 +17,14 @@ use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
 use crate::errs::{InputError, RunError};
+use crate::filter_thresholds::FilterThresholds;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
-    collapse_mod_probs, format_mm_ml_tag, CollapseMethod, ModBaseInfo,
-    RawModCode, SkipMode, ML_TAGS, MM_TAGS,
+    collapse_mod_probs, format_mm_ml_tag, BaseModCall, CollapseMethod,
+    ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS, RawModCode
 };
-use crate::mod_base_code::ModCode;
+use crate::mod_base_code::{DnaBase, ModCode};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
 use crate::summarize::summarize_modbam;
@@ -64,9 +65,31 @@ impl Commands {
             Self::AdjustMods(x) => x.run().map_err(|e| e.to_string()),
             Self::Pileup(x) => x.run().map_err(|e| e.to_string()),
             Self::SampleProbs(x) => x.run().map_err(|e| e.to_string()),
-            Self::Summary(x) => x.run(),
+            Self::Summary(x) => x.run().map_err(|e| e.to_string()),
             Self::MotifBed(x) => x.run().map_err(|e| e.to_string()),
             Self::UpdateTags(x) => x.run(),
+        }
+    }
+}
+
+fn get_sampling_options(
+    no_filtering: bool,
+    sampling_frac: Option<f64>,
+    num_reads: usize,
+) -> (Option<f64>, Option<usize>) {
+    match (no_filtering, sampling_frac, num_reads) {
+        (true, _, _) => {
+            info!("performing no filtering");
+            (None, None)
+        }
+        (false, Some(f), _) => {
+            let pct = f * 100f64;
+            info!("sampling {pct}% of reads");
+            (Some(f), None)
+        }
+        (false, _, num) => {
+            info!("sampling {num} reads from BAM");
+            (None, Some(num))
         }
     }
 }
@@ -111,6 +134,86 @@ fn get_threshold_from_options(
         seed,
         region,
     )
+}
+
+fn parse_raw_threshold(raw: &str) -> AnyhowResult<(DnaBase, f32)> {
+    let parts = raw.split(':').collect::<Vec<&str>>();
+    if parts.len() != 2 {
+        return Err(anyhow!(
+            "encountered illegal per-base threshold {raw}, should\
+                be <base>:<threshold>, e.g. C:0.75"
+        ));
+    }
+    let raw_canonical_base = parts[0]
+        .chars()
+        .nth(0)
+        .ok_or(anyhow!("failed to parse canonical base {}", &parts[0]))?;
+    let dna_base = DnaBase::parse(raw_canonical_base).context(format!(
+        "failed to parse canonical base {}",
+        raw_canonical_base
+    ))?;
+    let threshold_value = parts[1]
+        .parse::<f32>()
+        .context(format!("failed to parse threshold value {}", &parts[1]))?;
+    Ok((dna_base, threshold_value))
+}
+
+fn parse_thresholds(
+    raw_thresholds: &[String],
+) -> AnyhowResult<FilterThresholds> {
+    if raw_thresholds.is_empty() {
+        return Err(anyhow!("no thresholds provided"));
+    }
+    if raw_thresholds.len() == 1 {
+        let raw = &raw_thresholds[0];
+        if raw.contains(':') {
+            let threshold_for_base = parse_raw_threshold(raw)?;
+            info!(
+                "using threshold {} for base {}",
+                threshold_for_base.0.char(),
+                threshold_for_base.1
+            );
+            let per_base_threshold = vec![threshold_for_base]
+                .into_iter()
+                .collect::<HashMap<DnaBase, f32>>();
+            Ok(FilterThresholds::new(0f32, per_base_threshold))
+        } else {
+            let default_threshold = raw.parse::<f32>().context(format!(
+                "failed to parse user defined threshold {raw}"
+            ))?;
+            Ok(FilterThresholds::new(default_threshold, HashMap::new()))
+        }
+    } else {
+        let mut default: Option<f32> = None;
+        let mut per_base_thresholds = HashMap::new();
+        for raw_threshold in raw_thresholds {
+            if raw_threshold.contains(':') {
+                let (dna_base, threshold) = parse_raw_threshold(raw_threshold)?;
+                info!(
+                    "using threshold {} for base {}",
+                    threshold,
+                    dna_base.char()
+                );
+                per_base_thresholds.insert(dna_base, threshold);
+            } else {
+                if let Some(_) = default {
+                    return Err(anyhow!(
+                        "default threshold encountered more than once"
+                    ));
+                }
+                let default_threshold =
+                    raw_threshold.parse::<f32>().context(format!(
+                        "failed to parse default threshold {raw_threshold}"
+                    ))?;
+                info!("setting default threshold to {}", default_threshold);
+                default = Some(default_threshold);
+            }
+        }
+        Ok(FilterThresholds::new(
+            default.unwrap_or(0f32),
+            per_base_thresholds,
+        ))
+    }
 }
 
 #[derive(Args)]
@@ -735,6 +838,17 @@ pub struct SampleModBaseProbs {
     /// reads will be sampled evenly across the length of the
     /// reference sequence.
     in_bam: PathBuf,
+    /// Number of threads to use.
+    #[arg(short, long, default_value_t = 4)]
+    threads: usize,
+    /// Specify a file for debug logs to be written to, otherwise ignore them.
+    /// Setting a file is recommended.
+    #[arg(long)]
+    log_filepath: Option<PathBuf>,
+    /// Percentiles to calculate, a space separated list of floats.
+    #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
+    percentiles: String,
+
     /// Max number of reads to use, especially recommended when using a large
     /// BAM without an index. If an indexed BAM is provided, the reads will be
     /// sampled evenly over the length of the aligned reference. If a region is
@@ -747,36 +861,27 @@ pub struct SampleModBaseProbs {
         default_value_t = 10_042
     )]
     num_reads: usize,
-    /// Fraction of reads to sample, for example 0.1 will sample
-    /// 1/10th of the reads.
+    /// Instead of using a defined number of reads, specify a fraction of reads
+    /// to sample, for example 0.1 will sample 1/10th of the reads.
     #[arg(group = "sampling_options", short = 'f', long)]
     sampling_frac: Option<f64>,
+    /// Do not perform any filtering, include all mod base calls in output. See
+    /// filtering.md for details on filtering.
+    #[arg(group = "sampling_options", long, default_value_t = false)]
+    no_filtering: bool,
+    /// Random seed for deterministic running, the default is non-deterministic.
+    #[arg(short, requires = "sampling_frac", long)]
+    seed: Option<u64>,
+
+    /// Process only the specified region of the BAM when performing pileup.
+    /// Format should be <chrom_name>:<start>-<end>.
+    #[arg(long)]
+    region: Option<String>,
     /// Interval chunk size to process concurrently. Smaller interval chunk
     /// sizes will use less memory but incur more overhead. Only used when
     /// sampling probs from an indexed bam.
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
-    /// Do not perform any filtering, include all mod base calls in output. See
-    /// filtering.md for details on filtering.
-    #[arg(group = "sampling_options", long, default_value_t = false)]
-    no_filtering: bool,
-    /// Process only the specified region of the BAM when performing pileup.
-    /// Format should be <chrom_name>:<start>-<end>.
-    #[arg(long)]
-    region: Option<String>,
-    /// Number of threads to use.
-    #[arg(short, long, default_value_t = 4)]
-    threads: usize,
-    /// Random seed for deterministic running, the default is non-deterministic.
-    #[arg(short, long)]
-    seed: Option<u64>,
-    /// Percentiles to calculate, a space separated list of floats.
-    #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
-    percentiles: String,
-    /// Specify a file for debug logs to be written to, otherwise ignore them.
-    /// Setting a file is recommended.
-    #[arg(long)]
-    log_filepath: Option<PathBuf>,
 }
 
 impl SampleModBaseProbs {
@@ -790,31 +895,17 @@ impl SampleModBaseProbs {
         } else {
             None
         };
-        let (sample_frac, num_reads) = match (
+        let (sample_frac, num_reads) = get_sampling_options(
             self.no_filtering,
             self.sampling_frac,
             self.num_reads,
-        ) {
-            (true, _, _) => {
-                info!("performing no filtering");
-                (None, None)
-            }
-            (false, Some(f), _) => {
-                let pct = f * 100f64;
-                info!("sampling {pct}% of reads to estimate probability distribution");
-                (Some(f), None)
-            }
-            (false, _, num) => {
-                info!("sampling {num} reads from BAM to estimate probability distribution");
-                (None, Some(num))
-            }
-        };
+        );
 
         let desired_percentiles = parse_percentiles(&self.percentiles)
             .with_context(|| {
                 format!("failed to parse percentiles: {}", &self.percentiles)
             })?;
-        let mut probs = get_modbase_probs_from_bam(
+        let canonical_base_to_mod_calls = get_modbase_probs_from_bam(
             &self.in_bam,
             self.threads,
             self.interval_size,
@@ -823,10 +914,13 @@ impl SampleModBaseProbs {
             self.seed,
             region.as_ref(),
         )?;
-        println!(
-            "{}",
-            Percentiles::new(&mut probs, &desired_percentiles)?.report()
-        );
+        for (canonical_base, mut probs) in canonical_base_to_mod_calls {
+            println!(
+                "{}\n{}",
+                canonical_base.char(),
+                Percentiles::new(&mut probs, &desired_percentiles)?.report()
+            );
+        }
         Ok(())
     }
 }
@@ -835,7 +929,7 @@ impl SampleModBaseProbs {
 pub struct ModSummarize {
     /// Input ModBam file.
     in_bam: PathBuf,
-    /// Number of threads to use reading BAM.
+    /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
@@ -843,48 +937,100 @@ pub struct ModSummarize {
     #[arg(long)]
     log_filepath: Option<PathBuf>,
 
-    /// Filter out mod-calls where the probability of the predicted
-    /// variant is below this percentile. For example, 0.1 will filter
-    /// out the 10% lowest confidence modification calls.
-    /// Set a maximum number of reads to process.
-    #[arg(short = 'n', long)]
-    num_reads: Option<usize>,
-    /// Sample this fraction of the reads when estimating the
-    /// `filter-percentile`. In practice, 50-100 thousand reads is sufficient to
-    /// estimate the model output distribution and determine the filtering
-    /// threshold.
-    #[arg(short = 'f', long, default_value_t = 0.1, hide_short_help = true)]
-    sampling_frac: f64,
-    /// Set a random seed for deterministic running, the default is non-deterministic.
-    #[arg(long, hide_short_help = true)]
-    seed: Option<u64>,
+    /// Max number of reads to use, especially recommended when using a large
+    /// BAM without an index. If an indexed BAM is provided, the reads will be
+    /// sampled evenly over the length of the aligned reference. If a region is
+    /// passed with the --region option, they will be sampled over the genomic
+    /// region.
+    #[arg(
+        group = "sampling_options",
+        short = 'n',
+        long,
+        default_value_t = 10_042
+    )]
+    num_reads: usize,
+    /// Instead of using a defined number of reads, specify a fraction of reads
+    /// to sample, for example 0.1 will sample 1/10th of the reads.
+    #[arg(group = "sampling_options", short = 'f', long)]
+    sampling_frac: Option<f64>,
     /// Do not perform any filtering, include all mod base calls in output. See
     /// filtering.md for details on filtering.
-    #[arg(group = "thresholds", long, default_value_t = false)]
+    #[arg(group = "sampling_options", long, default_value_t = false)]
     no_filtering: bool,
-
+    /// Random seed for deterministic running, the default is non-deterministic.
+    #[arg(short, requires = "sampling_frac", long)]
+    seed: Option<u64>,
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will filter
     /// out the 10% lowest confidence modification calls.
     #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
     filter_percentile: f32,
-    /// Filter threshold, drop calls below this probability.
-    #[arg(group = "thresholds", long)]
-    filter_threshold: Option<f32>,
+    /// Specify the filter threshold globally or per-base. Global filter threshold
+    /// can be specified with by a decimal number (e.g. 0.75). Per-base thresholds
+    /// can be specified by colon-separated values, for example C:0.75 specifies a
+    /// threshold value of 0.75 for cytosine modification calls. Additional
+    /// per-base thresholds can be specified by repeating the option: for example
+    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
+    /// base option and a default for all other bases with:
+    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
+    /// value of 0.70 for adenosine and 0.9 for all other base modification calls.
+    #[arg(
+        long,
+        group = "thresholds",
+        action = clap::ArgAction::Append
+    )]
+    filter_threshold: Option<Vec<String>>,
+
+    /// Process only the specified region of the BAM when collecting probabilities.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    #[arg(long)]
+    region: Option<String>,
+    /// When using regions, interval chunk size to process concurrently.
+    /// Smaller interval chunk sizes will use less memory but incur more
+    /// overhead.
+    #[arg(short = 'i', long, default_value_t = 1_000_000)]
+    interval_size: u32,
 }
 
 impl ModSummarize {
-    pub fn run(&self) -> AnyhowResult<(), String> {
+    pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        let reader = bam::Reader::from_path(&self.in_bam)?;
+        let region = if let Some(raw_region) = &self.region {
+            info!("parsing region {raw_region}");
+            Some(Region::parse_str(&raw_region, reader.header())?)
+        } else {
+            None
+        };
+
+        let (sample_frac, num_reads) = get_sampling_options(
+            self.no_filtering,
+            self.sampling_frac,
+            self.num_reads,
+        );
+
+        let filter_thresholds =
+            if let Some(raw_thresholds) = &self.filter_threshold {
+                info!("parsing user defined thresholds");
+                Some(parse_thresholds(raw_thresholds)?)
+            } else {
+                None
+            };
+
         let mod_summary = summarize_modbam(
             &self.in_bam,
             self.threads,
-            self.filter_threshold.unwrap_or(0f32),
-            self.num_reads,
-        )
-        .map_err(|e| e.to_string())?;
+            self.interval_size,
+            sample_frac,
+            num_reads,
+            self.seed,
+            region.as_ref(),
+            self.filter_percentile,
+            filter_thresholds,
+        )?;
+
         let mut writer = TsvWriter::new();
-        writer.write(mod_summary).map_err(|e| e.to_string())?;
+        writer.write(mod_summary)?;
         Ok(())
     }
 }

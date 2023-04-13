@@ -174,7 +174,7 @@ impl TsvWriter<std::io::Stdout> {
     }
 }
 
-impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
+impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
     fn write(&mut self, item: ModSummary) -> AnyhowResult<u64> {
         let mut report = String::new();
         let mod_called_bases = item
@@ -194,7 +194,7 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
         for (canonical_base, mod_counts) in item.mod_call_counts {
             let total_calls = mod_counts.values().sum::<u64>() as f64;
             let total_filtered_calls = item
-                .filtered_mod_calls
+                .filtered_mod_call_counts
                 .get(&canonical_base)
                 .map(|filtered_counts| filtered_counts.values().sum::<u64>())
                 .unwrap_or(0);
@@ -205,7 +205,7 @@ impl<W: Write> OutWriter<ModSummary> for TsvWriter<W> {
                     format!("modified_{}", mod_code.char())
                 };
                 let filtered = *item
-                    .filtered_mod_calls
+                    .filtered_mod_call_counts
                     .get(&canonical_base)
                     .and_then(|filtered_counts| filtered_counts.get(&mod_code))
                     .unwrap_or(&0);

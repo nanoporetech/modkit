@@ -1,4 +1,7 @@
 use anyhow::anyhow;
+use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
+use std::path::PathBuf;
 use std::string::FromUtf8Error;
 
 use anyhow::Result as AnyhowResult;
@@ -55,6 +58,9 @@ pub(crate) fn get_master_progress_bar(n: usize) -> ProgressBar {
 pub(crate) fn get_subroutine_progress_bar(n: usize) -> ProgressBar {
     ProgressBar::new(n as u64).with_style(get_subroutine_progress_bar_style())
 }
+
+/// mapping of forward query position to aligned reference position
+pub type AlignedPairs = HashMap<usize, u64>;
 
 pub(crate) fn get_aligned_pairs_forward(
     record: &bam::Record,
@@ -200,7 +206,7 @@ pub struct ReferenceRecord {
     pub name: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Region {
     pub name: String,
     pub start: u32,
@@ -276,7 +282,7 @@ impl Region {
                 })
             } else {
                 Err(InputError::new(&format!(
-                    "failed to find matching contig for {raw}"
+                    "failed to find matching reference sequence for {raw} in BAM header"
                 )))
             }
         }
