@@ -25,7 +25,8 @@ Commands:
   help          Print this message or the help of the given subcommand(s).
 
 Options:
-  -h, --help  Print help information.
+  -h, --help     Print help information.
+  -V, --version  Print version information.
 ```
 
 ## pileup
@@ -122,6 +123,9 @@ Options:
 
       --ref <REFERENCE_FASTA>
           Reference sequence in FASTA format. Required for CpG motif filtering.
+
+  -k, --mask
+          Respect soft masking in the reference FASTA.
 
       --preset <PRESET>
           Optional preset options for specific applications. traditional: Prepares bedMethyl
@@ -302,7 +306,7 @@ Options:
 ```bash
 Create BED file with all locations of a sequence motif.
 
-Usage: modkit motif-bed <FASTA> <MOTIF> <OFFSET>
+Usage: modkit motif-bed [OPTIONS] <FASTA> <MOTIF> <OFFSET>
 
 Arguments:
   <FASTA>   Input FASTA file.
@@ -310,5 +314,6 @@ Arguments:
   <OFFSET>  Offset within motif.
 
 Options:
+  -k, --mask  Respect soft masking in the reference FASTA.
   -h, --help  Print help information.
 ```

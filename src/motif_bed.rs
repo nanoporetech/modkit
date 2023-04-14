@@ -144,7 +144,7 @@ fn process_record(header: &str, seq: &str, regex_motif: &RegexMotif) {
     }
 }
 
-pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize) {
+pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize, mask: bool) {
     let motif = iupac_to_regex(&motif_raw);
     let re = Regex::new(&motif).unwrap();
     let rc_motif = motif_rev_comp(&motif);
@@ -169,7 +169,11 @@ pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize) {
             header = line;
             seq.clear();
         } else {
-            seq.push_str(&line);
+            if mask {
+                seq.push_str(&line);
+            } else {
+                seq.push_str(&line.to_ascii_uppercase())
+            }
         }
     }
     if !seq.is_empty() {
@@ -187,6 +191,7 @@ impl MotifLocations {
         fasta_fp: &PathBuf,
         regex_motif: RegexMotif,
         name_to_tid: &HashMap<&str, u32>,
+        mask: bool,
     ) -> AnyhowResult<Self> {
         let reader = FastaReader::from_file(fasta_fp)?;
         let records_progress = get_spinner();
@@ -200,6 +205,7 @@ impl MotifLocations {
             })
             .filter_map(|(record, tid)| {
                 String::from_utf8(record.seq().to_vec())
+                    .map(|s| if mask { s } else { s.to_ascii_uppercase() })
                     .ok()
                     .map(|s| (s, tid))
             })

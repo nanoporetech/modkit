@@ -435,6 +435,15 @@ pub struct ModBamPileup {
     /// Reference sequence in FASTA format. Required for CpG motif filtering.
     #[arg(long = "ref")]
     reference_fasta: Option<PathBuf>,
+    /// Respect soft masking in the reference FASTA.
+    #[arg(
+        long,
+        short = 'k',
+        requires = "reference_fasta",
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    mask: bool,
     /// Optional preset options for specific applications.
     /// traditional: Prepares bedMethyl analogous to that generated from other technologies
     /// for the analysis of 5mC modified bases. Shorthand for --cpg --combine-strands
@@ -600,7 +609,12 @@ impl ModBamPileup {
                 .map(|target| (target.name.as_str(), target.tid))
                 .collect::<HashMap<&str, u32>>();
             let motif_locations = pool.install(|| {
-                MotifLocations::from_fasta(fasta_fp, regex_motif, &names_to_tid)
+                MotifLocations::from_fasta(
+                    fasta_fp,
+                    regex_motif,
+                    &names_to_tid,
+                    self.mask,
+                )
             })?;
             let filtered_tids = motif_locations.filter_reference_records(tids);
             (Some(motif_locations), filtered_tids)
@@ -888,11 +902,14 @@ pub struct MotifBed {
     motif: String,
     /// Offset within motif.
     offset: usize,
+    /// Respect soft masking in the reference FASTA.
+    #[arg(long, short = 'k', default_value_t = false)]
+    mask: bool,
 }
 
 impl MotifBed {
     fn run(&self) -> Result<(), String> {
-        motif_bed(&self.fasta, &self.motif, self.offset);
+        motif_bed(&self.fasta, &self.motif, self.offset, self.mask);
         Ok(())
     }
 }
