@@ -90,10 +90,10 @@ pub fn summarize_modbam<T: AsRef<Path>>(
                         }
                     }
                     BaseModCall::Modified(p, mod_code) => {
-                        if p > threshold {
-                            mod_counts.entry(mod_code).or_insert(0)
-                        } else {
+                        if p < threshold {
                             filtered_counts.entry(mod_code).or_insert(0)
+                        } else {
+                            mod_counts.entry(mod_code).or_insert(0)
                         }
                     }
                     BaseModCall::Filtered => {

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.4-rc1]
+
+### Changes
+- Filter base modification calls that are < the threshold value instead of <= the threshold value.
+
+
 ## [v0.1.3]
 ### Adds
 - `--mask` flag in `pileup` and `motif-bed`
