@@ -183,7 +183,7 @@ impl Percentiles {
         let mut s = String::new();
         s.push_str("q\tp\n");
         for (q, p) in &self.qs {
-            s.push_str(&format!("{:.2}\t{:.2}\n", q, p));
+            s.push_str(&format!("{:.2}\t{:.3}\n", q, p));
         }
 
         s
