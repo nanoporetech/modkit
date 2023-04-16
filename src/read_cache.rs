@@ -169,10 +169,10 @@ impl<'a> ReadCache<'a> {
     ) -> BaseModCall {
         match base_mod_call {
             BaseModCall::Canonical(p) | BaseModCall::Modified(p, _) => {
-                if *p > threshold {
-                    *base_mod_call
-                } else {
+                if *p < threshold {
                     BaseModCall::Filtered
+                } else {
+                    *base_mod_call
                 }
             }
             BaseModCall::Filtered => *base_mod_call,
