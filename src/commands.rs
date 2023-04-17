@@ -889,6 +889,10 @@ impl SampleModBaseProbs {
         let _handle = init_logging(self.log_filepath.as_ref());
         let reader = bam::Reader::from_path(&self.in_bam)?;
 
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.threads)
+            .build()?;
+
         let region = if let Some(raw_region) = &self.region {
             info!("parsing region {raw_region}");
             Some(Region::parse_str(raw_region, reader.header())?)
@@ -905,15 +909,18 @@ impl SampleModBaseProbs {
             .with_context(|| {
                 format!("failed to parse percentiles: {}", &self.percentiles)
             })?;
-        let canonical_base_to_mod_calls = get_modbase_probs_from_bam(
-            &self.in_bam,
-            self.threads,
-            self.interval_size,
-            sample_frac,
-            num_reads,
-            self.seed,
-            region.as_ref(),
-        )?;
+
+        let canonical_base_to_mod_calls = pool.install(|| {
+            get_modbase_probs_from_bam(
+                &self.in_bam,
+                self.threads,
+                self.interval_size,
+                sample_frac,
+                num_reads,
+                self.seed,
+                region.as_ref(),
+            )
+        })?;
         for (canonical_base, mut probs) in canonical_base_to_mod_calls {
             println!(
                 "{}\n{}",
@@ -996,6 +1003,9 @@ impl ModSummarize {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         let reader = bam::Reader::from_path(&self.in_bam)?;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.threads)
+            .build()?;
         let region = if let Some(raw_region) = &self.region {
             info!("parsing region {raw_region}");
             Some(Region::parse_str(&raw_region, reader.header())?)
@@ -1017,17 +1027,19 @@ impl ModSummarize {
                 None
             };
 
-        let mod_summary = summarize_modbam(
-            &self.in_bam,
-            self.threads,
-            self.interval_size,
-            sample_frac,
-            num_reads,
-            self.seed,
-            region.as_ref(),
-            self.filter_percentile,
-            filter_thresholds,
-        )?;
+        let mod_summary = pool.install(|| {
+            summarize_modbam(
+                &self.in_bam,
+                self.threads,
+                self.interval_size,
+                sample_frac,
+                num_reads,
+                self.seed,
+                region.as_ref(),
+                self.filter_percentile,
+                filter_thresholds,
+            )
+        })?;
 
         let mut writer = TsvWriter::new();
         writer.write(mod_summary)?;

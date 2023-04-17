@@ -6,9 +6,9 @@ use derive_new::new;
 use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use log::{debug, error, info, warn};
+use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
-use rayon::prelude::*;
 
 use crate::errs::RunError;
 use crate::filter_thresholds::FilterThresholds;
@@ -82,7 +82,6 @@ pub fn summarize_modbam<'a>(
             calc_thresholds_per_base(
                 &read_ids_to_base_mod_calls,
                 filter_percentile,
-                threads,
                 None,
             )?
         }

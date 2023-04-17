@@ -97,37 +97,30 @@ impl Percentiles {
 pub(crate) fn calc_thresholds_per_base(
     read_ids_to_base_mod_calls: &ReadIdsToBaseModCalls,
     filter_percentile: f32,
-    threads: usize,
     default_threshold: Option<f32>,
 ) -> AnyhowResult<FilterThresholds> {
     debug!("calculating per base thresholds");
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()?;
-    // todo thread pools should only be used at the commands.rs level
-    pool.install(|| {
-        let st = std::time::Instant::now();
-        let mut probs_per_base = read_ids_to_base_mod_calls.probs_per_base();
-        debug!("probs per base took {:?}s", st.elapsed().as_secs());
-        let st = std::time::Instant::now();
-        let filter_thresholds = probs_per_base
-            .iter_mut()
-            .map(|(canonical_base, probs)| {
-                probs.par_sort_by(|a, b| a.partial_cmp(b).unwrap());
-                percentile_linear_interp(&probs, filter_percentile)
-                    .map(|t| (*canonical_base, t))
-            })
-            .collect::<AnyhowResult<HashMap<DnaBase, f32>>>()?;
-        debug!("filter thresholds took {}s", st.elapsed().as_secs());
-        info!("calculated thresholds:");
-        for (dna_base, thresh) in filter_thresholds.iter() {
-            info!("{}: {}", dna_base.char(), thresh);
-        }
-        Ok(FilterThresholds::new(
-            default_threshold.unwrap_or(0f32),
-            filter_thresholds,
-        ))
-    })
+    let st = std::time::Instant::now();
+    let mut probs_per_base = read_ids_to_base_mod_calls.probs_per_base();
+    debug!("probs per base took {:?}s", st.elapsed().as_secs());
+    let st = std::time::Instant::now();
+    let filter_thresholds = probs_per_base
+        .iter_mut()
+        .map(|(canonical_base, probs)| {
+            probs.par_sort_by(|a, b| a.partial_cmp(b).unwrap());
+            percentile_linear_interp(&probs, filter_percentile)
+                .map(|t| (*canonical_base, t))
+        })
+        .collect::<AnyhowResult<HashMap<DnaBase, f32>>>()?;
+    debug!("filter thresholds took {}s", st.elapsed().as_secs());
+    info!("calculated thresholds:");
+    for (dna_base, thresh) in filter_thresholds.iter() {
+        info!("{}: {}", dna_base.char(), thresh);
+    }
+    Ok(FilterThresholds::new(
+        default_threshold.unwrap_or(0f32),
+        filter_thresholds,
+    ))
 }
 
 pub fn calc_threshold_from_bam(

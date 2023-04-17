@@ -132,7 +132,7 @@ impl Moniod for ReadIdsToBaseModCalls {
 /// to their mapping.
 pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
     bam_fp: &PathBuf,
-    threads: usize,
+    reader_threads: usize,
     interval_size: u32,
     sample_frac: Option<f64>,
     num_reads: Option<usize>,
@@ -143,7 +143,6 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
     if use_regions {
         sample_reads_base_mod_calls_over_regions(
             bam_fp,
-            threads,
             interval_size,
             sample_frac,
             num_reads,
@@ -155,7 +154,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
             return Err(anyhow!("cannot use region without indexed BAM"));
         }
         let mut reader = bam::Reader::from_path(bam_fp)?;
-        reader.set_threads(threads)?;
+        reader.set_threads(reader_threads)?;
         let record_sampler =
             RecordSampler::new_from_options(sample_frac, num_reads, seed);
         sample_read_base_mod_calls(reader.records(), true, record_sampler)
@@ -166,7 +165,6 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
 /// an entire sorted, aligned BAM.
 fn sample_reads_base_mod_calls_over_regions(
     bam_fp: &PathBuf,
-    threads: usize,
     interval_size: u32,
     sample_frac: Option<f64>,
     num_reads: Option<usize>,
@@ -188,80 +186,73 @@ fn sample_reads_base_mod_calls_over_regions(
     sampled_items.set_message("base mod calls sampled");
     // end prog bar stuff
 
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()?;
     let mut aggregator = ReadIdsToBaseModCalls::zero();
-    pool.install(|| {
-        for reference in references {
-            let intervals = IntervalChunks::new(
-                reference.start,
-                reference.length,
-                interval_size,
-                reference.tid,
-                None,
-            )
-            .collect::<Vec<(u32, u32)>>();
-            // make the number of reads (if given) proportional to the length
-            // of this reference
-            let num_reads_for_reference = num_reads.map(|nr| {
-                let f = reference.length as f64 / total_length as f64;
-                let nr = nr as f64 * f;
-                std::cmp::max(nr.floor() as usize, 1usize)
-            });
+    for reference in references {
+        let intervals = IntervalChunks::new(
+            reference.start,
+            reference.length,
+            interval_size,
+            reference.tid,
+            None,
+        )
+        .collect::<Vec<(u32, u32)>>();
+        // make the number of reads (if given) proportional to the length
+        // of this reference
+        let num_reads_for_reference = num_reads.map(|nr| {
+            let f = reference.length as f64 / total_length as f64;
+            let nr = nr as f64 * f;
+            std::cmp::max(nr.floor() as usize, 1usize)
+        });
 
-            // progress bar stuff
-            let interval_progress = master_progress
-                .add(get_subroutine_progress_bar(intervals.len()));
-            interval_progress
-                .set_message(format!("processing {}", &reference.name));
-            // end progress bar stuff
+        // progress bar stuff
+        let interval_progress =
+            master_progress.add(get_subroutine_progress_bar(intervals.len()));
+        interval_progress
+            .set_message(format!("processing {}", &reference.name));
+        // end progress bar stuff
 
-            let read_ids_to_mod_calls = intervals
-                .into_par_iter()
-                .progress_with(interval_progress)
-                .filter_map(|(start, end)| {
-                    let n_reads_for_interval =
-                        num_reads_for_reference.map(|nr| {
-                            let f =
-                                (end - start) as f64 / reference.length as f64;
-                            let nr = nr as f64 * f;
-                            std::cmp::max(nr.floor() as usize, 1usize)
-                        });
-                    let record_sampler = RecordSampler::new_from_options(
-                        sample_frac,
-                        n_reads_for_interval,
-                        seed,
-                    );
-                    match sample_reads_from_interval(
-                        bam_fp,
-                        reference.tid,
-                        start,
-                        end,
-                        record_sampler,
-                    ) {
-                        Ok(res) => {
-                            let sampled_count = res.size();
-                            sampled_items.inc(sampled_count);
-                            Some(res)
-                        }
-                        Err(e) => {
-                            debug!(
-                                "reference {} for interval {} to {} failed {}",
-                                &reference.name,
-                                start,
-                                end,
-                                e.to_string()
-                            );
-                            None
-                        }
+        let read_ids_to_mod_calls = intervals
+            .into_par_iter()
+            .progress_with(interval_progress)
+            .filter_map(|(start, end)| {
+                let n_reads_for_interval = num_reads_for_reference.map(|nr| {
+                    let f = (end - start) as f64 / reference.length as f64;
+                    let nr = nr as f64 * f;
+                    std::cmp::max(nr.floor() as usize, 1usize)
+                });
+                let record_sampler = RecordSampler::new_from_options(
+                    sample_frac,
+                    n_reads_for_interval,
+                    seed,
+                );
+                match sample_reads_from_interval(
+                    bam_fp,
+                    reference.tid,
+                    start,
+                    end,
+                    record_sampler,
+                ) {
+                    Ok(res) => {
+                        let sampled_count = res.size();
+                        sampled_items.inc(sampled_count);
+                        Some(res)
                     }
-                })
-                .reduce(|| ReadIdsToBaseModCalls::zero(), |a, b| a.op(b));
-            aggregator.op_mut(read_ids_to_mod_calls);
-            tid_progress.inc(1);
-        }
-    });
+                    Err(e) => {
+                        debug!(
+                            "reference {} for interval {} to {} failed {}",
+                            &reference.name,
+                            start,
+                            end,
+                            e.to_string()
+                        );
+                        None
+                    }
+                }
+            })
+            .reduce(|| ReadIdsToBaseModCalls::zero(), |a, b| a.op(b));
+        aggregator.op_mut(read_ids_to_mod_calls);
+        tid_progress.inc(1);
+    }
 
     tid_progress.finish_and_clear();
     info!("sampled {} records", aggregator.len());

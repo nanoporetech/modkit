@@ -27,15 +27,18 @@ pub fn run_simple_summary(
     interval_size: u32,
 ) -> AnyhowResult<ModSummary> {
     let threads = 1usize;
-    summarize_modbam(
-        &Path::new(bam_fp).to_path_buf(),
-        threads,
-        interval_size,
-        None,
-        None,
-        None,
-        None,
-        0.1, // doesn't matter
-        Some(FilterThresholds::new(0f32, HashMap::new())),
-    )
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build()?;
+    pool.install(|| {
+        summarize_modbam(
+            &Path::new(bam_fp).to_path_buf(),
+            threads,
+            interval_size,
+            None,
+            None,
+            None,
+            None,
+            0.1, // doesn't matter
+            Some(FilterThresholds::new(0f32, HashMap::new())),
+        )
+    })
 }
