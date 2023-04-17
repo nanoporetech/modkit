@@ -16,4 +16,8 @@ impl FilterThresholds {
     pub fn get(&self, base: &DnaBase) -> f32 {
         *self.per_base_thresholds.get(&base).unwrap_or(&self.default)
     }
+
+    pub fn iter_thresholds(&self) -> impl Iterator<Item = (&DnaBase, &f32)> {
+        self.per_base_thresholds.iter()
+    }
 }

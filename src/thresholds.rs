@@ -128,9 +128,9 @@ pub fn calc_threshold_from_bam(
     filter_percentile: f32,
     seed: Option<u64>,
     region: Option<&Region>,
-) -> AnyhowResult<f32> {
+) -> AnyhowResult<HashMap<DnaBase, f32>> {
     // todo implement per-base thresholds
-    let can_base_probs = get_modbase_probs_from_bam(
+    let mut can_base_probs = get_modbase_probs_from_bam(
         bam_fp,
         threads,
         interval_size,
@@ -139,16 +139,14 @@ pub fn calc_threshold_from_bam(
         seed,
         region,
     )?;
-    let mut probs = can_base_probs
-        .values()
-        .flatten()
-        .map(|p| *p)
-        .collect::<Vec<f32>>();
-    probs.sort_by(|x, y| x.partial_cmp(y).unwrap());
-
-    let threshold = percentile_linear_interp(&probs, filter_percentile)
-        .with_context(|| format!("didn't sample enough data, try a larger fraction of another seed"))?;
-    Ok(threshold)
+    can_base_probs
+        .iter_mut()
+        .map(|(dna_base, mod_base_probs) | {
+            mod_base_probs.par_sort_by(|x, y| x.partial_cmp(y).unwrap());
+            let threshold = percentile_linear_interp(&mod_base_probs, filter_percentile)
+                .with_context(|| format!("didn't sample enough data, try a larger fraction of another seed"))?;
+            Ok((*dna_base, threshold))
+        }).collect()
 }
 
 pub fn get_modbase_probs_from_bam(

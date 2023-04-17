@@ -92,7 +92,14 @@ Options:
           [default: 0.1]
 
       --filter-threshold <FILTER_THRESHOLD>
-          Use a specific filter threshold, drop calls below this probability.
+          Specify the filter threshold globally or per-base. Global filter threshold can be
+          specified with by a decimal number (e.g. 0.75). Per-base thresholds can be specified by
+          colon-separated values, for example C:0.75 specifies a threshold value of 0.75 for
+          cytosine modification calls. Additional per-base thresholds can be specified by repeating
+          the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
+          single base option and a default for all other bases with: --filter-threshold A:0.70
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
+          all other base modification calls.
 
       --sample-region <SAMPLE_REGION>
           Specify a region for sampling reads from when estimating the threshold probability. If
@@ -223,30 +230,33 @@ Arguments:
             across the length of the reference sequence.
 
 Options:
+  -t, --threads <THREADS>              Number of threads to use [default: 4]
+      --log-filepath <LOG_FILEPATH>    Specify a file for debug logs to be written to, otherwise
+                                       ignore them. Setting a file is recommended.
+  -p, --percentiles <PERCENTILES>      Percentiles to calculate, a space separated list of floats. [default:
+                                       0.1,0.5,0.9]
   -n, --num-reads <NUM_READS>          Max number of reads to use, especially recommended when using
                                        a large BAM without an index. If an indexed BAM is provided,
                                        the reads will be sampled evenly over the length of the
                                        aligned reference. If a region is passed with the --region
                                        option, they will be sampled over the genomic region. [default:
                                        10042]
-  -f, --sampling-frac <SAMPLING_FRAC>  Fraction of reads to sample, for example 0.1 will sample
+  -f, --sampling-frac <SAMPLING_FRAC>  Instead of using a defined number of reads, specify a
+                                       fraction of reads to sample, for example 0.1 will sample
                                        1/10th of the reads.
+      --no-filtering                   Do not perform any filtering, include all mod base calls in
+                                       output. See filtering.md for details on filtering.
+  -s, --seed <SEED>                    Random seed for deterministic running, the default is
+                                       non-deterministic.
+      --region <REGION>                Process only the specified region of the BAM when collecting
+                                       probabilities. Format should be <chrom_name>:<start>-<end> or
+                                       <chrom_name>.
+
   -i, --interval-size <INTERVAL_SIZE>  Interval chunk size to process concurrently. Smaller interval
                                        chunk sizes will use less memory but incur more overhead.
                                        Only used when sampling probs from an indexed bam. [default:
                                        1000000]
-      --no-filtering                   Do not perform any filtering, include all mod base calls in
-                                       output. See filtering.md for details on filtering.
-      --region <REGION>                Process only the specified region of the BAM when performing
-                                       pileup. Format should be <chrom_name>:<start>-<end>.
-  -t, --threads <THREADS>              Number of threads to use. [default: 4]
-  -s, --seed <SEED>                    Random seed for deterministic running, the default is
-                                       non-deterministic.
-  -p, --percentiles <PERCENTILES>      Percentiles to calculate, a space separated list of floats. [default:
-                                       0.1,0.5,0.9]
-      --log-filepath <LOG_FILEPATH>    Specify a file for debug logs to be written to, otherwise
-                                       ignore them. Setting a file is recommended.
-  -h, --help                           Print help information.
+  -h, --help                           Print help information
 ```
 
 ## summary
@@ -270,36 +280,39 @@ Options:
           recommended.
 
   -n, --num-reads <NUM_READS>
-          Filter out mod-calls where the probability of the predicted variant is below this
-          percentile. For example, 0.1 will filter out the 10% lowest confidence modification calls.
-          Set a maximum number of reads to process.
-
+          Max number of reads to use, especially recommended when using a large BAM without an
+          index. If an indexed BAM is provided, the reads will be sampled evenly over the length of
+          the aligned reference. If a region is passed with the --region option, they will be
+          sampled over the genomic region. [default: 10042]
   -f, --sampling-frac <SAMPLING_FRAC>
-          Sample this fraction of the reads when estimating the `filter-percentile`. In practice,
-          50-100 thousand reads is sufficient to estimate the model output distribution and
-          determine the filtering threshold.
-          
-          [default: 0.1]
-
-      --seed <SEED>
-          Set a random seed for deterministic running, the default is non-deterministic.
-
+          Instead of using a defined number of reads, specify a fraction of reads to sample, for
+          example 0.1 will sample 1/10th of the reads.
       --no-filtering
           Do not perform any filtering, include all mod base calls in output. See filtering.md for
           details on filtering.
-
+  -s, --seed <SEED>
+          Random seed for deterministic running, the default is non-deterministic
   -p, --filter-percentile <FILTER_PERCENTILE>
           Filter out modified base calls where the probability of the predicted variant is below
           this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
-          modification calls.
-          
-          [default: 0.1]
-
+          modification calls. [default: 0.1]
       --filter-threshold <FILTER_THRESHOLD>
-          Filter threshold, drop calls below this probability.
-
+          Specify the filter threshold globally or per-base. Global filter threshold can be
+          specified with by a decimal number (e.g. 0.75). Per-base thresholds can be specified by
+          colon-separated values, for example C:0.75 specifies a threshold value of 0.75 for
+          cytosine modification calls. Additional per-base thresholds can be specified by repeating
+          the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
+          single base option and a default for all other bases with: --filter-threshold A:0.70
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
+          all other base modification calls.
+      --region <REGION>
+          Process only the specified region of the BAM when collecting probabilities. Format should
+          be <chrom_name>:<start>-<end> or <chrom_name>.
+  -i, --interval-size <INTERVAL_SIZE>
+          When using regions, interval chunk size to process concurrently. Smaller interval chunk
+          sizes will use less memory but incur more overhead. [default: 1000000]
   -h, --help
-          Print help information (use `-h` for a summary).
+          Print help information.
 ```
 
 ## motif-bed

@@ -103,15 +103,11 @@ fn get_threshold_from_options(
     no_filtering: bool,
     filter_percentile: f32,
     seed: Option<u64>,
-    user_threshold: Option<f32>,
     region: Option<&Region>,
-) -> AnyhowResult<f32> {
+) -> AnyhowResult<FilterThresholds> {
     if no_filtering {
         info!("not performing filtering");
-        return Ok(0f32);
-    }
-    if let Some(t) = user_threshold {
-        return Ok(t);
+        return Ok(FilterThresholds::new_passthrough());
     }
     let (sample_frac, num_reads) = match sample_frac {
         Some(f) => {
@@ -124,7 +120,7 @@ fn get_threshold_from_options(
             (None, Some(num_reads))
         }
     };
-    calc_threshold_from_bam(
+    let per_base_thresholds = calc_threshold_from_bam(
         in_bam,
         threads,
         interval_size,
@@ -133,7 +129,8 @@ fn get_threshold_from_options(
         filter_percentile,
         seed,
         region,
-    )
+    )?;
+    Ok(FilterThresholds::new(0f32, per_base_thresholds))
 }
 
 fn parse_raw_threshold(raw: &str) -> AnyhowResult<(DnaBase, f32)> {
@@ -492,9 +489,21 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     filter_percentile: f32,
-    /// Use a specific filter threshold, drop calls below this probability.
-    #[arg(group = "thresholds", long, hide_short_help = true)]
-    filter_threshold: Option<f32>,
+    /// Specify the filter threshold globally or per-base. Global filter threshold
+    /// can be specified with by a decimal number (e.g. 0.75). Per-base thresholds
+    /// can be specified by colon-separated values, for example C:0.75 specifies a
+    /// threshold value of 0.75 for cytosine modification calls. Additional
+    /// per-base thresholds can be specified by repeating the option: for example
+    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
+    /// base option and a default for all other bases with:
+    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
+    /// value of 0.70 for adenosine and 0.9 for all other base modification calls.
+    #[arg(
+    long,
+    group = "thresholds",
+    action = clap::ArgAction::Append
+    )]
+    filter_threshold: Option<Vec<String>>,
     /// Specify a region for sampling reads from when estimating the threshold probability.
     /// If this option is not provided, but --region is provided, the genomic interval
     /// passed to --region will be used.
@@ -654,35 +663,43 @@ impl ModBamPileup {
                 self.only_tabs,
             ))
         };
-
-        let threshold = get_threshold_from_options(
-            &self.in_bam,
-            self.threads,
-            self.sampling_interval_size,
-            self.sampling_frac,
-            self.num_reads,
-            self.no_filtering,
-            self.filter_percentile,
-            self.seed,
-            self.filter_threshold,
-            sampling_region.as_ref().or(region.as_ref()),
-        )?;
-
-        match (threshold * 100f32).ceil() as usize {
-            0..=60 => error!(
-                "Threshold of {threshold} is very low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."),
-            61..=70 => warn!(
-                "Threshold of {threshold} is low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."
-            ),
-            _ => info!("Using filter threshold {}.", threshold),
-        }
-
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()
             .with_context(|| "failed to make threadpool")?;
+
+        let filter_thresholds =
+            if let Some(raw_threshold) = &self.filter_threshold {
+                parse_thresholds(raw_threshold)?
+            } else {
+                pool.install(|| {
+                    get_threshold_from_options(
+                        &self.in_bam,
+                        self.threads,
+                        self.sampling_interval_size,
+                        self.sampling_frac,
+                        self.num_reads,
+                        self.no_filtering,
+                        self.filter_percentile,
+                        self.seed,
+                        sampling_region.as_ref().or(region.as_ref()),
+                    )
+                })?
+            };
+
+        for (base, threshold) in filter_thresholds.iter_thresholds() {
+            let base = base.char();
+            match (threshold * 100f32).ceil() as usize {
+                0..=60 => error!(
+                "Threshold of {threshold} for base {base} is very low. Consider increasing the \
+                filter-percentile or specifying a higher threshold."),
+                61..=70 => warn!(
+                "Threshold of {threshold} for base {base} is low. Consider increasing the \
+                filter-percentile or specifying a higher threshold."
+            ),
+                _ => info!("Using filter threshold {} for {base}.", threshold),
+            }
+        }
 
         let tids = get_targets(&header, region.as_ref());
         let use_cpg_motifs = self.cpg
@@ -775,7 +792,7 @@ impl ModBamPileup {
                                         target.tid,
                                         start,
                                         end,
-                                        threshold,
+                                        &filter_thresholds,
                                         &pileup_options,
                                         force_allow,
                                         combine_strands,
@@ -873,8 +890,8 @@ pub struct SampleModBaseProbs {
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
 
-    /// Process only the specified region of the BAM when performing pileup.
-    /// Format should be <chrom_name>:<start>-<end>.
+    /// Process only the specified region of the BAM when collecting probabilities.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     region: Option<String>,
     /// Interval chunk size to process concurrently. Smaller interval chunk
