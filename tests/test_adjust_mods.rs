@@ -114,18 +114,6 @@ fn test_mod_adjust_convert_sum_probs() {
         25,
     )
     .unwrap();
-    // let initial_mod_summary = summarize_modbam(
-    //     &Path::new("tests/resources/bc_anchored_10_reads.sorted.bam").to_path_buf(),
-    //     threads,
-    //     interval_size,
-    //     None,
-    //     None,
-    //     None,
-    //     None,
-    //     0.1,
-    //     Some(threshold)
-    // )
-    // .unwrap();
 
     let collapse_args = [
         "adjust-mods",

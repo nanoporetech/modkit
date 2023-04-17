@@ -3,15 +3,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
 use derive_new::new;
+use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
+use rayon::prelude::*;
 
 use crate::errs::RunError;
 use crate::filter_thresholds::FilterThresholds;
 use crate::mod_bam::BaseModCall;
 use crate::mod_base_code::{DnaBase, ModCode};
+use crate::monoid::Moniod;
 use crate::reads_sampler::{
     get_sampled_read_ids_to_base_mod_calls, ReadIdsToBaseModCalls,
 };
@@ -21,84 +24,27 @@ use crate::thresholds::{
 };
 use crate::util::{get_master_progress_bar, get_spinner, Region, Strand};
 
+/// Count statistics from a modBAM.
 #[derive(Debug, new, Eq, PartialEq)]
 pub struct ModSummary<'a> {
-    pub reads_with_mod_calls: HashMap<DnaBase, usize>,
+    /// For each canonical base, how many reads had
+    /// base modification calls for this base.
+    pub reads_with_mod_calls: HashMap<DnaBase, u64>,
+    /// For each canonical base, how many of each base modification
+    /// code were observed and not filtered out.
     pub mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
+    /// For each canonical base, how many of each base modification
+    /// code were observed but filtered out.
     pub filtered_mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
+    /// Total number of reads used in the summary. Usually a summary is computed
+    /// on a sub-sample of the reads in a modBAM (or a sub-region).
     pub total_reads_used: usize,
+    /// If a region is provided, this is a reference to that region.
     pub region: Option<&'a Region>,
 }
 
-fn sampled_reads_to_summary<'a>(
-    read_ids_to_mod_calls: ReadIdsToBaseModCalls,
-    filter_thresholds: &FilterThresholds,
-    region: Option<&'a Region>,
-) -> anyhow::Result<ModSummary<'a>> {
-    let total_reads_used = read_ids_to_mod_calls.num_reads();
-    let mut reads_with_mod_calls = HashMap::new();
-    let mut mod_call_counts = HashMap::new();
-    let mut filtered_mod_call_counts = HashMap::new();
-    let start_t = std::time::Instant::now();
-    // todo this could be done in parallel
-    for (_read_id, canonical_base_to_calls) in read_ids_to_mod_calls.inner {
-        for (canonical_base, base_mod_calls) in canonical_base_to_calls {
-            *reads_with_mod_calls.entry(canonical_base).or_insert(0) += 1;
-
-            let canonical_base_mod_counts = mod_call_counts
-                .entry(canonical_base)
-                .or_insert(HashMap::new());
-            let canonical_base_filtered_mod_counts = filtered_mod_call_counts
-                .entry(canonical_base)
-                .or_insert(HashMap::new());
-
-            let mod_code_for_canonical_base =
-                canonical_base.canonical_mod_code()?;
-            for base_mod_call in base_mod_calls {
-                let agg = match base_mod_call {
-                    BaseModCall::Canonical(p) => {
-                        if p < filter_thresholds.get(&canonical_base) {
-                            canonical_base_filtered_mod_counts
-                                .entry(mod_code_for_canonical_base)
-                                .or_insert(0)
-                        } else {
-                            canonical_base_mod_counts
-                                .entry(mod_code_for_canonical_base)
-                                .or_insert(0)
-                        }
-                    }
-                    BaseModCall::Modified(p, mod_code) => {
-                        if p < filter_thresholds.get(&canonical_base) {
-                            canonical_base_filtered_mod_counts
-                                .entry(mod_code)
-                                .or_insert(0)
-                        } else {
-                            canonical_base_mod_counts
-                                .entry(mod_code)
-                                .or_insert(0)
-                        }
-                    }
-                    BaseModCall::Filtered => {
-                        unreachable!(
-                            "should not encounter filtered base mod calls here"
-                        );
-                    }
-                };
-                *agg += 1u64;
-            }
-        }
-    }
-    let elap = start_t.elapsed();
-    info!("computing summary took {}s", elap.as_secs());
-    Ok(ModSummary::new(
-        reads_with_mod_calls,
-        mod_call_counts,
-        filtered_mod_call_counts,
-        total_reads_used,
-        region,
-    ))
-}
-
+/// Compute summary statistics from the reads in a modBAM. See `ModSummary`
+/// for more details.
 pub fn summarize_modbam<'a>(
     bam_fp: &PathBuf,
     threads: usize,
@@ -149,106 +95,122 @@ pub fn summarize_modbam<'a>(
     )
 }
 
-// pub fn summarize_modbam_<T: AsRef<Path>>(
-//     bam_fp: T,
-//     threads: usize,
-//     threshold: f32,
-//     num_reads: Option<usize>,
-// ) -> Result<ModSummary, RunError> {
-//     let mut reader = bam::Reader::from_path(bam_fp)
-//         .map_err(|e| RunError::new_input_error(e.to_string()))?;
-//     reader.set_threads(threads).map_err(|e| {
-//         RunError::new_failed(format!(
-//             "failed to set threads on reader, {}",
-//             e.to_string()
-//         ))
-//     })?;
-//
-//     let record_iter = modbase_records(reader.records());
-//     let spinner = if let Some(n) = num_reads {
-//         get_master_progress_bar(n)
-//     } else {
-//         get_spinner()
-//     };
-//
-//     spinner.set_message("records processed");
-//
-//     let mut total_reads_used = 0;
-//     let mut reads_with_mod_calls = HashMap::new();
-//     let mut mod_call_counts = HashMap::new();
-//     let mut filtered_mod_calls = HashMap::new();
-//     for (i, modbase_info) in record_iter.enumerate() {
-//         if modbase_info.is_empty() {
-//             continue;
-//         }
-//
-//         let (_converters, prob_iter) = modbase_info.into_iter_base_mod_probs();
-//         for (canonical_base, strand, seq_pos_mod_probs) in prob_iter {
-//             let canonical_base = match (DnaBase::parse(canonical_base), strand)
-//             {
-//                 (Err(_), _) => continue,
-//                 (Ok(dna_base), Strand::Positive) => dna_base,
-//                 (Ok(dna_base), Strand::Negative) => dna_base.complement(),
-//             };
-//             let count = reads_with_mod_calls.entry(canonical_base).or_insert(0);
-//             *count += 1;
-//             let mod_counts = mod_call_counts
-//                 .entry(canonical_base)
-//                 .or_insert(HashMap::new());
-//             let filtered_counts = filtered_mod_calls
-//                 .entry(canonical_base)
-//                 .or_insert(HashMap::new());
-//             for (_position, base_mod_probs) in
-//                 seq_pos_mod_probs.pos_to_base_mod_probs
-//             {
-//                 let count = match base_mod_probs.base_mod_call() {
-//                     BaseModCall::Canonical(p) => {
-//                         if p > threshold {
-//                             mod_counts
-//                                 .entry(
-//                                     canonical_base
-//                                         .canonical_mod_code()
-//                                         .unwrap(),
-//                                 )
-//                                 .or_insert(0)
-//                         } else {
-//                             filtered_counts
-//                                 .entry(
-//                                     canonical_base
-//                                         .canonical_mod_code()
-//                                         .unwrap(),
-//                                 )
-//                                 .or_insert(0)
-//                         }
-//                     }
-//                     BaseModCall::Modified(p, mod_code) => {
-//                         if p > threshold {
-//                             mod_counts.entry(mod_code).or_insert(0)
-//                         } else {
-//                             filtered_counts.entry(mod_code).or_insert(0)
-//                         }
-//                     }
-//                     BaseModCall::Filtered => {
-//                         unreachable!("should not encounter filtered calls")
-//                     }
-//                 };
-//                 *count += 1;
-//             }
-//         }
-//         total_reads_used = i;
-//         spinner.inc(1);
-//         let done = num_reads.map(|n| i >= n).unwrap_or(false);
-//         if done {
-//             break;
-//         }
-//     }
-//     spinner.finish_and_clear();
-//
-//     Ok(ModSummary {
-//         reads_with_mod_calls,
-//         mod_call_counts,
-//         filtered_mod_calls,
-//         total_reads_used: total_reads_used + 1,
-//         region: None,
-//     })
-// }
+fn sampled_reads_to_summary<'a>(
+    read_ids_to_mod_calls: ReadIdsToBaseModCalls,
+    filter_thresholds: &FilterThresholds,
+    region: Option<&'a Region>,
+) -> anyhow::Result<ModSummary<'a>> {
+    let total_reads_used = read_ids_to_mod_calls.num_reads();
+    let start_t = std::time::Instant::now();
+
+    let pb = get_master_progress_bar(read_ids_to_mod_calls.num_reads());
+    pb.set_message("compiling summary");
+    let read_summary_chunk = read_ids_to_mod_calls.inner
+        .par_iter()
+        .progress_with(pb)
+        .map(|(_read_id, canonical_base_to_calls)| {
+            let mut mod_call_counts = HashMap::new();
+            let mut filtered_mod_call_counts = HashMap::new();
+            let mut reads_with_mod_calls = HashMap::new();
+            for (&canonical_base, base_mod_calls) in canonical_base_to_calls {
+                *reads_with_mod_calls.entry(canonical_base).or_insert(0) += 1;
+                let canonical_base_mod_counts = mod_call_counts
+                    .entry(canonical_base)
+                    .or_insert(HashMap::new());
+                let canonical_base_filtered_mod_counts = filtered_mod_call_counts
+                    .entry(canonical_base)
+                    .or_insert(HashMap::new());
+
+                let mod_code_for_canonical_base =
+                    canonical_base.canonical_mod_code().unwrap();
+                for base_mod_call in base_mod_calls {
+                    let agg = match base_mod_call {
+                        BaseModCall::Canonical(p) => {
+                            if *p < filter_thresholds.get(&canonical_base) {
+                                canonical_base_filtered_mod_counts
+                                    .entry(mod_code_for_canonical_base)
+                                    .or_insert(0)
+                            } else {
+                                canonical_base_mod_counts
+                                    .entry(mod_code_for_canonical_base)
+                                    .or_insert(0)
+                            }
+                        }
+                        BaseModCall::Modified(p, mod_code) => {
+                            if *p < filter_thresholds.get(&canonical_base) {
+                                canonical_base_filtered_mod_counts
+                                    .entry(*mod_code)
+                                    .or_insert(0)
+                            } else {
+                                canonical_base_mod_counts
+                                    .entry(*mod_code)
+                                    .or_insert(0)
+                            }
+                        }
+                        BaseModCall::Filtered => {
+                            unreachable!(
+                                "should not encounter filtered base mod calls here"
+                            );
+                        }
+                    };
+                    *agg += 1u64;
+                }
+            }
+            ReadSummaryChunk {
+                reads_with_mod_calls, mod_call_counts, filtered_mod_call_counts,
+            }
+        })
+        .reduce(|| ReadSummaryChunk::zero(), |a, b| a.op(b));
+
+    let elap = start_t.elapsed();
+    debug!("computing summary took {}s", elap.as_secs());
+    Ok(ModSummary::new(
+        read_summary_chunk.reads_with_mod_calls,
+        read_summary_chunk.mod_call_counts,
+        read_summary_chunk.filtered_mod_call_counts,
+        total_reads_used,
+        region,
+    ))
+}
+
+#[derive(Debug)]
+struct ReadSummaryChunk {
+    reads_with_mod_calls: HashMap<DnaBase, u64>,
+    mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
+    filtered_mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
+}
+
+impl Moniod for ReadSummaryChunk {
+    fn zero() -> Self {
+        Self {
+            reads_with_mod_calls: HashMap::new(),
+            mod_call_counts: HashMap::new(),
+            filtered_mod_call_counts: HashMap::new(),
+        }
+    }
+
+    fn op(self, other: Self) -> Self {
+        let mut mod_call_counts = self.mod_call_counts;
+        let mut filtered_mod_call_counts = self.filtered_mod_call_counts;
+        let mut total = self.reads_with_mod_calls;
+        total.op_mut(other.reads_with_mod_calls);
+        mod_call_counts.op_mut(other.mod_call_counts);
+        filtered_mod_call_counts.op_mut(other.filtered_mod_call_counts);
+        Self {
+            reads_with_mod_calls: total,
+            mod_call_counts,
+            filtered_mod_call_counts,
+        }
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        self.reads_with_mod_calls.op_mut(other.reads_with_mod_calls);
+        self.mod_call_counts.op_mut(other.mod_call_counts);
+        self.filtered_mod_call_counts
+            .op_mut(other.filtered_mod_call_counts);
+    }
+
+    fn len(&self) -> usize {
+        todo!()
+    }
+}

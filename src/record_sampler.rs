@@ -3,6 +3,10 @@ use indicatif::ProgressBar;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+/// A utility data structure that when used in an interator allows
+/// to randomly sample either a preset number of reads or a fraction
+/// of reads. If sampling a preset number of reads, say N reads, then
+/// the first N reads are taken.
 pub struct RecordSampler {
     pub(crate) num_reads: Option<usize>,
     pub(crate) sample_frac: Option<f64>,

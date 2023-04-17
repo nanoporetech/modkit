@@ -17,7 +17,12 @@ use rust_htslib::bam::{self, Read};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub struct ReadIdsToBaseModCalls {
+/// Read IDs mapped to their base modification calls, organized by the
+/// canonical base. This data structure contains essentially all of the
+/// same data as in the records themselves, but with the query position
+/// and the alternative probabilities removed (i.e. it only has the
+/// probability of the called modification).
+pub(crate) struct ReadIdsToBaseModCalls {
     // mapping of read id to canonical base mapped to a vec
     // of base mod calls on that canonical base
     pub(crate) inner: HashMap<String, HashMap<DnaBase, Vec<BaseModCall>>>,
@@ -65,11 +70,11 @@ impl ReadIdsToBaseModCalls {
     pub(crate) fn probs_per_base(&self) -> HashMap<DnaBase, Vec<f32>> {
         let pb = get_master_progress_bar(self.inner.len());
         pb.set_message("aggregating per-base modification probabilities");
-        let lut = self
-            .inner
+        self.inner
             .par_iter()
+            .progress_with(pb)
             .map(|(_, canonical_base_to_base_mod_calls)| {
-                let probs = canonical_base_to_base_mod_calls
+                canonical_base_to_base_mod_calls
                     .iter()
                     .map(|(canonical_base, base_mod_calls)| {
                         let probs = base_mod_calls
@@ -82,13 +87,9 @@ impl ReadIdsToBaseModCalls {
                             .collect::<Vec<f32>>();
                         (*canonical_base, probs)
                     })
-                    .collect::<HashMap<DnaBase, Vec<f32>>>();
-                pb.inc(1);
-                probs
+                    .collect::<HashMap<DnaBase, Vec<f32>>>()
             })
-            .reduce(|| HashMap::zero(), |a, b| a.op(b));
-        pb.finish_and_clear();
-        lut
+            .reduce(|| HashMap::zero(), |a, b| a.op(b))
     }
 }
 
@@ -127,7 +128,9 @@ impl Moniod for ReadIdsToBaseModCalls {
     }
 }
 
-pub fn get_sampled_read_ids_to_base_mod_calls(
+/// Entry point to sampling base modification calls from a BAM without regard
+/// to their mapping.
+pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
     bam_fp: &PathBuf,
     threads: usize,
     interval_size: u32,
