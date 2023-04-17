@@ -1,16 +1,12 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::anyhow;
 use derive_new::new;
 use indicatif::ParallelProgressIterator;
-use itertools::Itertools;
-use log::{debug, error, info, warn};
-use rayon::prelude::*;
-use rust_htslib::bam;
-use rust_htslib::bam::Read;
 
-use crate::errs::RunError;
+use log::{debug, info};
+use rayon::prelude::*;
+
 use crate::filter_thresholds::FilterThresholds;
 use crate::mod_bam::BaseModCall;
 use crate::mod_base_code::{DnaBase, ModCode};
@@ -18,11 +14,9 @@ use crate::monoid::Moniod;
 use crate::reads_sampler::{
     get_sampled_read_ids_to_base_mod_calls, ReadIdsToBaseModCalls,
 };
-use crate::record_sampler::RecordSampler;
-use crate::thresholds::{
-    calc_thresholds_per_base, get_modbase_probs_from_bam, modbase_records,
-};
-use crate::util::{get_master_progress_bar, get_spinner, Region, Strand};
+
+use crate::thresholds::calc_thresholds_per_base;
+use crate::util::{get_master_progress_bar, Region};
 
 /// Count statistics from a modBAM.
 #[derive(Debug, new, Eq, PartialEq)]

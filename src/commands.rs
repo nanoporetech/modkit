@@ -21,8 +21,8 @@ use crate::filter_thresholds::FilterThresholds;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
-    collapse_mod_probs, format_mm_ml_tag, BaseModCall, CollapseMethod,
-    ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS, RawModCode
+    collapse_mod_probs, format_mm_ml_tag, CollapseMethod, ModBaseInfo,
+    SkipMode, ML_TAGS, MM_TAGS, RawModCode
 };
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};

@@ -1,24 +1,20 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result as AnyhowResult};
-use derive_new::new;
-use itertools::Itertools;
+
 use log::{debug, info};
 use rayon::prelude::*;
-use rust_htslib::bam::{self, Read as _};
+use rust_htslib::bam::{self};
 
-use crate::commands::SampleModBaseProbs;
-use crate::errs::RunError;
 use crate::filter_thresholds::FilterThresholds;
-use crate::mod_bam::{BaseModCall, BaseModProbs, ModBaseInfo};
+use crate::mod_bam::ModBaseInfo;
 use crate::mod_base_code::DnaBase;
-use crate::monoid::Moniod;
 use crate::reads_sampler::{
     get_sampled_read_ids_to_base_mod_calls, ReadIdsToBaseModCalls,
 };
 use crate::util;
-use crate::util::{record_is_secondary, AlignedPairs, Region, Strand};
+use crate::util::{record_is_secondary, AlignedPairs, Region};
 
 fn percentile_linear_interp(xs: &[f32], q: f32) -> AnyhowResult<f32> {
     if xs.len() < 2 {

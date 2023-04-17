@@ -10,7 +10,6 @@ use rand::{Rng, SeedableRng};
 pub struct RecordSampler {
     pub(crate) num_reads: Option<usize>,
     pub(crate) sample_frac: Option<f64>,
-    pub(crate) seed: Option<u64>,
     rng: StdRng,
     reads_sampled: usize,
 }
@@ -20,7 +19,6 @@ impl RecordSampler {
         Self {
             num_reads: Some(num_reads),
             sample_frac: None,
-            seed: None,
             rng: StdRng::from_entropy(),
             reads_sampled: 0,
         }
@@ -33,7 +31,6 @@ impl RecordSampler {
         Self {
             num_reads: None,
             sample_frac: Some(sample_frac),
-            seed,
             rng,
             reads_sampled: 0,
         }
@@ -43,7 +40,6 @@ impl RecordSampler {
         Self {
             num_reads: None,
             sample_frac: None,
-            seed: None,
             rng: StdRng::from_entropy(),
             reads_sampled: 0,
         }

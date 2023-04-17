@@ -1,6 +1,5 @@
-use crate::filter_thresholds::FilterThresholds;
 use crate::interval_chunks::IntervalChunks;
-use crate::mod_bam::{BaseModCall, BaseModProbs, ModBaseInfo};
+use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::mod_base_code::DnaBase;
 use crate::monoid::Moniod;
 use crate::record_sampler::{Indicator, RecordSampler};

@@ -1,13 +1,9 @@
-use anyhow::Context;
 use rust_htslib::{bam, bam::Read};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
 use crate::common::run_simple_summary;
 use common::run_modkit;
 use mod_kit::mod_bam::parse_raw_mod_tags;
 use mod_kit::mod_base_code::{DnaBase, ModCode};
-use mod_kit::summarize::summarize_modbam;
 
 mod common;
 

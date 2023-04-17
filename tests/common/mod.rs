@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result as AnyhowResult};
 use mod_kit::filter_thresholds::FilterThresholds;
 use mod_kit::summarize::{summarize_modbam, ModSummary};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Output;
 
 pub fn run_modkit(args: &[&str]) -> AnyhowResult<Output> {
