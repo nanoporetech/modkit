@@ -1,4 +1,4 @@
-![Oxford Nanopore Technologies logo](https://github.com/epi2me-labs/modbam2bed/raw/master/images/ONT_logo_590x106.png)
+![Oxford Nanopore Technologies logo](ONT_logo_590x106.png)
 
 # Modkit
 
