@@ -28,8 +28,7 @@ use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
 use crate::summarize::summarize_modbam;
 use crate::thresholds::{
-    calc_threshold_from_bam, get_modbase_probs_from_bam, modbase_records,
-    Percentiles,
+    calc_threshold_from_bam, get_modbase_probs_from_bam, Percentiles,
 };
 use crate::util;
 use crate::util::{

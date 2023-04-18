@@ -71,7 +71,7 @@ impl<'a> ReadCache<'a> {
             // here the q_pos is the forward-oriented position
             .flat_map(|(q_pos, bmp)| {
                 if let Some(r_pos) = aligned_pairs.get(&q_pos) {
-                    Some((*r_pos, bmp.base_mod_call()))
+                    Some((*r_pos, bmp.base_mod_call_unchecked()))
                 } else {
                     None
                 }

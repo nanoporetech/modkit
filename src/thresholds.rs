@@ -93,7 +93,7 @@ impl ModbaseProbSampler {
                             .pos_to_base_mod_probs
                             .iter()
                             .map(|(_pos, base_mod_probs)| match base_mod_probs
-                                .base_mod_call()
+                                .base_mod_call_unchecked()
                             {
                                 BaseModCall::Modified(p, _) => p,
                                 BaseModCall::Canonical(p) => p,

@@ -130,7 +130,7 @@ impl BaseModProbs {
         }
     }
 
-    pub fn base_mod_call(&self) -> BaseModCall {
+    pub fn base_mod_call(&self) -> anyhow::Result<BaseModCall> {
         let canonical_prob = self.canonical_prob();
         // todo(arand) use iterprobs here
         let max_mod_prob = self
@@ -138,18 +138,21 @@ impl BaseModProbs {
             .iter()
             .zip(self.mod_codes.iter())
             .max_by(|(p, _), (q, _)| p.partial_cmp(q).unwrap());
-        if let Some((mod_prob, mod_code)) = max_mod_prob {
+        let base_mod_call = if let Some((mod_prob, mod_code)) = max_mod_prob {
+            let mod_code = ModCode::parse_raw_mod_code(*mod_code)?;
             if *mod_prob > canonical_prob {
-                BaseModCall::Modified(
-                    *mod_prob,
-                    ModCode::parse_raw_mod_code(*mod_code).unwrap(),
-                )
+                BaseModCall::Modified(*mod_prob, mod_code)
             } else {
                 BaseModCall::Canonical(canonical_prob)
             }
         } else {
             BaseModCall::Canonical(canonical_prob)
-        }
+        };
+        Ok(base_mod_call)
+    }
+
+    pub fn base_mod_call_unchecked(&self) -> BaseModCall {
+        self.base_mod_call().unwrap()
     }
 
     pub fn canonical_prob(&self) -> f32 {
