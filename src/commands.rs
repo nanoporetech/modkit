@@ -909,6 +909,7 @@ pub struct MotifBed {
 
 impl MotifBed {
     fn run(&self) -> AnyhowResult<()> {
+        let _handle = init_logging(None);
         motif_bed(&self.fasta, &self.motif, self.offset, self.mask)
     }
 }
