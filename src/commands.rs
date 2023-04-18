@@ -909,7 +909,7 @@ pub struct MotifBed {
 
 impl MotifBed {
     fn run(&self) -> AnyhowResult<()> {
-        motif_bed(&self.fasta, &self.motif, self.offset)
+        motif_bed(&self.fasta, &self.motif, self.offset, self.mask)
     }
 }
 

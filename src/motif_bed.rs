@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
-use indicatif::{ParallelProgressIterator, ProgressIterator};
+use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
 use log::debug;
 use rayon::prelude::*;
 use regex::{Match, Regex};
@@ -184,21 +183,33 @@ fn find_motif_hits(
     motif_hits
 }
 
-fn process_record(header: &str, seq: &str, regex_motif: &RegexMotif) {
+fn process_record(header: &str, seq: &str, regex_motif: &RegexMotif) -> usize {
     let motif_hits = find_motif_hits(seq, regex_motif);
-    // get contig name
-    let (_, rest) = header.split_at(1);
-    let ctg = rest.split_whitespace().next().unwrap_or("");
+    let n_hits = motif_hits.len();
     for (pos, strand) in motif_hits {
-        println!("{}\t{}\t{}\t.\t.\t{}", ctg, pos, pos + 1, strand.to_char());
+        println!(
+            "{}\t{}\t{}\t.\t.\t{}",
+            header,
+            pos,
+            pos + 1,
+            strand.to_char()
+        );
     }
+    n_hits
 }
 
-pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize, mask: bool) -> AnyhowResult<()> {
+pub fn motif_bed(
+    path: &PathBuf,
+    motif_raw: &str,
+    offset: usize,
+    mask: bool,
+) -> AnyhowResult<()> {
     let motif = iupac_to_regex(&motif_raw);
-    let re = OverlappingRegex::new(&motif)?;
+    let re = OverlappingRegex::new(&motif)
+        .context("failed to make forward regex pattern")?;
     let rc_motif = motif_rev_comp(&motif);
-    let rc_re = OverlappingRegex::new(&rc_motif)?;
+    let rc_re = OverlappingRegex::new(&rc_motif)
+        .context("failed to make reverse complement regex pattern")?;
     let rc_offset = motif_raw
         .len()
         .checked_sub(offset + 1)
@@ -207,36 +218,51 @@ pub fn motif_bed(path: &PathBuf, motif_raw: &str, offset: usize, mask: bool) -> 
     let regex_motif =
         RegexMotif::new(re, rc_re, offset, rc_offset, motif_raw.len());
 
-    let file =
-        std::fs::File::open(path).context(format!("could not open file"))?;
-    let reader = BufReader::new(file);
+    let reader =
+        FastaReader::from_file(path).context("failed to open FASTA")?;
 
-    let mut seq = String::new();
-    let mut header = String::new();
-    for line in reader.lines().filter_map(|res| match res {
-        Ok(l) => Some(l),
-        Err(e) => {
-            debug!("could not read line {}", e.to_string());
-            None
-        }
-    }) {
-        if line.starts_with(">") {
-            if !seq.is_empty() {
-                process_record(&header, &seq, &regex_motif);
+    // prog bar stuff
+    let master_pb = MultiProgress::new();
+    let records_progress = master_pb.add(get_spinner());
+    records_progress.set_message("Reading reference sequences");
+    let motifs_progress = master_pb.add(get_spinner());
+    motifs_progress.set_message(format!(
+        "{} motifs found",
+        regex_motif.forward_pattern.as_str()
+    ));
+    // end prog bar stuff
+
+    reader
+        .records()
+        .progress_with(records_progress)
+        .filter_map(|r| match r {
+            Ok(r) => Some(r),
+            Err(e) => {
+                debug!("failed to read record, {}", e.to_string());
+                None
             }
-            header = line;
-            seq.clear();
-        } else {
-            if mask {
-                seq.push_str(&line);
-            } else {
-                seq.push_str(&line.to_ascii_uppercase())
+        })
+        .filter_map(|record| {
+            let seq = String::from_utf8(record.seq().to_vec());
+            match seq {
+                Ok(s) => Some((s, record)),
+                Err(e) => {
+                    let header = record.id();
+                    debug!(
+                        "sequence for {header} failed UTF-8 conversion, {}",
+                        e.to_string()
+                    );
+                    None
+                }
             }
-        }
-    }
-    if !seq.is_empty() {
-        process_record(&header, &seq, &regex_motif);
-    }
+        })
+        .for_each(|(seq, record)| {
+            let seq = if mask { seq } else { seq.to_ascii_uppercase() };
+            let n_hits = process_record(record.id(), &seq, &regex_motif);
+            motifs_progress.inc(n_hits as u64);
+        });
+
+    motifs_progress.finish_and_clear();
     Ok(())
 }
 
