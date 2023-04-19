@@ -134,11 +134,9 @@ impl BaseModProbs {
         let canonical_prob = self.canonical_prob();
         // todo(arand) use iterprobs here
         let max_mod_prob = self
-            .probs
-            .iter()
-            .zip(self.mod_codes.iter())
-            .max_by(|(p, _), (q, _)| p.partial_cmp(q).unwrap());
-        let base_mod_call = if let Some((mod_prob, mod_code)) = max_mod_prob {
+            .iter_probs()
+            .max_by(|(_, p), (_, q)| p.partial_cmp(q).unwrap());
+        let base_mod_call = if let Some((mod_code, mod_prob)) = max_mod_prob {
             let mod_code = ModCode::parse_raw_mod_code(*mod_code)?;
             if *mod_prob > canonical_prob {
                 BaseModCall::Modified(*mod_prob, mod_code)
