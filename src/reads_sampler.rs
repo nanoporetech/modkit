@@ -140,14 +140,50 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
 ) -> anyhow::Result<ReadIdsToBaseModCalls> {
     let use_regions = bam::IndexedReader::from_path(&bam_fp).is_ok();
     if use_regions {
-        sample_reads_base_mod_calls_over_regions(
-            bam_fp,
-            interval_size,
-            sample_frac,
-            num_reads,
-            seed,
-            region,
-        )
+        let mut read_ids_to_base_mod_calls =
+            sample_reads_base_mod_calls_over_regions(
+                bam_fp,
+                interval_size,
+                sample_frac,
+                num_reads,
+                seed,
+                region,
+            )?;
+        // sample unmapped reads iff we've sampled less than 90% of the number we've wanted to get
+        // or 0 (from sample_frac).
+        let should_sample_unmapped = num_reads
+            .map(|nr| {
+                let f = (nr as f32 - read_ids_to_base_mod_calls.len() as f32)
+                    / nr as f32;
+                let f = 1f32 - f;
+                f <= 0.9f32
+            })
+            .unwrap_or(read_ids_to_base_mod_calls.len() > 0);
+        if should_sample_unmapped {
+            debug!(
+                "sampled {} mapped records, sampling unmapped records",
+                read_ids_to_base_mod_calls.len()
+            );
+            let mut reader = bam::IndexedReader::from_path(bam_fp)?;
+            reader.set_threads(reader_threads)?;
+            reader.fetch(bam::FetchDefinition::Unmapped)?;
+            let num_reads_unmapped =
+                num_reads.map(|nr| nr - read_ids_to_base_mod_calls.len());
+            let record_sampler = RecordSampler::new_from_options(
+                sample_frac,
+                num_reads_unmapped,
+                seed,
+            );
+            let unmapped_read_ids_to_base_mod_calls =
+                sample_read_base_mod_calls(
+                    reader.records(),
+                    true,
+                    record_sampler,
+                )?;
+            read_ids_to_base_mod_calls
+                .op_mut(unmapped_read_ids_to_base_mod_calls);
+        }
+        Ok(read_ids_to_base_mod_calls)
     } else {
         if region.is_some() {
             return Err(anyhow!("cannot use region without indexed BAM"));

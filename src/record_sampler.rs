@@ -67,13 +67,12 @@ impl RecordSampler {
         spinner
     }
 
-    fn check_num_reads(&mut self) -> Indicator {
+    fn check_num_reads(&self) -> Indicator {
         let indicator = if self.reads_sampled >= self.num_reads.unwrap() {
             Indicator::Done
         } else {
             Indicator::Use
         };
-        self.reads_sampled += 1;
         indicator
     }
 
@@ -89,12 +88,13 @@ impl RecordSampler {
         match (self.num_reads, self.sample_frac) {
             (Some(_nr), _) => self.check_num_reads(),
             (_, Some(_sample_frac)) => self.check_sample_frac(),
-            (None, None) => Indicator::Use,
+            (None, None) => Indicator::Use
         }
     }
 }
 
-pub enum Indicator {
+
+pub(crate) enum Indicator {
     Use,
     Skip,
     Done,
