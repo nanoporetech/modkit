@@ -294,15 +294,13 @@ fn test_adjust_out_of_spec_codes() {
     ])
     .expect("should run adjust");
 
-    let expected_summary = summarize_modbam(
+    let expected_summary = run_simple_summary(
         "tests/resources/bc_anchored_10_reads.sorted.bam",
-        1,
-        0f32,
-        None,
+        25,
     )
     .expect("should get expected summary");
     let adjusted_summary =
-        summarize_modbam(adjusted_bam.to_str().unwrap(), 1, 0f32, None)
+        run_simple_summary(adjusted_bam.to_str().unwrap(), 25)
             .expect("should get adjusted summary");
     assert_eq!(expected_summary, adjusted_summary);
 }

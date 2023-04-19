@@ -13,7 +13,7 @@ use indicatif::{MultiProgress, ParallelProgressIterator};
 use log::{debug, error, info};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Read IDs mapped to their base modification calls, organized by the
@@ -346,6 +346,7 @@ fn sample_read_base_mod_calls<T: Read>(
     };
     let mod_base_info_iter = filter_records_iter(records);
     let mut read_ids_to_mod_base_probs = ReadIdsToBaseModCalls::zero();
+    let mut warned = HashSet::new();
     for (record, mod_base_info) in mod_base_info_iter {
         match record_sampler.ask() {
             Indicator::Use => {
@@ -371,8 +372,21 @@ fn sample_read_base_mod_calls<T: Read>(
                     let mod_probs = seq_pos_base_mod_probs
                         .pos_to_base_mod_probs
                         .iter()
-                        .map(|(_q_pos, base_mod_probs)| {
-                            base_mod_probs.base_mod_call()
+                        .filter_map(|(_q_pos, base_mod_probs)| {
+                            match base_mod_probs.base_mod_call() {
+                                Ok(base_mod_call) => Some(base_mod_call),
+                                Err(e) => {
+                                    let warning = e.to_string();
+                                    match warned.contains(&warning) {
+                                        true => {}
+                                        false => {
+                                            debug!("{warning}");
+                                            warned.insert(warning);
+                                        }
+                                    }
+                                    None
+                                }
+                            }
                         })
                         .collect::<Vec<BaseModCall>>();
                     read_ids_to_mod_base_probs.add_mod_calls_for_read(

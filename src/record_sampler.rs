@@ -88,11 +88,10 @@ impl RecordSampler {
         match (self.num_reads, self.sample_frac) {
             (Some(_nr), _) => self.check_num_reads(),
             (_, Some(_sample_frac)) => self.check_sample_frac(),
-            (None, None) => Indicator::Use
+            (None, None) => Indicator::Use,
         }
     }
 }
-
 
 pub(crate) enum Indicator {
     Use,

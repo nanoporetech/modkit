@@ -22,7 +22,7 @@ use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     collapse_mod_probs, format_mm_ml_tag, CollapseMethod, ModBaseInfo,
-    SkipMode, ML_TAGS, MM_TAGS, RawModCode
+    RawModCode, SkipMode, ML_TAGS, MM_TAGS,
 };
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
@@ -882,10 +882,6 @@ pub struct SampleModBaseProbs {
     /// to sample, for example 0.1 will sample 1/10th of the reads.
     #[arg(group = "sampling_options", short = 'f', long)]
     sampling_frac: Option<f64>,
-    /// Do not perform any filtering, include all mod base calls in output. See
-    /// filtering.md for details on filtering.
-    #[arg(group = "sampling_options", long, default_value_t = false)]
-    no_filtering: bool,
     /// Random seed for deterministic running, the default is non-deterministic.
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
@@ -917,7 +913,7 @@ impl SampleModBaseProbs {
             None
         };
         let (sample_frac, num_reads) = get_sampling_options(
-            self.no_filtering,
+            false,
             self.sampling_frac,
             self.num_reads,
         );
