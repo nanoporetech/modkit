@@ -285,3 +285,33 @@ fn test_adjust_to_no_mods() {
         assert!(mm.starts_with("C+C?"));
     }
 }
+
+#[test]
+fn test_adjust_out_of_spec_codes() {
+    let adjusted_bam =
+        std::env::temp_dir().join("test_adjust_out_of_spec_codes.bam");
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads_old_tags.bam",
+        adjusted_bam.to_str().unwrap(),
+        "--convert",
+        "Z",
+        "m",
+        "--convert",
+        "Y",
+        "h",
+    ])
+    .expect("should run adjust");
+
+    let expected_summary = summarize_modbam(
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        1,
+        0f32,
+        None,
+    )
+    .expect("should get expected summary");
+    let adjusted_summary =
+        summarize_modbam(adjusted_bam.to_str().unwrap(), 1, 0f32, None)
+            .expect("should get adjusted summary");
+    assert_eq!(expected_summary, adjusted_summary);
+}

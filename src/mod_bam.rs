@@ -12,6 +12,8 @@ use std::collections::{HashMap, HashSet};
 pub const MM_TAGS: [&str; 2] = ["MM", "Mm"];
 pub const ML_TAGS: [&str; 2] = ["ML", "Ml"];
 
+pub type RawModCode = char;
+
 pub struct RawModTags {
     raw_mm: String,
     raw_ml: Vec<u16>,
@@ -48,15 +50,21 @@ impl RawModTags {
 #[derive(Debug, Clone)]
 pub enum CollapseMethod {
     /// ModCode is the modified base to remove
-    ReNormalize(ModCode),
+    ReNormalize(RawModCode),
     /// ModCode is the modified base to remove
-    ReDistribute(ModCode),
+    ReDistribute(RawModCode),
     /// Convert one mod base to another
-    Convert { from: HashSet<ModCode>, to: ModCode },
+    Convert {
+        from: HashSet<RawModCode>,
+        to: RawModCode,
+    },
 }
 
 impl CollapseMethod {
-    pub fn parse_str(raw: &str, mod_code: ModCode) -> Result<Self, InputError> {
+    pub fn parse_str(
+        raw: &str,
+        mod_code: RawModCode,
+    ) -> Result<Self, InputError> {
         match raw {
             "norm" => Ok(Self::ReNormalize(mod_code)),
             "dist" => Ok(Self::ReDistribute(mod_code)),
@@ -122,27 +130,27 @@ impl BaseModProbs {
         }
     }
 
-    pub fn base_mod_call(&self) -> BaseModCall {
+    pub fn base_mod_call(&self) -> anyhow::Result<BaseModCall> {
         let canonical_prob = self.canonical_prob();
         // todo(arand) use iterprobs here
         let max_mod_prob = self
-            .probs
-            .iter()
-            .zip(self.mod_codes.iter())
-            .max_by(|(p, _), (q, _)| p.partial_cmp(q).unwrap());
-        if let Some((mod_prob, mod_code)) = max_mod_prob {
+            .iter_probs()
+            .max_by(|(_, p), (_, q)| p.partial_cmp(q).unwrap());
+        let base_mod_call = if let Some((mod_code, mod_prob)) = max_mod_prob {
+            let mod_code = ModCode::parse_raw_mod_code(*mod_code)?;
             if *mod_prob > canonical_prob {
-                // todo(arand) use ModCodes directly in BaseModProbs
-                BaseModCall::Modified(
-                    *mod_prob,
-                    ModCode::parse_raw_mod_code(*mod_code).unwrap(),
-                )
+                BaseModCall::Modified(*mod_prob, mod_code)
             } else {
                 BaseModCall::Canonical(canonical_prob)
             }
         } else {
             BaseModCall::Canonical(canonical_prob)
-        }
+        };
+        Ok(base_mod_call)
+    }
+
+    pub fn base_mod_call_unchecked(&self) -> BaseModCall {
+        self.base_mod_call().unwrap()
     }
 
     pub fn canonical_prob(&self) -> f32 {
@@ -162,9 +170,7 @@ impl BaseModProbs {
             CollapseMethod::ReNormalize(mod_to_collapse) => {
                 let marginal_collapsed_prob = self
                     .iter_probs()
-                    .filter(|(mod_code, _prob)| {
-                        **mod_code != mod_to_collapse.char()
-                    })
+                    .filter(|(mod_code, _prob)| *mod_code != mod_to_collapse)
                     .collect::<Vec<(&char, &f32)>>();
                 let total_marginal_collapsed_prob = marginal_collapsed_prob
                     .iter()
@@ -187,7 +193,7 @@ impl BaseModProbs {
                 let marginal_prob = self
                     .iter_probs()
                     .filter_map(|(mod_code, prob)| {
-                        if *mod_code == mod_to_collapse.char() {
+                        if mod_code == mod_to_collapse {
                             Some(*prob)
                         } else {
                             None
@@ -196,9 +202,7 @@ impl BaseModProbs {
                     .sum::<f32>();
                 let other_mods = self
                     .iter_probs()
-                    .filter(|(mod_code, _prob)| {
-                        *mod_code != &mod_to_collapse.char()
-                    })
+                    .filter(|(mod_code, _prob)| *mod_code != mod_to_collapse)
                     .collect::<Vec<_>>();
                 let n_other_mods = other_mods.len() as f32 + 1f32; // plus 1 for the canonical base
                 let prob_to_redistribute = marginal_prob / n_other_mods;
@@ -226,11 +230,8 @@ impl BaseModProbs {
 
                 let mut converted_prob = 0f32;
                 for (raw_mod_code, prob) in self.iter_probs() {
-                    // todo(arand) remove this unnecessary unwrap when refactoring
-                    let mod_code =
-                        ModCode::parse_raw_mod_code(*raw_mod_code).unwrap();
                     // if we're converting from, add to the accumulator
-                    if from.contains(&mod_code) {
+                    if from.contains(&raw_mod_code) {
                         converted_prob += prob;
                     } else {
                         // keep track as before
@@ -243,7 +244,7 @@ impl BaseModProbs {
 
                 if converted_prob > 0f32 {
                     new_base_mod_probs
-                        .insert_base_mod_prob(to.char(), converted_prob);
+                        .insert_base_mod_prob(*to, converted_prob);
                 }
 
                 new_base_mod_probs
@@ -1028,22 +1029,22 @@ mod mod_bam_tests {
         };
         let collapsed = mod_base_probs
             .clone()
-            .into_collapsed(&CollapseMethod::ReDistribute(ModCode::h));
+            .into_collapsed(&CollapseMethod::ReDistribute('h'));
         assert_eq!(collapsed.probs, vec![0.52500004]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
         let collapsed = mod_base_probs
             .clone()
-            .into_collapsed(&CollapseMethod::ReNormalize(ModCode::h));
+            .into_collapsed(&CollapseMethod::ReNormalize('h'));
         assert_eq!(collapsed.probs, vec![0.6666669]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
 
         let collapsed = mod_base_probs
             .clone()
-            .into_collapsed(&CollapseMethod::ReNormalize(ModCode::a));
+            .into_collapsed(&CollapseMethod::ReNormalize('a'));
         assert_eq!(&collapsed, &mod_base_probs);
         let collapsed = mod_base_probs
             .clone()
-            .into_collapsed(&CollapseMethod::ReDistribute(ModCode::a));
+            .into_collapsed(&CollapseMethod::ReDistribute('a'));
         assert_eq!(&collapsed, &mod_base_probs);
     }
 
@@ -1053,8 +1054,8 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.05273438, 0.03320312],
         };
-        let collapsed = mod_base_probs
-            .into_collapsed(&CollapseMethod::ReNormalize(ModCode::h));
+        let collapsed =
+            mod_base_probs.into_collapsed(&CollapseMethod::ReNormalize('h'));
         assert_eq!(collapsed.probs, vec![0.035051543]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
@@ -1065,8 +1066,8 @@ mod mod_bam_tests {
             mod_codes: indexset! {'h', 'm'},
             probs: vec![0.05273438, 0.03320312],
         };
-        let collapsed = mod_base_probs
-            .into_collapsed(&CollapseMethod::ReDistribute(ModCode::h));
+        let collapsed =
+            mod_base_probs.into_collapsed(&CollapseMethod::ReDistribute('h'));
         assert_eq!(collapsed.probs, vec![0.059570313]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
@@ -1079,8 +1080,8 @@ mod mod_bam_tests {
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
-                from: HashSet::from([ModCode::h]),
-                to: ModCode::C,
+                from: HashSet::from(['h']),
+                to: 'C',
             });
         assert_eq!(collapsed.probs, vec![0.75, 0.10]);
         assert_eq!(collapsed.mod_codes, indexset! {'m', 'C'});
@@ -1091,8 +1092,8 @@ mod mod_bam_tests {
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
-                from: HashSet::from([ModCode::h, ModCode::m]),
-                to: ModCode::C,
+                from: HashSet::from(['h', 'm']),
+                to: 'C',
             });
         assert_eq!(collapsed.probs, vec![0.85]);
         assert_eq!(collapsed.mod_codes, indexset! {'C'});
@@ -1106,8 +1107,8 @@ mod mod_bam_tests {
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
-                from: HashSet::from([ModCode::h]),
-                to: ModCode::m,
+                from: HashSet::from(['h']),
+                to: 'm',
             });
         assert_eq!(collapsed.probs, vec![0.85]);
         assert_eq!(collapsed.mod_codes, indexset! {'m'});
@@ -1121,8 +1122,8 @@ mod mod_bam_tests {
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
-                from: HashSet::from([ModCode::a]),
-                to: ModCode::A,
+                from: HashSet::from(['a']),
+                to: 'A',
             });
         assert_eq!(collapsed.probs, vec![0.10, 0.75]);
         assert_eq!(collapsed.mod_codes, indexset! {'h', 'm'});

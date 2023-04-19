@@ -21,7 +21,7 @@ use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     collapse_mod_probs, format_mm_ml_tag, CollapseMethod, ModBaseInfo,
-    SkipMode, ML_TAGS, MM_TAGS,
+    RawModCode, SkipMode, ML_TAGS, MM_TAGS,
 };
 use crate::mod_base_code::ModCode;
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
@@ -218,16 +218,16 @@ impl Adjust {
             let mut conversions = HashMap::new();
             for chunk in convert.chunks(2) {
                 debug_assert_eq!(chunk.len(), 2);
-                let from = ModCode::parse_raw_mod_code(chunk[0])?;
-                let to = ModCode::parse_raw_mod_code(chunk[1])?;
+                let from: RawModCode = chunk[0];
+                let to: RawModCode = chunk[1];
                 let froms = conversions.entry(to).or_insert(HashSet::new());
                 froms.insert(from);
             }
             for (to_code, from_codes) in conversions.iter() {
                 info!(
                     "Converting {} to {}",
-                    from_codes.iter().map(|c| c.char()).collect::<String>(),
-                    to_code.char()
+                    from_codes.iter().collect::<String>(),
+                    to_code
                 )
             }
             conversions
@@ -242,17 +242,13 @@ impl Adjust {
                 })
                 .collect::<Vec<CollapseMethod>>()
         } else {
-            let mod_code_to_remove = ModCode::parse_raw_mod_code(self.ignore)?;
             info!(
-                "{}",
-                format!(
-                    "Removing mod base {} from {}, new bam {}",
-                    mod_code_to_remove.char(),
-                    fp.to_str().unwrap_or("???"),
-                    out_fp.to_str().unwrap_or("???")
-                )
+                "Removing mod base {} from {}, new bam {}",
+                self.ignore,
+                fp.to_str().unwrap_or("???"),
+                out_fp.to_str().unwrap_or("???")
             );
-            let method = CollapseMethod::ReDistribute(mod_code_to_remove);
+            let method = CollapseMethod::ReDistribute(self.ignore);
             vec![method]
         };
 
@@ -523,7 +519,7 @@ impl ModBamPileup {
                 info!("ignoring mod code {}", ModCode::h.char());
                 (
                     PileupNumericOptions::Collapse(
-                        CollapseMethod::ReDistribute(ModCode::h),
+                        CollapseMethod::ReDistribute('h'),
                     ),
                     true,
                 )
@@ -533,10 +529,9 @@ impl ModBamPileup {
                     (false, None) => PileupNumericOptions::Passthrough,
                     (true, _) => PileupNumericOptions::Combine,
                     (_, Some(raw_mod_code)) => {
-                        let mod_code =
-                            ModCode::parse_raw_mod_code(*raw_mod_code)?;
                         info!("ignoring mod code {}", raw_mod_code);
-                        let method = CollapseMethod::ReDistribute(mod_code);
+                        let method =
+                            CollapseMethod::ReDistribute(*raw_mod_code);
                         PileupNumericOptions::Collapse(method)
                     }
                 };

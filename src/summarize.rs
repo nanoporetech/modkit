@@ -4,12 +4,13 @@ use crate::mod_base_code::{DnaBase, ModCode};
 use crate::thresholds::modbase_records;
 use crate::util::{get_master_progress_bar, get_spinner, Strand};
 
+use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct ModSummary {
     pub reads_with_mod_calls: HashMap<DnaBase, u64>,
     pub mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
@@ -45,6 +46,7 @@ pub fn summarize_modbam<T: AsRef<Path>>(
     let mut reads_with_mod_calls = HashMap::new();
     let mut mod_call_counts = HashMap::new();
     let mut filtered_mod_calls = HashMap::new();
+    let mut warned = HashSet::new();
     for (i, modbase_info) in record_iter.enumerate() {
         if modbase_info.is_empty() {
             continue;
@@ -70,7 +72,7 @@ pub fn summarize_modbam<T: AsRef<Path>>(
                 seq_pos_mod_probs.pos_to_base_mod_probs
             {
                 let count = match base_mod_probs.base_mod_call() {
-                    BaseModCall::Canonical(p) => {
+                    Ok(BaseModCall::Canonical(p)) => {
                         if p > threshold {
                             mod_counts
                                 .entry(
@@ -89,15 +91,26 @@ pub fn summarize_modbam<T: AsRef<Path>>(
                                 .or_insert(0)
                         }
                     }
-                    BaseModCall::Modified(p, mod_code) => {
+                    Ok(BaseModCall::Modified(p, mod_code)) => {
                         if p < threshold {
                             filtered_counts.entry(mod_code).or_insert(0)
                         } else {
                             mod_counts.entry(mod_code).or_insert(0)
                         }
                     }
-                    BaseModCall::Filtered => {
+                    Ok(BaseModCall::Filtered) => {
                         unreachable!("should not encounter filtered calls")
+                    }
+                    Err(e) => {
+                        let warning = e.to_string();
+                        match warned.get(&warning) {
+                            None => {
+                                debug!("{}", &warning);
+                                warned.insert(warning);
+                            }
+                            Some(_) => {}
+                        }
+                        continue;
                     }
                 };
                 *count += 1;
