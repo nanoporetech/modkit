@@ -57,7 +57,8 @@ pub enum Commands {
     SampleProbs(SampleModBaseProbs),
     /// Summarize the mod tags present in a BAM and get basic statistics
     Summary(ModSummarize),
-    /// Create BED file with all locations of a sequence motif
+    /// Create BED file with all locations of a sequence motif.
+    /// Example: --motif CG --offset 0.
     MotifBed(MotifBed),
 }
 
@@ -689,17 +690,19 @@ impl ModBamPileup {
                 })?
             };
 
-        for (base, threshold) in filter_thresholds.iter_thresholds() {
-            let base = base.char();
-            match (threshold * 100f32).ceil() as usize {
-                0..=60 => error!(
+        if !self.no_filtering {
+            for (base, threshold) in filter_thresholds.iter_thresholds() {
+                let base = base.char();
+                match (threshold * 100f32).ceil() as usize {
+                    0..=60 => error!(
                 "Threshold of {threshold} for base {base} is very low. Consider increasing the \
                 filter-percentile or specifying a higher threshold."),
-                61..=70 => warn!(
+                    61..=70 => warn!(
                 "Threshold of {threshold} for base {base} is low. Consider increasing the \
                 filter-percentile or specifying a higher threshold."
             ),
-                _ => info!("Using filter threshold {} for {base}.", threshold),
+                    _ => info!("Using filter threshold {} for {base}.", threshold),
+                }
             }
         }
 
@@ -1070,9 +1073,9 @@ impl ModSummarize {
 pub struct MotifBed {
     /// Input FASTA file
     fasta: PathBuf,
-    /// Motif to search for within FASTA
+    /// Motif to search for within FASTA, e.g. CG
     motif: String,
-    /// Offset within motif.
+    /// Offset within motif, e.g. 0
     offset: usize,
     /// Respect soft masking in the reference FASTA.
     #[arg(long, short = 'k', default_value_t = false)]

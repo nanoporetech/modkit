@@ -149,10 +149,6 @@ impl BaseModProbs {
         Ok(base_mod_call)
     }
 
-    pub fn base_mod_call_unchecked(&self) -> BaseModCall {
-        self.base_mod_call().unwrap()
-    }
-
     pub fn canonical_prob(&self) -> f32 {
         1f32 - self.probs.iter().sum::<f32>()
     }

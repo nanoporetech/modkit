@@ -266,7 +266,7 @@ impl TsvWriter<std::io::Stdout> {
 impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
     fn write(&mut self, item: ModSummary) -> AnyhowResult<u64> {
         warn!("this output format will not be default in the next version, the table output \
-            set with --table will become default and this format will require the --tsv option"
+            (set with --table) will become default and this format will require the --tsv option"
         );
         let mut report = String::new();
         let mod_called_bases = item.mod_bases();

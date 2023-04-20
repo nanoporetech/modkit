@@ -22,6 +22,7 @@ Commands:
   sample-probs  Calculate an estimate of the base modification probability distribution.
   summary       Summarize the mod tags present in a BAM and get basic statistics.
   motif-bed     Create BED file with all locations of a sequence motif.
+                    Example: --motif CG --offset 0.
   help          Print this message or the help of the given subcommand(s).
 
 Options:
@@ -244,14 +245,11 @@ Options:
   -f, --sampling-frac <SAMPLING_FRAC>  Instead of using a defined number of reads, specify a
                                        fraction of reads to sample, for example 0.1 will sample
                                        1/10th of the reads.
-      --no-filtering                   Do not perform any filtering, include all mod base calls in
-                                       output. See filtering.md for details on filtering.
   -s, --seed <SEED>                    Random seed for deterministic running, the default is
                                        non-deterministic.
       --region <REGION>                Process only the specified region of the BAM when collecting
                                        probabilities. Format should be <chrom_name>:<start>-<end> or
                                        <chrom_name>.
-
   -i, --interval-size <INTERVAL_SIZE>  Interval chunk size to process concurrently. Smaller interval
                                        chunk sizes will use less memory but incur more overhead.
                                        Only used when sampling probs from an indexed bam. [default:
@@ -266,19 +264,17 @@ Summarize the mod tags present in a BAM and get basic statistics.
 Usage: modkit summary [OPTIONS] <IN_BAM>
 
 Arguments:
-  <IN_BAM>
-          Input ModBam file.
+  <IN_BAM>  Input ModBam file.
 
 Options:
   -t, --threads <THREADS>
-          Number of threads to use reading BAM.
-          
-          [default: 4]
-
+          Number of threads to use. [default: 4]
       --log-filepath <LOG_FILEPATH>
           Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
           recommended.
-
+      --table
+          Output summary as a table to stdout. Default is tab-separated values. *This will become
+          the default output format in the next version.*.
   -n, --num-reads <NUM_READS>
           Max number of reads to use, especially recommended when using a large BAM without an
           index. If an indexed BAM is provided, the reads will be sampled evenly over the length of
@@ -317,14 +313,14 @@ Options:
 
 ## motif-bed
 ```bash
-Create BED file with all locations of a sequence motif.
+Create BED file with all locations of a sequence motif. Example: --motif CG --offset 0.
 
 Usage: modkit motif-bed [OPTIONS] <FASTA> <MOTIF> <OFFSET>
 
 Arguments:
   <FASTA>   Input FASTA file.
-  <MOTIF>   Motif to search for within FASTA.
-  <OFFSET>  Offset within motif.
+  <MOTIF>   Motif to search for within FASTA, e.g. CG.
+  <OFFSET>  Offset within motif, e.g. 0.
 
 Options:
   -k, --mask  Respect soft masking in the reference FASTA.
