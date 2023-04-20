@@ -314,6 +314,10 @@ impl Region {
             self.end as i64,
         ))
     }
+
+    pub(crate) fn to_string(&self) -> String {
+        format!("{}:{}-{}", self.name, self.start, self.end)
+    }
 }
 
 pub fn add_modkit_pg_records(header: &mut bam::Header) {

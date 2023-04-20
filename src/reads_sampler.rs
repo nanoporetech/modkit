@@ -10,7 +10,7 @@ use crate::util::{
 };
 use anyhow::anyhow;
 use indicatif::{MultiProgress, ParallelProgressIterator};
-use log::{debug, error, info};
+use log::{debug, error};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
 use std::collections::{HashMap, HashSet};
@@ -158,7 +158,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
                 let f = 1f32 - f;
                 f <= 0.9f32
             })
-            .unwrap_or(read_ids_to_base_mod_calls.len() > 0);
+            .unwrap_or(read_ids_to_base_mod_calls.len() < 100);
         if should_sample_unmapped {
             debug!(
                 "sampled {} mapped records, sampling unmapped records",
@@ -180,9 +180,15 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
                     true,
                     record_sampler,
                 )?;
+            debug!(
+                "sampled {} unmapped records",
+                unmapped_read_ids_to_base_mod_calls.len()
+            );
             read_ids_to_base_mod_calls
                 .op_mut(unmapped_read_ids_to_base_mod_calls);
         }
+        debug!("sampled {} records", read_ids_to_base_mod_calls.len());
+
         Ok(read_ids_to_base_mod_calls)
     } else {
         if region.is_some() {
@@ -192,7 +198,10 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
         reader.set_threads(reader_threads)?;
         let record_sampler =
             RecordSampler::new_from_options(sample_frac, num_reads, seed);
-        sample_read_base_mod_calls(reader.records(), true, record_sampler)
+        let read_ids_to_base_mod_calls =
+            sample_read_base_mod_calls(reader.records(), true, record_sampler)?;
+        debug!("sampled {} records", read_ids_to_base_mod_calls.len());
+        Ok(read_ids_to_base_mod_calls)
     }
 }
 
@@ -290,7 +299,6 @@ fn sample_reads_base_mod_calls_over_regions(
     }
 
     tid_progress.finish_and_clear();
-    info!("sampled {} records", aggregator.len());
     Ok(aggregator)
 }
 
@@ -406,7 +414,6 @@ fn sample_read_base_mod_calls<T: Read>(
 
     if let Some(pb) = &spinner {
         pb.finish_and_clear();
-        info!("sampled {} records", read_ids_to_mod_base_probs.len());
     }
 
     Ok(read_ids_to_mod_base_probs)

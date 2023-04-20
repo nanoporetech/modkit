@@ -67,12 +67,13 @@ impl RecordSampler {
         spinner
     }
 
-    fn check_num_reads(&self) -> Indicator {
+    fn check_num_reads(&mut self) -> Indicator {
         let indicator = if self.reads_sampled >= self.num_reads.unwrap() {
             Indicator::Done
         } else {
             Indicator::Use
         };
+        self.reads_sampled += 1;
         indicator
     }
 

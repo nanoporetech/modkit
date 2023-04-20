@@ -19,7 +19,7 @@ use crate::thresholds::calc_thresholds_per_base;
 use crate::util::{get_master_progress_bar, Region};
 
 /// Count statistics from a modBAM.
-#[derive(Debug, new, Eq, PartialEq)]
+#[derive(Debug, new, PartialEq)]
 pub struct ModSummary<'a> {
     /// For each canonical base, how many reads had
     /// base modification calls for this base.
@@ -33,6 +33,9 @@ pub struct ModSummary<'a> {
     /// Total number of reads used in the summary. Usually a summary is computed
     /// on a sub-sample of the reads in a modBAM (or a sub-region).
     pub total_reads_used: usize,
+    /// Mapping of canonical base to the estimated base modification confidence
+    /// threshold for base modification calls at that base.
+    pub per_base_thresholds: HashMap<DnaBase, f32>,
     /// If a region is provided, this is a reference to that region.
     pub region: Option<&'a Region>,
 }
@@ -157,11 +160,16 @@ fn sampled_reads_to_summary<'a>(
 
     let elap = start_t.elapsed();
     debug!("computing summary took {}s", elap.as_secs());
+    let per_base_thresholds = filter_thresholds
+        .iter_thresholds()
+        .map(|(b, t)| (*b, *t))
+        .collect::<HashMap<DnaBase, f32>>();
     Ok(ModSummary::new(
         read_summary_chunk.reads_with_mod_calls,
         read_summary_chunk.mod_call_counts,
         read_summary_chunk.filtered_mod_call_counts,
         total_reads_used,
+        per_base_thresholds,
         region,
     ))
 }

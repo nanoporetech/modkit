@@ -912,11 +912,8 @@ impl SampleModBaseProbs {
         } else {
             None
         };
-        let (sample_frac, num_reads) = get_sampling_options(
-            false,
-            self.sampling_frac,
-            self.num_reads,
-        );
+        let (sample_frac, num_reads) =
+            get_sampling_options(false, self.sampling_frac, self.num_reads);
 
         let desired_percentiles = parse_percentiles(&self.percentiles)
             .with_context(|| {

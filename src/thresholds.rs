@@ -109,10 +109,11 @@ pub(crate) fn calc_thresholds_per_base(
         })
         .collect::<AnyhowResult<HashMap<DnaBase, f32>>>()?;
     debug!("filter thresholds took {}s", st.elapsed().as_secs());
-    info!("calculated thresholds:");
+    let mut threshold_message = "calculated thresholds: ".to_string();
     for (dna_base, thresh) in filter_thresholds.iter() {
-        info!("{}: {}", dna_base.char(), thresh);
+        threshold_message.push_str(&format!("{}: {}", dna_base.char(), thresh));
     }
+    info!("{threshold_message}");
     Ok(FilterThresholds::new(
         default_threshold.unwrap_or(0f32),
         filter_thresholds,
