@@ -19,6 +19,7 @@ type RefPosBaseModCalls = HashMap<u64, BaseModCall>; // todo use FxHasher
 // todo last position (for gc)
 pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that read
+    /// organized by the canonical base (the 'char') todo: should use DnaBase here
     pos_reads: HashMap<String, HashMap<char, (RefPosBaseModCalls, SkipMode)>>,
     neg_reads: HashMap<String, HashMap<char, (RefPosBaseModCalls, SkipMode)>>,
     /// these reads don't have mod tags or should be skipped for some other reason
@@ -65,13 +66,30 @@ impl<'a> ReadCache<'a> {
             .filter_map(|ap| ap.ok())
             .collect::<HashMap<usize, u64>>();
 
+        let mut warned = false;
         let ref_pos_base_mod_calls = seq_pos_base_mod_probs
             .pos_to_base_mod_probs
             .into_iter()
             // here the q_pos is the forward-oriented position
             .flat_map(|(q_pos, bmp)| {
                 if let Some(r_pos) = aligned_pairs.get(&q_pos) {
-                    Some((*r_pos, bmp.base_mod_call_unchecked()))
+                    match bmp.base_mod_call() {
+                        Ok(base_mod_call) => Some((*r_pos, base_mod_call)),
+                        Err(e) => {
+                            if !warned {
+                                let warning = e.to_string();
+                                let e = e.context(format!(
+                                    "{} has out of spec mod code, {warning}",
+                                    record_name
+                                ));
+                                debug!("{}, update tags with modkit adjust-mods --convert",
+                                e.to_string());
+                                warned = true
+                            }
+                            None
+                        }
+                    }
+                    // Some((*r_pos, bmp.base_mod_call_unchecked()))
                 } else {
                     None
                 }
@@ -106,7 +124,7 @@ impl<'a> ReadCache<'a> {
         for (_base, _strand, seq_pos_probs) in
             mod_base_info.iter_seq_base_mod_probs()
         {
-            if seq_pos_probs.skip_mode != SkipMode::Ambiguous
+            if seq_pos_probs.skip_mode == SkipMode::ImplicitProbModified
                 && !self.force_allow
             {
                 let msg = format!(

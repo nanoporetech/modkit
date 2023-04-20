@@ -1,9 +1,9 @@
 use rust_htslib::{bam, bam::Read};
 
+use crate::common::run_simple_summary;
 use common::run_modkit;
 use mod_kit::mod_bam::parse_raw_mod_tags;
 use mod_kit::mod_base_code::{DnaBase, ModCode};
-use mod_kit::summarize::summarize_modbam;
 
 mod common;
 
@@ -105,11 +105,9 @@ fn test_mod_adjust_convert_sum_probs() {
     let test_convered_bam =
         std::env::temp_dir().join("test_convert_sum_probs.bam");
 
-    let initial_mod_summary = summarize_modbam(
+    let initial_mod_summary = run_simple_summary(
         "tests/resources/bc_anchored_10_reads.sorted.bam",
-        1,
-        0f32,
-        None,
+        25,
     )
     .unwrap();
 
@@ -124,8 +122,7 @@ fn test_mod_adjust_convert_sum_probs() {
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1, 0f32, None)
-            .unwrap();
+        run_simple_summary(test_convered_bam.to_str().unwrap(), 25).unwrap();
 
     let initial_m_calls = initial_mod_summary
         .mod_call_counts
@@ -156,11 +153,9 @@ fn test_mod_adjust_convert_rename() {
     let test_convered_bam =
         std::env::temp_dir().join("test_convert_convert_rename.bam");
 
-    let initial_mod_summary = summarize_modbam(
+    let initial_mod_summary = run_simple_summary(
         "tests/resources/bc_anchored_10_reads.sorted.bam",
-        1,
-        0f32,
-        None,
+        25,
     )
     .unwrap();
 
@@ -175,8 +170,7 @@ fn test_mod_adjust_convert_rename() {
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_convered_bam.to_str().unwrap(), 1, 0f32, None)
-            .unwrap();
+        run_simple_summary(test_convered_bam.to_str().unwrap(), 25).unwrap();
 
     let initial_h_calls = initial_mod_summary
         .mod_call_counts
@@ -196,11 +190,9 @@ fn test_mod_adjust_convert_sum_probs_rename() {
     let test_converted_bam =
         std::env::temp_dir().join("test_convert_sum_probs_rename.bam");
 
-    let initial_mod_summary = summarize_modbam(
+    let initial_mod_summary = run_simple_summary(
         "tests/resources/bc_anchored_10_reads.sorted.bam",
-        1,
-        0f32,
-        None,
+        25,
     )
     .unwrap();
 
@@ -218,8 +210,7 @@ fn test_mod_adjust_convert_sum_probs_rename() {
     run_modkit(&collapse_args).unwrap();
 
     let converted_mod_summary =
-        summarize_modbam(test_converted_bam.to_str().unwrap(), 1, 0f32, None)
-            .unwrap();
+        run_simple_summary(test_converted_bam.to_str().unwrap(), 25).unwrap();
 
     let initial_m_calls = initial_mod_summary
         .mod_call_counts
@@ -303,15 +294,13 @@ fn test_adjust_out_of_spec_codes() {
     ])
     .expect("should run adjust");
 
-    let expected_summary = summarize_modbam(
+    let expected_summary = run_simple_summary(
         "tests/resources/bc_anchored_10_reads.sorted.bam",
-        1,
-        0f32,
-        None,
+        25,
     )
     .expect("should get expected summary");
     let adjusted_summary =
-        summarize_modbam(adjusted_bam.to_str().unwrap(), 1, 0f32, None)
+        run_simple_summary(adjusted_bam.to_str().unwrap(), 25)
             .expect("should get adjusted summary");
     assert_eq!(expected_summary, adjusted_summary);
 }

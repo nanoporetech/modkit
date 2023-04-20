@@ -12,3 +12,4 @@ push-remote.sh
 tmp/
 dist
 dist/
+sourceme.sh

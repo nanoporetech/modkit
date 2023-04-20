@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
+use crate::filter_thresholds::FilterThresholds;
 use derive_new::new;
 use itertools::Itertools;
 use log::{debug, error};
@@ -563,7 +564,7 @@ pub fn process_region<T: AsRef<Path>>(
     chrom_tid: u32,
     start_pos: u32,
     end_pos: u32,
-    threshold: f32,
+    filter_thresholds: &FilterThresholds,
     pileup_numeric_options: &PileupNumericOptions,
     force_allow: bool,
     combine_strands: bool,
@@ -666,7 +667,7 @@ pub fn process_region<T: AsRef<Path>>(
                 &record,
                 pos,
                 read_base.char(),
-                threshold,
+                filter_thresholds.get(&read_base),
             ) {
                 // a read can report on the read-positive or read-negative
                 // strand (see the docs for .get_mod_call above) so the
