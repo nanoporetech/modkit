@@ -27,7 +27,7 @@ use crate::mod_bam::{
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
-use crate::summarize::summarize_modbam;
+use crate::summarize::{summarize_modbam, ModSummary};
 use crate::thresholds::{
     calc_threshold_from_bam, get_modbase_probs_from_bam, Percentiles,
 };
@@ -36,7 +36,9 @@ use crate::util::{
     add_modkit_pg_records, get_spinner, get_targets, record_is_secondary,
     Region,
 };
-use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter, TsvWriter};
+use crate::writers::{
+    BedGraphWriter, BedMethylWriter, OutWriter, TableWriter, TsvWriter,
+};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -953,6 +955,10 @@ pub struct ModSummarize {
     /// Setting a file is recommended.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
+    /// Output summary as a table to stdout. Default is tab-separated values.
+    /// *This will become the default output format in the next version.*
+    #[arg(long = "table", default_value_t = false)]
+    table_format: bool,
 
     /// Max number of reads to use, especially recommended when using a large
     /// BAM without an index. If an indexed BAM is provided, the reads will be
@@ -1050,8 +1056,11 @@ impl ModSummarize {
                 filter_thresholds,
             )
         })?;
-
-        let mut writer = TsvWriter::new();
+        let mut writer: Box<dyn OutWriter<ModSummary>> = if self.table_format {
+            Box::new(TableWriter::new())
+        } else {
+            Box::new(TsvWriter::new())
+        };
         writer.write(mod_summary)?;
         Ok(())
     }

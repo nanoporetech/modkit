@@ -40,6 +40,16 @@ pub struct ModSummary<'a> {
     pub region: Option<&'a Region>,
 }
 
+impl<'a> ModSummary<'a> {
+    pub(crate) fn mod_bases(&self) -> String {
+        self.mod_call_counts
+            .keys()
+            .map(|d| d.char().to_string())
+            .collect::<Vec<String>>()
+            .join(",")
+    }
+}
+
 /// Compute summary statistics from the reads in a modBAM. See `ModSummary`
 /// for more details.
 pub fn summarize_modbam<'a>(
@@ -74,7 +84,7 @@ pub fn summarize_modbam<'a>(
             FilterThresholds::new_passthrough()
         } else {
             // calculate the threshold at the given filter-percentile
-            let pct = filter_percentile * 100f32;
+            let pct = (filter_percentile * 100f32).floor();
             info!("calculating threshold at {pct}% percentile");
             calc_thresholds_per_base(
                 &read_ids_to_base_mod_calls,

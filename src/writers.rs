@@ -2,7 +2,9 @@ use crate::mod_pileup::ModBasePileup;
 use crate::summarize::ModSummary;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 
-use log::debug;
+use log::warn;
+use prettytable::format::FormatBuilder;
+use prettytable::{row, Table};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -163,64 +165,53 @@ impl OutWriter<ModBasePileup> for BedGraphWriter {
     }
 }
 
-pub struct TsvWriter<W: Write> {
-    buf_writer: BufWriter<W>,
+pub struct TableWriter<W: Write> {
+    writer: BufWriter<W>,
 }
 
-impl TsvWriter<std::io::Stdout> {
+impl TableWriter<std::io::Stdout> {
     pub fn new() -> Self {
         let out = BufWriter::new(std::io::stdout());
-
-        Self { buf_writer: out }
+        Self { writer: out }
     }
 }
 
-impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
-    fn write(&mut self, item: ModSummary) -> AnyhowResult<u64> {
-        let tab = '\t';
-        let newline = '\n';
-
-        let mut header = String::new();
-        let mod_called_bases = item
-            .mod_call_counts
-            .keys()
-            .map(|d| d.char().to_string())
-            .collect::<Vec<String>>()
-            .join(",");
-        header.push_str(&format!(
-            "#   total_reads_used{tab}{}{newline}",
-            item.total_reads_used
-        ));
-        header.push_str(&format!(
-            "#              bases{tab}{}{newline}",
-            mod_called_bases
-        ));
+impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
+    fn write(&mut self, item: ModSummary<'a>) -> AnyhowResult<u64> {
+        let mut metadata_table = Table::new();
+        let metadata_format =
+            FormatBuilder::new().padding(1, 1).left_border('#').build();
+        metadata_table.set_format(metadata_format);
+        metadata_table.add_row(row!["bases", item.mod_bases()]);
+        metadata_table.add_row(row!["total_reads_used", item.total_reads_used]);
         for (dna_base, reads_with_calls) in item.reads_with_mod_calls {
-            header.push_str(&format!(
-                "#      count_reads_{}{tab}{}{newline}",
-                dna_base.char(),
+            metadata_table.add_row(row![
+                format!("count_reads_{}", dna_base.char()),
                 reads_with_calls
-            ));
+            ]);
         }
         for (dna_base, threshold) in item.per_base_thresholds {
-            header.push_str(&format!(
-                "# filter_threshold_{}{tab}{}{newline}",
-                dna_base.char(),
+            metadata_table.add_row(row![
+                format!("filter_threshold_{}", dna_base.char()),
                 threshold
-            ));
+            ]);
         }
-
         if let Some(region) = item.region {
-            header.push_str(&format!(
-                "#             region{tab}{}{newline}",
-                region.to_string()
-            ));
+            metadata_table.add_row(row!["region", region.to_string()]);
         }
+        let emitted = metadata_table.print(&mut self.writer)?;
 
-        let mut report = String::new();
-        report.push_str(&format!(
-            "base{tab}code{tab}count{tab}frac{tab}filt_count{tab}filt_frac{newline}"
-        ));
+        let mut report_table = Table::new();
+        report_table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
+        report_table.set_titles(row![
+            "base",
+            "code",
+            "count",
+            "frac",
+            "filt_count",
+            "filt_frac"
+        ]);
+
         for (canonical_base, mod_counts) in item.mod_call_counts {
             // total calls here are filtered counts, (i.e. after filtering)
             let total_calls = mod_counts.values().sum::<u64>() as f64;
@@ -244,10 +235,103 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
                     .unwrap_or(&0);
                 let call_frac = counts as f32 / total_calls as f32;
                 let filt_frac = filtered as f32 / total_filtered_calls as f32;
-                report.push_str(&format!("{}{tab}{label}{tab}{counts}{tab}{call_frac}{tab}{filtered}{tab}{filt_frac}{newline}", canonical_base.char()));
+                report_table.add_row(row![
+                    canonical_base.char(),
+                    label,
+                    counts,
+                    call_frac,
+                    filtered,
+                    filt_frac
+                ]);
             }
         }
-        self.buf_writer.write(header.as_bytes())?;
+        let mut report_emitted = report_table.print(&mut self.writer)?;
+        report_emitted += emitted;
+        Ok(report_emitted as u64)
+    }
+}
+
+pub struct TsvWriter<W: Write> {
+    buf_writer: BufWriter<W>,
+}
+
+impl TsvWriter<std::io::Stdout> {
+    pub fn new() -> Self {
+        let out = BufWriter::new(std::io::stdout());
+
+        Self { buf_writer: out }
+    }
+}
+
+impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
+    fn write(&mut self, item: ModSummary) -> AnyhowResult<u64> {
+        warn!("this output format will not be default in the next version, the table output \
+            set with --table will become default and this format will require the --tsv option"
+        );
+        let mut report = String::new();
+        let mod_called_bases = item.mod_bases();
+        report.push_str(&format!("mod_bases\t{}\n", mod_called_bases));
+        for (dna_base, read_count) in item.reads_with_mod_calls {
+            report.push_str(&format!(
+                "count_reads_{}\t{}\n",
+                dna_base.char(),
+                read_count
+            ));
+        }
+        for (canonical_base, mod_counts) in item.mod_call_counts {
+            let total_calls = mod_counts.values().sum::<u64>() as f64;
+            let total_filtered_calls = item
+                .filtered_mod_call_counts
+                .get(&canonical_base)
+                .map(|filtered_counts| filtered_counts.values().sum::<u64>())
+                .unwrap_or(0);
+            for (mod_code, counts) in mod_counts {
+                let label = if mod_code.is_canonical() {
+                    format!("unmodified")
+                } else {
+                    format!("modified_{}", mod_code.char())
+                };
+                let filtered = *item
+                    .filtered_mod_call_counts
+                    .get(&canonical_base)
+                    .and_then(|filtered_counts| filtered_counts.get(&mod_code))
+                    .unwrap_or(&0);
+                report.push_str(&format!(
+                    "{}_calls_{}\t{}\n",
+                    canonical_base.char(),
+                    label,
+                    counts
+                ));
+                report.push_str(&format!(
+                    "{}_frac_{}\t{}\n",
+                    canonical_base.char(),
+                    label,
+                    counts as f64 / total_calls
+                ));
+                report.push_str(&format!(
+                    "{}_filtered_{}\t{}\n",
+                    canonical_base.char(),
+                    label,
+                    filtered
+                ));
+            }
+            report.push_str(&format!(
+                "{}_total_mod_calls\t{}\n",
+                canonical_base.char(),
+                total_calls as u64
+            ));
+            report.push_str(&format!(
+                "{}_total_filtered_mod_calls\t{}\n",
+                canonical_base.char(),
+                total_filtered_calls
+            ));
+        }
+
+        report.push_str(&format!(
+            "total_reads_used\t{}\n",
+            item.total_reads_used
+        ));
+
         self.buf_writer.write(report.as_bytes())?;
         Ok(1)
     }
