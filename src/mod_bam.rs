@@ -74,9 +74,15 @@ impl CollapseMethod {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub(crate) enum SkipMode {
+pub enum SkipMode {
+    /// '?' mode, no probability for a position means we have no information
+    /// about base modifications at that position
     Ambiguous,
+    /// '.' mode, no probability means the base is canonical (or predicted
+    /// canonical).
     ProbModified,
+    /// Same as `ProbModified` except the BAM record does not specify the
+    /// actual mode.
     ImplicitProbModified,
 }
 
@@ -153,7 +159,7 @@ impl BaseModProbs {
         1f32 - self.probs.iter().sum::<f32>()
     }
 
-    fn iter_probs(&self) -> impl Iterator<Item = (&char, &f32)> {
+    pub fn iter_probs(&self) -> impl Iterator<Item = (&char, &f32)> {
         self.mod_codes.iter().zip(self.probs.iter())
     }
 
@@ -471,8 +477,11 @@ fn combine_positions_to_probs(
 /// Mapping of _forward sequence_ position to `BaseModProbs`.
 #[derive(PartialEq, Debug)]
 pub struct SeqPosBaseModProbs {
-    pub(crate) skip_mode: SkipMode,
-    pub(crate) pos_to_base_mod_probs: HashMap<usize, BaseModProbs>,
+    /// The `.` or `?` or implied mode, see `SkipMode`.
+    pub skip_mode: SkipMode,
+    /// Mapping of _forward_ sequence position to the predicted base
+    /// modification probabilities for that position.
+    pub pos_to_base_mod_probs: HashMap<usize, BaseModProbs>,
 }
 
 impl SeqPosBaseModProbs {
