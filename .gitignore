@@ -13,3 +13,6 @@ tmp/
 dist
 dist/
 sourceme.sh
+*.swp
+docs/book
+docs/book/*

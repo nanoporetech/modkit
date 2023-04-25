@@ -58,7 +58,7 @@ pub enum Commands {
     /// Summarize the mod tags present in a BAM and get basic statistics
     Summary(ModSummarize),
     /// Create BED file with all locations of a sequence motif.
-    /// Example: --motif CG --offset 0.
+    /// Example: modkit motif-bed CG 0
     MotifBed(MotifBed),
 }
 

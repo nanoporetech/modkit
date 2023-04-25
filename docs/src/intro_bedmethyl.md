@@ -1,33 +1,9 @@
-![Oxford Nanopore Technologies logo](ONT_logo_590x106.png)
+# Constructing bedMethyl tables.
 
-# Modkit
-
-A bioinformatics tool for working with modified bases from Oxford Nanopore. Specifically for converting modBAM
-to bedMethyl files using best practices, but also manipulating modBAM files and generating summary statistics.
-
-## Installation
-
-Pre-compiled binaries are provided for Linux from the [release page](https://github.com/nanoporetech/modkit/releases). We recommend the use of these in most circumstances.
-
-### Building from source
-
-The provided packages should be used where possible. We understand that some users may wish to compile the software from its source code. To build `modkit` from source [cargo](https://www.rust-lang.org/learn/get-started) should be used.
-
-```bash
-git clone https://github.com/nanoporetech/modkit.git
-cd modkit
-cargo install --path .
-# or
-cargo install --git https://github.com/nanoporetech/modkit.git
-```
-
-## Usage
-
-Modkit comprises a suite of tools for manipulating modified-base data stored in [BAM](http://www.htslib.org/) files. Modified base information is stored in the `MM` and `ML` tags (see section 1.7 of the [SAM tags](https://samtools.github.io/hts-specs/SAMtags.pdf) specification). These tags are produced by contemporary basecallers of data from Oxford Nanopore Technologies sequencing platforms.
-
-### Constructing bedMethyl tables
-
-A primary use of `modkit` is to create summary counts of modified and unmodified bases in an extended [bedMethyl](https://www.encodeproject.org/data-standards/wgbs/) format. bedMethyl files tabulate the counts of base modifications from every sequencing read over each reference genomic position.
+A primary use of `modkit` is to create summary counts of modified and unmodified bases in
+an extended [bedMethyl](https://www.encodeproject.org/data-standards/wgbs/) format.
+bedMethyl files tabulate the counts of base modifications from every sequencing read over
+each aligned reference genomic position.
 
 In its simplest form `modkit` creates a bedMethyl file using the following:
 
@@ -35,17 +11,24 @@ In its simplest form `modkit` creates a bedMethyl file using the following:
 modkit pileup path/to/reads.bam output/path/pileup.bed --log-filepath pileup.log
 ```
 
-No reference sequence is required. A single file (described [below](#description-of-bedmethyl-output)) with base count summaries will be created. The final argument here specifies an optional log file output.
+No reference sequence is required. A single file (described
+[below](#description-of-bedmethyl-output)) with base count summaries will be created. The
+final argument here specifies an optional log file output.
 
-The program performs best-practices filtering and manipulation of the raw data stored in the input file. For further details see [filtering modified-base calls](./filtering.md).
+The program performs best-practices filtering and manipulation of the raw data stored in
+the input file. For further details see [filtering modified-base calls](./filtering.md).
 
-For user convenience the counting process can be modulated using several additional transforms and filters. The most basic of these is to report only counts from reference CpG dinucleotides. This option requires a reference sequence in order to locate the CpGs in the reference:
+For user convenience, the counting process can be modulated using several additional
+transforms and filters. The most basic of these is to report only counts from reference
+CpG dinucleotides. This option requires a reference sequence in order to locate the CpGs
+in the reference:
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta
 ```
 
-The program also contains a range of presets which combine several options for ease of use. The `traditional` preset,
+The program also contains preset which combine several options for ease of use. The
+`traditional` preset,
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed \
@@ -54,10 +37,11 @@ modkit pileup path/to/reads.bam output/path/pileup.bed \
 ```
 
 performs three transforms:
-* restricts output to locations where there is a CG dinucleotide in
-the reference,
-* reports only a C and 5mC counts, using procedures to take into account counts of other forms of cytosine modification (notably 5hmC), and
-* aggregates data across strands. The strand field od the output will be marked as '.' indicating that the strand information has been lost.
+* restricts output to locations where there is a CG dinucleotide in the reference,
+* reports only a C and 5mC counts, using procedures to take into account counts of other
+  forms of cytosine modification (notably 5hmC), and
+* aggregates data across strands. The strand field od the output will be marked as '.'
+  indicating that the strand information has been lost.
 
 Using this option is equivalent to running with the options:
 
@@ -67,7 +51,7 @@ modkit pileup --cpg --ref <reference.fasta> --collapse h --combine-strands
 
 For more information on the individual options see the [Advanced Usage](./advanced_usage.md) help document.
 
-## Description of bedMethyl output
+## Description of bedMethyl output.
 
 Below is a description of the bedMethyl columns generated by `modkit pileup`. A brief description of the
 bedMethyl specification can be found on [Encode](https://www.encodeproject.org/data-standards/wgbs/).
@@ -91,7 +75,7 @@ set on the command line or computed from the data (usually filtering out the low
 modification call. This can happen, for example, if the model requires a CpG dinucleotide and the read has a
 CG->CH substitution such that no modification call was produced by the basecaller.
 
-### bedMethyl column descriptions
+### bedMethyl column descriptions.
 
 | column | name                  | description                                                                    | type  |
 |--------|-----------------------|--------------------------------------------------------------------------------|-------|
@@ -114,35 +98,3 @@ CG->CH substitution such that no modification call was produced by the basecalle
 | 17     | N<sub>diff</sub>      | See definitions above.                                                         | int   |
 | 18     | N<sub>nocall</sub>    | See definitions above.                                                         | int   |
 
-
-## Advanced usage examples
-
-For complete usage instructions please see the command-line help of the program or the [Advanced usage](./advanced_usage.md) help documentation. Some more commonly required examples are provided below.
-
-To combine multiple base modification calls into one, for example to combine basecalls for both 5hmC and 5mC into a count for "all cytosine modifications" (with code `C`) the `--combine-mods` option can be used:
-
-```bash
-modkit pileup path/to/reads.bam output/path/pileup.bed --combine-mods
-```
-
-In standard usage the `--preset traditional` option can be used as outlined in the [Usage](#usage) section. By more directly specifying individual options we can perform something similar without loss of information for 5hmC data stored in the input file: 
-
-```bash
-modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta \
-    --combine-strands  
-```
-
-To produce a bedGraph file for each modification in the BAM file the `--bedgraph` option can be given. Counts for the positive and negative strands will be put in separate files.
-
-```bash
-modkit pileup path/to/reads.bam output/directory/path --bedgraph <--prefix string>
-```
-
-The option `--prefix [str]` parameter allows specification of a prefix to the output file names.
-
-**Licence and Copyright**
-
-(c) 2023 Oxford Nanopore Technologies Plc.
-
-Modkit is distributed under the terms of the Oxford Nanopore Technologies, Ltd. Public License, v. 1.0.
-If a copy of the License was not distributed with this file, You can obtain one at http://nanoporetech.com

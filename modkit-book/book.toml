@@ -1,6 +1,0 @@
-[book]
-authors = ["Art Rand"]
-language = "en"
-multilingual = false
-src = "src"
-title = "Modkit"
