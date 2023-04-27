@@ -135,7 +135,7 @@ The modification calls table follows immediately after the totals table.
 | 2      | code       | base modification code, or `-` for canonical                                             | char  |
 | 3      | all_count  | total number of calls for the modification code in column 2                              | int   |
 | 4      | all_frac   | fraction of all calls for the modification in column 2                                   | float |
-| 5      | pass_count | total number of passing (confidence >= threshold) calls for the modification in column 2 | float |
+| 5      | pass_count | total number of passing (confidence >= threshold) calls for the modification in column 2 | int   |
 | 6      | pass_frac  | fraction of passing (>= threshold) calls for the modification in column 2                | float |
 
 
