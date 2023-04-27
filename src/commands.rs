@@ -7,6 +7,7 @@ use std::thread;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
 use crossbeam_channel::bounded;
+use histo_fp::Histogram;
 use indicatif::{
     MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle,
 };
@@ -27,17 +28,17 @@ use crate::mod_bam::{
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
+use crate::reads_sampler::get_sampled_read_ids_to_base_mod_calls;
 use crate::summarize::{summarize_modbam, ModSummary};
-use crate::thresholds::{
-    calc_threshold_from_bam, get_modbase_probs_from_bam, Percentiles,
-};
+use crate::thresholds::{calc_threshold_from_bam, Percentiles};
 use crate::util;
 use crate::util::{
     add_modkit_pg_records, get_spinner, get_targets, record_is_secondary,
     Region,
 };
 use crate::writers::{
-    BedGraphWriter, BedMethylWriter, OutWriter, TableWriter, TsvWriter,
+    BedGraphWriter, BedMethylWriter, DataOutputFormat, MultiTableWriter,
+    OutWriter, SampledProbs, TableWriter, TsvWriter,
 };
 
 #[derive(Subcommand)]
@@ -872,6 +873,29 @@ pub struct SampleModBaseProbs {
     /// Percentiles to calculate, a space separated list of floats.
     #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
     percentiles: String,
+    /// Directory to deposit result tables into. Required for model probability
+    /// histogram output.
+    #[arg(short = 'o', long)]
+    out_dir: Option<PathBuf>,
+    /// Label to prefix output files with. E.g. 'foo' will output
+    /// foo_<canonical_base>_thresholds.tsv and (optionally)
+    /// foo_<mod_base>_probabilities.tsv(for 'table' output) and
+    /// foo_<mod_base>_probabilities.txt for 'plot'.
+    #[arg(long, requires = "out_dir")]
+    prefix: Option<String>,
+    /// Overwrite results if present.
+    #[arg(long, requires = "out_dir", default_value_t = false)]
+    force: bool,
+
+    // probability histogram options
+    /// Output histogram of base modification prediction probabilities, and
+    /// specify format. 'plot' will produce ASCII plot of probability histogram,
+    /// and 'table' will produce a machine-parsable table.
+    #[arg(long = "hist", requires = "out_dir")]
+    histogram_format: Option<DataOutputFormat>,
+    /// Number of buckets for the histogram, if used.
+    #[arg(long, requires = "histogram_format", default_value_t = 255)]
+    buckets: u64,
 
     /// Max number of reads to use, especially recommended when using a large
     /// BAM without an index. If an indexed BAM is provided, the reads will be
@@ -927,25 +951,68 @@ impl SampleModBaseProbs {
                 format!("failed to parse percentiles: {}", &self.percentiles)
             })?;
 
-        let canonical_base_to_mod_calls = pool.install(|| {
-            get_modbase_probs_from_bam(
-                &self.in_bam,
-                self.threads,
-                self.interval_size,
-                sample_frac,
-                num_reads,
-                self.seed,
-                region.as_ref(),
-            )
-        })?;
-        for (canonical_base, mut probs) in canonical_base_to_mod_calls {
-            println!(
-                "{}\n{}",
-                canonical_base.char(),
-                Percentiles::new(&mut probs, &desired_percentiles)?.report()
+        pool.install(|| {
+            let read_ids_to_base_mod_calls =
+                get_sampled_read_ids_to_base_mod_calls(
+                    &self.in_bam,
+                    self.threads,
+                    self.interval_size,
+                    sample_frac,
+                    num_reads,
+                    self.seed,
+                    region.as_ref(),
+                )?;
+
+            let histograms = self.histogram_format.map(|_| {
+                let mod_call_probs =
+                    read_ids_to_base_mod_calls.probs_per_base_mod_call();
+                mod_call_probs
+                    .iter()
+                    .map(|(base, calls)| {
+                        let mut hist =
+                            Histogram::with_buckets(self.buckets, Some(0));
+                        for prob in calls {
+                            hist.add(*prob)
+                        }
+                        (*base, hist)
+                    })
+                    .collect::<HashMap<char, Histogram>>()
+            });
+
+            let percentiles = read_ids_to_base_mod_calls
+                .probs_per_base()
+                .into_iter()
+                .map(|(canonical_base, mut probs)| {
+                    Percentiles::new(&mut probs, &desired_percentiles)
+                        .with_context(|| {
+                            format!(
+                                "failed to calculate threshold for base {}",
+                                canonical_base.char()
+                            )
+                        })
+                        .map(|percs| (canonical_base.char(), percs))
+                })
+                .collect::<AnyhowResult<HashMap<char, Percentiles>>>()?;
+
+            let sampled_probs = SampledProbs::new(
+                histograms,
+                percentiles,
+                self.prefix.clone(),
+                self.histogram_format,
             );
-        }
-        Ok(())
+
+            let mut writer: Box<dyn OutWriter<SampledProbs>> =
+                if let Some(p) = &self.out_dir {
+                    sampled_probs.check_path(p, self.force)?;
+                    Box::new(MultiTableWriter::new(p.clone()))
+                } else {
+                    Box::new(TsvWriter::new_stdout())
+                };
+
+            writer.write(sampled_probs)?;
+
+            Ok(())
+        })
     }
 }
 
