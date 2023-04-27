@@ -206,23 +206,22 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
         report_table.set_titles(row![
             "base",
             "code",
-            "count",
-            "frac",
-            "filt_count",
-            "filt_frac"
+            "all_count",
+            "all_frac",
+            "pass_count",
+            "pass_frac"
         ]);
 
-        for (canonical_base, mod_counts) in item.mod_call_counts {
-            // total calls here are filtered counts, (i.e. after filtering)
-            let total_calls = mod_counts.values().sum::<u64>() as f64;
+        for (canonical_base, pass_mod_to_counts) in item.mod_call_counts {
+            let total_pass_calls = pass_mod_to_counts.values().sum::<u64>();
             let total_filtered_calls = item
                 .filtered_mod_call_counts
                 .get(&canonical_base)
                 .map(|filtered_counts| filtered_counts.values().sum::<u64>())
                 .unwrap_or(0);
+            let total_calls = total_filtered_calls + total_pass_calls;
 
-            // counts here are _filtered_ counts
-            for (mod_code, counts) in mod_counts {
+            for (mod_code, pass_counts) in pass_mod_to_counts {
                 let label = if mod_code.is_canonical() {
                     format!("-")
                 } else {
@@ -233,15 +232,16 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
                     .get(&canonical_base)
                     .and_then(|filtered_counts| filtered_counts.get(&mod_code))
                     .unwrap_or(&0);
-                let call_frac = counts as f32 / total_calls as f32;
-                let filt_frac = filtered as f32 / total_filtered_calls as f32;
+                let all_counts = pass_counts + filtered;
+                let all_frac = all_counts as f32 / total_calls as f32;
+                let pass_frac = pass_counts as f32 / total_pass_calls as f32;
                 report_table.add_row(row![
                     canonical_base.char(),
                     label,
-                    counts,
-                    call_frac,
-                    filtered,
-                    filt_frac
+                    all_counts,
+                    all_frac,
+                    pass_counts,
+                    pass_frac
                 ]);
             }
         }

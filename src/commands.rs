@@ -55,7 +55,9 @@ pub enum Commands {
     UpdateTags(Update),
     /// Calculate an estimate of the base modification probability distribution.
     SampleProbs(SampleModBaseProbs),
-    /// Summarize the mod tags present in a BAM and get basic statistics
+    /// Summarize the mod tags present in a BAM and get basic statistics. The default
+    /// output is a totals table (designated by '#' lines) and a modification calls
+    /// table. Descriptions of the columns can be found in the README.
     Summary(ModSummarize),
     /// Create BED file with all locations of a sequence motif.
     /// Example: --motif CG --offset 0.
@@ -958,10 +960,9 @@ pub struct ModSummarize {
     /// Setting a file is recommended.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
-    /// Output summary as a table to stdout. Default is tab-separated values.
-    /// *This will become the default output format in the next version.*
-    #[arg(long = "table", default_value_t = false)]
-    table_format: bool,
+    /// Output summary as a tab-separated variables stdout instead of a table.
+    #[arg(long = "tsv", default_value_t = false)]
+    tsv_format: bool,
 
     /// Max number of reads to use, especially recommended when using a large
     /// BAM without an index. If an indexed BAM is provided, the reads will be
@@ -1059,10 +1060,10 @@ impl ModSummarize {
                 filter_thresholds,
             )
         })?;
-        let mut writer: Box<dyn OutWriter<ModSummary>> = if self.table_format {
-            Box::new(TableWriter::new())
-        } else {
+        let mut writer: Box<dyn OutWriter<ModSummary>> = if self.tsv_format {
             Box::new(TsvWriter::new())
+        } else {
+            Box::new(TableWriter::new())
         };
         writer.write(mod_summary)?;
         Ok(())
