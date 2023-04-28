@@ -37,8 +37,8 @@ use crate::util::{
     Region,
 };
 use crate::writers::{
-    BedGraphWriter, BedMethylWriter, DataOutputFormat, MultiTableWriter,
-    OutWriter, SampledProbs, TableWriter, TsvWriter,
+    BedGraphWriter, BedMethylWriter, MultiTableWriter, OutWriter, SampledProbs,
+    TableWriter, TsvWriter,
 };
 
 #[derive(Subcommand)]
@@ -888,13 +888,11 @@ pub struct SampleModBaseProbs {
     force: bool,
 
     // probability histogram options
-    /// Output histogram of base modification prediction probabilities, and
-    /// specify format. 'plot' will produce ASCII plot of probability histogram,
-    /// and 'table' will produce a machine-parsable table.
-    #[arg(long = "hist", requires = "out_dir")]
-    histogram_format: Option<DataOutputFormat>,
+    /// Output histogram of base modification prediction probabilities.
+    #[arg(long = "hist", requires = "out_dir", default_value_t = false)]
+    histogram: bool,
     /// Number of buckets for the histogram, if used.
-    #[arg(long, requires = "histogram_format", default_value_t = 255)]
+    #[arg(long, requires = "histogram", default_value_t = 255)]
     buckets: u64,
 
     /// Max number of reads to use, especially recommended when using a large
@@ -963,21 +961,25 @@ impl SampleModBaseProbs {
                     region.as_ref(),
                 )?;
 
-            let histograms = self.histogram_format.map(|_| {
+            let histograms = if self.histogram {
                 let mod_call_probs =
                     read_ids_to_base_mod_calls.probs_per_base_mod_call();
-                mod_call_probs
-                    .iter()
-                    .map(|(base, calls)| {
-                        let mut hist =
-                            Histogram::with_buckets(self.buckets, Some(0));
-                        for prob in calls {
-                            hist.add(*prob)
-                        }
-                        (*base, hist)
-                    })
-                    .collect::<HashMap<char, Histogram>>()
-            });
+                Some(
+                    mod_call_probs
+                        .iter()
+                        .map(|(base, calls)| {
+                            let mut hist =
+                                Histogram::with_buckets(self.buckets, Some(0));
+                            for prob in calls {
+                                hist.add(*prob)
+                            }
+                            (*base, hist)
+                        })
+                        .collect::<HashMap<char, Histogram>>(),
+                )
+            } else {
+                None
+            };
 
             let percentiles = read_ids_to_base_mod_calls
                 .probs_per_base()
@@ -994,12 +996,8 @@ impl SampleModBaseProbs {
                 })
                 .collect::<AnyhowResult<HashMap<char, Percentiles>>>()?;
 
-            let sampled_probs = SampledProbs::new(
-                histograms,
-                percentiles,
-                self.prefix.clone(),
-                self.histogram_format,
-            );
+            let sampled_probs =
+                SampledProbs::new(histograms, percentiles, self.prefix.clone());
 
             let mut writer: Box<dyn OutWriter<SampledProbs>> =
                 if let Some(p) = &self.out_dir {
@@ -1128,7 +1126,7 @@ impl ModSummarize {
             )
         })?;
         let mut writer: Box<dyn OutWriter<ModSummary>> = if self.tsv_format {
-            Box::new(TsvWriter::new())
+            Box::new(TsvWriter::new_stdout())
         } else {
             Box::new(TableWriter::new())
         };

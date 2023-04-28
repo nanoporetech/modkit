@@ -3,7 +3,6 @@ use crate::summarize::ModSummary;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 
 use crate::thresholds::Percentiles;
-use clap::ValueEnum;
 use derive_new::new;
 use histo_fp::Histogram;
 use log::{debug, warn};
@@ -341,13 +340,6 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-#[allow(non_camel_case_types)]
-pub(crate) enum DataOutputFormat {
-    table,
-    plot,
-}
-
 #[derive(new)]
 pub(crate) struct MultiTableWriter {
     out_dir: PathBuf,
@@ -358,7 +350,6 @@ pub(crate) struct SampledProbs {
     histograms: Option<HashMap<char, Histogram>>,
     percentiles: HashMap<char, Percentiles>,
     prefix: Option<String>,
-    output_format: Option<DataOutputFormat>,
 }
 
 impl SampledProbs {
@@ -370,16 +361,14 @@ impl SampledProbs {
         }
     }
 
-    fn get_probabilities_filename(&self) -> String {
-        let extension = match self.output_format {
-            Some(DataOutputFormat::plot) => "txt",
-            Some(DataOutputFormat::table) | None => "tsv",
-        };
-
+    fn get_probabilities_filenames(&self) -> (String, String) {
         if let Some(prefix) = &self.prefix {
-            format!("{prefix}_probabilities.{extension}")
+            (
+                format!("{prefix}_probabilities.tsv"),
+                format!("{prefix}_probabilities.txt"),
+            )
         } else {
-            format!("probabilities.{extension}")
+            (format!("probabilities.tsv"), format!("probabilities.txt"))
         }
     }
 
@@ -396,12 +385,19 @@ impl SampledProbs {
             debug!("thresholds file at {:?} will be overwritten", fp);
         }
         if let Some(_) = &self.histograms {
-            let filename = self.get_probabilities_filename();
-            let fp = p.join(filename);
-            if fp.exists() && !force {
-                return Err(anyhow!("refusing to overwrite {:?}", fp));
-            } else if fp.exists() && force {
-                debug!("probabilities file at {:?} will be overwritten", fp);
+            let (probs_table_fn, probs_plots_fn) =
+                self.get_probabilities_filenames();
+            let probs_table_fp = p.join(probs_table_fn);
+            let probs_plots_fp = p.join(probs_plots_fn);
+            for fp in [probs_table_fp, probs_plots_fp] {
+                if fp.exists() && !force {
+                    return Err(anyhow!("refusing to overwrite {:?}", fp));
+                } else if fp.exists() && force {
+                    debug!(
+                        "probabilities file at {:?} will be overwritten",
+                        fp
+                    );
+                }
             }
         }
 
@@ -433,57 +429,54 @@ impl OutWriter<SampledProbs> for MultiTableWriter {
         rows_written += n_written as u64;
 
         if let Some(histograms) = &item.histograms {
-            let probs_filename =
-                self.out_dir.join(item.get_probabilities_filename());
-            let mut fh = File::create(probs_filename)?;
+            let (probs_table_fn, probs_plots_fn) =
+                item.get_probabilities_filenames();
+            let mut probs_table_fh =
+                File::create(self.out_dir.join(probs_table_fn))?;
+            let mut probs_plots_fh =
+                File::create(self.out_dir.join(probs_plots_fn))?;
 
-            match item.output_format {
-                Some(DataOutputFormat::table) | None => {
-                    let mut histogram_table = Table::new();
-                    histogram_table
-                        .set_format(*prettytable::format::consts::FORMAT_CLEAN);
-                    histogram_table.set_titles(row![
-                        "code",
-                        "bucket",
-                        "range_start",
-                        "range_end",
-                        "count",
-                        "frac"
+            let mut histogram_table = Table::new();
+            histogram_table
+                .set_format(*prettytable::format::consts::FORMAT_CLEAN);
+            histogram_table.set_titles(row![
+                "code",
+                "bucket",
+                "range_start",
+                "range_end",
+                "count",
+                "frac"
+            ]);
+            let mut total_rows = 0;
+            for (raw_mod_base_code, histogram) in histograms {
+                let mut row_count = Vec::new();
+                for (i, bucket) in histogram.buckets().enumerate() {
+                    histogram_table.add_row(row![
+                        raw_mod_base_code,
+                        i + 1,
+                        format!("{:.3}", bucket.start()),
+                        format!("{:.3}", bucket.end()),
+                        bucket.count()
                     ]);
-                    let mut total_rows = 0;
-                    for (raw_mod_base_code, histogram) in histograms {
-                        let mut row_count = Vec::new();
-                        for (i, bucket) in histogram.buckets().enumerate() {
-                            histogram_table.add_row(row![
-                                raw_mod_base_code,
-                                i + 1,
-                                format!("{:.3}", bucket.start()),
-                                format!("{:.3}", bucket.end()),
-                                bucket.count()
-                            ]);
-                            row_count.push(bucket.count());
-                        }
-                        let total = row_count.iter().sum::<u64>() as f32;
-                        for (i, count) in row_count.iter().enumerate() {
-                            let frac = *count as f32 / total;
-                            histogram_table
-                                .get_mut_row(i + total_rows)
-                                .unwrap()
-                                .add_cell(cell!(frac));
-                        }
-                        total_rows += row_count.len();
-                    }
-                    let n_written = histogram_table.print(&mut fh)?;
-                    rows_written += n_written as u64;
+                    row_count.push(bucket.count());
                 }
-                Some(DataOutputFormat::plot) => {
-                    for (raw_mod_code, hist) in histograms {
-                        fh.write(
-                            format!("# code {raw_mod_code}\n").as_bytes(),
-                        )?;
-                        fh.write(format!("{hist}").as_bytes())?;
-                    }
+                let total = row_count.iter().sum::<u64>() as f32;
+                for (i, count) in row_count.iter().enumerate() {
+                    let frac = *count as f32 / total;
+                    histogram_table
+                        .get_mut_row(i + total_rows)
+                        .unwrap()
+                        .add_cell(cell!(frac));
                 }
+                total_rows += row_count.len();
+            }
+            let n_written = histogram_table.print(&mut probs_table_fh)?;
+            rows_written += n_written as u64;
+
+            for (raw_mod_code, hist) in histograms {
+                probs_plots_fh
+                    .write(format!("# code {raw_mod_code}\n").as_bytes())?;
+                probs_plots_fh.write(format!("{hist}").as_bytes())?;
             }
         }
 

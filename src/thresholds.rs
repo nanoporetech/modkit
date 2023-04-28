@@ -24,15 +24,19 @@ fn percentile_linear_interp(xs: &[f32], q: f32) -> AnyhowResult<f32> {
         if q > 1.0 {
             return Err(anyhow!("quantile must be less than 1.0 got {q}"));
         }
-        assert!(q <= 1.0);
-        let l = xs.len() as f32;
-        let left = (l * q).floor();
-        let right = (l * q).ceil();
-        let g = (l * q).fract();
-        let y0 = xs[left as usize];
-        let y1 = xs[right as usize];
-        let y = y0 * (1f32 - g) + y1 * g;
-        Ok(y)
+        if q == 1.0f32 {
+            Ok(xs[xs.len() - 1])
+        } else {
+            assert!(q < 1.0);
+            let l = xs.len() as f32;
+            let left = (l * q).floor();
+            let right = (l * q).ceil();
+            let g = (l * q).fract();
+            let y0 = xs[left as usize];
+            let y1 = xs[right as usize];
+            let y = y0 * (1f32 - g) + y1 * g;
+            Ok(y)
+        }
     }
 }
 
