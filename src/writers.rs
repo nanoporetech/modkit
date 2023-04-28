@@ -192,7 +192,7 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
         }
         for (dna_base, threshold) in item.per_base_thresholds {
             metadata_table.add_row(row![
-                format!("filter_threshold_{}", dna_base.char()),
+                format!("pass_threshold_{}", dna_base.char()),
                 threshold
             ]);
         }
@@ -297,19 +297,19 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
                     .and_then(|filtered_counts| filtered_counts.get(&mod_code))
                     .unwrap_or(&0);
                 report.push_str(&format!(
-                    "{}_calls_{}\t{}\n",
+                    "{}_pass_calls_{}\t{}\n",
                     canonical_base.char(),
                     label,
                     counts
                 ));
                 report.push_str(&format!(
-                    "{}_frac_{}\t{}\n",
+                    "{}_pass_frac_{}\t{}\n",
                     canonical_base.char(),
                     label,
                     counts as f64 / total_calls
                 ));
                 report.push_str(&format!(
-                    "{}_filtered_{}\t{}\n",
+                    "{}_fail_calls_{}\t{}\n",
                     canonical_base.char(),
                     label,
                     filtered
@@ -321,7 +321,7 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
                 total_calls as u64
             ));
             report.push_str(&format!(
-                "{}_total_filtered_mod_calls\t{}\n",
+                "{}_total_fail_mod_calls\t{}\n",
                 canonical_base.char(),
                 total_filtered_calls
             ));
