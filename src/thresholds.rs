@@ -23,15 +23,19 @@ fn percentile_linear_interp(xs: &[f32], q: f32) -> AnyhowResult<f32> {
         if q > 1.0 {
             return Err(anyhow!("quantile must be less than 1.0 got {q}"));
         }
-        assert!(q <= 1.0);
-        let l = xs.len() as f32;
-        let left = (l * q).floor();
-        let right = (l * q).ceil();
-        let g = (l * q).fract();
-        let y0 = xs[left as usize];
-        let y1 = xs[right as usize];
-        let y = y0 * (1f32 - g) + y1 * g;
-        Ok(y)
+        if q == 1.0f32 {
+            Ok(xs[xs.len() - 1])
+        } else {
+            assert!(q < 1.0);
+            let l = xs.len() as f32;
+            let left = (l * q).floor();
+            let right = (l * q).ceil();
+            let g = (l * q).fract();
+            let y0 = xs[left as usize];
+            let y1 = xs[right as usize];
+            let y = y0 * (1f32 - g) + y1 * g;
+            Ok(y)
+        }
     }
 }
 
@@ -63,7 +67,7 @@ pub fn modbase_records<T: bam::Read>(
 }
 
 pub struct Percentiles {
-    qs: Vec<(f32, f32)>,
+    pub(crate) qs: Vec<(f32, f32)>,
 }
 
 impl Percentiles {
@@ -99,21 +103,30 @@ pub(crate) fn calc_thresholds_per_base(
     let st = std::time::Instant::now();
     let mut probs_per_base = read_ids_to_base_mod_calls.probs_per_base();
     debug!("probs per base took {:?}s", st.elapsed().as_secs());
+
     let st = std::time::Instant::now();
     let filter_thresholds = probs_per_base
         .iter_mut()
         .map(|(canonical_base, probs)| {
             probs.par_sort_by(|a, b| a.partial_cmp(b).unwrap());
             percentile_linear_interp(&probs, filter_percentile)
+                .with_context(|| {
+                    format!(
+                        "failed to calculate threshold for base {}",
+                        canonical_base.char()
+                    )
+                })
                 .map(|t| (*canonical_base, t))
         })
         .collect::<AnyhowResult<HashMap<DnaBase, f32>>>()?;
     debug!("filter thresholds took {}s", st.elapsed().as_secs());
+
     let mut threshold_message = "calculated thresholds: ".to_string();
     for (dna_base, thresh) in filter_thresholds.iter() {
         threshold_message.push_str(&format!("{}: {}", dna_base.char(), thresh));
     }
     info!("{threshold_message}");
+
     Ok(FilterThresholds::new(
         default_threshold.unwrap_or(0f32),
         filter_thresholds,

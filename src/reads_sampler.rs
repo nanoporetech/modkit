@@ -90,6 +90,47 @@ impl ReadIdsToBaseModCalls {
             })
             .reduce(|| HashMap::zero(), |a, b| a.op(b))
     }
+
+    pub(crate) fn probs_per_base_mod_call(&self) -> HashMap<char, Vec<f64>> {
+        let pb = get_master_progress_bar(self.inner.len());
+        pb.set_message("aggregating per-mod modification probabilities");
+        self.inner
+            .par_iter()
+            .progress_with(pb)
+            .filter_map(|(_, base_mod_calls)| {
+                let grouped = base_mod_calls
+                    .iter()
+                    .map(|(base, base_mod_calls)| {
+                        let canonical_code = base
+                            .canonical_mod_code()
+                            .map(|c| c.char())
+                            .unwrap_or(base.char());
+                        base_mod_calls
+                            .iter()
+                            .filter_map(|bmc| match bmc {
+                                BaseModCall::Modified(p, code) => {
+                                    Some((code.char(), *p))
+                                }
+                                BaseModCall::Canonical(p) => {
+                                    Some((canonical_code, *p))
+                                }
+                                BaseModCall::Filtered => None,
+                            })
+                            .fold(
+                                HashMap::<char, Vec<f64>>::new(),
+                                |mut acc, (base, p)| {
+                                    acc.entry(base)
+                                        .or_insert(Vec::new())
+                                        .push(p as f64);
+                                    acc
+                                },
+                            )
+                    })
+                    .reduce(|a, b| a.op(b));
+                grouped
+            })
+            .reduce(|| HashMap::zero(), |a, b| a.op(b))
+    }
 }
 
 impl Moniod for ReadIdsToBaseModCalls {
@@ -299,6 +340,7 @@ fn sample_reads_base_mod_calls_over_regions(
     }
 
     tid_progress.finish_and_clear();
+    let _ = master_progress.clear();
     Ok(aggregator)
 }
 

@@ -2,12 +2,15 @@ use crate::mod_pileup::ModBasePileup;
 use crate::summarize::ModSummary;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 
-use log::warn;
+use crate::thresholds::Percentiles;
+use derive_new::new;
+use histo_fp::Histogram;
+use log::{debug, warn};
 use prettytable::format::FormatBuilder;
-use prettytable::{row, Table};
+use prettytable::{cell, row, Table};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Stdout, Write};
 use std::path::PathBuf;
 
 pub trait OutWriter<T> {
@@ -169,7 +172,7 @@ pub struct TableWriter<W: Write> {
     writer: BufWriter<W>,
 }
 
-impl TableWriter<std::io::Stdout> {
+impl TableWriter<Stdout> {
     pub fn new() -> Self {
         let out = BufWriter::new(std::io::stdout());
         Self { writer: out }
@@ -256,7 +259,7 @@ pub struct TsvWriter<W: Write> {
 }
 
 impl TsvWriter<std::io::Stdout> {
-    pub fn new() -> Self {
+    pub fn new_stdout() -> Self {
         let out = BufWriter::new(std::io::stdout());
 
         Self { buf_writer: out }
@@ -334,5 +337,166 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
 
         self.buf_writer.write(report.as_bytes())?;
         Ok(1)
+    }
+}
+
+#[derive(new)]
+pub(crate) struct MultiTableWriter {
+    out_dir: PathBuf,
+}
+
+#[derive(new)]
+pub(crate) struct SampledProbs {
+    histograms: Option<HashMap<char, Histogram>>,
+    percentiles: HashMap<char, Percentiles>,
+    prefix: Option<String>,
+}
+
+impl SampledProbs {
+    fn get_thresholds_filename(&self) -> String {
+        if let Some(prefix) = &self.prefix {
+            format!("{prefix}_thresholds.tsv")
+        } else {
+            format!("thresholds.tsv")
+        }
+    }
+
+    fn get_probabilities_filenames(&self) -> (String, String) {
+        if let Some(prefix) = &self.prefix {
+            (
+                format!("{prefix}_probabilities.tsv"),
+                format!("{prefix}_probabilities.txt"),
+            )
+        } else {
+            (format!("probabilities.tsv"), format!("probabilities.txt"))
+        }
+    }
+
+    pub(crate) fn check_path(
+        &self,
+        p: &PathBuf,
+        force: bool,
+    ) -> AnyhowResult<()> {
+        let filename = self.get_thresholds_filename();
+        let fp = p.join(filename);
+        if fp.exists() && !force {
+            return Err(anyhow!("refusing to overwrite {:?}", fp));
+        } else if fp.exists() && force {
+            debug!("thresholds file at {:?} will be overwritten", fp);
+        }
+        if let Some(_) = &self.histograms {
+            let (probs_table_fn, probs_plots_fn) =
+                self.get_probabilities_filenames();
+            let probs_table_fp = p.join(probs_table_fn);
+            let probs_plots_fp = p.join(probs_plots_fn);
+            for fp in [probs_table_fp, probs_plots_fp] {
+                if fp.exists() && !force {
+                    return Err(anyhow!("refusing to overwrite {:?}", fp));
+                } else if fp.exists() && force {
+                    debug!(
+                        "probabilities file at {:?} will be overwritten",
+                        fp
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn thresholds_table(&self) -> Table {
+        let mut table = Table::new();
+        table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
+        table.set_titles(row!["base", "percentile", "threshold"]);
+        for (base, percentiles) in &self.percentiles {
+            for (q, p) in percentiles.qs.iter() {
+                let q = *q * 100f32;
+                table.add_row(row![base, q, *p]);
+            }
+        }
+        table
+    }
+}
+
+impl OutWriter<SampledProbs> for MultiTableWriter {
+    fn write(&mut self, item: SampledProbs) -> AnyhowResult<u64> {
+        let mut rows_written = 0u64;
+        let thresh_table = item.thresholds_table();
+
+        let threshold_fn = self.out_dir.join(item.get_thresholds_filename());
+        let mut fh = File::create(threshold_fn)?;
+        let n_written = thresh_table.print(&mut fh)?;
+        rows_written += n_written as u64;
+
+        if let Some(histograms) = &item.histograms {
+            let (probs_table_fn, probs_plots_fn) =
+                item.get_probabilities_filenames();
+            let mut probs_table_fh =
+                File::create(self.out_dir.join(probs_table_fn))?;
+            let mut probs_plots_fh =
+                File::create(self.out_dir.join(probs_plots_fn))?;
+
+            let mut histogram_table = Table::new();
+            histogram_table
+                .set_format(*prettytable::format::consts::FORMAT_CLEAN);
+            histogram_table.set_titles(row![
+                "code",
+                "bucket",
+                "range_start",
+                "range_end",
+                "count",
+                "frac"
+            ]);
+            let mut total_rows = 0;
+            for (raw_mod_base_code, histogram) in histograms {
+                let mut row_count = Vec::new();
+                for (i, bucket) in histogram.buckets().enumerate() {
+                    histogram_table.add_row(row![
+                        raw_mod_base_code,
+                        i + 1,
+                        format!("{:.3}", bucket.start()),
+                        format!("{:.3}", bucket.end()),
+                        bucket.count()
+                    ]);
+                    row_count.push(bucket.count());
+                }
+                let total = row_count.iter().sum::<u64>() as f32;
+                for (i, count) in row_count.iter().enumerate() {
+                    let frac = *count as f32 / total;
+                    histogram_table
+                        .get_mut_row(i + total_rows)
+                        .unwrap()
+                        .add_cell(cell!(frac));
+                }
+                total_rows += row_count.len();
+            }
+            let n_written = histogram_table.print(&mut probs_table_fh)?;
+            rows_written += n_written as u64;
+
+            for (raw_mod_code, hist) in histograms {
+                probs_plots_fh
+                    .write(format!("# code {raw_mod_code}\n").as_bytes())?;
+                probs_plots_fh.write(format!("{hist}").as_bytes())?;
+            }
+        }
+
+        Ok(rows_written)
+    }
+}
+
+impl OutWriter<SampledProbs> for TsvWriter<Stdout> {
+    fn write(&mut self, item: SampledProbs) -> AnyhowResult<u64> {
+        let mut rows_written = 0u64;
+        let thresholds_table = item.thresholds_table();
+        let n_written = thresholds_table.print(&mut self.buf_writer)?;
+        rows_written += n_written as u64;
+        if let Some(histograms) = &item.histograms {
+            for (raw_mod_code, hist) in histograms {
+                println!("# code {raw_mod_code}");
+                println!("{hist}");
+            }
+        }
+
+        Ok(rows_written)
     }
 }
