@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 
 use log::{debug, info};
-
 use rayon::prelude::*;
 use rust_htslib::bam::{self};
 

@@ -92,8 +92,11 @@ impl ReadIdsToBaseModCalls {
     }
 
     pub(crate) fn probs_per_base_mod_call(&self) -> HashMap<char, Vec<f64>> {
+        let pb = get_master_progress_bar(self.inner.len());
+        pb.set_message("aggregating per-mod modification probabilities");
         self.inner
             .par_iter()
+            .progress_with(pb)
             .filter_map(|(_, base_mod_calls)| {
                 let grouped = base_mod_calls
                     .iter()
@@ -337,6 +340,7 @@ fn sample_reads_base_mod_calls_over_regions(
     }
 
     tid_progress.finish_and_clear();
+    let _ = master_progress.clear();
     Ok(aggregator)
 }
 

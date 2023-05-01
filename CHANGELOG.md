@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v0.1.5]
 ### Changes
 - Table output is default in `modkit summary`, columns are all_counts/frac and pass_counts/frac instead of counts/frac and filt_counts/frac. See help for details.
+- The `sample-probs` sub-command will now output histograms of the base modification probabilities with the `--hist` option.
 
 ## [v0.1.4]
 ### Changes

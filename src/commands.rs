@@ -874,13 +874,13 @@ pub struct SampleModBaseProbs {
     #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
     percentiles: String,
     /// Directory to deposit result tables into. Required for model probability
-    /// histogram output.
+    /// histogram output. Creates two files probabilities.tsv and probabilities.txt
+    /// The .txt contains ASCII-histograms and the .tsv contains tab-separated variable
+    /// data represented by the histograms.
     #[arg(short = 'o', long)]
     out_dir: Option<PathBuf>,
     /// Label to prefix output files with. E.g. 'foo' will output
-    /// foo_<canonical_base>_thresholds.tsv and (optionally)
-    /// foo_<mod_base>_probabilities.tsv(for 'table' output) and
-    /// foo_<mod_base>_probabilities.txt for 'plot'.
+    /// foo_thresholds.tsv, foo_probabilities.tsv, and foo_probabilities.txt.
     #[arg(long, requires = "out_dir")]
     prefix: Option<String>,
     /// Overwrite results if present.
