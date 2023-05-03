@@ -134,6 +134,7 @@ manual_build_modkit_linux:
   cp *.md dist/
   cp LICENCE.txt dist/
   cp target/release/modkit dist/
+  cp -r docs dist/
   echo "contents if distribution $(ls dist/)"
   tar -cvzf modkit_centos7_x86_64.tar.gz dist/
   ls modkit_centos7_x86_64.tar.gz
