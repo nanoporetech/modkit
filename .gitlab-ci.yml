@@ -137,7 +137,6 @@ manual_build_modkit_linux:
   echo "contents if distribution $(ls dist/)"
   tar -cvzf modkit_centos7_x86_64.tar.gz dist/
   ls modkit_centos7_x86_64.tar.gz
-  
 
 manual_build_modkit_linux_centos:
   <<: *centos7_image
@@ -186,3 +185,16 @@ deploy_source_code:
     - *setup_gh_push
     - git remote add github https://github.com/nanoporetech/modkit.git
     - git push github master -f
+
+
+build_modkit_docs:
+  <<: *rust_image
+  stage: test
+  when: manual
+  script:
+    - cargo install mdbook --no-default-features --features search --vers "^0.4" --locked
+    - cd docs
+    - mdbook build -d public
+  artifacts:
+    paths:
+      - docs/public
