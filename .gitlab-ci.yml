@@ -131,13 +131,13 @@ manual_build_modkit_linux:
 .pack_up_dist_centos: &pack_up_dist_centos |
   ls target/release/modkit
   mkdir dist
-  cp *.md dist/
+  cp README.md dist/
   cp LICENCE.txt dist/
   cp target/release/modkit dist/
+  cp -r docs dist/
   echo "contents if distribution $(ls dist/)"
   tar -cvzf modkit_centos7_x86_64.tar.gz dist/
   ls modkit_centos7_x86_64.tar.gz
-  
 
 manual_build_modkit_linux_centos:
   <<: *centos7_image
@@ -150,7 +150,6 @@ manual_build_modkit_linux_centos:
     - *pack_up_dist_centos
   artifacts:
     paths:
-      - target/release/modkit
       - modkit_centos7_x86_64.tar.gz
 
 deploy_linux_artefact:
@@ -186,3 +185,16 @@ deploy_source_code:
     - *setup_gh_push
     - git remote add github https://github.com/nanoporetech/modkit.git
     - git push github master -f
+
+
+build_modkit_docs:
+  <<: *rust_image
+  stage: test
+  when: manual
+  script:
+    - cargo install mdbook --no-default-features --features search --vers "^0.4" --locked
+    - cd book
+    - mdbook build -d ../docs
+  artifacts:
+    paths:
+      - docs

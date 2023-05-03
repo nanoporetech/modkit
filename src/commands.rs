@@ -61,7 +61,7 @@ pub enum Commands {
     /// table. Descriptions of the columns can be found in the README.
     Summary(ModSummarize),
     /// Create BED file with all locations of a sequence motif.
-    /// Example: --motif CG --offset 0.
+    /// Example: modkit motif-bed CG 0
     MotifBed(MotifBed),
 }
 
