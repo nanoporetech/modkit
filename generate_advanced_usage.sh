@@ -4,10 +4,10 @@ set -e
 
 cargo build
 
-rm advanced_usage.md
-cp advanced_usage.template advanced_usage.md
+rm book/src/advanced_usage.md
+cp advanced_usage.template book/src/advanced_usage.md
 
-doc_file=advanced_usage.md
+doc_file=book/src/advanced_usage.md
 
 echo "" >> ${doc_file}
 echo "" >> ${doc_file}

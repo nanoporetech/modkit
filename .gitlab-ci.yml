@@ -193,8 +193,8 @@ build_modkit_docs:
   when: manual
   script:
     - cargo install mdbook --no-default-features --features search --vers "^0.4" --locked
-    - cd docs
-    - mdbook build -d public
+    - cd book
+    - mdbook build -d ../docs
   artifacts:
     paths:
-      - docs/public
+      - docs

@@ -1,0 +1,810 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Modkit</title>
+        <meta name="robots" content="noindex" />
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="custom.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var html = document.querySelector('html');
+            var sidebar = null;
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Filtering base modification calls</a></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Modkit</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h1>
+<h3 id="modkit-is-a-bioinformatics-tool-for-working-with-modified-bases-from-oxford-nanopore"><a class="header" href="#modkit-is-a-bioinformatics-tool-for-working-with-modified-bases-from-oxford-nanopore"><code>modkit</code> is a bioinformatics tool for working with modified bases from Oxford Nanopore.</a></h3>
+<p><img src="./images/ONT_logo_590x106.png" alt="ONT_logo" /></p>
+<h2 id="installation"><a class="header" href="#installation">Installation</a></h2>
+<p>Pre-compiled binaries are provided for Linux from the <a href="https://github.com/nanoporetech/modkit/releases">release
+page</a>. We recommend the use of these in
+most circumstances. As a rust-based project, <code>modkit</code> can also be installed with 
+<a href="https://www.rust-lang.org/learn/get-started">cargo</a>.</p>
+<pre><code class="language-bash">git clone https://github.com/nanoporetech/modkit.git
+cd modkit
+cargo install --path .
+# or
+cargo install --git https://github.com/nanoporetech/modkit.git
+</code></pre>
+<h2 id="common-use-cases"><a class="header" href="#common-use-cases">Common Use Cases</a></h2>
+<ol>
+<li><a href="./intro_bedmethyl.html">Creating a bedMethyl table with <code>pileup</code></a></li>
+<li><a href="./intro_adjust.html">Updating and Adjusting MM tags with <code>adjust-mods</code> and <code>update-tags</code></a></li>
+<li><a href="./intro_summary.html">Summarizing a modBAM with <code>summary</code></a></li>
+<li><a href="./intro_motif_bed.html">Making a motif BED file with <code>motif-bed</code></a></li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="constructing-bedmethyl-tables"><a class="header" href="#constructing-bedmethyl-tables">Constructing bedMethyl tables.</a></h1>
+<p>A primary use of <code>modkit</code> is to create summary counts of modified and unmodified bases in
+an extended <a href="https://www.encodeproject.org/data-standards/wgbs/">bedMethyl</a> format.
+bedMethyl files tabulate the counts of base modifications from every sequencing read over
+each aligned reference genomic position.</p>
+<p>In its simplest form <code>modkit</code> creates a bedMethyl file using the following:</p>
+<pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed --log-filepath pileup.log
+</code></pre>
+<p>No reference sequence is required. A single file (described
+<a href="intro_bedmethyl.html#description-of-bedmethyl-output">below</a>) with base count summaries will be created. The
+final argument here specifies an optional log file output.</p>
+<p>The program performs best-practices filtering and manipulation of the raw data stored in
+the input file. For further details see <a href="./filtering.html">filtering modified-base calls</a>.</p>
+<p>For user convenience, the counting process can be modulated using several additional
+transforms and filters. The most basic of these is to report only counts from reference
+CpG dinucleotides. This option requires a reference sequence in order to locate the CpGs
+in the reference:</p>
+<pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta
+</code></pre>
+<p>The program also contains preset which combine several options for ease of use. The
+<code>traditional</code> preset,</p>
+<pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed \
+  --ref path/to/reference.fasta \
+  --preset traditional
+</code></pre>
+<p>performs three transforms:</p>
+<ul>
+<li>restricts output to locations where there is a CG dinucleotide in the reference,</li>
+<li>reports only a C and 5mC counts, using procedures to take into account counts of other
+forms of cytosine modification (notably 5hmC), and</li>
+<li>aggregates data across strands. The strand field od the output will be marked as '.'
+indicating that the strand information has been lost.</li>
+</ul>
+<p>Using this option is equivalent to running with the options:</p>
+<pre><code class="language-bash">modkit pileup --cpg --ref &lt;reference.fasta&gt; --collapse h --combine-strands
+</code></pre>
+<p>For more information on the individual options see the <a href="./advanced_usage.html">Advanced Usage</a> help document.</p>
+<h2 id="description-of-bedmethyl-output"><a class="header" href="#description-of-bedmethyl-output">Description of bedMethyl output.</a></h2>
+<p>Below is a description of the bedMethyl columns generated by <code>modkit pileup</code>. A brief description of the
+bedMethyl specification can be found on <a href="https://www.encodeproject.org/data-standards/wgbs/">Encode</a>.</p>
+<h3 id="definitions"><a class="header" href="#definitions">Definitions:</a></h3>
+<ul>
+<li>N<sub>mod</sub> - Number of calls passing filters that were classified as a residue with a specified base modification.</li>
+<li>N<sub>canonical</sub> - Number of calls passing filters were classified as the canonical base rather than modified. The
+exact base must be inferred by the modification code. For example, if the modification code is <code>m</code> (5mC) then
+the canonical base is cytosine. If the modification code is <code>a</code>, the canonical base is adenosine.</li>
+<li>N<sub>other mod</sub> - Number of calls passing filters that were classified as modified, but where the modification is different from the listed base (and the corresponding canonical base is equal). For example, for a given cytosine there may be 3 reads with
+<code>h</code> calls, 1 with a canonical call, and 2 with <code>m</code> calls. In the bedMethyl row for <code>h</code> N<sub>other_mod</sub> would be 2. In the
+<code>m</code> row N<sub>other_mod</sub> would be 3.</li>
+<li>N<sub>valid_cov</sub> - the valid coverage. N<sub>valid_cov</sub> = N<sub>mod</sub> + N<sub>other_mod</sub> + N<sub>canonical</sub>, also used as the <code>score</code> in the bedMethyl</li>
+<li>N<sub>diff</sub> - Number of reads with a base other than the canonical base for this modification. For example, in a row
+for <code>h</code> the canonical base is cytosine, if there are 2 reads with C-&gt;A substitutions, N<sub>diff</sub> will be 2.</li>
+<li>N<sub>delete</sub> - Number of reads with a deletion at this reference position</li>
+<li>N<sub>fail</sub> - Number of calls where the probability of the call was below the threshold. The threshold can be
+set on the command line or computed from the data (usually failing the lowest 10th percentile of calls).</li>
+<li>N<sub>nocall</sub> - Number of reads aligned to this reference position, with the correct canonical base, but without a base
+modification call. This can happen, for example, if the model requires a CpG dinucleotide and the read has a
+CG-&gt;CH substitution such that no modification call was produced by the basecaller.</li>
+</ul>
+<h3 id="bedmethyl-column-descriptions"><a class="header" href="#bedmethyl-column-descriptions">bedMethyl column descriptions.</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>column</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
+<tr><td>1</td><td>chrom</td><td>name of reference sequence from BAM header</td><td>str</td></tr>
+<tr><td>2</td><td>start position</td><td>0-based start position</td><td>int</td></tr>
+<tr><td>3</td><td>end position</td><td>0-based exclusive end position</td><td>int</td></tr>
+<tr><td>4</td><td>modified base code</td><td>single letter code for modified base</td><td>str</td></tr>
+<tr><td>5</td><td>score</td><td>Equal to N<sub>valid_cov</sub>.</td><td>int</td></tr>
+<tr><td>6</td><td>strand</td><td>'+' for positive strand '-' for negative strand, '.' when strands are combined</td><td>str</td></tr>
+<tr><td>7</td><td>start position</td><td>included for compatibility</td><td>int</td></tr>
+<tr><td>8</td><td>end position</td><td>included for compatibility</td><td>int</td></tr>
+<tr><td>9</td><td>color</td><td>included for compatibility, always 255,0,0</td><td>str</td></tr>
+<tr><td>10</td><td>N<sub>valid_cov</sub></td><td>See definitions above.</td><td>int</td></tr>
+<tr><td>11</td><td>fraction modified</td><td>N<sub>mod</sub> / N<sub>valid_cov</sub></td><td>float</td></tr>
+<tr><td>12</td><td>N<sub>mod</sub></td><td>See definitions above.</td><td>int</td></tr>
+<tr><td>13</td><td>N<sub>canonical</sub></td><td>See definitions above.</td><td>int</td></tr>
+<tr><td>14</td><td>N<sub>other_mod</sub></td><td>See definitions above.</td><td>int</td></tr>
+<tr><td>15</td><td>N<sub>delete</sub></td><td>See definitions above.</td><td>int</td></tr>
+<tr><td>16</td><td>N<sub>filtered</sub></td><td>See definitions above.</td><td>int</td></tr>
+<tr><td>17</td><td>N<sub>diff</sub></td><td>See definitions above.</td><td>int</td></tr>
+<tr><td>18</td><td>N<sub>nocall</sub></td><td>See definitions above.</td><td>int</td></tr>
+</tbody></table>
+</div><div style="break-before: page; page-break-before: always;"></div><h1 id="updating-and-adjusting-mm-tags"><a class="header" href="#updating-and-adjusting-mm-tags">Updating and Adjusting MM tags.</a></h1>
+<p>The <code>adjust-mods</code> subcommand can be used to manipulate MM (and corresponding ML) tags in a
+modBam. In general, these simple commands are run prior to <code>pileup</code>, visualization, or
+other analysis.</p>
+<h2 id="ignoring-a-modification-class"><a class="header" href="#ignoring-a-modification-class">Ignoring a modification class.</a></h2>
+<p>To remove a base modification class from a modBAM and produce a new modBAM, use the
+<code>--ignore</code> option for <code>adjust-mods</code>.</p>
+<pre><code>modkit adjust-mods input.bam output.adjust.bam --ignore &lt;mod_code_to_ignore&gt;
+</code></pre>
+<p>For example the command below will remove 5hmC calls, leaving just 5mC calls.</p>
+<pre><code>modkit adjust-mods input.bam output.adjust.bam --ignore h
+</code></pre>
+<p>For technical details on the transformation see <a href="./collapse.html#removing-dna-base-modification-probabilities">Removing modification calls from
+BAMs</a>.</p>
+<h2 id="combining-base-modification-probabilities"><a class="header" href="#combining-base-modification-probabilities">Combining base modification probabilities.</a></h2>
+<p>Combining base modification probabilities may be desirable for downstream analysis or
+visualization. Unlike <code>--ignore</code> which removes the probability of a class, <code>--convert</code>
+will sum the probability of one class with another if the second class already exists. For
+example, the command below will convert probabilities associated with <code>h</code> probability into
+<code>m</code> probability. If <code>m</code> already exists, the probabilities will be summed.  As described in
+<a href="./intro_adjust.html#changing-the-base-modification-code">changing the modification code</a>,
+if the second base modification code doesn't exist, the probabilities are left unchanged.</p>
+<pre><code>modkit adjust-mods input.bam output.convert.bam --convert h m
+</code></pre>
+<p>This would be equivalent to setting <code>--combine-mods</code> flag, for example.</p>
+<pre><code>modkit pileup path/to/reads.bam output/path/pileup.bed --combine-mods
+</code></pre>
+<h2 id="updating-the-flag--and-"><a class="header" href="#updating-the-flag--and-">Updating the flag (<code>?</code> and <code>.</code>).</a></h2>
+<p>The <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a> (Section 1.7) allows
+for omission of the MM flag, however this may not be the intent of missing base
+modification probabilities for some models. The command below will add or change the <code>?</code> flag to a modBAM.</p>
+<pre><code>modkit adjust-mods input.bam output.bam --mode ambiguous
+</code></pre>
+<p>Another option is to set the flag to <code>.</code>, the &quot;implicitly canonical&quot; mode:</p>
+<pre><code>modkit adjust-mods input.bam output.bam --mode implicit
+</code></pre>
+<h2 id="changing-the-base-modification-code"><a class="header" href="#changing-the-base-modification-code">Changing the base modification code.</a></h2>
+<p>Some functions in <code>modkit</code> or other tools may require the mod-codes in the MM tag be in
+the <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a>. </p>
+<p>For example, the following command will change <code>C+Z,</code> tags to <code>C+m,</code> tags.</p>
+<pre><code>modkit adjust-mods input.bam output.bam --convert Z m
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="summarizing-a-modbam"><a class="header" href="#summarizing-a-modbam">Summarizing a modBAM.</a></h1>
+<p>The <code>modkit summary</code> sub-command is intended for collecting read-level statistics on
+either a sample of reads, a region, or an entire modBam.</p>
+<h2 id="summarize-the-base-modification-calls-in-a-modbam"><a class="header" href="#summarize-the-base-modification-calls-in-a-modbam">Summarize the base modification calls in a modBAM.</a></h2>
+<pre><code>modkit summary input.bam 
+</code></pre>
+<p>will output a table similar to this</p>
+<pre><code class="language-bash">&gt; parsing region chr20  # only present if --region option is provided
+&gt; sampling 10042 reads from BAM # modulated with --num-reads
+&gt; calculating threshold at 10% percentile # modulated with --filter-percentile
+&gt; calculated thresholds: C: 0.7167969 # calculated per-canonical base, on the fly
+# bases             C
+# total_reads_used  9989
+# count_reads_C     9989
+# pass_threshold_C  0.7167969
+# region            chr20:0-64444167
+ base  code  all_count  all_frac     pass_count  pass_frac
+ C     h     195335     0.086608544  119937      0.0590528
+ C     m     1305956    0.5790408    1192533     0.58716166
+ C     -     754087     0.33435062   718543      0.3537855
+</code></pre>
+<p>The <code>pass_count</code> and <code>pass_frac</code> columns are the statistics for calls with confidence
+greater than or equal to the <code>pass_threshold</code> for that canonical base's calls. For more
+details on thresholds see <a href="./filtering.html">filtering base modification calls</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="making-a-motif-bed-file"><a class="header" href="#making-a-motif-bed-file">Making a motif BED file.</a></h1>
+<p>Downstream analysis may require a <a href="https://en.wikipedia.org/wiki/BED_(file_format)">BED</a>
+file to select motifs of interest. For example, selecting GATC motifs in <em>E. coli</em>. This
+command requires a reference sequence in
+<a href="https://en.wikipedia.org/wiki/FASTA_format">FASTA</a> a motif to find, which can include
+<a href="https://en.wikipedia.org/wiki/Nucleic_acid_notation">IUPAC ambiguous bases</a> and a
+position within the motif.</p>
+<p>The following command would make a BED file for CG motifs.</p>
+<pre><code>modkit motif-bed reference.fasta CG 0 1&gt; cg_modifs.bed
+</code></pre>
+<p>The output is directed to standard out.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="modkit-subcommand-documentation"><a class="header" href="#modkit-subcommand-documentation">modkit, subcommand documentation</a></h1>
+<p>The goal of <code>modkit</code> is to enable best-practices manipulation of BAM files containing
+modified base information (modBAMs). The various sub-commands and tools available in
+<code>modkit</code> are described below.  This information can be obtained by invoking the long help
+(<code>--help</code>) for each command.</p>
+<blockquote>
+<p>Advanced usage information.</p>
+</blockquote>
+<pre><code class="language-bash">Usage: modkit &lt;COMMAND&gt;
+
+Commands:
+  pileup        Tabulates base modification calls across genomic positions. This command
+                    produces a bedMethyl formatted file. Schema and description of fields can be
+                    found in the README.
+  adjust-mods   Performs various operations on BAM files containing base modification
+                    information, such as converting base modification codes and ignoring
+                    modification calls. Produces a BAM output file.
+  update-tags   Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag from
+                    silent '.' to explicitly '?' or '.'.
+  sample-probs  Calculate an estimate of the base modification probability distribution.
+  summary       Summarize the mod tags present in a BAM and get basic statistics.
+  motif-bed     Create BED file with all locations of a sequence motif.
+                    Example: --motif CG --offset 0.
+  help          Print this message or the help of the given subcommand(s).
+
+Options:
+  -h, --help     Print help information.
+  -V, --version  Print version information.
+</code></pre>
+<h2 id="pileup"><a class="header" href="#pileup">pileup</a></h2>
+<pre><code class="language-bash">Tabulates base modification calls across genomic positions. This command produces a bedMethyl
+formatted file. Schema and description of fields can be found in the README.
+
+Usage: modkit pileup [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BED&gt;
+
+Arguments:
+  &lt;IN_BAM&gt;
+          Input BAM, should be sorted and have associated index available.
+
+  &lt;OUT_BED&gt;
+          Output file (or directory with --bedgraph option) to write results into.
+
+Options:
+      --log-filepath &lt;LOG_FILEPATH&gt;
+          Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
+          recommended.
+
+      --region &lt;REGION&gt;
+          Process only the specified region of the BAM when performing pileup. Format should be
+          &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or &lt;chrom_name&gt;.
+
+  -t, --threads &lt;THREADS&gt;
+          Number of threads to use while processing chunks concurrently.
+          
+          [default: 4]
+
+  -i, --interval-size &lt;INTERVAL_SIZE&gt;
+          Interval chunk size to process concurrently. Smaller interval chunk sizes will use less
+          memory but incur more overhead.
+          
+          [default: 100000]
+
+  -n, --num-reads &lt;NUM_READS&gt;
+          Sample this many reads when estimating the filtering threshold. Reads will be sampled
+          evenly across aligned genome. If a region is specified, either with the --region option or
+          the --sample-region option, then reads will be sampled evenly across the region given.
+          This option is useful for large BAM files. In practice, 10-50 thousand reads is sufficient
+          to estimate the model output distribution and determine the filtering threshold.
+          
+          [default: 10042]
+
+  -f, --sampling-frac &lt;SAMPLING_FRAC&gt;
+          Sample this fraction of the reads when estimating the filter-percentile. In practice,
+          50-100 thousand reads is sufficient to estimate the model output distribution and
+          determine the filtering threshold. See filtering.md for details on filtering.
+
+      --seed &lt;SEED&gt;
+          Set a random seed for deterministic running, the default is non-deterministic.
+
+      --no-filtering
+          Do not perform any filtering, include all mod base calls in output. See filtering.md for
+          details on filtering.
+
+  -p, --filter-percentile &lt;FILTER_PERCENTILE&gt;
+          Filter out modified base calls where the probability of the predicted variant is below
+          this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
+          modification calls.
+          
+          [default: 0.1]
+
+      --filter-threshold &lt;FILTER_THRESHOLD&gt;
+          Specify the filter threshold globally or per-base. Global filter threshold can be
+          specified with by a decimal number (e.g. 0.75). Per-base thresholds can be specified by
+          colon-separated values, for example C:0.75 specifies a threshold value of 0.75 for
+          cytosine modification calls. Additional per-base thresholds can be specified by repeating
+          the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
+          single base option and a default for all other bases with: --filter-threshold A:0.70
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
+          all other base modification calls.
+
+      --sample-region &lt;SAMPLE_REGION&gt;
+          Specify a region for sampling reads from when estimating the threshold probability. If
+          this option is not provided, but --region is provided, the genomic interval passed to
+          --region will be used. Format should be &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or &lt;chrom_name&gt;.
+
+      --sampling-interval-size &lt;SAMPLING_INTERVAL_SIZE&gt;
+          Interval chunk size to process concurrently when estimating the threshold probability, can
+          be larger than the pileup processing interval.
+          
+          [default: 1000000]
+
+      --ignore &lt;IGNORE&gt;
+          Ignore a modified base class  _in_situ_ by redistributing base modification probability
+          equally across other options. For example, if collapsing 'h', with 'm' and canonical
+          options, half of the probability of 'h' will be added to both 'm' and 'C'. A full
+          description of the methods can be found in collapse.md.
+
+      --force-allow-implicit
+          Force allow implicit-canonical mode. By default modkit does not allow pileup with the
+          implicit mode ('.', or silent). The `update-tags` subcommand is provided to update tags to
+          the new mode. This option allows the interpretation of implicit mode tags: residues
+          without modified base probability will be interpreted as being the non-modified base. We
+          do not recommend using this option.
+
+      --cpg
+          Only output counts at CpG motifs. Requires a reference sequence to be provided.
+
+      --ref &lt;REFERENCE_FASTA&gt;
+          Reference sequence in FASTA format. Required for CpG motif filtering.
+
+  -k, --mask
+          Respect soft masking in the reference FASTA.
+
+      --preset &lt;PRESET&gt;
+          Optional preset options for specific applications. traditional: Prepares bedMethyl
+          analogous to that generated from other technologies for the analysis of 5mC modified
+          bases. Shorthand for --cpg --combine-strands --ignore h.
+          
+          [possible values: traditional]
+
+      --combine-mods
+          Combine base modification calls, all counts of modified bases are summed together. See
+          collapse.md for details.
+
+      --combine-strands
+          When performing CpG analysis, sum the counts from the positive and negative strands into
+          the counts for the positive strand.
+
+      --only-tabs
+          For bedMethyl output, separate columns with only tabs. The default is to use tabs for the
+          first 10 fields and spaces thereafter. The default behavior is more likely to be
+          compatible with genome viewers. Enabling this option may make it easier to parse the
+          output with tabular data handlers that expect a single kind of separator.
+
+      --bedgraph
+          Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html. For
+          this setting, specify a directory for output files to be make in. Two files for each
+          modification will be produced, one for the positive strand and one for the negative
+          strand. So for 5mC (m) and 5hmC (h) there will be 4 files produced.
+
+      --prefix &lt;PREFIX&gt;
+          Prefix to prepend on bedgraph output file names. Without this option the files will be
+          &lt;mod_code&gt;_&lt;strand&gt;.bedgraph.
+
+  -h, --help
+          Print help information (use `-h` for a summary).
+</code></pre>
+<h2 id="adjust-mods"><a class="header" href="#adjust-mods">adjust-mods</a></h2>
+<pre><code class="language-bash">Performs various operations on BAM files containing base modification information, such as
+converting base modification codes and ignoring modification calls. Produces a BAM output file.
+
+Usage: modkit adjust-mods [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BAM&gt;
+
+Arguments:
+  &lt;IN_BAM&gt;   BAM file to collapse mod call from.
+  &lt;OUT_BAM&gt;  File path to new BAM file to be created.
+
+Options:
+      --ignore &lt;IGNORE&gt;              Modified base code to ignore/remove, see
+                                     https://samtools.github.io/hts-specs/SAMtags.pdf for details on
+                                     the modified base codes. [default: h]
+  -t, --threads &lt;THREADS&gt;            Number of threads to use. [default: 4]
+  -f, --ff                           Fast fail, stop processing at the first invalid sequence
+                                     record. Default behavior is to continue and report
+                                     failed/skipped records at the end.
+      --convert &lt;CONVERT&gt; &lt;CONVERT&gt;  Convert one mod-tag to another, summing the probabilities
+                                     together if the retained mod tag is already present.
+      --log-filepath &lt;LOG_FILEPATH&gt;  Output debug logs to file at this path.
+  -h, --help                         Print help information.
+</code></pre>
+<h2 id="update-tags"><a class="header" href="#update-tags">update-tags</a></h2>
+<pre><code class="language-bash">Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag from silent '.' to explicitly
+'?' or '.'.
+
+Usage: modkit update-tags [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BAM&gt;
+
+Arguments:
+  &lt;IN_BAM&gt;   BAM file to update modified base tags in.
+  &lt;OUT_BAM&gt;  File path to new BAM file to be created.
+
+Options:
+  -m, --mode &lt;MODE&gt;                  Mode, change mode to this value, options {'ambiguous',
+                                     'implicit'}. See spec at:
+                                     https://samtools.github.io/hts-specs/SAMtags.pdf. 'ambiguous'
+                                     ('?') means residues without explicit modification
+                                     probabilities will not be assumed canonical or modified.
+                                     'implicit' means residues without explicit modification
+                                     probabilities are assumed to be canonical. [possible values:
+                                     ambiguous, implicit]
+  -t, --threads &lt;THREADS&gt;            Number of threads to use. [default: 4]
+      --log-filepath &lt;LOG_FILEPATH&gt;  Output debug logs to file at this path.
+  -h, --help                         Print help information.
+</code></pre>
+<h2 id="sample-probs"><a class="header" href="#sample-probs">sample-probs</a></h2>
+<pre><code class="language-bash">Calculate an estimate of the base modification probability distribution.
+
+Usage: modkit sample-probs [OPTIONS] &lt;IN_BAM&gt;
+
+Arguments:
+  &lt;IN_BAM&gt;  Input BAM with modified base tags. If a index is found reads will be sampled evenly
+            across the length of the reference sequence.
+
+Options:
+  -t, --threads &lt;THREADS&gt;              Number of threads to use [default: 4]
+      --log-filepath &lt;LOG_FILEPATH&gt;    Specify a file for debug logs to be written to, otherwise
+                                       ignore them. Setting a file is recommended.
+  -p, --percentiles &lt;PERCENTILES&gt;      Percentiles to calculate, a space separated list of floats. [default:
+                                       0.1,0.5,0.9]
+  -n, --num-reads &lt;NUM_READS&gt;          Max number of reads to use, especially recommended when using
+                                       a large BAM without an index. If an indexed BAM is provided,
+                                       the reads will be sampled evenly over the length of the
+                                       aligned reference. If a region is passed with the --region
+                                       option, they will be sampled over the genomic region. [default:
+                                       10042]
+  -f, --sampling-frac &lt;SAMPLING_FRAC&gt;  Instead of using a defined number of reads, specify a
+                                       fraction of reads to sample, for example 0.1 will sample
+                                       1/10th of the reads.
+  -s, --seed &lt;SEED&gt;                    Random seed for deterministic running, the default is
+                                       non-deterministic.
+      --region &lt;REGION&gt;                Process only the specified region of the BAM when collecting
+                                       probabilities. Format should be &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or
+                                       &lt;chrom_name&gt;.
+  -i, --interval-size &lt;INTERVAL_SIZE&gt;  Interval chunk size to process concurrently. Smaller interval
+                                       chunk sizes will use less memory but incur more overhead.
+                                       Only used when sampling probs from an indexed bam. [default:
+                                       1000000]
+  -h, --help                           Print help information
+</code></pre>
+<h2 id="summary"><a class="header" href="#summary">summary</a></h2>
+<pre><code class="language-bash">Summarize the mod tags present in a BAM and get basic statistics.
+
+Usage: modkit summary [OPTIONS] &lt;IN_BAM&gt;
+
+Arguments:
+  &lt;IN_BAM&gt;  Input ModBam file.
+
+Options:
+  -t, --threads &lt;THREADS&gt;
+          Number of threads to use. [default: 4]
+      --log-filepath &lt;LOG_FILEPATH&gt;
+          Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
+          recommended.
+      --table
+          Output summary as a table to stdout. Default is tab-separated values. *This will become
+          the default output format in the next version.*.
+  -n, --num-reads &lt;NUM_READS&gt;
+          Max number of reads to use, especially recommended when using a large BAM without an
+          index. If an indexed BAM is provided, the reads will be sampled evenly over the length of
+          the aligned reference. If a region is passed with the --region option, they will be
+          sampled over the genomic region. [default: 10042]
+  -f, --sampling-frac &lt;SAMPLING_FRAC&gt;
+          Instead of using a defined number of reads, specify a fraction of reads to sample, for
+          example 0.1 will sample 1/10th of the reads.
+      --no-filtering
+          Do not perform any filtering, include all mod base calls in output. See filtering.md for
+          details on filtering.
+  -s, --seed &lt;SEED&gt;
+          Random seed for deterministic running, the default is non-deterministic
+  -p, --filter-percentile &lt;FILTER_PERCENTILE&gt;
+          Filter out modified base calls where the probability of the predicted variant is below
+          this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
+          modification calls. [default: 0.1]
+      --filter-threshold &lt;FILTER_THRESHOLD&gt;
+          Specify the filter threshold globally or per-base. Global filter threshold can be
+          specified with by a decimal number (e.g. 0.75). Per-base thresholds can be specified by
+          colon-separated values, for example C:0.75 specifies a threshold value of 0.75 for
+          cytosine modification calls. Additional per-base thresholds can be specified by repeating
+          the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
+          single base option and a default for all other bases with: --filter-threshold A:0.70
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
+          all other base modification calls.
+      --region &lt;REGION&gt;
+          Process only the specified region of the BAM when collecting probabilities. Format should
+          be &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or &lt;chrom_name&gt;.
+  -i, --interval-size &lt;INTERVAL_SIZE&gt;
+          When using regions, interval chunk size to process concurrently. Smaller interval chunk
+          sizes will use less memory but incur more overhead. [default: 1000000]
+  -h, --help
+          Print help information.
+</code></pre>
+<h2 id="motif-bed"><a class="header" href="#motif-bed">motif-bed</a></h2>
+<pre><code class="language-bash">Create BED file with all locations of a sequence motif. Example: modkit motif-bed CG 0
+
+Usage: modkit motif-bed [OPTIONS] &lt;FASTA&gt; &lt;MOTIF&gt; &lt;OFFSET&gt;
+
+Arguments:
+  &lt;FASTA&gt;   Input FASTA file.
+  &lt;MOTIF&gt;   Motif to search for within FASTA, e.g. CG.
+  &lt;OFFSET&gt;  Offset within motif, e.g. 0.
+
+Options:
+  -k, --mask  Respect soft masking in the reference FASTA.
+  -h, --help  Print help information.
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h1>
+<p>It's recommended to run all <code>modkit</code> commands with the <code>--log-filepath &lt;path-to-file&gt;</code>
+option set. When unexpected outputs are produced inspecting this file will often indicate
+the reason.</p>
+<h2 id="no-rows-in-modkit-pileup-output"><a class="header" href="#no-rows-in-modkit-pileup-output">No rows in <code>modkit pileup</code> output.</a></h2>
+<p>First, check the logfile, there may be many lines with a variant of</p>
+<pre><code class="language-text">record 905b4cb4-15e2-4060-9c98-866d0aff78bb has un-allowed mode
+(ImplicitProbModified), use '--force-allow-implicit' or 'modkit update-tags --mode
+ambiguous
+</code></pre>
+<p>As suggested, using <a href="./intro_adjust.html##updating-the-flag--and-">update</a> or setting the
+<code>--force-allow-implicit</code> flag should produce output from these records.</p>
+<p>If the MM tag contains an un-supported mod-code (a <a href="./limitations.html">limitation</a> that
+will be removed in a future release), these errors will be logged. To process the modBAM,
+first <a href="./intro_adjust.html#changing-the-base-modification-code">convert</a> the tags.</p>
+<p>In general, if there are MM/ML tags in the modBAM and the bedMethyl is still empty the
+log file will contain a line explaining why each record is being skipped.</p>
+<h2 id="not-sampling-enough-reads-to-estimate-threshold"><a class="header" href="#not-sampling-enough-reads-to-estimate-threshold">Not sampling enough reads to estimate threshold.</a></h2>
+<p>If you have previously downsampled the modBAM to a specific region, for example with a
+command like</p>
+<pre><code>samtools view -bh input.sorted.bam chr1
+</code></pre>
+<p>modkit will still try and sample reads evenly across the entire genome but fail to find
+any aligned to other contigs. To remedy this, either pass the same <code>--region chr1</code> option
+or set the <code>--sampling-frac 1.0</code>. The former will set <code>modkit</code> to only use the region
+present in the BAM. For example,</p>
+<pre><code>modkit pileup input.bam output.bed --region chr1
+# or
+modkit pileup input.bam output.bed --sample-region chr1
+</code></pre>
+<p>The latter will sample all of the reads in the BAM, which may slow
+down the process, so in general the best advice is to either use the same <code>--region &lt;contig&gt;</code> when using <code>modkit</code> or don't downsample the BAM ahead of time (and use <code>--region &lt;contig&gt;</code> in order to get the desired bedMethyl).</p>
+<p>The <code>summary</code>, <code>sample-probs</code>, and <code>pileup</code> subcommands all use the same <code>--region</code>
+option.</p>
+<h2 id="cg-positions-are-missing-from-output-bedmethyl"><a class="header" href="#cg-positions-are-missing-from-output-bedmethyl">CG positions are missing from output bedMethyl.</a></h2>
+<p>When running with <code>--preset traditional</code> or <code>--cpg</code> the resultant bedMethyl file will only
+contains CG positions. However, it will not include positions for which the pass coverage
+is zero (see <a href="./intro_bedmethyl.html#description-of-bedmethyl-output">the column
+descriptions</a>). This is to be
+expected.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="current-limitations"><a class="header" href="#current-limitations">Current limitations</a></h1>
+<p>Known limitations and forecasts for when they will be removed.</p>
+<ol>
+<li>
+<p>ChEBI codes are not supported at all, only mod-codes in the
+<a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a> (top of page 9) are
+supported in <code>pileup</code>.</p>
+<ul>
+<li>This limitation will be removed by version 0.2.0</li>
+</ul>
+</li>
+<li>
+<p>Only one MM-flag (<code>.</code>, <code>?</code>) per-canonical base is supported within a read.</p>
+<ul>
+<li>This limitation may be removed in the future.</li>
+</ul>
+</li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="performance-considerations"><a class="header" href="#performance-considerations">Performance considerations</a></h1>
+<h2 id="sharding-a-large-modbam-by-region"><a class="header" href="#sharding-a-large-modbam-by-region">Sharding a large modBAM by region.</a></h2>
+<p>The <code>--region</code> option in <code>pileup</code>, <code>summary</code>, and <code>sample-probs</code> can be used to operate on
+a subset of records in a large BAM. If you're working in a distributed environment, the
+genome could be sharded into large sections which are specified to <code>modkit</code> in concurrent
+processes and merged afterward in a &quot;map-reduce&quot; pattern.</p>
+<h2 id="setting-the---interval-size-and---sampling-interval-size"><a class="header" href="#setting-the---interval-size-and---sampling-interval-size">Setting the <code>--interval-size</code> and <code>--sampling-interval-size</code>.</a></h2>
+<p>Whenever operating on a sorted, indexed BAM, <code>modkit</code> will operate in parallel on disjoint
+spans of the genome. The length of these spans (i.e. intervals) can be determined by the
+<code>--interval-size</code> (for general <code>pileup</code> and other use cases) or the
+<code>--sampling-interval-size</code> (for the sampling algorithm only). The defaults for these
+parameters works well for genomes such as the human genome. For smaller genomes with high
+coverage, you may decide to <em>decrease</em> the interval size in order to take advantage of
+parallelism. If you're operating in a memory-constrained environment, <em>decreasing</em> the
+interval size will reduce the memory usage per-thread.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="algorithm-details"><a class="header" href="#algorithm-details">Algorithm details</a></h1>
+<ul>
+<li><a href="./filtering.html">Filtering low confidence base modification calls</a></li>
+<li><a href="./filtering.html">Removing and combining modified base types</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="filtering-base-modification-calls"><a class="header" href="#filtering-base-modification-calls">Filtering base modification calls.</a></h1>
+<p>Modified base calls are qualitied with a probability that is contained in the ML tag (see the
+<a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a>). We calculate the confidence that the model
+has in the base modification prediction as \(\mathcal{q} = argmax(\textbf{P})\) where \(\textbf{P}\) is the
+vector of probabilities for each modification. For example, given a model that can classify canonical
+cytosine, 5mC, and 5hmC, \(\textbf{P}\) is \([P_{C}, P_m, P_h]\), and \(\mathcal{q}\) will be \(\mathcal{q} =
+argmax(P_{C}, P_m, P_h)\), the maximum of the three probabilities.  Filtering in <code>modkit</code> is performed by
+first determining the value of \(\mathcal{q}\) for the lowest n-th percentile of calls (10th percentile by
+default).  The threshold value is typically an estimate because the base modification probabilities are
+sampled from a subset of the reads. All calls can be used to calculate the exact value, but in practice the
+approximation gives the same value. Base modification calls with a confidence value less than this number will
+not be counted.  Determination of the threshold value can be performed on the fly (by sampling) or the
+threshold value can be specified on the command line with the <code>--filter_threshold</code> flag. The <code>sample-probs</code>
+command can be used to quickly estimate the value of \(\mathcal{q}\) at various percentiles.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="removing-modification-calls-from-bams"><a class="header" href="#removing-modification-calls-from-bams">Removing modification calls from BAMs.</a></h1>
+<p>There may be multiple possible base modifications to a specific canonical base. For
+example, cytosine has four known modified variants. As technologies are increasingly able
+to detect these chemical moieties, not all downstream tools may be capable of accepting
+them, or you may want to convert your data to make it comparable to other data with less
+specific resolution. To address this issue, <code>modkit</code> implements a method for removing one
+or more DNA base modification call from a BAM as well as a command line flag to simply
+combine all modification calls when performing a pileup to generate a bedMethyl file.</p>
+<h2 id="removing-dna-base-modification-probabilities"><a class="header" href="#removing-dna-base-modification-probabilities">Removing DNA base modification probabilities.</a></h2>
+<p>BAM records containing probabilities for multiple base modifications at each residue can
+be transformed to ignore one (or more) of the predicted base modifications. For example,
+if a BAM file contains 5hmC and 5mC probabilities, the total probability is necessarily
+distributed over 5mC, \(p_m\), 5hmC, \(p_h\), and canonical C, \(p_{C}\). <code>modkit</code>
+implements a method, described below, for reducing the dimensionality of the probability
+distribution by one or more of the predicted base modification classes.</p>
+<p>Take for example a 3-way modification call for C, 5mC, and 5hmC, the probabilities of each
+being \(p_{C}\), \(p_{m}\), \(p_{h}\), respectively.  To remove the 5hmC
+probability, \(p_{h}\) is distributed evenly across the other two options. In this
+example, the updates are \( p_C \leftarrow p_C + (\frac{p_h}{2}) \) and \( p_m
+\leftarrow p_m + (\frac{p_h}{2}) \).</p>
+<h2 id="combining-multiple-base-modifications-into-a-single-count"><a class="header" href="#combining-multiple-base-modifications-into-a-single-count">Combining multiple base modifications into a single count.</a></h2>
+<h3 id="combine---combine"><a class="header" href="#combine---combine">Combine: <code>--combine</code></a></h3>
+<p>In <code>modkit pileup</code> the combine method can be used to produce binary modified/unmodified
+counts. Continuing with the above example, the counts for number of modified reads,
+<code>N_mod</code>, becomes the number of reads with 5hmC calls plus the number of reads with 5mC
+calls. <code>N_other_mod</code> will always be <code>0</code>. The <code>raw_mod_code</code> will be reported as the
+ambiguous mod code for the canonical base. See
+https://samtools.github.io/hts-specs/SAMtags.pdf for details on base modification codes
+and <code>schema.yaml</code> in this project for details on the notation for counts.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            MathJax.Hub.Register.StartupHook('End', function() {
+                window.setTimeout(window.print, 100);
+            });
+        });
+        </script>
+
+    </div>
+    </body>
+</html>

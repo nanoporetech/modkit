@@ -37,7 +37,7 @@ modkit pileup path/to/reads.bam output/path/pileup.bed --log-filepath pileup.log
 
 No reference sequence is required. A single file (described [below](#description-of-bedmethyl-output)) with base count summaries will be created. The final argument here specifies an optional log file output.
 
-The program performs best-practices filtering and manipulation of the raw data stored in the input file. For further details see [filtering modified-base calls](./filtering.md).
+The program performs best-practices filtering and manipulation of the raw data stored in the input file. For further details see [filtering modified-base calls](./book/src/filtering.md).
 
 For user convenience the counting process can be modulated using several additional transforms and filters. The most basic of these is to report only counts from reference CpG dinucleotides. This option requires a reference sequence in order to locate the CpGs in the reference:
 
@@ -65,7 +65,7 @@ Using this option is equivalent to running with the options:
 modkit pileup --cpg --ref <reference.fasta> --collapse h --combine-strands
 ```
 
-For more information on the individual options see the [Advanced Usage](./advanced_usage.md) help document.
+For more information on the individual options see the [Advanced Usage](./book/src/advanced_usage.md) help document.
 
 ## Description of bedMethyl output
 
@@ -117,7 +117,7 @@ CG->CH substitution such that no modification call was produced by the basecalle
 
 ## Advanced usage examples
 
-For complete usage instructions please see the command-line help of the program or the [Advanced usage](./advanced_usage.md) help documentation. Some more commonly required examples are provided below.
+For complete usage instructions please see the command-line help of the program or the [Advanced usage](./book/src/advanced_usage.md) help documentation. Some more commonly required examples are provided below.
 
 To combine multiple base modification calls into one, for example to combine basecalls for both 5hmC and 5mC into a count for "all cytosine modifications" (with code `C`) the `--combine-mods` option can be used:
 
