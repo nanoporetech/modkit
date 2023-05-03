@@ -69,8 +69,8 @@ the canonical base is cytosine. If the modification code is `a`, the canonical b
 * N<sub>diff</sub> - Number of reads with a base other than the canonical base for this modification. For example, in a row
 for `h` the canonical base is cytosine, if there are 2 reads with C->A substitutions, N<sub>diff</sub> will be 2.
 * N<sub>delete</sub> - Number of reads with a deletion at this reference position
-* N<sub>filtered</sub> - Number of calls where the probability of the call was below the threshold. The threshold can be
-set on the command line or computed from the data (usually filtering out the lowest 10th percentile of calls).
+* N<sub>fail</sub> - Number of calls where the probability of the call was below the threshold. The threshold can be
+set on the command line or computed from the data (usually failing the lowest 10th percentile of calls).
 * N<sub>nocall</sub> - Number of reads aligned to this reference position, with the correct canonical base, but without a base
 modification call. This can happen, for example, if the model requires a CpG dinucleotide and the read has a
 CG->CH substitution such that no modification call was produced by the basecaller.

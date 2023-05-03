@@ -1,8 +1,11 @@
 # modkit, subcommand documentation
 
-The goal of `modkit` is to enable easy and correct manipulation of BAM files containing modified base
-information (modBAMs). The various sub-commands and tools available in `modkit` are described below.
-This information can be obtained by invoking the long help (`--help`) for each command.
+The goal of `modkit` is to enable best-practices manipulation of BAM files containing
+modified base information (modBAMs). The various sub-commands and tools available in
+`modkit` are described below.  This information can be obtained by invoking the long help
+(`--help`) for each command.
+
+> Advanced usage information.
 
 
 ```bash
@@ -311,7 +314,7 @@ Options:
 
 ## motif-bed
 ```bash
-Create BED file with all locations of a sequence motif. Example: --motif CG --offset 0.
+Create BED file with all locations of a sequence motif. Example: modkit motif-bed CG 0
 
 Usage: modkit motif-bed [OPTIONS] <FASTA> <MOTIF> <OFFSET>
 

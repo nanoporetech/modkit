@@ -2,7 +2,7 @@
 
 - [Basic Usage](./quick_start.md)
     - [Constructing bedMethyl tables](./intro_bedmethyl.md)
-    - [Updating and Adjusting MM tags](./intro_adjust.md)
+    - [Updating and adjusting MM tags](./intro_adjust.md)
     - [Summarizing a modBAM](./intro_summary.md)
     - [Making a motif BED file](./intro_motif_bed.md)
 - [Extended subcommand help](./advanced_usage.md)
