@@ -131,7 +131,7 @@ manual_build_modkit_linux:
 .pack_up_dist_centos: &pack_up_dist_centos |
   ls target/release/modkit
   mkdir dist
-  cp *.md dist/
+  cp README.md dist/
   cp LICENCE.txt dist/
   cp target/release/modkit dist/
   cp -r docs dist/
@@ -150,7 +150,6 @@ manual_build_modkit_linux_centos:
     - *pack_up_dist_centos
   artifacts:
     paths:
-      - target/release/modkit
       - modkit_centos7_x86_64.tar.gz
 
 deploy_linux_artefact:
