@@ -24,3 +24,6 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 1. [Summarizing a modBAM with `summary`](./intro_summary.md)
 1. [Making a motif BED file with `motif-bed`](./intro_motif_bed.md)
 
+## Notes and troubleshooting
+1. [General troubleshooting](./troubleshooting.md)
+
