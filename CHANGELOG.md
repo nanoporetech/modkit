@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v0.1.5]
 ### Changes
 - Table output is default in `modkit summary`, columns are all_counts/frac and pass_counts/frac instead of counts/frac and filt_counts/frac. See help for details.
-- The `sample-probs` sub-command will now output histograms of the base modification probabilities with the `--hist` option.
+
+### Fixes
+- The `modkit summary` command will not use all of the reads in the input modBAM when the `--no-filtering` flag is used. To disable sampling (and use all of the reads) use `--no-sampling`. See docs for details.
+
+### Adds
+- The `sample-probs` command will now output histograms of the base modification probabilities with the `--hist` option.
+- "Book-style" docs.
+
 
 ## [v0.1.4]
 ### Changes
