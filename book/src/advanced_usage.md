@@ -237,6 +237,18 @@ Options:
                                        ignore them. Setting a file is recommended.
   -p, --percentiles <PERCENTILES>      Percentiles to calculate, a space separated list of floats. [default:
                                        0.1,0.5,0.9]
+  -o, --out-dir <OUT_DIR>              Directory to deposit result tables into. Required for model
+                                       probability histogram output. Creates two files
+                                       probabilities.tsv and probabilities.txt The .txt contains
+                                       ASCII-histograms and the .tsv contains tab-separated variable
+                                       data represented by the histograms.
+      --prefix <PREFIX>                Label to prefix output files with. E.g. 'foo' will output
+                                       foo_thresholds.tsv, foo_probabilities.tsv, and
+                                       foo_probabilities.txt.
+      --force                          Overwrite results if present.
+      --hist                           Output histogram of base modification prediction
+                                       probabilities.
+      --buckets <BUCKETS>              Number of buckets for the histogram, if used. [default: 128]
   -n, --num-reads <NUM_READS>          Max number of reads to use, especially recommended when using
                                        a large BAM without an index. If an indexed BAM is provided,
                                        the reads will be sampled evenly over the length of the
@@ -246,6 +258,8 @@ Options:
   -f, --sampling-frac <SAMPLING_FRAC>  Instead of using a defined number of reads, specify a
                                        fraction of reads to sample, for example 0.1 will sample
                                        1/10th of the reads.
+      --no-sampling                    No sampling, use all of the reads to calculate the filter
+                                       thresholds.
   -s, --seed <SEED>                    Random seed for deterministic running, the default is
                                        non-deterministic.
       --region <REGION>                Process only the specified region of the BAM when collecting
@@ -260,7 +274,9 @@ Options:
 
 ## summary
 ```bash
-Summarize the mod tags present in a BAM and get basic statistics.
+Summarize the mod tags present in a BAM and get basic statistics. The default output is a totals
+table (designated by '#' lines) and a modification calls table. Descriptions of the columns can be
+found in the README.
 
 Usage: modkit summary [OPTIONS] <IN_BAM>
 
@@ -273,26 +289,30 @@ Options:
       --log-filepath <LOG_FILEPATH>
           Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
           recommended.
-      --table
-          Output summary as a table to stdout. Default is tab-separated values. *This will become
-          the default output format in the next version.*.
+      --tsv
+          Output summary as a tab-separated variables stdout instead of a table.
   -n, --num-reads <NUM_READS>
-          Max number of reads to use, especially recommended when using a large BAM without an
-          index. If an indexed BAM is provided, the reads will be sampled evenly over the length of
-          the aligned reference. If a region is passed with the --region option, they will be
-          sampled over the genomic region. [default: 10042]
+          Max number of reads to use for estimating the filter threshold and generating the summary,
+          especially recommended when using a large BAM without an index. If an indexed BAM is
+          provided, the reads will be sampled evenly over the length of the aligned reference. If a
+          region is passed with the --region option, they will be sampled over the genomic region. [default:
+          10042]
   -f, --sampling-frac <SAMPLING_FRAC>
-          Instead of using a defined number of reads, specify a fraction of reads to sample, for
-          example 0.1 will sample 1/10th of the reads.
-      --no-filtering
-          Do not perform any filtering, include all mod base calls in output. See filtering.md for
-          details on filtering.
+          Instead of using a defined number of reads, specify a fraction of reads to sample when
+          estimating the filter threshold. For example 0.1 will sample 1/10th of the reads.
+      --no-sampling
+          No sampling, use all of the reads to calculate the filter thresholds and generating the
+          summary.
   -s, --seed <SEED>
-          Random seed for deterministic running, the default is non-deterministic
+          Sets a random seed for deterministic running (when using --sample-frac), the default is
+          non-deterministic.
+      --no-filtering
+          Do not perform any filtering, include all base modification calls in the summary. See
+          filtering.md for details on filtering.
   -p, --filter-percentile <FILTER_PERCENTILE>
           Filter out modified base calls where the probability of the predicted variant is below
           this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
-          modification calls. [default: 0.1]
+          base modification calls. [default: 0.1]
       --filter-threshold <FILTER_THRESHOLD>
           Specify the filter threshold globally or per-base. Global filter threshold can be
           specified with by a decimal number (e.g. 0.75). Per-base thresholds can be specified by

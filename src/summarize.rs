@@ -74,24 +74,17 @@ pub fn summarize_modbam<'a>(
     )?;
 
     let filter_thresholds = if let Some(ft) = filter_thresholds {
+        // filter thresholds provided, use those
         ft
     } else {
-        // if sample_frac and num_reads are none, no sampling was performed
-        // and we cannot estimate the filter threshold at the filter_percentile
-        // so make a passthrough
-        if sample_frac.is_none() && num_reads.is_none() {
-            // no filtering
-            FilterThresholds::new_passthrough()
-        } else {
-            // calculate the threshold at the given filter-percentile
-            let pct = (filter_percentile * 100f32).floor();
-            info!("calculating threshold at {pct}% percentile");
-            calc_thresholds_per_base(
-                &read_ids_to_base_mod_calls,
-                filter_percentile,
-                None,
-            )?
-        }
+        // calculate the filter thresholds at the requested percentile
+        let pct = (filter_percentile * 100f32).floor();
+        info!("calculating threshold at {pct}% percentile");
+        calc_thresholds_per_base(
+            &read_ids_to_base_mod_calls,
+            filter_percentile,
+            None,
+        )?
     };
 
     sampled_reads_to_summary(

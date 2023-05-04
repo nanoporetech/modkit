@@ -209,10 +209,10 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
         report_table.set_titles(row![
             "base",
             "code",
+            "pass_count",
+            "pass_frac",
             "all_count",
             "all_frac",
-            "pass_count",
-            "pass_frac"
         ]);
 
         for (canonical_base, pass_mod_to_counts) in item.mod_call_counts {
@@ -241,10 +241,10 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
                 report_table.add_row(row![
                     canonical_base.char(),
                     label,
+                    pass_counts,
+                    pass_frac,
                     all_counts,
                     all_frac,
-                    pass_counts,
-                    pass_frac
                 ]);
             }
         }
