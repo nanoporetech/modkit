@@ -168,9 +168,28 @@ either a sample of reads, a region, or an entire modBam.</p>
  C     h     119937      0.0590528   195335     0.086608544
  C     -     718543      0.3537855   754087     0.33435062
 </code></pre>
-<p>The <code>pass_count</code> and <code>pass_frac</code> columns are the statistics for calls with confidence
-greater than or equal to the <code>pass_threshold</code> for that canonical base's calls. For more
-details on thresholds see <a href="./filtering.html">filtering base modification calls</a>.</p>
+<h2 id="description-of-columns-in-modkit-summary"><a class="header" href="#description-of-columns-in-modkit-summary">Description of columns in <code>modkit summary</code>:</a></h2>
+<h3 id="totals-table"><a class="header" href="#totals-table">Totals table</a></h3>
+<p>The lines of the totals table are prefixed with a <code>#</code> character.</p>
+<div class="table-wrapper"><table><thead><tr><th>row</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
+<tr><td>1</td><td>bases</td><td>comma-separated list of canonical bases with modification calls.</td><td>str</td></tr>
+<tr><td>2</td><td>total_reads_used</td><td>total number of reads from which base modification calls were extracted</td><td>int</td></tr>
+<tr><td>3+</td><td>count_reads_{base}</td><td>total number of reads that contained base modifications for {base}</td><td>int</td></tr>
+<tr><td>4+</td><td>filter_threshold_{base}</td><td>filter threshold used for {base}</td><td>float</td></tr>
+</tbody></table>
+</div>
+<h3 id="modification-calls-table"><a class="header" href="#modification-calls-table">Modification calls table</a></h3>
+<p>The modification calls table follows immediately after the totals table.</p>
+<div class="table-wrapper"><table><thead><tr><th>column</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
+<tr><td>1</td><td>base</td><td>canonical base with modification call</td><td>char</td></tr>
+<tr><td>2</td><td>code</td><td>base modification code, or <code>-</code> for canonical</td><td>char</td></tr>
+<tr><td>3</td><td>pass_count</td><td>total number of passing (confidence &gt;= threshold) calls for the modification in column 2</td><td>int</td></tr>
+<tr><td>4</td><td>pass_frac</td><td>fraction of passing (&gt;= threshold) calls for the modification in column 2</td><td>float</td></tr>
+<tr><td>5</td><td>all_count</td><td>total number of calls for the modification code in column 2</td><td>int</td></tr>
+<tr><td>6</td><td>all_frac</td><td>fraction of all calls for the modification in column 2</td><td>float</td></tr>
+</tbody></table>
+</div>
+<p>For more details on thresholds see <a href="./filtering.html">filtering base modification calls</a>.</p>
 <p>By default <code>modkit summary</code> will only use ten thousand reads when generating the summary
 (or fewer if the modBAM has fewer than that). To use all of the reads in the modBAM set
 the <code>--no-sampling</code> flag.</p>

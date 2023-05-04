@@ -94,7 +94,7 @@ CG->CH substitution such that no modification call was produced by the basecalle
 | 13     | N<sub>canonical</sub> | See definitions above.                                                         | int   |
 | 14     | N<sub>other_mod</sub> | See definitions above.                                                         | int   |
 | 15     | N<sub>delete</sub>    | See definitions above.                                                         | int   |
-| 16     | N<sub>filtered</sub>  | See definitions above.                                                         | int   |
+| 16     | N<sub>fail</sub>      | See definitions above.                                                         | int   |
 | 17     | N<sub>diff</sub>      | See definitions above.                                                         | int   |
 | 18     | N<sub>nocall</sub>    | See definitions above.                                                         | int   |
 

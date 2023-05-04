@@ -27,9 +27,32 @@ will output a table similar to this
  C     -     718543      0.3537855   754087     0.33435062
 ```
 
-The `pass_count` and `pass_frac` columns are the statistics for calls with confidence
-greater than or equal to the `pass_threshold` for that canonical base's calls. For more
-details on thresholds see [filtering base modification calls](./filtering.md).
+## Description of columns in `modkit summary`:
+### Totals table
+The lines of the totals table are prefixed with a `#` character.
+
+| row | name                    | description                                                             | type   |
+|-----|-------------------------|-------------------------------------------------------------------------|--------|
+| 1   | bases                   | comma-separated list of canonical bases with modification calls.        | str    |
+| 2   | total_reads_used        | total number of reads from which base modification calls were extracted | int    |
+| 3+  | count_reads_{base}      | total number of reads that contained base modifications for {base}      | int    |
+| 4+  | filter_threshold_{base} | filter threshold used for {base}                                        | float  |
+
+### Modification calls table
+The modification calls table follows immediately after the totals table.
+
+| column | name       | description                                                                              | type  |
+|--------|------------|------------------------------------------------------------------------------------------|-------|
+| 1      | base       | canonical base with modification call                                                    | char  |
+| 2      | code       | base modification code, or `-` for canonical                                             | char  |
+| 3      | pass_count | total number of passing (confidence >= threshold) calls for the modification in column 2 | int   |
+| 4      | pass_frac  | fraction of passing (>= threshold) calls for the modification in column 2                | float |
+| 5      | all_count  | total number of calls for the modification code in column 2                              | int   |
+| 6      | all_frac   | fraction of all calls for the modification in column 2                                   | float |
+
+
+For more details on thresholds see [filtering base modification calls](./filtering.md).
+
 
 By default `modkit summary` will only use ten thousand reads when generating the summary
 (or fewer if the modBAM has fewer than that). To use all of the reads in the modBAM set

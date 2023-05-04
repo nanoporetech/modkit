@@ -4,7 +4,7 @@
 
 A bioinformatics tool for working with modified bases from Oxford Nanopore. Specifically for converting modBAM
 to bedMethyl files using best practices, but also manipulating modBAM files and generating summary statistics.
-Detailed documentation and quick-start can be found in the [online docs](https://nanoporetech.github.io/modkit/).
+Detailed documentation and quick-start can be found in the [online documentation](https://nanoporetech.github.io/modkit/).
 
 ## Installation
 
@@ -111,7 +111,7 @@ CG->CH substitution such that no modification call was produced by the basecalle
 | 13     | N<sub>canonical</sub> | See definitions above.                                                         | int   |
 | 14     | N<sub>other_mod</sub> | See definitions above.                                                         | int   |
 | 15     | N<sub>delete</sub>    | See definitions above.                                                         | int   |
-| 16     | N<sub>filtered</sub>  | See definitions above.                                                         | int   |
+| 16     | N<sub>fail</sub>      | See definitions above.                                                         | int   |
 | 17     | N<sub>diff</sub>      | See definitions above.                                                         | int   |
 | 18     | N<sub>nocall</sub>    | See definitions above.                                                         | int   |
 
@@ -134,10 +134,10 @@ The modification calls table follows immediately after the totals table.
 |--------|------------|------------------------------------------------------------------------------------------|-------|
 | 1      | base       | canonical base with modification call                                                    | char  |
 | 2      | code       | base modification code, or `-` for canonical                                             | char  |
-| 3      | all_count  | total number of calls for the modification code in column 2                              | int   |
-| 4      | all_frac   | fraction of all calls for the modification in column 2                                   | float |
-| 5      | pass_count | total number of passing (confidence >= threshold) calls for the modification in column 2 | int   |
-| 6      | pass_frac  | fraction of passing (>= threshold) calls for the modification in column 2                | float |
+| 3      | pass_count | total number of passing (confidence >= threshold) calls for the modification in column 2 | int   |
+| 4      | pass_frac  | fraction of passing (>= threshold) calls for the modification in column 2                | float |
+| 5      | all_count  | total number of calls for the modification code in column 2                              | int   |
+| 6      | all_frac   | fraction of all calls for the modification in column 2                                   | float |
 
 
 
