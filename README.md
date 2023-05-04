@@ -4,6 +4,7 @@
 
 A bioinformatics tool for working with modified bases from Oxford Nanopore. Specifically for converting modBAM
 to bedMethyl files using best practices, but also manipulating modBAM files and generating summary statistics.
+Detailed documentation and quick-start can be found in the [online docs](https://nanoporetech.github.io/modkit/).
 
 ## Installation
 
