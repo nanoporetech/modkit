@@ -163,14 +163,39 @@ either a sample of reads, a region, or an entire modBam.</p>
 # count_reads_C     9989
 # pass_threshold_C  0.7167969
 # region            chr20:0-64444167
- base  code  all_count  all_frac     pass_count  pass_frac
- C     h     195335     0.086608544  119937      0.0590528
- C     m     1305956    0.5790408    1192533     0.58716166
- C     -     754087     0.33435062   718543      0.3537855
+ base  code  pass_count  pass_frac   all_count  all_frac
+ C     m     1192533     0.58716166  1305956    0.5790408
+ C     h     119937      0.0590528   195335     0.086608544
+ C     -     718543      0.3537855   754087     0.33435062
 </code></pre>
 <p>The <code>pass_count</code> and <code>pass_frac</code> columns are the statistics for calls with confidence
 greater than or equal to the <code>pass_threshold</code> for that canonical base's calls. For more
 details on thresholds see <a href="./filtering.html">filtering base modification calls</a>.</p>
+<p>By default <code>modkit summary</code> will only use ten thousand reads when generating the summary
+(or fewer if the modBAM has fewer than that). To use all of the reads in the modBAM set
+the <code>--no-sampling</code> flag.</p>
+<pre><code>modkit summary input.bam --no-sampling
+</code></pre>
+<p>There are <code>--no-filtering</code>, <code>--filter-percentile</code>, and <code>--filter-threshold</code> options that
+can be used with or without sampling.</p>
+<h3 id="passing-a-threshold-directly"><a class="header" href="#passing-a-threshold-directly">Passing a threshold directly.</a></h3>
+<p>To estimate the pass thresholds on a subset of reads, but then summarize <em>all</em> of the
+reads, there is a two-step process. First, determine the thresholds with <code>modkit sample-probs</code> (see <a href="./advanced_usage.html#sample-probs">usage</a> for more details). Then run
+<code>modkit summary</code> with the threshold value specified.</p>
+<pre><code>modkit sample-probs input.bam [--sampling-frac &lt;frac&gt; | --num-reads &lt;num&gt;]
+</code></pre>
+<p>This command will output a table like this:</p>
+<pre><code>&gt; sampling 10042 reads from BAM
+ base  percentile  threshold
+ C     10          0.6972656
+ C     50          0.96484375
+ C     90          0.9941406
+</code></pre>
+<p>You can then use pass this threshold directly to <code>modkit summary</code>:</p>
+<pre><code>modkit summary input.bam \
+    --filter-threshold 0.6972656 \ # filter 10% lowest confidence calls
+    --no-sampling
+</code></pre>
 
                     </main>
 
