@@ -79,23 +79,25 @@ impl Commands {
 }
 
 fn get_sampling_options(
-    no_filtering: bool,
+    no_sampling: bool,
     sampling_frac: Option<f64>,
     num_reads: usize,
 ) -> (Option<f64>, Option<usize>) {
-    match (no_filtering, sampling_frac, num_reads) {
+    match (no_sampling, sampling_frac, num_reads) {
+        // Both None tells RecordSampler to use passthrough
+        // see `RecordSampler::new_from_options`
         (true, _, _) => {
-            info!("performing no filtering");
+            info!("not subsampling, using all reads");
             (None, None)
         }
-        (false, Some(f), _) => {
-            let pct = f * 100f64;
+        (false, Some(frac), _) => {
+            let pct = frac * 100f64;
             info!("sampling {pct}% of reads");
-            (Some(f), None)
+            (sampling_frac, None)
         }
-        (false, _, num) => {
-            info!("sampling {num} reads from BAM");
-            (None, Some(num))
+        (false, None, num_reads) => {
+            info!("sampling {num_reads} reads from BAM");
+            (None, Some(num_reads))
         }
     }
 }
@@ -892,7 +894,7 @@ pub struct SampleModBaseProbs {
     #[arg(long = "hist", requires = "out_dir", default_value_t = false)]
     histogram: bool,
     /// Number of buckets for the histogram, if used.
-    #[arg(long, requires = "histogram", default_value_t = 255)]
+    #[arg(long, requires = "histogram", default_value_t = 128)]
     buckets: u64,
 
     /// Max number of reads to use, especially recommended when using a large
@@ -911,6 +913,9 @@ pub struct SampleModBaseProbs {
     /// to sample, for example 0.1 will sample 1/10th of the reads.
     #[arg(group = "sampling_options", short = 'f', long)]
     sampling_frac: Option<f64>,
+    /// No sampling, use all of the reads to calculate the filter thresholds.
+    #[arg(long, group = "sampling_options", default_value_t = false)]
+    no_sampling: bool,
     /// Random seed for deterministic running, the default is non-deterministic.
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
@@ -941,8 +946,12 @@ impl SampleModBaseProbs {
         } else {
             None
         };
-        let (sample_frac, num_reads) =
-            get_sampling_options(false, self.sampling_frac, self.num_reads);
+
+        let (sample_frac, num_reads) = get_sampling_options(
+            self.no_sampling,
+            self.sampling_frac,
+            self.num_reads,
+        );
 
         let desired_percentiles = parse_percentiles(&self.percentiles)
             .with_context(|| {
@@ -1029,11 +1038,13 @@ pub struct ModSummarize {
     #[arg(long = "tsv", default_value_t = false)]
     tsv_format: bool,
 
-    /// Max number of reads to use, especially recommended when using a large
-    /// BAM without an index. If an indexed BAM is provided, the reads will be
-    /// sampled evenly over the length of the aligned reference. If a region is
-    /// passed with the --region option, they will be sampled over the genomic
-    /// region.
+    // sampling options
+    /// Max number of reads to use for estimating the filter threshold and
+    /// generating the summary, especially recommended when using a large
+    /// BAM without an index. If an indexed BAM is provided, the reads will
+    /// be sampled evenly over the length of the aligned reference. If a
+    /// region is passed with the --region option, they will be sampled
+    /// over the genomic region.
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -1042,19 +1053,27 @@ pub struct ModSummarize {
     )]
     num_reads: usize,
     /// Instead of using a defined number of reads, specify a fraction of reads
-    /// to sample, for example 0.1 will sample 1/10th of the reads.
+    /// to sample when estimating the filter threshold. For example 0.1 will
+    /// sample 1/10th of the reads.
     #[arg(group = "sampling_options", short = 'f', long)]
     sampling_frac: Option<f64>,
-    /// Do not perform any filtering, include all mod base calls in output. See
-    /// filtering.md for details on filtering.
-    #[arg(group = "sampling_options", long, default_value_t = false)]
-    no_filtering: bool,
-    /// Random seed for deterministic running, the default is non-deterministic.
+    /// No sampling, use all of the reads to calculate the filter thresholds and
+    /// generating the summary.
+    #[arg(long, group = "sampling_options", default_value_t = false)]
+    no_sampling: bool,
+    /// Sets a random seed for deterministic running (when using --sample-frac),
+    /// the default is non-deterministic.
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
+
+    // threshold options
+    /// Do not perform any filtering, include all base modification calls in the
+    /// summary. See filtering.md for details on filtering.
+    #[arg(group = "thresholds", long, default_value_t = false)]
+    no_filtering: bool,
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will filter
-    /// out the 10% lowest confidence modification calls.
+    /// out the 10% lowest confidence base modification calls.
     #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
     filter_percentile: f32,
     /// Specify the filter threshold globally or per-base. Global filter threshold
@@ -1099,15 +1118,17 @@ impl ModSummarize {
         };
 
         let (sample_frac, num_reads) = get_sampling_options(
-            self.no_filtering,
+            self.no_sampling,
             self.sampling_frac,
             self.num_reads,
         );
-
         let filter_thresholds =
             if let Some(raw_thresholds) = &self.filter_threshold {
                 info!("parsing user defined thresholds");
                 Some(parse_thresholds(raw_thresholds)?)
+            } else if self.no_filtering {
+                info!("not performing filtering");
+                Some(FilterThresholds::new_passthrough())
             } else {
                 None
             };
