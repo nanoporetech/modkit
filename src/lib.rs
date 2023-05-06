@@ -15,6 +15,7 @@ pub mod writers;
 mod read_cache;
 mod reads_sampler;
 mod record_sampler;
+mod threshold_mod_caller;
 mod util;
 
 #[cfg(test)]

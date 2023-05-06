@@ -3,6 +3,7 @@ use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
 use crate::util::{get_tag, Strand};
 use indexmap::{indexset, IndexSet};
+use std::cmp::Ordering;
 
 use log::debug;
 use rust_htslib::bam;
@@ -104,11 +105,34 @@ impl SkipMode {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BaseModCall {
     Canonical(f32),
     Modified(f32, ModCode),
     Filtered,
+}
+
+impl Eq for BaseModCall {}
+
+impl Ord for BaseModCall {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other)
+            .expect("should not have NaN probability")
+    }
+}
+
+impl PartialOrd for BaseModCall {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let p_a = match self {
+            BaseModCall::Canonical(p) | BaseModCall::Modified(p, _) => Some(*p),
+            BaseModCall::Filtered => None,
+        };
+        let p_b = match other {
+            BaseModCall::Canonical(p) | BaseModCall::Modified(p, _) => Some(*p),
+            BaseModCall::Filtered => None,
+        };
+        p_a.partial_cmp(&p_b)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -121,13 +145,13 @@ pub struct BaseModProbs {
 }
 
 impl BaseModProbs {
-    fn new(mod_code: char, prob: f32) -> Self {
+    pub(crate) fn new(mod_code: char, prob: f32) -> Self {
         let mod_codes = indexset! {mod_code};
         let probs = vec![prob];
         Self { mod_codes, probs }
     }
 
-    fn insert_base_mod_prob(&mut self, mod_code: char, prob: f32) {
+    pub(crate) fn insert_base_mod_prob(&mut self, mod_code: char, prob: f32) {
         if let Some(idx) = self.mod_codes.get_index_of(&mod_code) {
             self.probs[idx] += prob;
         } else {
@@ -161,6 +185,10 @@ impl BaseModProbs {
 
     pub fn iter_probs(&self) -> impl Iterator<Item = (&char, &f32)> {
         self.mod_codes.iter().zip(self.probs.iter())
+    }
+
+    pub fn iter_mut_probs(&mut self) -> impl Iterator<Item = &mut f32> {
+        self.probs.iter_mut()
     }
 
     pub(crate) fn into_collapsed(
@@ -1527,5 +1555,18 @@ mod mod_bam_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_base_modcall_equality() {
+        let a = BaseModCall::Canonical(1.0);
+        let b = BaseModCall::Canonical(1.0);
+        let c = BaseModCall::Modified(0.8, ModCode::a);
+        let d = BaseModCall::Modified(0.7, ModCode::a);
+        let e = BaseModCall::Filtered;
+        assert_eq!(a, b);
+        assert!(a > c);
+        assert!(c > d);
+        assert!(d > e);
     }
 }
