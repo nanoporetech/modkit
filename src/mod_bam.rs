@@ -160,7 +160,7 @@ impl BaseModProbs {
         }
     }
 
-    pub fn base_mod_call(&self) -> anyhow::Result<BaseModCall> {
+    pub fn argmax_base_mod_call(&self) -> anyhow::Result<BaseModCall> {
         let canonical_prob = self.canonical_prob();
         // todo(arand) use iterprobs here
         let max_mod_prob = self

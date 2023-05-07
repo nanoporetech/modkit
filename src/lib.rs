@@ -1,6 +1,6 @@
 pub mod commands;
 pub mod errs;
-pub mod filter_thresholds;
+// pub mod filter_thresholds;
 pub mod interval_chunks;
 pub mod logging;
 pub mod mod_bam;
@@ -9,13 +9,13 @@ pub mod mod_pileup;
 pub mod monoid;
 pub mod motif_bed;
 pub mod summarize;
+pub mod threshold_mod_caller;
 pub mod thresholds;
 pub mod writers;
 
 mod read_cache;
 mod reads_sampler;
 mod record_sampler;
-mod threshold_mod_caller;
 mod util;
 
 #[cfg(test)]

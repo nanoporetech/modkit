@@ -1,6 +1,12 @@
 use anyhow::{anyhow, Result as AnyhowResult};
 use log::debug;
 
+pub trait ParseChar {
+    fn parse_char(c: char) -> AnyhowResult<Self>
+    where
+        Self: Sized;
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ModCode {
@@ -78,6 +84,12 @@ impl ModCode {
     }
 }
 
+impl ParseChar for ModCode {
+    fn parse_char(c: char) -> AnyhowResult<Self> {
+        ModCode::parse_raw_mod_code(c)
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum DnaBase {
     A,
@@ -126,5 +138,11 @@ impl DnaBase {
                 Err(anyhow!("no mod code for canonical base {}", self.char()))
             }
         }
+    }
+}
+
+impl ParseChar for DnaBase {
+    fn parse_char(c: char) -> AnyhowResult<Self> {
+        DnaBase::parse(c)
     }
 }

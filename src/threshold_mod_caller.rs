@@ -87,6 +87,16 @@ impl MultipleThresholdModCaller {
             BaseModCall::Filtered => Ok(None),
         }
     }
+
+    pub fn iter_thresholds(&self) -> impl Iterator<Item = (&DnaBase, &f32)> {
+        self.per_base_thresholds.iter()
+    }
+
+    pub fn iter_mod_thresholds(
+        &self,
+    ) -> impl Iterator<Item = (&ModCode, &f32)> {
+        self.per_mod_thresholds.iter()
+    }
 }
 
 #[cfg(test)]

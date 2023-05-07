@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result as AnyhowResult};
-use mod_kit::filter_thresholds::FilterThresholds;
 use mod_kit::summarize::{summarize_modbam, ModSummary};
+use mod_kit::threshold_mod_caller::MultipleThresholdModCaller;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Output;
@@ -38,7 +38,8 @@ pub fn run_simple_summary(
             None,
             None,
             0.1, // doesn't matter
-            Some(FilterThresholds::new(0f32, HashMap::new())),
+            Some(MultipleThresholdModCaller::new_passthrough()),
+            None,
         )
     })
 }
