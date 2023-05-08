@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result as AnyhowResult};
 use mod_kit::summarize::{summarize_modbam, ModSummary};
 use mod_kit::threshold_mod_caller::MultipleThresholdModCaller;
-use std::collections::HashMap;
 use std::path::Path;
 use std::process::Output;
 

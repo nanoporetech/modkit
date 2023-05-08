@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod errs;
 // pub mod filter_thresholds;
+pub mod adjust;
 pub mod interval_chunks;
 pub mod logging;
 pub mod mod_bam;

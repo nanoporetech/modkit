@@ -73,7 +73,7 @@ impl<'a> ReadCache<'a> {
         let mut warned = false;
         let ref_pos_base_mod_calls = seq_pos_base_mod_probs
             .pos_to_base_mod_probs
-            .into_iter()
+            .into_iter() // par iter?
             // here the q_pos is the forward-oriented position
             .flat_map(|(q_pos, bmp)| {
                 if let Some(r_pos) = aligned_pairs.get(&q_pos) {
@@ -144,8 +144,7 @@ impl<'a> ReadCache<'a> {
             }
         }
 
-        let (_, mod_prob_iter) =
-            mod_base_info.into_iter_base_mod_probs();
+        let (_, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
         for (base, mod_strand, mut seq_base_mod_probs) in mod_prob_iter {
             match DnaBase::parse(base) {
                 Ok(dna_base) => {

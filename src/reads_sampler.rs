@@ -13,7 +13,7 @@ use indicatif::{MultiProgress, ParallelProgressIterator};
 use log::{debug, error};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Read IDs mapped to their base modification probabilities, organized

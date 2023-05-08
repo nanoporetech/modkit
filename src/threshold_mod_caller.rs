@@ -1,7 +1,6 @@
-use crate::mod_bam::{BaseModCall, BaseModProbs};
+use crate::mod_bam::{BaseModCall, BaseModProbs, SeqPosBaseModProbs};
 use crate::mod_base_code::{DnaBase, ModCode};
 use derive_new::new;
-use log::debug;
 use std::collections::HashMap;
 
 #[derive(new)]
@@ -88,6 +87,29 @@ impl MultipleThresholdModCaller {
         }
     }
 
+    pub fn call_seq_pos_mod_probs(
+        &self,
+        canonical_base: &DnaBase,
+        seq_pos_mod_probs: SeqPosBaseModProbs,
+    ) -> anyhow::Result<SeqPosBaseModProbs> {
+        let pos_to_base_mod_probs = seq_pos_mod_probs
+            .pos_to_base_mod_probs
+            .into_iter()
+            .map(|(q_pos, probs)| {
+                self.call_probs(canonical_base, probs)
+                    .map(|probs| (q_pos, probs))
+            })
+            .collect::<anyhow::Result<HashMap<_, _>>>()?
+            .into_iter()
+            .filter_map(|(q_pos, probs)| probs.map(|p| (q_pos, p)))
+            .collect::<HashMap<usize, BaseModProbs>>();
+
+        Ok(SeqPosBaseModProbs {
+            pos_to_base_mod_probs,
+            skip_mode: seq_pos_mod_probs.skip_mode,
+        })
+    }
+
     pub fn iter_thresholds(&self) -> impl Iterator<Item = (&DnaBase, &f32)> {
         self.per_base_thresholds.iter()
     }
@@ -105,7 +127,6 @@ mod threshold_mod_caller_tests {
     use crate::mod_base_code::{DnaBase, ModCode};
     use crate::threshold_mod_caller::MultipleThresholdModCaller;
     use anyhow::anyhow;
-    use indexmap::indexset;
     use std::collections::HashMap;
 
     fn assert_base_mod_call_canonical(
