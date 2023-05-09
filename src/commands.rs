@@ -74,7 +74,7 @@ impl Commands {
             Self::Summary(x) => x.run().map_err(|e| e.to_string()),
             Self::MotifBed(x) => x.run().map_err(|e| e.to_string()),
             Self::UpdateTags(x) => x.run(),
-            Self::CallMods(x) => x.run().map_err(|e| e.to_string())
+            Self::CallMods(x) => x.run().map_err(|e| e.to_string()),
         }
     }
 }
@@ -338,7 +338,7 @@ impl Adjust {
             &methods,
             None,
             self.fail_fast,
-            "Adjusting modBAM"
+            "Adjusting modBAM",
         )?;
         Ok(())
     }
@@ -1467,7 +1467,7 @@ impl CallMods {
             &[],
             Some(&caller),
             self.fail_fast,
-            "Calling Mods"
+            "Calling Mods",
         )?;
 
         Ok(())

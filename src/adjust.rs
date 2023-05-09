@@ -89,7 +89,7 @@ pub fn adjust_modbam(
     collapse_methods: &[CollapseMethod],
     threshold_caller: Option<&MultipleThresholdModCaller>,
     fail_fast: bool,
-    verb: &'static str
+    verb: &'static str,
 ) -> anyhow::Result<()> {
     let spinner = get_spinner();
     spinner.set_message(verb);
