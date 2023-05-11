@@ -210,23 +210,6 @@ impl<'a> ReadCache<'a> {
     }
 
     #[inline]
-    fn filter_base_mod_call(
-        base_mod_call: &BaseModCall,
-        threshold: f32,
-    ) -> BaseModCall {
-        match base_mod_call {
-            BaseModCall::Canonical(p) | BaseModCall::Modified(p, _) => {
-                if *p < threshold {
-                    BaseModCall::Filtered
-                } else {
-                    *base_mod_call
-                }
-            }
-            BaseModCall::Filtered => *base_mod_call,
-        }
-    }
-
-    #[inline]
     fn get_mod_call_from_mapping(
         strand_calls: &HashMap<char, (RefPosBaseModCalls, SkipMode)>,
         canonical_base: char,
