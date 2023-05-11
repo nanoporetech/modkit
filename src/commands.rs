@@ -441,6 +441,7 @@ pub struct ModBamPileup {
     /// TODO these docs
     #[arg(
     long,
+    alias = "mod-threshold",
     action = clap::ArgAction::Append
     )]
     mod_thresholds: Option<Vec<String>>,
@@ -1367,6 +1368,17 @@ pub struct CallMods {
         hide_short_help = true
     )]
     seed: Option<u64>,
+    /// Specify a region for sampling reads from when estimating the threshold probability.
+    /// If this option is not provided, but --region is provided, the genomic interval
+    /// passed to --region will be used.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    #[arg(long)]
+    sample_region: Option<String>,
+    /// Interval chunk size to process concurrently when estimating the threshold
+    /// probability, can be larger than the pileup processing interval.
+    #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
+    sampling_interval_size: u32,
+
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will filter
     /// out the 10% lowest confidence modification calls.
@@ -1378,10 +1390,10 @@ pub struct CallMods {
         hide_short_help = true
     )]
     filter_percentile: f32,
-    /// Specify the filter threshold globally or per-base. Global filter threshold
-    /// can be specified with by a decimal number (e.g. 0.75). Per-base thresholds
-    /// can be specified by colon-separated values, for example C:0.75 specifies a
-    /// threshold value of 0.75 for cytosine modification calls. Additional
+    /// Specify the filter threshold globally or per primary base. A global filter
+    /// threshold can be specified with by a decimal number (e.g. 0.75). Per-base
+    /// thresholds can be specified by colon-separated values, for example C:0.75
+    /// specifies a threshold value of 0.75 for cytosine modification calls. Additional
     /// per-base thresholds can be specified by repeating the option: for example
     /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
     /// base option and a default for all other bases with:
@@ -1400,16 +1412,10 @@ pub struct CallMods {
     action = clap::ArgAction::Append
     )]
     mod_thresholds: Option<Vec<String>>,
-    /// Specify a region for sampling reads from when estimating the threshold probability.
-    /// If this option is not provided, but --region is provided, the genomic interval
-    /// passed to --region will be used.
-    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
-    #[arg(long)]
-    sample_region: Option<String>,
-    /// Interval chunk size to process concurrently when estimating the threshold
-    /// probability, can be larger than the pileup processing interval.
-    #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
-    sampling_interval_size: u32,
+    /// Don't filter base modification calls, assign each base modification to the
+    /// highest probability prediction.
+    #[arg(long, default_value_t = false)]
+    no_filtering: bool,
 }
 
 impl CallMods {

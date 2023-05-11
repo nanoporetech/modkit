@@ -61,24 +61,31 @@ pub fn adjust_mod_probs(
         ml_agg.extend_from_slice(&mut ml);
     }
 
-    record
-        .remove_aux(mm_style.as_bytes())
-        .expect("failed to remove MM tag");
-    record
-        .remove_aux(ml_style.as_bytes())
-        .expect("failed to remove ML tag");
+    record.remove_aux(mm_style.as_bytes()).map_err(|e| {
+        RunError::new_failed(format!(
+            "failed to remove MM tag, {}",
+            e.to_string()
+        ))
+    })?;
+    record.remove_aux(ml_style.as_bytes()).map_err(|e| {
+        RunError::new_failed(format!(
+            "failed to remove ML tag, {}",
+            e.to_string()
+        ))
+    })?;
+
     let mm = Aux::String(&mm_agg);
     let ml_arr: AuxArray<u8> = {
         let sl = &ml_agg;
         sl.into()
     };
     let ml = Aux::ArrayU8(ml_arr);
-    record
-        .push_aux(mm_style.as_bytes(), mm)
-        .expect("failed to add MM tag");
-    record
-        .push_aux(ml_style.as_bytes(), ml)
-        .expect("failed to add ML tag");
+    record.push_aux(mm_style.as_bytes(), mm).map_err(|e| {
+        RunError::new_failed(format!("failed to add MM tag, {}", e.to_string()))
+    })?;
+    record.push_aux(ml_style.as_bytes(), ml).map_err(|e| {
+        RunError::new_failed(format!("failed to add ML tag, {}", e.to_string()))
+    })?;
 
     Ok(record)
 }
