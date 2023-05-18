@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
-use crate::filter_thresholds::FilterThresholds;
 use derive_new::new;
 use itertools::Itertools;
 use log::{debug, error};
@@ -12,6 +11,7 @@ use crate::mod_bam::{BaseModCall, CollapseMethod};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::motif_bed::{MotifLocations, RegexMotif};
 use crate::read_cache::ReadCache;
+use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{record_is_secondary, Strand};
 
 #[derive(Debug, Copy, Clone)]
@@ -564,7 +564,7 @@ pub fn process_region<T: AsRef<Path>>(
     chrom_tid: u32,
     start_pos: u32,
     end_pos: u32,
-    filter_thresholds: &FilterThresholds,
+    caller: &MultipleThresholdModCaller,
     pileup_numeric_options: &PileupNumericOptions,
     force_allow: bool,
     combine_strands: bool,
@@ -589,6 +589,7 @@ pub fn process_region<T: AsRef<Path>>(
 
     let mut read_cache = ReadCache::new(
         pileup_numeric_options.get_collapse_method(),
+        caller,
         force_allow,
     );
     let mut position_feature_counts = HashMap::new();
@@ -663,12 +664,7 @@ pub fn process_region<T: AsRef<Path>>(
                 continue;
             };
 
-            match read_cache.get_mod_call(
-                &record,
-                pos,
-                read_base.char(),
-                filter_thresholds.get(&read_base),
-            ) {
+            match read_cache.get_mod_call(&record, pos, read_base.char()) {
                 // a read can report on the read-positive or read-negative
                 // strand (see the docs for .get_mod_call above) so the
                 // pos_call and neg_call below are _read oriented_, the

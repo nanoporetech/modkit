@@ -4,6 +4,7 @@ use std::num::ParseFloatError;
 use std::path::PathBuf;
 use std::thread;
 
+use crate::adjust::{adjust_modbam, record_is_valid};
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
 use crossbeam_channel::bounded;
@@ -18,24 +19,21 @@ use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
 use crate::errs::{InputError, RunError};
-use crate::filter_thresholds::FilterThresholds;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
-    collapse_mod_probs, format_mm_ml_tag, CollapseMethod, ModBaseInfo,
-    RawModCode, SkipMode, ML_TAGS, MM_TAGS,
+    format_mm_ml_tag, CollapseMethod, ModBaseInfo, RawModCode, SkipMode,
+    ML_TAGS, MM_TAGS,
 };
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::{DnaBase, ModCode, ParseChar};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
-use crate::reads_sampler::get_sampled_read_ids_to_base_mod_calls;
+use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::summarize::{summarize_modbam, ModSummary};
+use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{calc_threshold_from_bam, Percentiles};
 use crate::util;
-use crate::util::{
-    add_modkit_pg_records, get_spinner, get_targets, record_is_secondary,
-    Region,
-};
+use crate::util::{add_modkit_pg_records, get_spinner, get_targets, Region};
 use crate::writers::{
     BedGraphWriter, BedMethylWriter, MultiTableWriter, OutWriter, SampledProbs,
     TableWriter, TsvWriter,
@@ -60,6 +58,8 @@ pub enum Commands {
     /// output is a totals table (designated by '#' lines) and a modification calls
     /// table. Descriptions of the columns can be found in the README.
     Summary(ModSummarize),
+    /// Call mods from a modbam, discarding the probabilities.
+    CallMods(CallMods),
     /// Create BED file with all locations of a sequence motif.
     /// Example: modkit motif-bed CG 0
     MotifBed(MotifBed),
@@ -74,9 +74,12 @@ impl Commands {
             Self::Summary(x) => x.run().map_err(|e| e.to_string()),
             Self::MotifBed(x) => x.run().map_err(|e| e.to_string()),
             Self::UpdateTags(x) => x.run(),
+            Self::CallMods(x) => x.run().map_err(|e| e.to_string()),
         }
     }
 }
+
+type CliResult<T> = Result<T, RunError>;
 
 fn get_sampling_options(
     no_sampling: bool,
@@ -112,10 +115,12 @@ fn get_threshold_from_options(
     filter_percentile: f32,
     seed: Option<u64>,
     region: Option<&Region>,
-) -> AnyhowResult<FilterThresholds> {
+    per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+    collapse_method: Option<&CollapseMethod>,
+) -> AnyhowResult<MultipleThresholdModCaller> {
     if no_filtering {
         info!("not performing filtering");
-        return Ok(FilterThresholds::new_passthrough());
+        return Ok(MultipleThresholdModCaller::new_passthrough());
     }
     let (sample_frac, num_reads) = match sample_frac {
         Some(f) => {
@@ -137,69 +142,76 @@ fn get_threshold_from_options(
         filter_percentile,
         seed,
         region,
+        collapse_method,
     )?;
-    Ok(FilterThresholds::new(0f32, per_base_thresholds))
+
+    Ok(MultipleThresholdModCaller::new(
+        per_base_thresholds,
+        per_mod_thresholds.unwrap_or(HashMap::new()),
+        0f32,
+    ))
 }
 
-fn parse_raw_threshold(raw: &str) -> AnyhowResult<(DnaBase, f32)> {
+fn parse_raw_threshold<T: ParseChar>(raw: &str) -> AnyhowResult<(T, f32)> {
     let parts = raw.split(':').collect::<Vec<&str>>();
     if parts.len() != 2 {
         return Err(anyhow!(
-            "encountered illegal per-base threshold {raw}, should\
+            "encountered illegal per-base threshold {raw}, should \
                 be <base>:<threshold>, e.g. C:0.75"
         ));
     }
-    let raw_canonical_base = parts[0]
+    let raw_base = parts[0]
         .chars()
         .nth(0)
         .ok_or(anyhow!("failed to parse canonical base {}", &parts[0]))?;
-    let dna_base = DnaBase::parse(raw_canonical_base).context(format!(
-        "failed to parse canonical base {}",
-        raw_canonical_base
-    ))?;
+    let base = T::parse_char(raw_base)
+        .context(format!("failed to parse base {}", raw_base))?;
     let threshold_value = parts[1]
         .parse::<f32>()
         .context(format!("failed to parse threshold value {}", &parts[1]))?;
-    Ok((dna_base, threshold_value))
+    Ok((base, threshold_value))
 }
 
-fn parse_thresholds(
+fn parse_per_base_thresholds(
     raw_thresholds: &[String],
-) -> AnyhowResult<FilterThresholds> {
+) -> AnyhowResult<(Option<f32>, HashMap<DnaBase, f32>)> {
     if raw_thresholds.is_empty() {
         return Err(anyhow!("no thresholds provided"));
     }
     if raw_thresholds.len() == 1 {
         let raw = &raw_thresholds[0];
         if raw.contains(':') {
-            let threshold_for_base = parse_raw_threshold(raw)?;
-            info!(
-                "using threshold {} for base {}",
-                threshold_for_base.0.char(),
-                threshold_for_base.1
-            );
-            let per_base_threshold = vec![threshold_for_base]
+            let (dna_base, threshold) = parse_raw_threshold::<DnaBase>(raw)?;
+            info!("using threshold {} for base {}", threshold, dna_base.char());
+            let per_base_threshold = vec![(dna_base, threshold)]
                 .into_iter()
                 .collect::<HashMap<DnaBase, f32>>();
-            Ok(FilterThresholds::new(0f32, per_base_threshold))
+            Ok((None, per_base_threshold))
         } else {
             let default_threshold = raw.parse::<f32>().context(format!(
                 "failed to parse user defined threshold {raw}"
             ))?;
-            Ok(FilterThresholds::new(default_threshold, HashMap::new()))
+            Ok((Some(default_threshold), HashMap::new()))
         }
     } else {
         let mut default: Option<f32> = None;
         let mut per_base_thresholds = HashMap::new();
         for raw_threshold in raw_thresholds {
             if raw_threshold.contains(':') {
-                let (dna_base, threshold) = parse_raw_threshold(raw_threshold)?;
+                let (dna_base, threshold) =
+                    parse_raw_threshold::<DnaBase>(raw_threshold)?;
                 info!(
                     "using threshold {} for base {}",
                     threshold,
                     dna_base.char()
                 );
-                per_base_thresholds.insert(dna_base, threshold);
+                let repeated = per_base_thresholds.insert(dna_base, threshold);
+                if repeated.is_some() {
+                    return Err(anyhow!(
+                        "repeated threshold for base {}",
+                        dna_base.char()
+                    ));
+                }
             } else {
                 if let Some(_) = default {
                     return Err(anyhow!(
@@ -214,11 +226,34 @@ fn parse_thresholds(
                 default = Some(default_threshold);
             }
         }
-        Ok(FilterThresholds::new(
-            default.unwrap_or(0f32),
-            per_base_thresholds,
-        ))
+        Ok((default, per_base_thresholds))
     }
+}
+
+fn parse_per_mod_thresholds(
+    raw_per_mod_thresholds: &[String],
+) -> AnyhowResult<HashMap<ModCode, f32>> {
+    let per_mod_thresholds = raw_per_mod_thresholds
+        .iter()
+        .map(|raw| parse_raw_threshold::<ModCode>(raw))
+        .collect::<anyhow::Result<HashMap<ModCode, f32>>>()?;
+    per_mod_thresholds.iter().for_each(|(mod_code, thresh)| {
+        info!("using threshold {thresh} for mod-code {}", mod_code.char());
+    });
+    Ok(per_mod_thresholds)
+}
+
+fn parse_thresholds(
+    raw_base_thresholds: &[String],
+    per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+) -> AnyhowResult<MultipleThresholdModCaller> {
+    let (default, per_base_thresholds) =
+        parse_per_base_thresholds(raw_base_thresholds)?;
+    Ok(MultipleThresholdModCaller::new(
+        per_base_thresholds,
+        per_mod_thresholds.unwrap_or(HashMap::new()),
+        default.unwrap_or(0f32),
+    ))
 }
 
 #[derive(Args)]
@@ -227,6 +262,9 @@ pub struct Adjust {
     in_bam: PathBuf,
     /// File path to new BAM file to be created.
     out_bam: PathBuf,
+    /// Output debug logs to file at this path.
+    #[arg(long)]
+    log_filepath: Option<PathBuf>,
     /// Modified base code to ignore/remove, see
     /// https://samtools.github.io/hts-specs/SAMtags.pdf for details on
     /// the modified base codes.
@@ -243,68 +281,6 @@ pub struct Adjust {
     /// the retained mod tag is already present.
     #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
     convert: Option<Vec<char>>,
-    /// Output debug logs to file at this path.
-    #[arg(long)]
-    log_filepath: Option<PathBuf>,
-}
-
-type CliResult<T> = Result<T, RunError>;
-
-fn record_is_valid(record: &bam::Record) -> Result<(), RunError> {
-    if record_is_secondary(&record) {
-        return Err(RunError::new_skipped("not primary"));
-    }
-    if record.seq_len() == 0 {
-        return Err(RunError::new_failed("seq is zero length"));
-    }
-    Ok(())
-}
-
-fn adjust_mod_probs(
-    mut record: bam::Record,
-    methods: &[CollapseMethod],
-) -> CliResult<bam::Record> {
-    let _ok = record_is_valid(&record)?;
-
-    let mod_base_info = ModBaseInfo::new_from_record(&record)?;
-    let mm_style = mod_base_info.mm_style;
-    let ml_style = mod_base_info.ml_style;
-
-    let mut mm_agg = String::new();
-    let mut ml_agg = Vec::new();
-
-    let (converters, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
-    for (base, strand, mut seq_pos_mod_probs) in mod_prob_iter {
-        let converter = converters.get(&base).unwrap();
-        for method in methods {
-            seq_pos_mod_probs = collapse_mod_probs(seq_pos_mod_probs, method);
-        }
-        let (mm, mut ml) =
-            format_mm_ml_tag(seq_pos_mod_probs, strand, converter);
-        mm_agg.push_str(&mm);
-        ml_agg.extend_from_slice(&mut ml);
-    }
-
-    record
-        .remove_aux(mm_style.as_bytes())
-        .expect("failed to remove MM tag");
-    record
-        .remove_aux(ml_style.as_bytes())
-        .expect("failed to remove ML tag");
-    let mm = Aux::String(&mm_agg);
-    let ml_arr: AuxArray<u8> = {
-        let sl = &ml_agg;
-        sl.into()
-    };
-    let ml = Aux::ArrayU8(ml_arr);
-    record
-        .push_aux(mm_style.as_bytes(), mm)
-        .expect("failed to add MM tag");
-    record
-        .push_aux(ml_style.as_bytes(), ml)
-        .expect("failed to add ML tag");
-
-    Ok(record)
 }
 
 impl Adjust {
@@ -319,8 +295,6 @@ impl Adjust {
         add_modkit_pg_records(&mut header);
         let mut out_bam =
             bam::Writer::from_path(out_fp, &header, bam::Format::Bam)?;
-
-        let fail_fast = self.fail_fast;
 
         let methods = if let Some(convert) = &self.convert {
             let mut conversions = HashMap::new();
@@ -360,61 +334,14 @@ impl Adjust {
             vec![method]
         };
 
-        let spinner = get_spinner();
-        spinner.set_message("Adjusting ModBAM");
-        let mut total = 0usize;
-        let mut total_failed = 0usize;
-        let mut total_skipped = 0usize;
-        for (i, result) in reader.records().enumerate() {
-            if let Ok(record) = result {
-                let record_name = util::get_query_name_string(&record)
-                    .unwrap_or("???".to_owned());
-                match adjust_mod_probs(record, &methods) {
-                    Err(RunError::BadInput(InputError(err)))
-                    | Err(RunError::Failed(err)) => {
-                        if fail_fast {
-                            return Err(anyhow!("{}", err.to_string()));
-                        } else {
-                            debug!("read {} failed, {}", record_name, err);
-                            total_failed += 1;
-                        }
-                    }
-                    Err(RunError::Skipped(_reason)) => {
-                        total_skipped += 1;
-                    }
-                    Ok(record) => {
-                        if let Err(err) = out_bam.write(&record) {
-                            if fail_fast {
-                                return Err(anyhow!(
-                                    "failed to write {}",
-                                    err.to_string()
-                                ));
-                            } else {
-                                debug!("failed to write {}", err);
-                                total_failed += 1;
-                            }
-                        } else {
-                            spinner.inc(1);
-                            total = i;
-                        }
-                    }
-                }
-            } else {
-                if fail_fast {
-                    let err = result.err().unwrap().to_string();
-                    return Err(anyhow!("{}", err));
-                }
-                total_failed += 1;
-            }
-        }
-        spinner.finish_and_clear();
-
-        info!(
-            "done, {} records processed, {} failed, {} skipped",
-            total + 1,
-            total_failed,
-            total_skipped
-        );
+        adjust_modbam(
+            &mut reader,
+            &mut out_bam,
+            &methods,
+            None,
+            self.fail_fast,
+            "Adjusting modBAM",
+        )?;
         Ok(())
     }
 }
@@ -509,9 +436,22 @@ pub struct ModBamPileup {
     #[arg(
     long,
     group = "thresholds",
-    action = clap::ArgAction::Append
+    action = clap::ArgAction::Append,
+    alias = "pass_threshold"
     )]
     filter_threshold: Option<Vec<String>>,
+    /// Specify a passing threshold to use for a base modification, independent of the
+    /// threshold for the primary sequence base or the default. For example, to set
+    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
+    /// threshold will still be estimated as usual and used for canonical cytosine and
+    /// 5mC unless the `--filter-threshold` option is also passed. See the online
+    /// documentation for more details.
+    #[arg(
+    long,
+    alias = "mod-threshold",
+    action = clap::ArgAction::Append
+    )]
+    mod_thresholds: Option<Vec<String>>,
     /// Specify a region for sampling reads from when estimating the threshold probability.
     /// If this option is not provided, but --region is provided, the genomic interval
     /// passed to --region will be used.
@@ -634,30 +574,44 @@ impl ModBamPileup {
             None
         };
 
-        let (pileup_options, combine_strands) = match self.preset {
-            Some(Presets::traditional) => {
-                info!("ignoring mod code {}", ModCode::h.char());
-                (
-                    PileupNumericOptions::Collapse(
-                        CollapseMethod::ReDistribute('h'),
-                    ),
-                    true,
-                )
-            }
-            None => {
-                let options = match (self.combine_mods, &self.ignore) {
-                    (false, None) => PileupNumericOptions::Passthrough,
-                    (true, _) => PileupNumericOptions::Combine,
-                    (_, Some(raw_mod_code)) => {
-                        info!("ignoring mod code {}", raw_mod_code);
-                        let method =
-                            CollapseMethod::ReDistribute(*raw_mod_code);
-                        PileupNumericOptions::Collapse(method)
-                    }
-                };
-                (options, self.combine_strands)
-            }
-        };
+        let (pileup_options, combine_strands, threshold_collapse_method) =
+            match self.preset {
+                Some(Presets::traditional) => {
+                    info!("ignoring mod code {}", ModCode::h.char());
+                    info!(
+                        "NOTICE, in the next version of modkit the 'traditional' preset \
+                         will perform --combine-mods instead of --ignore h"
+                    );
+                    (
+                        PileupNumericOptions::Collapse(
+                            CollapseMethod::ReDistribute('h'),
+                        ),
+                        true,
+                        Some(CollapseMethod::ReDistribute('h')),
+                    )
+                }
+                None => {
+                    let (options, collapse_method) =
+                        match (self.combine_mods, &self.ignore) {
+                            (false, None) => {
+                                (PileupNumericOptions::Passthrough, None)
+                            }
+                            (true, _) => (PileupNumericOptions::Combine, None),
+                            (_, Some(raw_mod_code)) => {
+                                info!("ignoring mod code {}", raw_mod_code);
+                                let method =
+                                    CollapseMethod::ReDistribute(*raw_mod_code);
+                                (
+                                    PileupNumericOptions::Collapse(
+                                        method.clone(),
+                                    ),
+                                    Some(method),
+                                )
+                            }
+                        };
+                    (options, self.combine_strands, collapse_method)
+                }
+            };
 
         // setup the writer here so we fail before doing any work (if there are problems).
         let out_fp_str = self.out_bed.clone();
@@ -676,9 +630,15 @@ impl ModBamPileup {
             .build()
             .with_context(|| "failed to make threadpool")?;
 
-        let filter_thresholds =
+        let per_mod_thresholds =
+            if let Some(raw_per_mod_thresholds) = &self.mod_thresholds {
+                Some(parse_per_mod_thresholds(raw_per_mod_thresholds)?)
+            } else {
+                None
+            };
+        let threshold_caller =
             if let Some(raw_threshold) = &self.filter_threshold {
-                parse_thresholds(raw_threshold)?
+                parse_thresholds(raw_threshold, per_mod_thresholds)?
             } else {
                 pool.install(|| {
                     get_threshold_from_options(
@@ -691,12 +651,14 @@ impl ModBamPileup {
                         self.filter_percentile,
                         self.seed,
                         sampling_region.as_ref().or(region.as_ref()),
+                        per_mod_thresholds,
+                        threshold_collapse_method.as_ref(),
                     )
                 })?
             };
 
         if !self.no_filtering {
-            for (base, threshold) in filter_thresholds.iter_thresholds() {
+            for (base, threshold) in threshold_caller.iter_thresholds() {
                 let base = base.char();
                 match (threshold * 100f32).ceil() as usize {
                     0..=60 => error!(
@@ -707,6 +669,19 @@ impl ModBamPileup {
                 filter-percentile or specifying a higher threshold."
             ),
                     _ => info!("Using filter threshold {} for {base}.", threshold),
+                }
+            }
+            for (base, threshold) in threshold_caller.iter_mod_thresholds() {
+                let base = base.char();
+                match (threshold * 100f32).ceil() as usize {
+                    0..=60 => error!(
+                "Threshold of {threshold} for mod code {base} is very low. Consider increasing the \
+                filter-percentile or specifying a higher threshold."),
+                    61..=70 => warn!(
+                "Threshold of {threshold} for mod code {base} is low. Consider increasing the \
+                filter-percentile or specifying a higher threshold."
+            ),
+                    _ => info!("Using filter threshold {} for mod code {base}.", threshold),
                 }
             }
         }
@@ -802,7 +777,7 @@ impl ModBamPileup {
                                         target.tid,
                                         start,
                                         end,
-                                        &filter_thresholds,
+                                        &threshold_caller,
                                         &pileup_options,
                                         force_allow,
                                         combine_strands,
@@ -888,6 +863,13 @@ pub struct SampleModBaseProbs {
     /// Overwrite results if present.
     #[arg(long, requires = "out_dir", default_value_t = false)]
     force: bool,
+    /// Ignore a modified base class  _in_situ_ by redistributing base modification
+    /// probability equally across other options. For example, if collapsing 'h',
+    /// with 'm' and canonical options, half of the probability of 'h' will be added to
+    /// both 'm' and 'C'. A full description of the methods can be found in
+    /// collapse.md.
+    #[arg(long, hide_short_help = true)]
+    ignore: Option<char>,
 
     // probability histogram options
     /// Output histogram of base modification prediction probabilities.
@@ -953,6 +935,14 @@ impl SampleModBaseProbs {
             self.num_reads,
         );
 
+        let collapse_method = if let Some(raw_mod_code_to_ignore) = self.ignore
+        {
+            let _ = ModCode::parse_raw_mod_code(raw_mod_code_to_ignore)?;
+            Some(CollapseMethod::ReDistribute(raw_mod_code_to_ignore))
+        } else {
+            None
+        };
+
         let desired_percentiles = parse_percentiles(&self.percentiles)
             .with_context(|| {
                 format!("failed to parse percentiles: {}", &self.percentiles)
@@ -960,7 +950,7 @@ impl SampleModBaseProbs {
 
         pool.install(|| {
             let read_ids_to_base_mod_calls =
-                get_sampled_read_ids_to_base_mod_calls(
+                get_sampled_read_ids_to_base_mod_probs(
                     &self.in_bam,
                     self.threads,
                     self.interval_size,
@@ -968,11 +958,12 @@ impl SampleModBaseProbs {
                     num_reads,
                     self.seed,
                     region.as_ref(),
+                    collapse_method.as_ref(),
                 )?;
 
             let histograms = if self.histogram {
                 let mod_call_probs =
-                    read_ids_to_base_mod_calls.probs_per_base_mod_call();
+                    read_ids_to_base_mod_calls.mle_probs_per_base_mod();
                 Some(
                     mod_call_probs
                         .iter()
@@ -991,7 +982,7 @@ impl SampleModBaseProbs {
             };
 
             let percentiles = read_ids_to_base_mod_calls
-                .probs_per_base()
+                .mle_probs_per_base()
                 .into_iter()
                 .map(|(canonical_base, mut probs)| {
                     Percentiles::new(&mut probs, &desired_percentiles)
@@ -1091,6 +1082,24 @@ pub struct ModSummarize {
         action = clap::ArgAction::Append
     )]
     filter_threshold: Option<Vec<String>>,
+    /// Specify a passing threshold to use for a base modification, independent of the
+    /// threshold for the primary sequence base or the default. For example, to set
+    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
+    /// threshold will still be estimated as usual and used for canonical cytosine and
+    /// 5mC unless the `--filter-threshold` option is also passed. See the online
+    /// documentation for more details.
+    #[arg(
+    long,
+    action = clap::ArgAction::Append
+    )]
+    mod_thresholds: Option<Vec<String>>,
+    /// Ignore a modified base class  _in_situ_ by redistributing base modification
+    /// probability equally across other options. For example, if collapsing 'h',
+    /// with 'm' and canonical options, half of the probability of 'h' will be added to
+    /// both 'm' and 'C'. A full description of the methods can be found in
+    /// collapse.md.
+    #[arg(long, group = "combine_args", hide_short_help = true)]
+    ignore: Option<char>,
 
     /// Process only the specified region of the BAM when collecting probabilities.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
@@ -1122,16 +1131,35 @@ impl ModSummarize {
             self.sampling_frac,
             self.num_reads,
         );
-        let filter_thresholds =
-            if let Some(raw_thresholds) = &self.filter_threshold {
-                info!("parsing user defined thresholds");
-                Some(parse_thresholds(raw_thresholds)?)
-            } else if self.no_filtering {
-                info!("not performing filtering");
-                Some(FilterThresholds::new_passthrough())
+
+        let per_mod_thresholds =
+            if let Some(raw_per_mod_thresholds) = &self.mod_thresholds {
+                Some(parse_per_mod_thresholds(raw_per_mod_thresholds)?)
             } else {
                 None
             };
+
+        let filter_thresholds =
+            if let Some(raw_thresholds) = &self.filter_threshold {
+                info!("parsing user defined thresholds");
+                Some(parse_thresholds(
+                    raw_thresholds,
+                    per_mod_thresholds.clone(),
+                )?)
+            } else if self.no_filtering {
+                info!("not performing filtering");
+                Some(MultipleThresholdModCaller::new_passthrough())
+            } else {
+                None
+            };
+
+        let collapse_method = if let Some(raw_mod_code_to_ignore) = self.ignore
+        {
+            let _ = ModCode::parse_raw_mod_code(raw_mod_code_to_ignore)?;
+            Some(CollapseMethod::ReDistribute(raw_mod_code_to_ignore))
+        } else {
+            None
+        };
 
         let mod_summary = pool.install(|| {
             summarize_modbam(
@@ -1144,8 +1172,11 @@ impl ModSummarize {
                 region.as_ref(),
                 self.filter_percentile,
                 filter_thresholds,
+                per_mod_thresholds,
+                collapse_method.as_ref(),
             )
         })?;
+
         let mut writer: Box<dyn OutWriter<ModSummary>> = if self.tsv_format {
             Box::new(TsvWriter::new_stdout())
         } else {
@@ -1324,6 +1355,192 @@ impl Update {
             "done, {} records processed, {} failed, {} skipped",
             total, total_failed, total_skipped
         );
+        Ok(())
+    }
+}
+
+#[derive(Args)]
+pub struct CallMods {
+    // running args
+    /// Input BAM, should be sorted and have associated index available.
+    in_bam: PathBuf,
+    /// Output BAM filepath.
+    out_bam: PathBuf,
+    /// Specify a file for debug logs to be written to, otherwise ignore them.
+    /// Setting a file is recommended.
+    #[arg(long)]
+    log_filepath: Option<PathBuf>,
+    // /// Process only the specified region of the BAM when performing transformation.
+    // /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    // #[arg(long)] todo(arand)
+    // region: Option<String>,
+    /// Fast fail, stop processing at the first invalid sequence record. Default
+    /// behavior is to continue and report failed/skipped records at the end.
+    #[arg(long = "ff", default_value_t = false)]
+    fail_fast: bool,
+
+    // processing args
+    /// Number of threads to use while processing chunks concurrently.
+    #[arg(short, long, default_value_t = 4)]
+    threads: usize,
+    // /// Interval chunk size to process concurrently. Smaller interval chunk
+    // /// sizes will use less memory but incur more overhead. Only used when
+    // /// provided an indexed BAM.
+    // #[arg( todo(arand)
+    // short = 'i',
+    // long,
+    // default_value_t = 100_000,
+    // hide_short_help = true
+    // )]
+    // interval_size: u32,
+
+    // sampling args
+    /// Sample this many reads when estimating the filtering threshold. If alignments are
+    /// present reads will be sampled evenly across aligned genome. If a region is
+    /// specified, either with the --region option or the --sample-region option, then
+    /// reads will be sampled evenly across the region given. This option is useful for
+    /// large BAM files. In practice, 10-50 thousand reads is sufficient to estimate the
+    /// model output distribution and determine the filtering threshold.
+    #[arg(
+        group = "sampling_options",
+        short = 'n',
+        long,
+        default_value_t = 10_042
+    )]
+    num_reads: usize,
+    /// Sample this fraction of the reads when estimating the filter-percentile.
+    /// In practice, 50-100 thousand reads is sufficient to estimate the model output
+    /// distribution and determine the filtering threshold. See filtering.md for
+    /// details on filtering.
+    #[arg(
+        group = "sampling_options",
+        short = 'f',
+        long,
+        hide_short_help = true
+    )]
+    sampling_frac: Option<f64>,
+    /// Set a random seed for deterministic running, the default is non-deterministic.
+    #[arg(
+        long,
+        conflicts_with = "num_reads",
+        requires = "sampling_frac",
+        hide_short_help = true
+    )]
+    seed: Option<u64>,
+    /// Specify a region for sampling reads from when estimating the threshold probability.
+    /// If this option is not provided, but --region is provided, the genomic interval
+    /// passed to --region will be used.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    #[arg(long)]
+    sample_region: Option<String>,
+    /// Interval chunk size to process concurrently when estimating the threshold
+    /// probability, can be larger than the pileup processing interval.
+    #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
+    sampling_interval_size: u32,
+
+    /// Filter out modified base calls where the probability of the predicted
+    /// variant is below this confidence percentile. For example, 0.1 will filter
+    /// out the 10% lowest confidence modification calls.
+    #[arg(
+        group = "thresholds",
+        short = 'p',
+        long,
+        default_value_t = 0.1,
+        hide_short_help = true
+    )]
+    filter_percentile: f32,
+    /// Specify the filter threshold globally or per primary base. A global filter
+    /// threshold can be specified with by a decimal number (e.g. 0.75). Per-base
+    /// thresholds can be specified by colon-separated values, for example C:0.75
+    /// specifies a threshold value of 0.75 for cytosine modification calls. Additional
+    /// per-base thresholds can be specified by repeating the option: for example
+    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
+    /// base option and a default for all other bases with:
+    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
+    /// value of 0.70 for adenosine and 0.9 for all other base modification calls.
+    #[arg(
+    long,
+    group = "thresholds",
+    action = clap::ArgAction::Append,
+    alias = "pass_threshold"
+    )]
+    filter_threshold: Option<Vec<String>>,
+    /// Specify a passing threshold to use for a base modification, independent of the
+    /// threshold for the primary sequence base or the default. For example, to set
+    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
+    /// threshold will still be estimated as usual and used for canonical cytosine and
+    /// 5mC unless the `--filter-threshold` option is also passed. See the online
+    /// documentation for more details.
+    #[arg(
+    long = "mod-threshold",
+    action = clap::ArgAction::Append
+    )]
+    mod_thresholds: Option<Vec<String>>,
+    /// Don't filter base modification calls, assign each base modification to the
+    /// highest probability prediction.
+    #[arg(long, default_value_t = false)]
+    no_filtering: bool,
+}
+
+impl CallMods {
+    pub fn run(&self) -> AnyhowResult<()> {
+        let _handle = init_logging(self.log_filepath.as_ref());
+
+        let mut reader = bam::Reader::from_path(&self.in_bam)?;
+        let threads = self.threads;
+        reader.set_threads(threads)?;
+        let mut header = bam::Header::from_template(reader.header());
+        add_modkit_pg_records(&mut header);
+        let mut out_bam =
+            bam::Writer::from_path(&self.out_bam, &header, bam::Format::Bam)?;
+
+        let per_mod_thresholds =
+            if let Some(raw_per_mod_thresholds) = &self.mod_thresholds {
+                Some(parse_per_mod_thresholds(raw_per_mod_thresholds)?)
+            } else {
+                None
+            };
+
+        let sampling_region = if let Some(raw_region) = &self.sample_region {
+            info!("parsing sample region {raw_region}");
+            Some(Region::parse_str(raw_region, &reader.header())?)
+        } else {
+            None
+        };
+
+        let caller = if let Some(raw_threshold) = &self.filter_threshold {
+            parse_thresholds(raw_threshold, per_mod_thresholds)?
+        } else {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(self.threads)
+                .build()
+                .with_context(|| "failed to make threadpool")?;
+            pool.install(|| {
+                get_threshold_from_options(
+                    &self.in_bam,
+                    self.threads,
+                    self.sampling_interval_size,
+                    self.sampling_frac,
+                    self.num_reads,
+                    false,
+                    self.filter_percentile,
+                    self.seed,
+                    sampling_region.as_ref(),
+                    per_mod_thresholds,
+                    None,
+                )
+            })?
+        };
+
+        adjust_modbam(
+            &mut reader,
+            &mut out_bam,
+            &[],
+            Some(&caller),
+            self.fail_fast,
+            "Calling Mods",
+        )?;
+
         Ok(())
     }
 }

@@ -2,7 +2,7 @@ use rust_htslib::bam;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read as StdRead};
 
-use common::run_modkit;
+use common::{check_against_expected_text_file, run_modkit};
 
 mod common;
 
@@ -10,24 +10,6 @@ mod common;
 fn test_help() {
     let pileup_help_args = ["pileup", "--help"];
     let _out = run_modkit(&pileup_help_args).unwrap();
-}
-
-fn check_against_expected_text_file(output_fp: &str, expected_fp: &str) {
-    let test = {
-        let mut fh = File::open(output_fp).unwrap();
-        let mut buff = String::new();
-        fh.read_to_string(&mut buff).unwrap();
-        buff
-    };
-    let expected = {
-        // this file was hand-checked for correctness.
-        let mut fh = File::open(expected_fp).unwrap();
-        let mut buff = String::new();
-        fh.read_to_string(&mut buff).unwrap();
-        buff
-    };
-
-    similar_asserts::assert_eq!(test, expected);
 }
 
 #[test]
@@ -259,23 +241,27 @@ fn test_cpg_motif_filtering() {
 fn test_cpg_motif_filtering_strand_combine() {
     let temp_file = std::env::temp_dir()
         .join("test_cpg_motif_filtering_strand_combine.bed");
-    run_modkit(&[
-        "pileup",
-        "tests/resources/bc_anchored_10_reads.sorted.bam",
-        temp_file.to_str().unwrap(),
-        "--no-filtering",
-        "-i",
-        "91",
-        "--cpg",
-        "--combine-strands",
-        "--ref",
-        "tests/resources/CGI_ladder_3.6kb_ref.fa",
-    ])
-    .unwrap();
-    check_against_expected_text_file(
-        temp_file.to_str().unwrap(),
-        "tests/resources/bc_anchored_10_reads_nofilt_cg_motif_strand_combine.bed",
-    );
+    for interval_size in
+        ["10", "88", "89", "90", "91", "92", "93", "94", "10000"]
+    {
+        run_modkit(&[
+            "pileup",
+            "tests/resources/bc_anchored_10_reads.sorted.bam",
+            temp_file.to_str().unwrap(),
+            "--no-filtering",
+            "-i",
+            interval_size,
+            "--cpg",
+            "--combine-strands",
+            "--ref",
+            "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        ])
+        .unwrap();
+        check_against_expected_text_file(
+            temp_file.to_str().unwrap(),
+            "tests/resources/bc_anchored_10_reads_nofilt_cg_motif_strand_combine.bed",
+        );
+    }
 }
 
 #[test]

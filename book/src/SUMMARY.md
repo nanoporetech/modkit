@@ -10,5 +10,7 @@
 - [Current limitations](./limitations.md)
 - [Performance considerations](./perf_considerations.md)
 - [Algorithm details](./algo_details.md)
-    - [Filtering base modification calls](./filtering.md)
+    - [Pass/fail base modification calls](./filtering.md)
+        - [Threshold examples](./filtering_details.md)
+        - [Numeric details](./filtering_numeric_details.md)
     - [Ignoring and combining calls](./collapse.md)

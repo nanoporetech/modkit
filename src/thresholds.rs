@@ -7,12 +7,12 @@ use log::{debug, info};
 use rayon::prelude::*;
 use rust_htslib::bam::{self};
 
-use crate::filter_thresholds::FilterThresholds;
-use crate::mod_bam::ModBaseInfo;
-use crate::mod_base_code::DnaBase;
+use crate::mod_bam::{CollapseMethod, ModBaseInfo};
+use crate::mod_base_code::{DnaBase, ModCode};
 use crate::reads_sampler::{
-    get_sampled_read_ids_to_base_mod_calls, ReadIdsToBaseModCalls,
+    get_sampled_read_ids_to_base_mod_probs, ReadIdsToBaseModProbs,
 };
+use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util;
 use crate::util::{record_is_secondary, AlignedPairs, Region};
 
@@ -95,13 +95,14 @@ impl Percentiles {
 }
 
 pub(crate) fn calc_thresholds_per_base(
-    read_ids_to_base_mod_calls: &ReadIdsToBaseModCalls,
+    read_ids_to_base_mod_calls: &ReadIdsToBaseModProbs,
     filter_percentile: f32,
     default_threshold: Option<f32>,
-) -> AnyhowResult<FilterThresholds> {
+    per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+) -> AnyhowResult<MultipleThresholdModCaller> {
     debug!("calculating per base thresholds");
     let st = std::time::Instant::now();
-    let mut probs_per_base = read_ids_to_base_mod_calls.probs_per_base();
+    let mut probs_per_base = read_ids_to_base_mod_calls.mle_probs_per_base();
     debug!("probs per base took {:?}s", st.elapsed().as_secs());
 
     let st = std::time::Instant::now();
@@ -131,9 +132,10 @@ pub(crate) fn calc_thresholds_per_base(
     }
     info!("{threshold_message}");
 
-    Ok(FilterThresholds::new(
-        default_threshold.unwrap_or(0f32),
+    Ok(MultipleThresholdModCaller::new(
         filter_thresholds,
+        per_mod_thresholds.unwrap_or(HashMap::new()),
+        default_threshold.unwrap_or(0f32),
     ))
 }
 
@@ -146,8 +148,8 @@ pub fn calc_threshold_from_bam(
     filter_percentile: f32,
     seed: Option<u64>,
     region: Option<&Region>,
+    collapse_method: Option<&CollapseMethod>,
 ) -> AnyhowResult<HashMap<DnaBase, f32>> {
-    // todo implement per-base thresholds
     let mut can_base_probs = get_modbase_probs_from_bam(
         bam_fp,
         threads,
@@ -156,6 +158,7 @@ pub fn calc_threshold_from_bam(
         num_reads,
         seed,
         region,
+        collapse_method,
     )?;
     can_base_probs
         .iter_mut()
@@ -175,8 +178,9 @@ pub fn get_modbase_probs_from_bam(
     num_reads: Option<usize>,
     seed: Option<u64>,
     region: Option<&Region>,
+    collapse_method: Option<&CollapseMethod>,
 ) -> AnyhowResult<HashMap<DnaBase, Vec<f32>>> {
-    get_sampled_read_ids_to_base_mod_calls(
+    get_sampled_read_ids_to_base_mod_probs(
         bam_fp,
         threads,
         interval_size,
@@ -184,6 +188,7 @@ pub fn get_modbase_probs_from_bam(
         num_reads,
         seed,
         region,
+        collapse_method,
     )
-    .map(|x| x.probs_per_base())
+    .map(|x| x.mle_probs_per_base())
 }

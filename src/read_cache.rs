@@ -8,7 +8,8 @@ use crate::mod_bam::{
     collapse_mod_probs, BaseModCall, CollapseMethod, ModBaseInfo,
     SeqPosBaseModProbs, SkipMode,
 };
-use crate::mod_base_code::ModCode;
+use crate::mod_base_code::{DnaBase, ModCode};
+use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util;
 use crate::util::Strand;
 
@@ -31,12 +32,13 @@ pub(crate) struct ReadCache<'a> {
     method: Option<&'a CollapseMethod>,
     /// Force allowing of implicit canonical
     force_allow: bool,
+    caller: &'a MultipleThresholdModCaller,
 }
 
 impl<'a> ReadCache<'a> {
-    // todo garbage collect freq
     pub(crate) fn new(
         method: Option<&'a CollapseMethod>,
+        caller: &'a MultipleThresholdModCaller,
         force_allow: bool,
     ) -> Self {
         Self {
@@ -47,6 +49,7 @@ impl<'a> ReadCache<'a> {
             neg_mod_codes: HashMap::new(),
             method,
             force_allow,
+            caller,
         }
     }
 
@@ -60,7 +63,8 @@ impl<'a> ReadCache<'a> {
         record: &bam::Record,
         seq_pos_base_mod_probs: SeqPosBaseModProbs,
         mod_strand: Strand,
-        canonical_base: char,
+        canonical_base: DnaBase,
+        threshold_base: DnaBase,
     ) -> Result<(), RunError> {
         let aligned_pairs = util::get_aligned_pairs_forward(&record)
             .filter_map(|ap| ap.ok())
@@ -69,11 +73,12 @@ impl<'a> ReadCache<'a> {
         let mut warned = false;
         let ref_pos_base_mod_calls = seq_pos_base_mod_probs
             .pos_to_base_mod_probs
-            .into_iter()
+            .into_iter() // par iter?
             // here the q_pos is the forward-oriented position
             .flat_map(|(q_pos, bmp)| {
                 if let Some(r_pos) = aligned_pairs.get(&q_pos) {
-                    match bmp.base_mod_call() {
+                    // filtering happens here.
+                    match self.caller.call(&threshold_base, &bmp) {
                         Ok(base_mod_call) => Some((*r_pos, base_mod_call)),
                         Err(e) => {
                             if !warned {
@@ -89,12 +94,12 @@ impl<'a> ReadCache<'a> {
                             None
                         }
                     }
-                    // Some((*r_pos, bmp.base_mod_call_unchecked()))
                 } else {
                     None
                 }
             })
             .collect::<HashMap<u64, BaseModCall>>();
+
         let read_table = match mod_strand {
             Strand::Positive => &mut self.pos_reads,
             Strand::Negative => &mut self.neg_reads,
@@ -104,7 +109,7 @@ impl<'a> ReadCache<'a> {
             .or_insert(HashMap::new());
 
         base_to_mod_calls.insert(
-            canonical_base,
+            canonical_base.char(),
             (ref_pos_base_mod_calls, seq_pos_base_mod_probs.skip_mode),
         );
         Ok(())
@@ -121,6 +126,9 @@ impl<'a> ReadCache<'a> {
             return Err(RunError::Skipped(msg));
         }
 
+        // todo(ar) shouln't have to perform this sweep, should be able to keep
+        //  a temporary container and update the cache after all seq_pos_probs
+        //  are checked to be OK.
         for (_base, _strand, seq_pos_probs) in
             mod_base_info.iter_seq_base_mod_probs()
         {
@@ -136,65 +144,69 @@ impl<'a> ReadCache<'a> {
             }
         }
 
-        let (converters, mod_prob_iter) =
-            mod_base_info.into_iter_base_mod_probs();
+        let (_, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
         for (base, mod_strand, mut seq_base_mod_probs) in mod_prob_iter {
-            let converter = converters.get(&base).unwrap();
-            if let Some(method) = &self.method {
-                seq_base_mod_probs =
-                    collapse_mod_probs(seq_base_mod_probs, method);
-            }
+            match DnaBase::parse(base) {
+                Ok(dna_base) => {
+                    let threshold_base = match mod_strand {
+                        Strand::Positive => dna_base,
+                        Strand::Negative => dna_base.complement(),
+                    };
+                    if let Some(method) = &self.method {
+                        seq_base_mod_probs =
+                            collapse_mod_probs(seq_base_mod_probs, method);
+                    }
+                    // could move this into it's own routine..?
+                    let mod_codes = seq_base_mod_probs
+                        .pos_to_base_mod_probs
+                        .values()
+                        .flat_map(|base_mod_probs| {
+                            base_mod_probs.mod_codes.iter().filter_map(
+                                |raw_mod_code| {
+                                    ModCode::parse_raw_mod_code(*raw_mod_code)
+                                        .ok()
+                                },
+                            )
+                        })
+                        .collect::<HashSet<ModCode>>();
 
-            // could move this into it's own routine..?
-            let mod_codes = seq_base_mod_probs
-                .pos_to_base_mod_probs
-                .values()
-                .flat_map(|base_mod_probs| {
-                    base_mod_probs.mod_codes.iter().filter_map(|raw_mod_code| {
-                        ModCode::parse_raw_mod_code(*raw_mod_code).ok()
-                    })
-                })
-                .collect::<HashSet<ModCode>>();
+                    let mod_codes_for_read =
+                        match (mod_strand, record.is_reverse()) {
+                            // C+C positive stranded
+                            (Strand::Positive, false) => {
+                                &mut self.pos_mod_codes
+                            }
+                            (Strand::Positive, true) => &mut self.neg_mod_codes,
+                            // G-C negative stranded
+                            (Strand::Negative, false) => {
+                                &mut self.neg_mod_codes
+                            }
+                            (Strand::Negative, true) => &mut self.pos_mod_codes,
+                        };
+                    let record_mod_codes = mod_codes_for_read
+                        .entry(record_name.to_owned())
+                        .or_insert(HashSet::new());
+                    record_mod_codes.extend(mod_codes);
 
-            let mod_codes_for_read = match (mod_strand, record.is_reverse()) {
-                // C+C positive stranded
-                (Strand::Positive, false) => &mut self.pos_mod_codes,
-                (Strand::Positive, true) => &mut self.neg_mod_codes,
-                // G-C negative stranded
-                (Strand::Negative, false) => &mut self.neg_mod_codes,
-                (Strand::Negative, true) => &mut self.pos_mod_codes,
-            };
-            let record_mod_codes = mod_codes_for_read
-                .entry(record_name.to_owned())
-                .or_insert(HashSet::new());
-            record_mod_codes.extend(mod_codes);
-
-            self.add_modbase_probs_for_record_and_canonical_base(
-                &record_name,
-                record,
-                seq_base_mod_probs,
-                mod_strand,
-                converter.canonical_base, // todo(ar) don't need this here? can use base directly
-            )?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn filter_base_mod_call(
-        base_mod_call: &BaseModCall,
-        threshold: f32,
-    ) -> BaseModCall {
-        match base_mod_call {
-            BaseModCall::Canonical(p) | BaseModCall::Modified(p, _) => {
-                if *p < threshold {
-                    BaseModCall::Filtered
-                } else {
-                    *base_mod_call
+                    self.add_modbase_probs_for_record_and_canonical_base(
+                        &record_name,
+                        record,
+                        seq_base_mod_probs,
+                        mod_strand,
+                        dna_base,
+                        threshold_base,
+                    )?;
+                }
+                Err(e) => {
+                    let message = format!(
+                        "record {record_name} has unallowed DNA base {base}, {}", e.to_string()
+                    );
+                    debug!("{}", &message);
+                    return Err(RunError::new_failed(message));
                 }
             }
-            BaseModCall::Filtered => *base_mod_call,
         }
+        Ok(())
     }
 
     #[inline]
@@ -202,15 +214,14 @@ impl<'a> ReadCache<'a> {
         strand_calls: &HashMap<char, (RefPosBaseModCalls, SkipMode)>,
         canonical_base: char,
         position: u32,
-        threshold: f32,
     ) -> Option<BaseModCall> {
         strand_calls.get(&canonical_base).and_then(
             |(ref_pos_mod_calls, skip_mode)| {
-                let mod_base_call = ref_pos_mod_calls
-                    .get(&(position as u64))
-                    .map(|base_mod_call| {
-                        Self::filter_base_mod_call(base_mod_call, threshold)
-                    });
+                let mod_base_call =
+                    ref_pos_mod_calls.get(&(position as u64)).map(|bmc| *bmc);
+                // .map(|base_mod_call| {
+                //     Self::filter_base_mod_call(base_mod_call, threshold)
+                // });
                 match skip_mode {
                     SkipMode::Ambiguous => mod_base_call,
                     SkipMode::ImplicitProbModified | SkipMode::ProbModified => {
@@ -237,7 +248,6 @@ impl<'a> ReadCache<'a> {
         record: &bam::Record,
         position: u32,
         canonical_base: char, // todo make this DnaBase
-        threshold: f32,
     ) -> (Option<BaseModCall>, Option<BaseModCall>) {
         let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
         if self.skip_set.contains(&read_id) {
@@ -249,13 +259,11 @@ impl<'a> ReadCache<'a> {
                         pos_base_mod_calls,
                         canonical_base,
                         position,
-                        threshold,
                     ),
                     Self::get_mod_call_from_mapping(
                         neg_base_mod_calls,
                         canonical_base,
                         position,
-                        threshold,
                     ),
                 ),
                 (Some(pos_base_mod_calls), None) => (
@@ -263,7 +271,6 @@ impl<'a> ReadCache<'a> {
                         pos_base_mod_calls,
                         canonical_base,
                         position,
-                        threshold,
                     ),
                     None,
                 ),
@@ -273,7 +280,6 @@ impl<'a> ReadCache<'a> {
                         neg_base_mod_calls,
                         canonical_base,
                         position,
-                        threshold,
                     ),
                 ),
                 (None, None) => {
@@ -298,12 +304,7 @@ impl<'a> ReadCache<'a> {
                             || self.pos_reads.contains_key(&read_id)
                             || self.neg_reads.contains_key(&read_id),
                     );
-                    self.get_mod_call(
-                        record,
-                        position,
-                        canonical_base,
-                        threshold,
-                    )
+                    self.get_mod_call(record, position, canonical_base)
                 }
             }
         }
@@ -374,6 +375,7 @@ mod read_cache_tests {
     };
     use crate::read_cache::ReadCache;
     use crate::test_utils::dna_complement;
+    use crate::threshold_mod_caller::MultipleThresholdModCaller;
     use crate::util;
 
     fn tests_record(record: &bam::Record) {
@@ -391,7 +393,8 @@ mod read_cache_tests {
             .map(|seq| seq.chars().collect::<Vec<char>>())
             .unwrap();
 
-        let mut cache = ReadCache::new(None, false);
+        let caller = MultipleThresholdModCaller::new_passthrough();
+        let mut cache = ReadCache::new(None, &caller, false);
         cache.add_record(&record).unwrap();
         let converter =
             DeltaListConverter::new_from_record(&record, 'C').unwrap();
@@ -454,7 +457,8 @@ mod read_cache_tests {
             BamReader::from_path("tests/resources/empty-tags.sorted.bam")
                 .unwrap();
 
-        let mut cache = ReadCache::new(None, false);
+        let caller = MultipleThresholdModCaller::new_passthrough();
+        let mut cache = ReadCache::new(None, &caller, false);
         for r in reader.records() {
             let record = r.unwrap();
             assert!(cache.add_record(&record).is_err());
@@ -479,7 +483,8 @@ mod read_cache_tests {
             .fetch(FetchDefinition::Region(tid as i32, 0, target_length as i64))
             .unwrap();
 
-        let mut read_cache = ReadCache::new(None, false);
+        let caller = MultipleThresholdModCaller::new_passthrough();
+        let mut read_cache = ReadCache::new(None, &caller, false);
         for p in reader.pileup() {
             let pileup = p.unwrap();
             for alignment in pileup.alignments() {
@@ -495,12 +500,8 @@ mod read_cache_tests {
                 } else {
                     record.seq()[alignment.qpos().unwrap()] as char
                 };
-                let mod_base_call = read_cache.get_mod_call(
-                    &record,
-                    pileup.pos(),
-                    read_base,
-                    0f32,
-                );
+                let mod_base_call =
+                    read_cache.get_mod_call(&record, pileup.pos(), read_base);
                 let read_id = String::from_utf8_lossy(record.qname());
                 println!("{}\t{}\t{:?}", read_id, pileup.pos(), mod_base_call);
             }

@@ -87,7 +87,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Filtering base modification calls</a></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -382,7 +382,7 @@ modified base information (modBAMs). The various sub-commands and tools availabl
 <blockquote>
 <p>Advanced usage information.</p>
 </blockquote>
-<pre><code class="language-bash">Usage: modkit &lt;COMMAND&gt;
+<pre><code class="language-text">Usage: modkit &lt;COMMAND&gt;
 
 Commands:
   pileup        Tabulates base modification calls across genomic positions. This command
@@ -394,9 +394,12 @@ Commands:
   update-tags   Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag from
                     silent '.' to explicitly '?' or '.'.
   sample-probs  Calculate an estimate of the base modification probability distribution.
-  summary       Summarize the mod tags present in a BAM and get basic statistics.
+  summary       Summarize the mod tags present in a BAM and get basic statistics. The default
+                    output is a totals table (designated by '#' lines) and a modification calls
+                    table. Descriptions of the columns can be found in the README.
+  call-mods     Call mods from a modbam, discarding the probabilities.
   motif-bed     Create BED file with all locations of a sequence motif.
-                    Example: --motif CG --offset 0.
+                  Example: modkit motif-bed CG 0.
   help          Print this message or the help of the given subcommand(s).
 
 Options:
@@ -404,7 +407,7 @@ Options:
   -V, --version  Print version information.
 </code></pre>
 <h2 id="pileup"><a class="header" href="#pileup">pileup</a></h2>
-<pre><code class="language-bash">Tabulates base modification calls across genomic positions. This command produces a bedMethyl
+<pre><code class="language-text">Tabulates base modification calls across genomic positions. This command produces a bedMethyl
 formatted file. Schema and description of fields can be found in the README.
 
 Usage: modkit pileup [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BED&gt;
@@ -474,6 +477,13 @@ Options:
           --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
           all other base modification calls.
 
+      --mod-thresholds &lt;MOD_THRESHOLDS&gt;
+          Specify a passing threshold to use for a base modification, independent of the threshold
+          for the primary sequence base or the default. For example, to set the pass threshold for
+          5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
+          usual and used for canonical cytosine and 5mC unless the `--filter-threshold` option is
+          also passed. See the online documentation for more details.
+
       --sample-region &lt;SAMPLE_REGION&gt;
           Specify a region for sampling reads from when estimating the threshold probability. If
           this option is not provided, but --region is provided, the genomic interval passed to
@@ -542,7 +552,7 @@ Options:
           Print help information (use `-h` for a summary).
 </code></pre>
 <h2 id="adjust-mods"><a class="header" href="#adjust-mods">adjust-mods</a></h2>
-<pre><code class="language-bash">Performs various operations on BAM files containing base modification information, such as
+<pre><code class="language-text">Performs various operations on BAM files containing base modification information, such as
 converting base modification codes and ignoring modification calls. Produces a BAM output file.
 
 Usage: modkit adjust-mods [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BAM&gt;
@@ -552,6 +562,7 @@ Arguments:
   &lt;OUT_BAM&gt;  File path to new BAM file to be created.
 
 Options:
+      --log-filepath &lt;LOG_FILEPATH&gt;  Output debug logs to file at this path.
       --ignore &lt;IGNORE&gt;              Modified base code to ignore/remove, see
                                      https://samtools.github.io/hts-specs/SAMtags.pdf for details on
                                      the modified base codes. [default: h]
@@ -561,11 +572,10 @@ Options:
                                      failed/skipped records at the end.
       --convert &lt;CONVERT&gt; &lt;CONVERT&gt;  Convert one mod-tag to another, summing the probabilities
                                      together if the retained mod tag is already present.
-      --log-filepath &lt;LOG_FILEPATH&gt;  Output debug logs to file at this path.
   -h, --help                         Print help information.
 </code></pre>
 <h2 id="update-tags"><a class="header" href="#update-tags">update-tags</a></h2>
-<pre><code class="language-bash">Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag from silent '.' to explicitly
+<pre><code class="language-text">Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag from silent '.' to explicitly
 '?' or '.'.
 
 Usage: modkit update-tags [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BAM&gt;
@@ -588,56 +598,90 @@ Options:
   -h, --help                         Print help information.
 </code></pre>
 <h2 id="sample-probs"><a class="header" href="#sample-probs">sample-probs</a></h2>
-<pre><code class="language-bash">Calculate an estimate of the base modification probability distribution.
+<pre><code class="language-text">Calculate an estimate of the base modification probability distribution.
 
 Usage: modkit sample-probs [OPTIONS] &lt;IN_BAM&gt;
 
 Arguments:
-  &lt;IN_BAM&gt;  Input BAM with modified base tags. If a index is found reads will be sampled evenly
-            across the length of the reference sequence.
+  &lt;IN_BAM&gt;
+          Input BAM with modified base tags. If a index is found reads will be sampled evenly across
+          the length of the reference sequence.
 
 Options:
-  -t, --threads &lt;THREADS&gt;              Number of threads to use [default: 4]
-      --log-filepath &lt;LOG_FILEPATH&gt;    Specify a file for debug logs to be written to, otherwise
-                                       ignore them. Setting a file is recommended.
-  -p, --percentiles &lt;PERCENTILES&gt;      Percentiles to calculate, a space separated list of floats. [default:
-                                       0.1,0.5,0.9]
-  -o, --out-dir &lt;OUT_DIR&gt;              Directory to deposit result tables into. Required for model
-                                       probability histogram output. Creates two files
-                                       probabilities.tsv and probabilities.txt The .txt contains
-                                       ASCII-histograms and the .tsv contains tab-separated variable
-                                       data represented by the histograms.
-      --prefix &lt;PREFIX&gt;                Label to prefix output files with. E.g. 'foo' will output
-                                       foo_thresholds.tsv, foo_probabilities.tsv, and
-                                       foo_probabilities.txt.
-      --force                          Overwrite results if present.
-      --hist                           Output histogram of base modification prediction
-                                       probabilities.
-      --buckets &lt;BUCKETS&gt;              Number of buckets for the histogram, if used. [default: 128]
-  -n, --num-reads &lt;NUM_READS&gt;          Max number of reads to use, especially recommended when using
-                                       a large BAM without an index. If an indexed BAM is provided,
-                                       the reads will be sampled evenly over the length of the
-                                       aligned reference. If a region is passed with the --region
-                                       option, they will be sampled over the genomic region. [default:
-                                       10042]
-  -f, --sampling-frac &lt;SAMPLING_FRAC&gt;  Instead of using a defined number of reads, specify a
-                                       fraction of reads to sample, for example 0.1 will sample
-                                       1/10th of the reads.
-      --no-sampling                    No sampling, use all of the reads to calculate the filter
-                                       thresholds.
-  -s, --seed &lt;SEED&gt;                    Random seed for deterministic running, the default is
-                                       non-deterministic.
-      --region &lt;REGION&gt;                Process only the specified region of the BAM when collecting
-                                       probabilities. Format should be &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or
-                                       &lt;chrom_name&gt;.
-  -i, --interval-size &lt;INTERVAL_SIZE&gt;  Interval chunk size to process concurrently. Smaller interval
-                                       chunk sizes will use less memory but incur more overhead.
-                                       Only used when sampling probs from an indexed bam. [default:
-                                       1000000]
-  -h, --help                           Print help information
+  -t, --threads &lt;THREADS&gt;
+          Number of threads to use.
+          
+          [default: 4]
+
+      --log-filepath &lt;LOG_FILEPATH&gt;
+          Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
+          recommended.
+
+  -p, --percentiles &lt;PERCENTILES&gt;
+          Percentiles to calculate, a space separated list of floats.
+          
+          [default: 0.1,0.5,0.9]
+
+  -o, --out-dir &lt;OUT_DIR&gt;
+          Directory to deposit result tables into. Required for model probability histogram output.
+          Creates two files probabilities.tsv and probabilities.txt The .txt contains
+          ASCII-histograms and the .tsv contains tab-separated variable data represented by the
+          histograms.
+
+      --prefix &lt;PREFIX&gt;
+          Label to prefix output files with. E.g. 'foo' will output foo_thresholds.tsv,
+          foo_probabilities.tsv, and foo_probabilities.txt.
+
+      --force
+          Overwrite results if present.
+
+      --ignore &lt;IGNORE&gt;
+          Ignore a modified base class  _in_situ_ by redistributing base modification probability
+          equally across other options. For example, if collapsing 'h', with 'm' and canonical
+          options, half of the probability of 'h' will be added to both 'm' and 'C'. A full
+          description of the methods can be found in collapse.md.
+
+      --hist
+          Output histogram of base modification prediction probabilities.
+
+      --buckets &lt;BUCKETS&gt;
+          Number of buckets for the histogram, if used.
+          
+          [default: 128]
+
+  -n, --num-reads &lt;NUM_READS&gt;
+          Max number of reads to use, especially recommended when using a large BAM without an
+          index. If an indexed BAM is provided, the reads will be sampled evenly over the length of
+          the aligned reference. If a region is passed with the --region option, they will be
+          sampled over the genomic region.
+          
+          [default: 10042]
+
+  -f, --sampling-frac &lt;SAMPLING_FRAC&gt;
+          Instead of using a defined number of reads, specify a fraction of reads to sample, for
+          example 0.1 will sample 1/10th of the reads.
+
+      --no-sampling
+          No sampling, use all of the reads to calculate the filter thresholds.
+
+  -s, --seed &lt;SEED&gt;
+          Random seed for deterministic running, the default is non-deterministic.
+
+      --region &lt;REGION&gt;
+          Process only the specified region of the BAM when collecting probabilities. Format should
+          be &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or &lt;chrom_name&gt;.
+
+  -i, --interval-size &lt;INTERVAL_SIZE&gt;
+          Interval chunk size to process concurrently. Smaller interval chunk sizes will use less
+          memory but incur more overhead. Only used when sampling probs from an indexed bam.
+          
+          [default: 1000000]
+
+  -h, --help
+          Print help information (use `-h` for a summary).
 </code></pre>
 <h2 id="summary"><a class="header" href="#summary">summary</a></h2>
-<pre><code class="language-bash">Summarize the mod tags present in a BAM and get basic statistics. The default output is a totals
+<pre><code class="language-text">Summarize the mod tags present in a BAM and get basic statistics. The default output is a totals
 table (designated by '#' lines) and a modification calls table. Descriptions of the columns can be
 found in the README.
 
@@ -648,34 +692,48 @@ Arguments:
 
 Options:
   -t, --threads &lt;THREADS&gt;
-          Number of threads to use. [default: 4]
+          Number of threads to use.
+          
+          [default: 4]
+
       --log-filepath &lt;LOG_FILEPATH&gt;
           Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
           recommended.
+
       --tsv
           Output summary as a tab-separated variables stdout instead of a table.
+
   -n, --num-reads &lt;NUM_READS&gt;
           Max number of reads to use for estimating the filter threshold and generating the summary,
           especially recommended when using a large BAM without an index. If an indexed BAM is
           provided, the reads will be sampled evenly over the length of the aligned reference. If a
-          region is passed with the --region option, they will be sampled over the genomic region. [default:
-          10042]
+          region is passed with the --region option, they will be sampled over the genomic region.
+          
+          [default: 10042]
+
   -f, --sampling-frac &lt;SAMPLING_FRAC&gt;
           Instead of using a defined number of reads, specify a fraction of reads to sample when
           estimating the filter threshold. For example 0.1 will sample 1/10th of the reads.
+
       --no-sampling
           No sampling, use all of the reads to calculate the filter thresholds and generating the
           summary.
+
   -s, --seed &lt;SEED&gt;
           Sets a random seed for deterministic running (when using --sample-frac), the default is
           non-deterministic.
+
       --no-filtering
           Do not perform any filtering, include all base modification calls in the summary. See
           filtering.md for details on filtering.
+
   -p, --filter-percentile &lt;FILTER_PERCENTILE&gt;
           Filter out modified base calls where the probability of the predicted variant is below
           this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
-          base modification calls. [default: 0.1]
+          base modification calls.
+          
+          [default: 0.1]
+
       --filter-threshold &lt;FILTER_THRESHOLD&gt;
           Specify the filter threshold globally or per-base. Global filter threshold can be
           specified with by a decimal number (e.g. 0.75). Per-base thresholds can be specified by
@@ -685,17 +743,35 @@ Options:
           single base option and a default for all other bases with: --filter-threshold A:0.70
           --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
           all other base modification calls.
+
+      --mod-thresholds &lt;MOD_THRESHOLDS&gt;
+          Specify a passing threshold to use for a base modification, independent of the threshold
+          for the primary sequence base or the default. For example, to set the pass threshold for
+          5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
+          usual and used for canonical cytosine and 5mC unless the `--filter-threshold` option is
+          also passed. See the online documentation for more details.
+
+      --ignore &lt;IGNORE&gt;
+          Ignore a modified base class  _in_situ_ by redistributing base modification probability
+          equally across other options. For example, if collapsing 'h', with 'm' and canonical
+          options, half of the probability of 'h' will be added to both 'm' and 'C'. A full
+          description of the methods can be found in collapse.md.
+
       --region &lt;REGION&gt;
           Process only the specified region of the BAM when collecting probabilities. Format should
           be &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or &lt;chrom_name&gt;.
+
   -i, --interval-size &lt;INTERVAL_SIZE&gt;
           When using regions, interval chunk size to process concurrently. Smaller interval chunk
-          sizes will use less memory but incur more overhead. [default: 1000000]
+          sizes will use less memory but incur more overhead.
+          
+          [default: 1000000]
+
   -h, --help
-          Print help information.
+          Print help information (use `-h` for a summary).
 </code></pre>
 <h2 id="motif-bed"><a class="header" href="#motif-bed">motif-bed</a></h2>
-<pre><code class="language-bash">Create BED file with all locations of a sequence motif. Example: modkit motif-bed CG 0
+<pre><code class="language-text">Create BED file with all locations of a sequence motif. Example: modkit motif-bed CG 0
 
 Usage: modkit motif-bed [OPTIONS] &lt;FASTA&gt; &lt;MOTIF&gt; &lt;OFFSET&gt;
 
@@ -707,6 +783,92 @@ Arguments:
 Options:
   -k, --mask  Respect soft masking in the reference FASTA.
   -h, --help  Print help information.
+</code></pre>
+<h2 id="call-mods"><a class="header" href="#call-mods">call-mods</a></h2>
+<pre><code class="language-text">Call mods from a modbam, discarding the probabilities.
+
+Usage: modkit call-mods [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BAM&gt;
+
+Arguments:
+  &lt;IN_BAM&gt;
+          Input BAM, should be sorted and have associated index available.
+
+  &lt;OUT_BAM&gt;
+          Output BAM filepath.
+
+Options:
+      --log-filepath &lt;LOG_FILEPATH&gt;
+          Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
+          recommended.
+
+      --ff
+          Fast fail, stop processing at the first invalid sequence record. Default behavior is to
+          continue and report failed/skipped records at the end.
+
+  -t, --threads &lt;THREADS&gt;
+          Number of threads to use while processing chunks concurrently.
+          
+          [default: 4]
+
+  -n, --num-reads &lt;NUM_READS&gt;
+          Sample this many reads when estimating the filtering threshold. If alignments are present
+          reads will be sampled evenly across aligned genome. If a region is specified, either with
+          the --region option or the --sample-region option, then reads will be sampled evenly
+          across the region given. This option is useful for large BAM files. In practice, 10-50
+          thousand reads is sufficient to estimate the model output distribution and determine the
+          filtering threshold.
+          
+          [default: 10042]
+
+  -f, --sampling-frac &lt;SAMPLING_FRAC&gt;
+          Sample this fraction of the reads when estimating the filter-percentile. In practice,
+          50-100 thousand reads is sufficient to estimate the model output distribution and
+          determine the filtering threshold. See filtering.md for details on filtering.
+
+      --seed &lt;SEED&gt;
+          Set a random seed for deterministic running, the default is non-deterministic.
+
+      --sample-region &lt;SAMPLE_REGION&gt;
+          Specify a region for sampling reads from when estimating the threshold probability. If
+          this option is not provided, but --region is provided, the genomic interval passed to
+          --region will be used. Format should be &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or &lt;chrom_name&gt;.
+
+      --sampling-interval-size &lt;SAMPLING_INTERVAL_SIZE&gt;
+          Interval chunk size to process concurrently when estimating the threshold probability, can
+          be larger than the pileup processing interval.
+          
+          [default: 1000000]
+
+  -p, --filter-percentile &lt;FILTER_PERCENTILE&gt;
+          Filter out modified base calls where the probability of the predicted variant is below
+          this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
+          modification calls.
+          
+          [default: 0.1]
+
+      --filter-threshold &lt;FILTER_THRESHOLD&gt;
+          Specify the filter threshold globally or per primary base. A global filter threshold can
+          be specified with by a decimal number (e.g. 0.75). Per-base thresholds can be specified by
+          colon-separated values, for example C:0.75 specifies a threshold value of 0.75 for
+          cytosine modification calls. Additional per-base thresholds can be specified by repeating
+          the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
+          single base option and a default for all other bases with: --filter-threshold A:0.70
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
+          all other base modification calls.
+
+      --mod-threshold &lt;MOD_THRESHOLDS&gt;
+          Specify a passing threshold to use for a base modification, independent of the threshold
+          for the primary sequence base or the default. For example, to set the pass threshold for
+          5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
+          usual and used for canonical cytosine and 5mC unless the `--filter-threshold` option is
+          also passed. See the online documentation for more details.
+
+      --no-filtering
+          Don't filter base modification calls, assign each base modification to the highest
+          probability prediction.
+
+  -h, --help
+          Print help information (use `-h` for a summary).
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h1>
 <p>It's recommended to run all <code>modkit</code> commands with the <code>--log-filepath &lt;path-to-file&gt;</code>
@@ -760,6 +922,12 @@ supported in <code>pileup</code>.</p>
 </ul>
 </li>
 <li>
+<p>Ambiguous DNA bases in ML tags are not supported (for example <code>N+m?</code>).</p>
+<ul>
+<li>This limitation will be removed in version 0.2.z</li>
+</ul>
+</li>
+<li>
 <p>Only one MM-flag (<code>.</code>, <code>?</code>) per-canonical base is supported within a read.</p>
 <ul>
 <li>This limitation may be removed in the future.</li>
@@ -786,6 +954,60 @@ interval size will reduce the memory usage per-thread.</p>
 <li><a href="./filtering.html">Filtering low confidence base modification calls</a></li>
 <li><a href="./filtering.html">Removing and combining modified base types</a></li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="partitioning-pass-and-fail-base-modification-calls"><a class="header" href="#partitioning-pass-and-fail-base-modification-calls">Partitioning pass and fail base modification calls.</a></h1>
+<p>Base modification calls can be removed if they are low confidence based on the modification probabilities. In
+general, <code>modkit</code> will estimate a pass confidence threshold value based on the input data. Threshold values
+for modifications on a primary sequence base can be specified on the command line with the
+<code>--filter-threshold</code> option. For example to set a threshold for cytosine modifications at 0.8 and adenosine
+modifications at 0.9 provide <code>--filter-percentile C:0.8 --filter-percentile A:0.9</code>. Pass threshold values per
+base modification can also be specified. For example, to specify a threshold for canonical adenosine at 0.8
+and 6mA at 0.9 use <code>--mod-thresholds A:0.8 --mod-thresholds a:0.9</code>.</p>
+<h2 id="further-details"><a class="header" href="#further-details">Further details</a></h2>
+<ol>
+<li><a href="./filtering_details.html">Examples of how thresholds affect base modification calls.</a></li>
+<li><a href="./filtering_numeric_details.html">Numerical details of how thresholds are calculated on the fly.</a></li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="examples-of-how-thresholds-affect-base-modification-calls"><a class="header" href="#examples-of-how-thresholds-affect-base-modification-calls">Examples of how thresholds affect base modification calls</a></h1>
+<p>The following examples are meant to demonstrate how individual base modification calls will be made during
+<code>pileup</code> or <code>call-mods</code>. Important to remember that the probability of the modification needs to be &gt;= the
+pass threshold value.</p>
+<h2 id="two-way-base-modification-calls"><a class="header" href="#two-way-base-modification-calls">Two-way base modification calls</a></h2>
+<pre><code class="language-text">probability of canonical cytosine: p_C
+probability of 5mC: p_m
+threshold for all cytosine base modifications: threshold_C 
+
+{p_C: 0.25, p_m: 0.75}, threshold_C: 0.7 =&gt; call: 5mC (m), most likely.
+{p_C: 0.25, p_m: 0.75}, threshold_C: 0.8 =&gt; call: Fail, both probabilities are below threshold.
+</code></pre>
+<h2 id="three-way-base-modification-calls"><a class="header" href="#three-way-base-modification-calls">Three-way base modification calls</a></h2>
+<pre><code class="language-text">probability of canonical cytosine: p_C
+probability of 5mC: p_m
+probability of 5hmC: p_h
+threshold for all cytosine base modifications: threshold_C 
+
+{p_C: 0.05, p_m: 0.7, p_h: 0.25}, threshold_C: 0.7 =&gt; call: 5mC (m), most likely.
+{p_C: 0.15, p_m: 0.6, p_h: 0.25}, threshold_C: 0.7 =&gt; Fail, all below threshold.
+</code></pre>
+<h2 id="three-way-base-modification-calls-with-modification-specific-thresholds"><a class="header" href="#three-way-base-modification-calls-with-modification-specific-thresholds">Three-way base modification calls with modification-specific thresholds</a></h2>
+<pre><code class="language-text">probability of canonical cytosine: p_C
+probability of 5mC: p_m
+probability of 5hmC: p_h
+threshold for all canonical cytosine: mod_threshold_C 
+threshold for all 5mC: mod_threshold_m 
+threshold for all 5hmC: mod_threshold_h 
+
+mod_threshold_C: 0.7
+mod_threshold_m: 0.8
+mod_threshold_h: 0.9
+{p_C: 0.05, p_m: 0.85, p_h: 0.1} =&gt; call: 5mC (m) most likely
+
+mod_threshold_C: 0.7
+mod_threshold_m: 0.8
+mod_threshold_h: 0.9
+{p_C: 0.75, p_m: 0.05, p_h: 0.2} =&gt; call: C (canonical) most likely
+{p_C: 0.05, p_m: 0.75, p_h: 0.2} =&gt; Fail, all below respective thresholds
+{p_C: 0.1, p_m: 0.05, p_h: 0.85} =&gt; Fail, all below respective thresholds
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="filtering-base-modification-calls"><a class="header" href="#filtering-base-modification-calls">Filtering base modification calls.</a></h1>
 <p>Modified base calls are qualitied with a probability that is contained in the ML tag (see the
 <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a>). We calculate the confidence that the model
@@ -847,6 +1069,22 @@ and <code>schema.yaml</code> in this project for details on the notation for cou
 
         </div>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
 

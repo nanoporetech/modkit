@@ -1,5 +1,5 @@
 use crate::interval_chunks::IntervalChunks;
-use crate::mod_bam::{BaseModCall, ModBaseInfo};
+use crate::mod_bam::{BaseModCall, BaseModProbs, CollapseMethod, ModBaseInfo};
 use crate::mod_base_code::DnaBase;
 use crate::monoid::Moniod;
 use crate::record_sampler::{Indicator, RecordSampler};
@@ -13,40 +13,45 @@ use indicatif::{MultiProgress, ParallelProgressIterator};
 use log::{debug, error};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Read IDs mapped to their base modification calls, organized by the
-/// canonical base. This data structure contains essentially all of the
-/// same data as in the records themselves, but with the query position
-/// and the alternative probabilities removed (i.e. it only has the
-/// probability of the called modification).
-pub(crate) struct ReadIdsToBaseModCalls {
+/// Read IDs mapped to their base modification probabilities, organized
+/// by the canonical base. This data structure contains essentially all
+/// of the same data as in the records themselves, but with the query
+/// position and the alternative probabilities removed (i.e. it only has
+/// the probability of the called modification).
+pub(crate) struct ReadIdsToBaseModProbs {
     // mapping of read id to canonical base mapped to a vec
     // of base mod calls on that canonical base
-    pub(crate) inner: HashMap<String, HashMap<DnaBase, Vec<BaseModCall>>>,
+    pub(crate) inner: HashMap<String, HashMap<DnaBase, Vec<BaseModProbs>>>,
 }
 
-impl ReadIdsToBaseModCalls {
-    fn add_read_without_calls(&mut self, read_id: &str) {
+impl ReadIdsToBaseModProbs {
+    fn add_read_without_probs(&mut self, read_id: &str) {
         self.inner
             .entry(read_id.to_owned())
             .or_insert(HashMap::new());
     }
 
-    fn add_mod_calls_for_read(
+    fn add_mod_probs_for_read(
         &mut self,
         read_id: &str,
         canonical_base: DnaBase,
-        mod_calls: Vec<BaseModCall>,
+        mod_probs: Vec<BaseModProbs>,
     ) {
         let read_id_entry = self
             .inner
             .entry(read_id.to_owned())
             .or_insert(HashMap::new());
-        let added = read_id_entry.insert(canonical_base, mod_calls);
+        let added = read_id_entry.insert(canonical_base, mod_probs);
         if added.is_some() {
-            error!("double added base mod calls, potentially a logic error!")
+            error!(
+                "double added base mod calls for base {} and read {},\
+            potentially a logic error!",
+                canonical_base.char(),
+                read_id
+            );
         }
     }
 
@@ -66,22 +71,30 @@ impl ReadIdsToBaseModCalls {
     }
 
     #[inline]
-    pub(crate) fn probs_per_base(&self) -> HashMap<DnaBase, Vec<f32>> {
+    /// Returns most likely probabilities for base modifications predicted for
+    /// each canonical base.
+    pub(crate) fn mle_probs_per_base(&self) -> HashMap<DnaBase, Vec<f32>> {
         let pb = get_master_progress_bar(self.inner.len());
         pb.set_message("aggregating per-base modification probabilities");
         self.inner
             .par_iter()
             .progress_with(pb)
-            .map(|(_, canonical_base_to_base_mod_calls)| {
-                canonical_base_to_base_mod_calls
+            .map(|(_, can_base_to_base_mod_probs)| {
+                can_base_to_base_mod_probs
                     .iter()
-                    .map(|(canonical_base, base_mod_calls)| {
-                        let probs = base_mod_calls
+                    .map(|(canonical_base, base_mod_probs)| {
+                        let probs = base_mod_probs
                             .iter()
-                            .filter_map(|bmc| match bmc {
-                                BaseModCall::Modified(f, _) => Some(*f),
-                                BaseModCall::Canonical(f) => Some(*f),
-                                _ => None,
+                            .filter_map(|bmc| match bmc.argmax_base_mod_call() {
+                                Ok(BaseModCall::Modified(f, _)) => Some(f),
+                                Ok(BaseModCall::Canonical(f)) => Some(f),
+                                Ok(BaseModCall::Filtered) => {
+                                    unreachable!("argmax base mod call should not return Filtered")
+                                }
+                                Err(e) => {
+                                    debug!("{}", e.to_string());
+                                    None
+                                }
                             })
                             .collect::<Vec<f32>>();
                         (*canonical_base, probs)
@@ -91,37 +104,48 @@ impl ReadIdsToBaseModCalls {
             .reduce(|| HashMap::zero(), |a, b| a.op(b))
     }
 
-    pub(crate) fn probs_per_base_mod_call(&self) -> HashMap<char, Vec<f64>> {
+    /// return argmax probs for each mod-code
+    pub(crate) fn mle_probs_per_base_mod(&self) -> HashMap<char, Vec<f64>> {
+        // todo(arand) should really aggregate per mod-code
         let pb = get_master_progress_bar(self.inner.len());
-        pb.set_message("aggregating per-mod modification probabilities");
+        pb.set_message("aggregating per-mod probabilities");
         self.inner
             .par_iter()
             .progress_with(pb)
-            .filter_map(|(_, base_mod_calls)| {
-                let grouped = base_mod_calls
+            .filter_map(|(_, base_mod_probs)| {
+                let grouped = base_mod_probs
                     .iter()
-                    .map(|(base, base_mod_calls)| {
-                        let canonical_code = base
-                            .canonical_mod_code()
-                            .map(|c| c.char())
-                            .unwrap_or(base.char());
-                        base_mod_calls
+                    .map(|(base, base_mod_probs)| {
+                        // let canonical_code = base
+                        //     .canonical_mod_code()
+                        //     .map(|c| c.char())
+                        //     .unwrap_or(base.char());
+                        base_mod_probs
                             .iter()
-                            .filter_map(|bmc| match bmc {
-                                BaseModCall::Modified(p, code) => {
-                                    Some((code.char(), *p))
+                            // can make this .base_mod_call
+                            .filter_map(|bmc| {
+                                match bmc.argmax_base_mod_call() {
+                                    Ok(BaseModCall::Modified(p, code)) => {
+                                        Some((code.char(), p as f64))
+                                    }
+                                    Ok(BaseModCall::Canonical(p)) => {
+                                        Some((base.char(), p as f64))
+                                    }
+                                    Ok(BaseModCall::Filtered) => {
+                                        unreachable!("argmax base mod call should not return Filtered")
+                                    }
+                                    Err(e) => {
+                                        debug!("{}", e.to_string());
+                                        None
+                                    }
                                 }
-                                BaseModCall::Canonical(p) => {
-                                    Some((canonical_code, *p))
-                                }
-                                BaseModCall::Filtered => None,
                             })
                             .fold(
                                 HashMap::<char, Vec<f64>>::new(),
                                 |mut acc, (base, p)| {
                                     acc.entry(base)
                                         .or_insert(Vec::new())
-                                        .push(p as f64);
+                                        .push(p);
                                     acc
                                 },
                             )
@@ -133,7 +157,7 @@ impl ReadIdsToBaseModCalls {
     }
 }
 
-impl Moniod for ReadIdsToBaseModCalls {
+impl Moniod for ReadIdsToBaseModProbs {
     fn zero() -> Self {
         Self {
             inner: HashMap::new(),
@@ -168,9 +192,7 @@ impl Moniod for ReadIdsToBaseModCalls {
     }
 }
 
-/// Entry point to sampling base modification calls from a BAM without regard
-/// to their mapping.
-pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
+pub(crate) fn get_sampled_read_ids_to_base_mod_probs(
     bam_fp: &PathBuf,
     reader_threads: usize,
     interval_size: u32,
@@ -178,7 +200,8 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
     num_reads: Option<usize>,
     seed: Option<u64>,
     region: Option<&Region>,
-) -> anyhow::Result<ReadIdsToBaseModCalls> {
+    collapse_method: Option<&CollapseMethod>,
+) -> anyhow::Result<ReadIdsToBaseModProbs> {
     let use_regions = bam::IndexedReader::from_path(&bam_fp).is_ok();
     if use_regions {
         let mut read_ids_to_base_mod_calls =
@@ -189,6 +212,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
                 num_reads,
                 seed,
                 region,
+                collapse_method,
             )?;
         // sample unmapped reads iff we've sampled less than 90% of the number we've wanted to get
         // or 0 (from sample_frac).
@@ -220,6 +244,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
                     reader.records(),
                     true,
                     record_sampler,
+                    collapse_method,
                 )?;
             debug!(
                 "sampled {} unmapped records",
@@ -239,10 +264,14 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_calls(
         reader.set_threads(reader_threads)?;
         let record_sampler =
             RecordSampler::new_from_options(sample_frac, num_reads, seed);
-        let read_ids_to_base_mod_calls =
-            sample_read_base_mod_calls(reader.records(), true, record_sampler)?;
-        debug!("sampled {} records", read_ids_to_base_mod_calls.len());
-        Ok(read_ids_to_base_mod_calls)
+        let read_ids_to_base_mod_probs = sample_read_base_mod_calls(
+            reader.records(),
+            true,
+            record_sampler,
+            collapse_method,
+        )?;
+        debug!("sampled {} records", read_ids_to_base_mod_probs.len());
+        Ok(read_ids_to_base_mod_probs)
     }
 }
 
@@ -255,7 +284,8 @@ fn sample_reads_base_mod_calls_over_regions(
     num_reads: Option<usize>,
     seed: Option<u64>,
     region: Option<&Region>,
-) -> anyhow::Result<ReadIdsToBaseModCalls> {
+    collapse_method: Option<&CollapseMethod>,
+) -> anyhow::Result<ReadIdsToBaseModProbs> {
     let reader = bam::IndexedReader::from_path(bam_fp)?;
     let header = reader.header();
     // could be regions, plural here
@@ -271,7 +301,7 @@ fn sample_reads_base_mod_calls_over_regions(
     sampled_items.set_message("base mod calls sampled");
     // end prog bar stuff
 
-    let mut aggregator = ReadIdsToBaseModCalls::zero();
+    let mut aggregator = ReadIdsToBaseModProbs::zero();
     for reference in references {
         let intervals = IntervalChunks::new(
             reference.start,
@@ -316,6 +346,7 @@ fn sample_reads_base_mod_calls_over_regions(
                     start,
                     end,
                     record_sampler,
+                    collapse_method,
                 ) {
                     Ok(res) => {
                         let sampled_count = res.size();
@@ -334,7 +365,7 @@ fn sample_reads_base_mod_calls_over_regions(
                     }
                 }
             })
-            .reduce(|| ReadIdsToBaseModCalls::zero(), |a, b| a.op(b));
+            .reduce(|| ReadIdsToBaseModProbs::zero(), |a, b| a.op(b));
         aggregator.op_mut(read_ids_to_mod_calls);
         tid_progress.inc(1);
     }
@@ -344,6 +375,8 @@ fn sample_reads_base_mod_calls_over_regions(
     Ok(aggregator)
 }
 
+// todo(arand) make this into a struct that can keep track of how many reads are
+//  skipped, errored, etc.
 fn filter_records_iter<T: Read>(
     records: bam::Records<T>,
 ) -> impl Iterator<Item = (bam::Record, ModBaseInfo)> + '_ {
@@ -373,7 +406,8 @@ fn sample_reads_from_interval(
     start: u32,
     end: u32,
     record_sampler: RecordSampler,
-) -> anyhow::Result<ReadIdsToBaseModCalls> {
+    collapse_method: Option<&CollapseMethod>,
+) -> anyhow::Result<ReadIdsToBaseModProbs> {
     let mut bam_reader = bam::IndexedReader::from_path(bam_fp)?;
     bam_reader.fetch(bam::FetchDefinition::Region(
         chrom_tid as i32,
@@ -381,38 +415,46 @@ fn sample_reads_from_interval(
         end as i64,
     ))?;
 
-    sample_read_base_mod_calls(bam_reader.records(), false, record_sampler)
+    sample_read_base_mod_calls(
+        bam_reader.records(),
+        false,
+        record_sampler,
+        collapse_method,
+    )
 }
 
 fn sample_read_base_mod_calls<T: Read>(
     records: bam::Records<T>,
     with_progress: bool,
     mut record_sampler: RecordSampler,
-) -> anyhow::Result<ReadIdsToBaseModCalls> {
+    collapse_method: Option<&CollapseMethod>,
+) -> anyhow::Result<ReadIdsToBaseModProbs> {
     let spinner = if with_progress {
         Some(record_sampler.get_progress_bar())
     } else {
         None
     };
     let mod_base_info_iter = filter_records_iter(records);
-    let mut read_ids_to_mod_base_probs = ReadIdsToBaseModCalls::zero();
-    let mut warned = HashSet::new();
+    let mut read_ids_to_mod_base_probs = ReadIdsToBaseModProbs::zero();
     for (record, mod_base_info) in mod_base_info_iter {
         match record_sampler.ask() {
             Indicator::Use => {
                 let record_name = get_query_name_string(&record)
                     .unwrap_or("FAILED_UTF_DECODE".to_string());
                 if mod_base_info.is_empty() {
+                    // add count of unused/no calls
                     read_ids_to_mod_base_probs
-                        .add_read_without_calls(&record_name);
+                        .add_read_without_probs(&record_name);
                     continue;
                 }
 
+                let (_, base_mod_probs_iter) =
+                    mod_base_info.into_iter_base_mod_probs();
                 for (raw_canonical_base, strand, seq_pos_base_mod_probs) in
-                    mod_base_info.iter_seq_base_mod_probs()
+                    base_mod_probs_iter
                 {
                     let canonical_base =
-                        match (DnaBase::parse(*raw_canonical_base), strand) {
+                        match (DnaBase::parse(raw_canonical_base), strand) {
                             (Err(_), _) => continue,
                             (Ok(dna_base), Strand::Positive) => dna_base,
                             (Ok(dna_base), Strand::Negative) => {
@@ -421,25 +463,16 @@ fn sample_read_base_mod_calls<T: Read>(
                         };
                     let mod_probs = seq_pos_base_mod_probs
                         .pos_to_base_mod_probs
-                        .iter()
-                        .filter_map(|(_q_pos, base_mod_probs)| {
-                            match base_mod_probs.base_mod_call() {
-                                Ok(base_mod_call) => Some(base_mod_call),
-                                Err(e) => {
-                                    let warning = e.to_string();
-                                    match warned.contains(&warning) {
-                                        true => {}
-                                        false => {
-                                            debug!("{warning}");
-                                            warned.insert(warning);
-                                        }
-                                    }
-                                    None
-                                }
+                        .into_iter()
+                        .map(|(_q_pos, base_mod_probs)| {
+                            if let Some(method) = collapse_method {
+                                base_mod_probs.into_collapsed(method)
+                            } else {
+                                base_mod_probs
                             }
                         })
-                        .collect::<Vec<BaseModCall>>();
-                    read_ids_to_mod_base_probs.add_mod_calls_for_read(
+                        .collect::<Vec<BaseModProbs>>();
+                    read_ids_to_mod_base_probs.add_mod_probs_for_read(
                         &record_name,
                         canonical_base,
                         mod_probs,
