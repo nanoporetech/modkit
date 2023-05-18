@@ -1,15 +1,13 @@
-# Filtering base modification calls.
+# Partitioning pass and fail base modification calls.
 
-Modified base calls are qualitied with a probability that is contained in the ML tag (see the
-[specification](https://samtools.github.io/hts-specs/SAMtags.pdf)). We calculate the confidence that the model
-has in the base modification prediction as \\(\mathcal{q} = argmax(\textbf{P})\\) where \\(\textbf{P}\\) is the
-vector of probabilities for each modification. For example, given a model that can classify canonical
-cytosine, 5mC, and 5hmC, \\(\textbf{P}\\) is \\([P_{C}, P_m, P_h]\\), and \\(\mathcal{q}\\) will be \\(\mathcal{q} =
-argmax(P_{C}, P_m, P_h)\\), the maximum of the three probabilities.  Filtering in `modkit` is performed by
-first determining the value of \\(\mathcal{q}\\) for the lowest n-th percentile of calls (10th percentile by
-default).  The threshold value is typically an estimate because the base modification probabilities are
-sampled from a subset of the reads. All calls can be used to calculate the exact value, but in practice the
-approximation gives the same value. Base modification calls with a confidence value less than this number will
-not be counted.  Determination of the threshold value can be performed on the fly (by sampling) or the
-threshold value can be specified on the command line with the `--filter_threshold` flag. The `sample-probs`
-command can be used to quickly estimate the value of \\(\mathcal{q}\\) at various percentiles.
+Base modification calls can be removed if they are low confidence based on the modification probabilities. In
+general, `modkit` will estimate a pass confidence threshold value based on the input data. Threshold values
+for modifications on a primary sequence base can be specified on the command line with the
+`--filter-threshold` option. For example to set a threshold for cytosine modifications at 0.8 and adenosine
+modifications at 0.9 provide `--filter-percentile C:0.8 --filter-percentile A:0.9`. Pass threshold values per
+base modification can also be specified. For example, to specify a threshold for canonical adenosine at 0.8
+and 6mA at 0.9 use `--mod-thresholds A:0.8 --mod-thresholds a:0.9`.
+
+## Further details
+1. [Examples of how thresholds affect base modification calls.](./filtering_details.md)
+1. [Numerical details of how thresholds are calculated on the fly.](./filtering_numeric_details.md)
