@@ -746,6 +746,10 @@ impl ModBamPileup {
         tid_progress.set_message("contigs");
         let write_progress = master_progress.add(get_spinner());
         write_progress.set_message("rows written");
+        let skipped_reads = master_progress.add(get_spinner());
+        skipped_reads.set_message("~records skipped");
+        let processed_reads = master_progress.add(get_spinner());
+        processed_reads.set_message("~records processed");
 
         let force_allow = self.force_allow_implicit;
 
@@ -814,6 +818,9 @@ impl ModBamPileup {
         for result in rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {
+                    processed_reads
+                        .inc(mod_base_pileup.processed_records as u64);
+                    skipped_reads.inc(mod_base_pileup.skipped_records as u64);
                     let rows_written = writer.write(mod_base_pileup)?;
                     write_progress.inc(rows_written);
                 }
@@ -823,8 +830,18 @@ impl ModBamPileup {
             }
         }
         let rows_processed = write_progress.position();
+        let n_skipped_reads = skipped_reads.position();
+        let n_skipped_message = if n_skipped_reads == 0 {
+            format!("zero reads")
+        } else {
+            format!("~{n_skipped_reads} reads")
+        };
+        let n_processed_reads = processed_reads.position();
         write_progress.finish_and_clear();
-        info!("Done, processed {rows_processed} rows.");
+        processed_reads.finish_and_clear();
+        skipped_reads.finish_and_clear();
+        info!("Done, processed {rows_processed} rows. Processed ~{n_processed_reads} reads and \
+            skipped {n_skipped_message}.");
         Ok(())
     }
 }
