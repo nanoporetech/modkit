@@ -58,7 +58,8 @@ pub enum Commands {
     /// output is a totals table (designated by '#' lines) and a modification calls
     /// table. Descriptions of the columns can be found in the README.
     Summary(ModSummarize),
-    /// Call mods from a modbam, discarding the probabilities.
+    /// Call mods from a modbam, creates a new modbam with probabilities set to 100%
+    /// if a base modification is called or 0% if called canonical.
     CallMods(CallMods),
     /// Create BED file with all locations of a sequence motif.
     /// Example: modkit motif-bed CG 0

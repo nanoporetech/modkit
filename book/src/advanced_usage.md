@@ -24,7 +24,8 @@ Commands:
   summary       Summarize the mod tags present in a BAM and get basic statistics. The default
                     output is a totals table (designated by '#' lines) and a modification calls
                     table. Descriptions of the columns can be found in the README
-  call-mods     Call mods from a modbam, discarding the probabilities.
+  call-mods     Call mods from a modbam, creates a new modbam with probabilities set to 100% if
+                    a base modification is called or 0% if called canonical.
   motif-bed     Create BED file with all locations of a sequence motif.
                     Example: modkit motif-bed CG 0
   help          Print this message or the help of the given subcommand(s).
