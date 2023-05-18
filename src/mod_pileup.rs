@@ -528,6 +528,8 @@ impl<'a> Iterator for PileupIter<'a> {
 pub struct ModBasePileup {
     pub chrom_name: String,
     position_feature_counts: HashMap<u32, Vec<PileupFeatureCounts>>,
+    pub(crate) skipped_records: usize,
+    pub(crate) processed_records: usize,
 }
 
 impl ModBasePileup {
@@ -747,10 +749,14 @@ pub fn process_region<T: AsRef<Path>>(
     } else {
         position_feature_counts
     };
+    let (processed_records, skipped_records) =
+        read_cache.get_records_used_and_skipped();
 
     Ok(ModBasePileup {
         chrom_name,
         position_feature_counts,
+        processed_records,
+        skipped_records,
     })
 }
 

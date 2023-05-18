@@ -362,6 +362,16 @@ impl<'a> ReadCache<'a> {
             }
         }
     }
+
+    pub(crate) fn get_records_used_and_skipped(&self) -> (usize, usize) {
+        let used = self
+            .pos_reads
+            .keys()
+            .chain(self.neg_reads.keys())
+            .collect::<HashSet<&String>>();
+        let n_skipped = self.skip_set.len();
+        (used.len(), n_skipped)
+    }
 }
 
 #[cfg(test)]
