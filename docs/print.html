@@ -396,10 +396,10 @@ Commands:
   sample-probs  Calculate an estimate of the base modification probability distribution.
   summary       Summarize the mod tags present in a BAM and get basic statistics. The default
                     output is a totals table (designated by '#' lines) and a modification calls
-                    table. Descriptions of the columns can be found in the README.
+                    table. Descriptions of the columns can be found in the README
   call-mods     Call mods from a modbam, discarding the probabilities.
   motif-bed     Create BED file with all locations of a sequence motif.
-                  Example: modkit motif-bed CG 0.
+                    Example: modkit motif-bed CG 0
   help          Print this message or the help of the given subcommand(s).
 
 Options:
@@ -417,7 +417,8 @@ Arguments:
           Input BAM, should be sorted and have associated index available.
 
   &lt;OUT_BED&gt;
-          Output file (or directory with --bedgraph option) to write results into.
+          Output file (or directory with --bedgraph option) to write results into. Specify &quot;-&quot; or
+          &quot;stdout&quot; to direct output to stdout.
 
 Options:
       --log-filepath &lt;LOG_FILEPATH&gt;
@@ -1069,22 +1070,6 @@ and <code>schema.yaml</code> in this project for details on the notation for cou
 
         </div>
 
-        <!-- Livereload script (if served using the cli tool) -->
-        <script>
-            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
-            const socket = new WebSocket(wsAddress);
-            socket.onmessage = function (event) {
-                if (event.data === "reload") {
-                    socket.close();
-                    location.reload();
-                }
-            };
-
-            window.onbeforeunload = function() {
-                socket.close();
-            }
-        </script>
 
 
 

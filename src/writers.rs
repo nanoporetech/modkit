@@ -11,19 +11,19 @@ use prettytable::{cell, row, Table};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub trait OutWriter<T> {
     fn write(&mut self, item: T) -> AnyhowResult<u64>;
 }
 
-pub struct BedMethylWriter {
-    buf_writer: BufWriter<File>,
+pub struct BedMethylWriter<T: Write> {
+    buf_writer: BufWriter<T>,
     tabs_and_spaces: bool,
 }
 
-impl BedMethylWriter {
-    pub fn new(buf_writer: BufWriter<File>, tabs_and_spaces: bool) -> Self {
+impl<T: Write + Sized> BedMethylWriter<T> {
+    pub fn new(buf_writer: BufWriter<T>, tabs_and_spaces: bool) -> Self {
         Self {
             buf_writer,
             tabs_and_spaces,
@@ -31,7 +31,7 @@ impl BedMethylWriter {
     }
 }
 
-impl OutWriter<ModBasePileup> for BedMethylWriter {
+impl<T: Write> OutWriter<ModBasePileup> for BedMethylWriter<T> {
     fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
         let mut rows_written = 0;
         let tab = '\t';
@@ -93,10 +93,8 @@ pub struct BedGraphWriter {
 }
 
 impl BedGraphWriter {
-    pub fn new(
-        out_dir: PathBuf,
-        prefix: Option<&String>,
-    ) -> AnyhowResult<Self> {
+    pub fn new(out_dir: &str, prefix: Option<&String>) -> AnyhowResult<Self> {
+        let out_dir = Path::new(out_dir).to_path_buf();
         if out_dir.is_file() {
             Err(anyhow!("out dir cannot be a file, needs to be a directory"))
         } else {
