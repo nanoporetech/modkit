@@ -428,7 +428,8 @@ Options:
 
 ## call-mods
 ```text
-Call mods from a modbam, discarding the probabilities.
+Call mods from a modbam, creates a new modbam with probabilities set to 100% if a base modification
+is called or 0% if called canonical
 
 Usage: modkit call-mods [OPTIONS] <IN_BAM> <OUT_BAM>
 
