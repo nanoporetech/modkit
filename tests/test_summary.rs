@@ -1,4 +1,9 @@
-use crate::common::run_simple_summary;
+use crate::common::{
+    run_simple_summary, run_simple_summary_with_collapse_method,
+};
+use mod_kit::mod_bam::CollapseMethod;
+use mod_kit::mod_base_code::ModCode;
+use std::collections::HashSet;
 use std::path::Path;
 
 mod common;
@@ -18,4 +23,46 @@ fn test_summary_with_regions() {
         run_simple_summary(tf.to_str().unwrap(), 25).unwrap();
 
     assert_eq!(summary_with_index, summary_without_index);
+}
+
+#[test]
+fn test_summary_ignore() {
+    let bam_fp = Path::new("tests/resources/bc_anchored_10_reads.sorted.bam");
+    let summary_wo_collapse =
+        run_simple_summary(bam_fp.to_str().unwrap(), 25).unwrap();
+    let summary_w_collapse = run_simple_summary_with_collapse_method(
+        bam_fp.to_str().unwrap(),
+        25,
+        &CollapseMethod::ReDistribute('h'),
+    )
+    .unwrap();
+
+    let mod_codes = summary_wo_collapse
+        .mod_call_counts
+        .values()
+        .flat_map(|mod_code_counts| {
+            mod_code_counts
+                .keys()
+                .map(|mc| *mc)
+                .collect::<Vec<ModCode>>()
+        })
+        .collect::<HashSet<ModCode>>();
+    let expected = vec![ModCode::C, ModCode::m, ModCode::h]
+        .into_iter()
+        .collect::<HashSet<_>>();
+    assert_eq!(mod_codes, expected);
+    let mod_codes = summary_w_collapse
+        .mod_call_counts
+        .values()
+        .flat_map(|mod_code_counts| {
+            mod_code_counts
+                .keys()
+                .map(|mc| *mc)
+                .collect::<Vec<ModCode>>()
+        })
+        .collect::<HashSet<ModCode>>();
+    let expected = vec![ModCode::C, ModCode::m]
+        .into_iter()
+        .collect::<HashSet<_>>();
+    assert_eq!(mod_codes, expected);
 }

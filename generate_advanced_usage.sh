@@ -15,7 +15,7 @@ echo "\`\`\`bash" >> ${doc_file}
 ./target/debug/modkit --help >> ${doc_file}
 echo "\`\`\`" >> ${doc_file}
 
-subcommands=("pileup" "adjust-mods" "update-tags" "sample-probs" "summary" "motif-bed")
+subcommands=("pileup" "adjust-mods" "update-tags" "sample-probs" "summary" "motif-bed" "call-mods")
 for cmd in "${subcommands[@]}"
 do
   echo "" >> ${doc_file}

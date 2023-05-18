@@ -440,7 +440,12 @@ pub struct ModBamPileup {
     alias = "pass_threshold"
     )]
     filter_threshold: Option<Vec<String>>,
-    /// TODO these docs
+    /// Specify a passing threshold to use for a base modification, independent of the
+    /// threshold for the primary sequence base or the default. For example, to set
+    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
+    /// threshold will still be estimated as usual and used for canonical cytosine and
+    /// 5mC unless the `--filter-threshold` option is also passed. See the online
+    /// documentation for more details.
     #[arg(
     long,
     alias = "mod-threshold",
@@ -569,39 +574,44 @@ impl ModBamPileup {
             None
         };
 
-        let (pileup_options, combine_strands, collapse_method) = match self
-            .preset
-        {
-            Some(Presets::traditional) => {
-                info!("ignoring mod code {}", ModCode::h.char());
-                (
-                    PileupNumericOptions::Collapse(
-                        CollapseMethod::ReDistribute('h'),
-                    ),
-                    true,
-                    Some(CollapseMethod::ReDistribute('h')),
-                )
-            }
-            None => {
-                let (options, collapse_method) =
-                    match (self.combine_mods, &self.ignore) {
-                        (false, None) => {
-                            (PileupNumericOptions::Passthrough, None)
-                        }
-                        (true, _) => (PileupNumericOptions::Combine, None),
-                        (_, Some(raw_mod_code)) => {
-                            info!("ignoring mod code {}", raw_mod_code);
-                            let method =
-                                CollapseMethod::ReDistribute(*raw_mod_code);
-                            (
-                                PileupNumericOptions::Collapse(method.clone()),
-                                Some(method),
-                            )
-                        }
-                    };
-                (options, self.combine_strands, collapse_method)
-            }
-        };
+        let (pileup_options, combine_strands, threshold_collapse_method) =
+            match self.preset {
+                Some(Presets::traditional) => {
+                    info!("ignoring mod code {}", ModCode::h.char());
+                    info!(
+                        "NOTICE, in the next version of modkit the 'traditional' preset \
+                         will perform --combine-mods instead of --ignore h"
+                    );
+                    (
+                        PileupNumericOptions::Collapse(
+                            CollapseMethod::ReDistribute('h'),
+                        ),
+                        true,
+                        Some(CollapseMethod::ReDistribute('h')),
+                    )
+                }
+                None => {
+                    let (options, collapse_method) =
+                        match (self.combine_mods, &self.ignore) {
+                            (false, None) => {
+                                (PileupNumericOptions::Passthrough, None)
+                            }
+                            (true, _) => (PileupNumericOptions::Combine, None),
+                            (_, Some(raw_mod_code)) => {
+                                info!("ignoring mod code {}", raw_mod_code);
+                                let method =
+                                    CollapseMethod::ReDistribute(*raw_mod_code);
+                                (
+                                    PileupNumericOptions::Collapse(
+                                        method.clone(),
+                                    ),
+                                    Some(method),
+                                )
+                            }
+                        };
+                    (options, self.combine_strands, collapse_method)
+                }
+            };
 
         // setup the writer here so we fail before doing any work (if there are problems).
         let out_fp_str = self.out_bed.clone();
@@ -642,7 +652,7 @@ impl ModBamPileup {
                         self.seed,
                         sampling_region.as_ref().or(region.as_ref()),
                         per_mod_thresholds,
-                        collapse_method.as_ref(),
+                        threshold_collapse_method.as_ref(),
                     )
                 })?
             };
@@ -853,6 +863,13 @@ pub struct SampleModBaseProbs {
     /// Overwrite results if present.
     #[arg(long, requires = "out_dir", default_value_t = false)]
     force: bool,
+    /// Ignore a modified base class  _in_situ_ by redistributing base modification
+    /// probability equally across other options. For example, if collapsing 'h',
+    /// with 'm' and canonical options, half of the probability of 'h' will be added to
+    /// both 'm' and 'C'. A full description of the methods can be found in
+    /// collapse.md.
+    #[arg(long, hide_short_help = true)]
+    ignore: Option<char>,
 
     // probability histogram options
     /// Output histogram of base modification prediction probabilities.
@@ -918,6 +935,14 @@ impl SampleModBaseProbs {
             self.num_reads,
         );
 
+        let collapse_method = if let Some(raw_mod_code_to_ignore) = self.ignore
+        {
+            let _ = ModCode::parse_raw_mod_code(raw_mod_code_to_ignore)?;
+            Some(CollapseMethod::ReDistribute(raw_mod_code_to_ignore))
+        } else {
+            None
+        };
+
         let desired_percentiles = parse_percentiles(&self.percentiles)
             .with_context(|| {
                 format!("failed to parse percentiles: {}", &self.percentiles)
@@ -933,7 +958,7 @@ impl SampleModBaseProbs {
                     num_reads,
                     self.seed,
                     region.as_ref(),
-                    None, // todo allow collapse in sample probs
+                    collapse_method.as_ref(),
                 )?;
 
             let histograms = if self.histogram {
@@ -1057,12 +1082,24 @@ pub struct ModSummarize {
         action = clap::ArgAction::Append
     )]
     filter_threshold: Option<Vec<String>>,
-    /// TODO these docs
+    /// Specify a passing threshold to use for a base modification, independent of the
+    /// threshold for the primary sequence base or the default. For example, to set
+    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
+    /// threshold will still be estimated as usual and used for canonical cytosine and
+    /// 5mC unless the `--filter-threshold` option is also passed. See the online
+    /// documentation for more details.
     #[arg(
     long,
     action = clap::ArgAction::Append
     )]
     mod_thresholds: Option<Vec<String>>,
+    /// Ignore a modified base class  _in_situ_ by redistributing base modification
+    /// probability equally across other options. For example, if collapsing 'h',
+    /// with 'm' and canonical options, half of the probability of 'h' will be added to
+    /// both 'm' and 'C'. A full description of the methods can be found in
+    /// collapse.md.
+    #[arg(long, group = "combine_args", hide_short_help = true)]
+    ignore: Option<char>,
 
     /// Process only the specified region of the BAM when collecting probabilities.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
@@ -1116,6 +1153,14 @@ impl ModSummarize {
                 None
             };
 
+        let collapse_method = if let Some(raw_mod_code_to_ignore) = self.ignore
+        {
+            let _ = ModCode::parse_raw_mod_code(raw_mod_code_to_ignore)?;
+            Some(CollapseMethod::ReDistribute(raw_mod_code_to_ignore))
+        } else {
+            None
+        };
+
         let mod_summary = pool.install(|| {
             summarize_modbam(
                 &self.in_bam,
@@ -1128,6 +1173,7 @@ impl ModSummarize {
                 self.filter_percentile,
                 filter_thresholds,
                 per_mod_thresholds,
+                collapse_method.as_ref(),
             )
         })?;
 
@@ -1419,7 +1465,12 @@ pub struct CallMods {
     alias = "pass_threshold"
     )]
     filter_threshold: Option<Vec<String>>,
-    /// TODO these docs
+    /// Specify a passing threshold to use for a base modification, independent of the
+    /// threshold for the primary sequence base or the default. For example, to set
+    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
+    /// threshold will still be estimated as usual and used for canonical cytosine and
+    /// 5mC unless the `--filter-threshold` option is also passed. See the online
+    /// documentation for more details.
     #[arg(
     long = "mod-threshold",
     action = clap::ArgAction::Append

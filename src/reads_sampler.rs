@@ -346,7 +346,7 @@ fn sample_reads_base_mod_calls_over_regions(
                     start,
                     end,
                     record_sampler,
-                    collapse_method
+                    collapse_method,
                 ) {
                     Ok(res) => {
                         let sampled_count = res.size();

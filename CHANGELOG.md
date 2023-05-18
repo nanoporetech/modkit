@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Adds
 - [pileup] API to specify pass thresholds per base modification (or canonical) with `--mod-threshold` option.
 - New modBAM->modBAM subcommand, `call-mods` that will apply pass thresholds and clamp base modification probabilities to zero (canonical) or 1.0 for base modifications
+- [sample-probs, summary] Allow `--ignore` to remove a base modification class from the analysis.
 
 ## [v0.1.5]
 ### Changes
