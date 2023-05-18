@@ -11,7 +11,7 @@ doc_file=book/src/advanced_usage.md
 
 echo "" >> ${doc_file}
 echo "" >> ${doc_file}
-echo "\`\`\`bash" >> ${doc_file}
+echo "\`\`\`text" >> ${doc_file}
 ./target/debug/modkit --help >> ${doc_file}
 echo "\`\`\`" >> ${doc_file}
 
@@ -20,7 +20,7 @@ for cmd in "${subcommands[@]}"
 do
   echo "" >> ${doc_file}
   echo "## ${cmd}" >> ${doc_file}
-  echo "\`\`\`bash" >> ${doc_file}
+  echo "\`\`\`text" >> ${doc_file}
   ./target/debug/modkit $cmd --help >> ${doc_file}
   echo "\`\`\`" >> ${doc_file}
 done

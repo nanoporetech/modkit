@@ -352,7 +352,8 @@ pub struct ModBamPileup {
     /// Input BAM, should be sorted and have associated index available.
     in_bam: PathBuf,
     /// Output file (or directory with --bedgraph option) to write results into.
-    out_bed: PathBuf,
+    /// Specify "-" or "stdout" to direct output to stdout.
+    out_bed: String,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended.
     #[arg(long)]
@@ -616,14 +617,20 @@ impl ModBamPileup {
         // setup the writer here so we fail before doing any work (if there are problems).
         let out_fp_str = self.out_bed.clone();
         let mut writer: Box<dyn OutWriter<ModBasePileup>> = if self.bedgraph {
-            Box::new(BedGraphWriter::new(out_fp_str, self.prefix.as_ref())?)
+            Box::new(BedGraphWriter::new(&out_fp_str, self.prefix.as_ref())?)
         } else {
-            let out_fp = std::fs::File::create(out_fp_str)
-                .context("failed to make output file")?;
-            Box::new(BedMethylWriter::new(
-                BufWriter::new(out_fp),
-                self.only_tabs,
-            ))
+            match out_fp_str.as_str() {
+                "stdout" | "-" => {
+                    let writer = BufWriter::new(std::io::stdout());
+                    Box::new(BedMethylWriter::new(writer, self.only_tabs))
+                }
+                _ => {
+                    let fh = std::fs::File::create(out_fp_str)
+                        .context("failed to make output file")?;
+                    let writer = BufWriter::new(fh);
+                    Box::new(BedMethylWriter::new(writer, self.only_tabs))
+                }
+            }
         };
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)

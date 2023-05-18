@@ -23,10 +23,10 @@ Commands:
   sample-probs  Calculate an estimate of the base modification probability distribution.
   summary       Summarize the mod tags present in a BAM and get basic statistics. The default
                     output is a totals table (designated by '#' lines) and a modification calls
-                    table. Descriptions of the columns can be found in the README.
+                    table. Descriptions of the columns can be found in the README
   call-mods     Call mods from a modbam, discarding the probabilities.
   motif-bed     Create BED file with all locations of a sequence motif.
-                  Example: modkit motif-bed CG 0.
+                    Example: modkit motif-bed CG 0
   help          Print this message or the help of the given subcommand(s).
 
 Options:
@@ -46,7 +46,8 @@ Arguments:
           Input BAM, should be sorted and have associated index available.
 
   <OUT_BED>
-          Output file (or directory with --bedgraph option) to write results into.
+          Output file (or directory with --bedgraph option) to write results into. Specify "-" or
+          "stdout" to direct output to stdout.
 
 Options:
       --log-filepath <LOG_FILEPATH>
