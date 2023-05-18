@@ -7,7 +7,7 @@ use log::{debug, info};
 use rayon::prelude::*;
 use rust_htslib::bam::{self};
 
-use crate::mod_bam::ModBaseInfo;
+use crate::mod_bam::{CollapseMethod, ModBaseInfo};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::reads_sampler::{
     get_sampled_read_ids_to_base_mod_probs, ReadIdsToBaseModProbs,
@@ -148,8 +148,8 @@ pub fn calc_threshold_from_bam(
     filter_percentile: f32,
     seed: Option<u64>,
     region: Option<&Region>,
+    collapse_method: Option<&CollapseMethod>,
 ) -> AnyhowResult<HashMap<DnaBase, f32>> {
-    // todo implement per-base thresholds
     let mut can_base_probs = get_modbase_probs_from_bam(
         bam_fp,
         threads,
@@ -158,6 +158,7 @@ pub fn calc_threshold_from_bam(
         num_reads,
         seed,
         region,
+        collapse_method,
     )?;
     can_base_probs
         .iter_mut()
@@ -177,6 +178,7 @@ pub fn get_modbase_probs_from_bam(
     num_reads: Option<usize>,
     seed: Option<u64>,
     region: Option<&Region>,
+    collapse_method: Option<&CollapseMethod>,
 ) -> AnyhowResult<HashMap<DnaBase, Vec<f32>>> {
     get_sampled_read_ids_to_base_mod_probs(
         bam_fp,
@@ -186,6 +188,7 @@ pub fn get_modbase_probs_from_bam(
         num_reads,
         seed,
         region,
+        collapse_method,
     )
     .map(|x| x.mle_probs_per_base())
 }

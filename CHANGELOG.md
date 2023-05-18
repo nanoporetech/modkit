@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.6]
+### Changes
+- When ignoring a base modification in pileup, calculate pass thresholds on the probabilities after ignoring the specified probability.
+
+### Adds
+- [pileup] API to specify pass thresholds per base modification (or canonical) with `--mod-threshold` option.
+- New modBAM->modBAM subcommand, `call-mods` that will apply pass thresholds and clamp base modification probabilities to zero (canonical) or 1.0 for base modifications
+
 ## [v0.1.5]
 ### Changes
 - Table output is default in `modkit summary`, columns are all_counts/frac and pass_counts/frac instead of counts/frac and filt_counts/frac. See help for details.

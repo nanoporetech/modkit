@@ -1,5 +1,5 @@
 use crate::interval_chunks::IntervalChunks;
-use crate::mod_bam::{BaseModCall, BaseModProbs, ModBaseInfo};
+use crate::mod_bam::{BaseModCall, BaseModProbs, CollapseMethod, ModBaseInfo};
 use crate::mod_base_code::DnaBase;
 use crate::monoid::Moniod;
 use crate::record_sampler::{Indicator, RecordSampler};
@@ -200,6 +200,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_probs(
     num_reads: Option<usize>,
     seed: Option<u64>,
     region: Option<&Region>,
+    collapse_method: Option<&CollapseMethod>,
 ) -> anyhow::Result<ReadIdsToBaseModProbs> {
     let use_regions = bam::IndexedReader::from_path(&bam_fp).is_ok();
     if use_regions {
@@ -211,6 +212,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_probs(
                 num_reads,
                 seed,
                 region,
+                collapse_method,
             )?;
         // sample unmapped reads iff we've sampled less than 90% of the number we've wanted to get
         // or 0 (from sample_frac).
@@ -242,6 +244,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_probs(
                     reader.records(),
                     true,
                     record_sampler,
+                    collapse_method,
                 )?;
             debug!(
                 "sampled {} unmapped records",
@@ -261,8 +264,12 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_probs(
         reader.set_threads(reader_threads)?;
         let record_sampler =
             RecordSampler::new_from_options(sample_frac, num_reads, seed);
-        let read_ids_to_base_mod_probs =
-            sample_read_base_mod_calls(reader.records(), true, record_sampler)?;
+        let read_ids_to_base_mod_probs = sample_read_base_mod_calls(
+            reader.records(),
+            true,
+            record_sampler,
+            collapse_method,
+        )?;
         debug!("sampled {} records", read_ids_to_base_mod_probs.len());
         Ok(read_ids_to_base_mod_probs)
     }
@@ -277,6 +284,7 @@ fn sample_reads_base_mod_calls_over_regions(
     num_reads: Option<usize>,
     seed: Option<u64>,
     region: Option<&Region>,
+    collapse_method: Option<&CollapseMethod>,
 ) -> anyhow::Result<ReadIdsToBaseModProbs> {
     let reader = bam::IndexedReader::from_path(bam_fp)?;
     let header = reader.header();
@@ -338,6 +346,7 @@ fn sample_reads_base_mod_calls_over_regions(
                     start,
                     end,
                     record_sampler,
+                    collapse_method
                 ) {
                     Ok(res) => {
                         let sampled_count = res.size();
@@ -397,6 +406,7 @@ fn sample_reads_from_interval(
     start: u32,
     end: u32,
     record_sampler: RecordSampler,
+    collapse_method: Option<&CollapseMethod>,
 ) -> anyhow::Result<ReadIdsToBaseModProbs> {
     let mut bam_reader = bam::IndexedReader::from_path(bam_fp)?;
     bam_reader.fetch(bam::FetchDefinition::Region(
@@ -405,13 +415,19 @@ fn sample_reads_from_interval(
         end as i64,
     ))?;
 
-    sample_read_base_mod_calls(bam_reader.records(), false, record_sampler)
+    sample_read_base_mod_calls(
+        bam_reader.records(),
+        false,
+        record_sampler,
+        collapse_method,
+    )
 }
 
 fn sample_read_base_mod_calls<T: Read>(
     records: bam::Records<T>,
     with_progress: bool,
     mut record_sampler: RecordSampler,
+    collapse_method: Option<&CollapseMethod>,
 ) -> anyhow::Result<ReadIdsToBaseModProbs> {
     let spinner = if with_progress {
         Some(record_sampler.get_progress_bar())
@@ -448,7 +464,13 @@ fn sample_read_base_mod_calls<T: Read>(
                     let mod_probs = seq_pos_base_mod_probs
                         .pos_to_base_mod_probs
                         .into_iter()
-                        .map(|(_q_pos, base_mod_probs)| base_mod_probs)
+                        .map(|(_q_pos, base_mod_probs)| {
+                            if let Some(method) = collapse_method {
+                                base_mod_probs.into_collapsed(method)
+                            } else {
+                                base_mod_probs
+                            }
+                        })
                         .collect::<Vec<BaseModProbs>>();
                     read_ids_to_mod_base_probs.add_mod_probs_for_read(
                         &record_name,

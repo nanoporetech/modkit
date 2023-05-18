@@ -116,6 +116,7 @@ fn get_threshold_from_options(
     seed: Option<u64>,
     region: Option<&Region>,
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+    collapse_method: Option<&CollapseMethod>,
 ) -> AnyhowResult<MultipleThresholdModCaller> {
     if no_filtering {
         info!("not performing filtering");
@@ -141,6 +142,7 @@ fn get_threshold_from_options(
         filter_percentile,
         seed,
         region,
+        collapse_method,
     )?;
 
     Ok(MultipleThresholdModCaller::new(
@@ -567,7 +569,9 @@ impl ModBamPileup {
             None
         };
 
-        let (pileup_options, combine_strands) = match self.preset {
+        let (pileup_options, combine_strands, collapse_method) = match self
+            .preset
+        {
             Some(Presets::traditional) => {
                 info!("ignoring mod code {}", ModCode::h.char());
                 (
@@ -575,20 +579,27 @@ impl ModBamPileup {
                         CollapseMethod::ReDistribute('h'),
                     ),
                     true,
+                    Some(CollapseMethod::ReDistribute('h')),
                 )
             }
             None => {
-                let options = match (self.combine_mods, &self.ignore) {
-                    (false, None) => PileupNumericOptions::Passthrough,
-                    (true, _) => PileupNumericOptions::Combine,
-                    (_, Some(raw_mod_code)) => {
-                        info!("ignoring mod code {}", raw_mod_code);
-                        let method =
-                            CollapseMethod::ReDistribute(*raw_mod_code);
-                        PileupNumericOptions::Collapse(method)
-                    }
-                };
-                (options, self.combine_strands)
+                let (options, collapse_method) =
+                    match (self.combine_mods, &self.ignore) {
+                        (false, None) => {
+                            (PileupNumericOptions::Passthrough, None)
+                        }
+                        (true, _) => (PileupNumericOptions::Combine, None),
+                        (_, Some(raw_mod_code)) => {
+                            info!("ignoring mod code {}", raw_mod_code);
+                            let method =
+                                CollapseMethod::ReDistribute(*raw_mod_code);
+                            (
+                                PileupNumericOptions::Collapse(method.clone()),
+                                Some(method),
+                            )
+                        }
+                    };
+                (options, self.combine_strands, collapse_method)
             }
         };
 
@@ -631,6 +642,7 @@ impl ModBamPileup {
                         self.seed,
                         sampling_region.as_ref().or(region.as_ref()),
                         per_mod_thresholds,
+                        collapse_method.as_ref(),
                     )
                 })?
             };
@@ -921,6 +933,7 @@ impl SampleModBaseProbs {
                     num_reads,
                     self.seed,
                     region.as_ref(),
+                    None, // todo allow collapse in sample probs
                 )?;
 
             let histograms = if self.histogram {
@@ -1463,6 +1476,7 @@ impl CallMods {
                     self.seed,
                     sampling_region.as_ref(),
                     per_mod_thresholds,
+                    None,
                 )
             })?
         };

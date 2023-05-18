@@ -72,6 +72,7 @@ pub fn summarize_modbam<'a>(
         num_reads,
         seed,
         region,
+        None,
     )?;
 
     let threshold_caller = if let Some(ft) = filter_thresholds {
