@@ -1,7 +1,7 @@
 use crate::errs::{InputError, RunError};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
-use crate::util::{get_tag, Strand};
+use crate::util::{get_tag, record_is_secondary, Strand};
 use indexmap::{indexset, IndexSet};
 use std::cmp::Ordering;
 
@@ -9,6 +9,31 @@ use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
 use std::collections::{HashMap, HashSet};
+
+// todo(arand) make this into a struct that can keep track of how many reads are
+//  skipped, errored, etc.
+pub(crate) fn filter_records_iter<T: bam::Read>(
+    records: bam::Records<T>,
+) -> impl Iterator<Item = (bam::Record, ModBaseInfo)> + '_ {
+    records
+        // skip records that fail to parse htslib (todo this could be cleaned up)
+        .filter_map(|res| res.ok())
+        // skip non-primary
+        .filter(|record| !record_is_secondary(&record))
+        // skip records with empty sequences
+        .filter(|record| record.seq_len() > 0)
+        .filter_map(|record| {
+            ModBaseInfo::new_from_record(&record).ok().and_then(
+                |mod_base_info| {
+                    if mod_base_info.is_empty() {
+                        None
+                    } else {
+                        Some((record, mod_base_info))
+                    }
+                },
+            )
+        })
+}
 
 pub const MM_TAGS: [&str; 2] = ["MM", "Mm"];
 pub const ML_TAGS: [&str; 2] = ["ML", "Ml"];

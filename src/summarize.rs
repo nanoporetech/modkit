@@ -10,9 +10,9 @@ use rayon::prelude::*;
 use crate::mod_bam::{BaseModCall, CollapseMethod};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::monoid::Moniod;
-use crate::reads_sampler::{
-    get_sampled_read_ids_to_base_mod_probs, ReadIdsToBaseModProbs,
-};
+use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
+use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
+use crate::record_processor::WithRecords;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 
 use crate::thresholds::calc_thresholds_per_base;
@@ -65,16 +65,17 @@ pub fn summarize_modbam<'a>(
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
     collapse_method: Option<&CollapseMethod>,
 ) -> anyhow::Result<ModSummary<'a>> {
-    let read_ids_to_base_mod_calls = get_sampled_read_ids_to_base_mod_probs(
-        bam_fp,
-        threads,
-        interval_size,
-        sample_frac,
-        num_reads,
-        seed,
-        region,
-        collapse_method,
-    )?;
+    let read_ids_to_base_mod_calls =
+        get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
+            bam_fp,
+            threads,
+            interval_size,
+            sample_frac,
+            num_reads,
+            seed,
+            region,
+            collapse_method,
+        )?;
 
     let threshold_caller = if let Some(ft) = filter_thresholds {
         // filter thresholds provided, use those

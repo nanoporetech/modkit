@@ -15,8 +15,11 @@ pub mod thresholds;
 pub mod writers;
 
 mod read_cache;
+mod read_ids_to_base_mod_probs;
+/// Module contains functions for parallel processing
+/// of individual reads and aggregating the results.
 mod reads_sampler;
-mod record_sampler;
+mod record_processor;
 mod util;
 
 #[cfg(test)]

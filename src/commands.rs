@@ -28,6 +28,7 @@ use crate::mod_bam::{
 use crate::mod_base_code::{DnaBase, ModCode, ParseChar};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
+use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::summarize::{summarize_modbam, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
@@ -975,7 +976,7 @@ impl SampleModBaseProbs {
 
         pool.install(|| {
             let read_ids_to_base_mod_calls =
-                get_sampled_read_ids_to_base_mod_probs(
+                get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
                     &self.in_bam,
                     self.threads,
                     self.interval_size,

@@ -9,9 +9,8 @@ use rust_htslib::bam::{self};
 
 use crate::mod_bam::{CollapseMethod, ModBaseInfo};
 use crate::mod_base_code::{DnaBase, ModCode};
-use crate::reads_sampler::{
-    get_sampled_read_ids_to_base_mod_probs, ReadIdsToBaseModProbs,
-};
+use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
+use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util;
 use crate::util::{record_is_secondary, AlignedPairs, Region};
@@ -180,7 +179,7 @@ pub fn get_modbase_probs_from_bam(
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
 ) -> AnyhowResult<HashMap<DnaBase, Vec<f32>>> {
-    get_sampled_read_ids_to_base_mod_probs(
+    get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
         bam_fp,
         threads,
         interval_size,
