@@ -19,6 +19,7 @@ use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
 use crate::errs::{InputError, RunError};
+use crate::extract_mods::ExtractMods;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
@@ -65,6 +66,9 @@ pub enum Commands {
     /// Create BED file with all locations of a sequence motif.
     /// Example: modkit motif-bed CG 0
     MotifBed(MotifBed),
+    /// Extract read-level base modification information from a modBAM into a
+    /// tab-separated values table.
+    Extract(ExtractMods),
 }
 
 impl Commands {
@@ -77,6 +81,7 @@ impl Commands {
             Self::MotifBed(x) => x.run().map_err(|e| e.to_string()),
             Self::UpdateTags(x) => x.run(),
             Self::CallMods(x) => x.run().map_err(|e| e.to_string()),
+            Self::Extract(x) => x.run().map_err(|e| e.to_string()),
         }
     }
 }
@@ -492,7 +497,7 @@ pub struct ModBamPileup {
     #[arg(long, requires = "reference_fasta", default_value_t = false)]
     cpg: bool,
     /// Reference sequence in FASTA format. Required for CpG motif filtering.
-    #[arg(long = "ref")]
+    #[arg(long = "ref", alias = "reference", short = 'r')]
     reference_fasta: Option<PathBuf>,
     /// Respect soft masking in the reference FASTA.
     #[arg(
@@ -1030,7 +1035,7 @@ impl SampleModBaseProbs {
                     sampled_probs.check_path(p, self.force)?;
                     Box::new(MultiTableWriter::new(p.clone()))
                 } else {
-                    Box::new(TsvWriter::new_stdout())
+                    Box::new(TsvWriter::new_stdout(None))
                 };
 
             writer.write(sampled_probs)?;
@@ -1204,7 +1209,7 @@ impl ModSummarize {
         })?;
 
         let mut writer: Box<dyn OutWriter<ModSummary>> = if self.tsv_format {
-            Box::new(TsvWriter::new_stdout())
+            Box::new(TsvWriter::new_stdout(None))
         } else {
             Box::new(TableWriter::new())
         };

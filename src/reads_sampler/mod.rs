@@ -101,6 +101,20 @@ where
     }
 }
 
+// pub(crate) fn process_records_in_bam<P: RecordProcessor>(
+//     bam_fp: &PathBuf,
+//     interval_size: u32,
+//     regions: &[Region],
+//     collapse_method: Option<&CollapseMethod>,
+// ) -> anyhow::Result<P::Output> {
+//     let use_regions = bam::IndexedReader::from_path(bam_fp).is_ok();
+//     if !use_regions && !regions.is_empty() {
+//         return
+//     }
+//
+//     unimplemented!()
+// }
+
 /// Sample reads evenly over a specified region or over
 /// an entire sorted, aligned BAM.
 fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
@@ -155,7 +169,7 @@ where
             .set_message(format!("processing {}", &reference.name));
         // end progress bar stuff
 
-        let read_ids_to_mod_calls = intervals
+        let proc_outputs = intervals
             .into_par_iter()
             .progress_with(interval_progress)
             .filter_map(|(start, end)| {
@@ -195,7 +209,7 @@ where
                 }
             })
             .reduce(|| <P::Output as Moniod>::zero(), |a, b| a.op(b));
-        aggregator.op_mut(read_ids_to_mod_calls);
+        aggregator.op_mut(proc_outputs);
         tid_progress.inc(1);
     }
 
@@ -204,7 +218,7 @@ where
     Ok(aggregator)
 }
 
-fn sample_reads_from_interval<P: RecordProcessor>(
+pub(crate) fn sample_reads_from_interval<P: RecordProcessor>(
     bam_fp: &PathBuf,
     chrom_tid: u32,
     start: u32,

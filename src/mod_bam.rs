@@ -10,6 +10,81 @@ use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
 use std::collections::{HashMap, HashSet};
 
+pub(crate) struct TrackingModRecordIter<'a, T: bam::Read> {
+    records: bam::Records<'a, T>,
+    pub(crate) num_used: usize,
+    pub(crate) num_skipped: usize,
+    pub(crate) num_failed: usize,
+}
+
+impl<'a, T: bam::Read> TrackingModRecordIter<'a, T> {
+    pub(crate) fn new(records: bam::Records<'a, T>) -> Self {
+        Self {
+            records,
+            num_used: 0,
+            num_skipped: 0,
+            num_failed: 0,
+        }
+    }
+}
+
+impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
+    type Item = (bam::Record, String, ModBaseInfo);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.records.next() {
+            Some(Ok(record)) => {
+                let record_name = String::from_utf8(record.qname().to_vec())
+                    .unwrap_or("utf-decode-failed".to_string());
+                if record_is_secondary(&record) {
+                    self.num_skipped += 1;
+                    self.next()
+                } else {
+                    if record.seq_len() == 0 {
+                        debug!("record {record_name} has zero length sequence");
+                        self.num_failed += 1;
+                        self.next()
+                    } else {
+                        match ModBaseInfo::new_from_record(&record) {
+                            Ok(modbase_info) => {
+                                if modbase_info.is_empty() {
+                                    self.num_skipped += 1;
+                                    debug!(
+                                        "record {record_name} has no base \
+                                        modification information, skipping"
+                                    );
+                                    self.next()
+                                } else {
+                                    self.num_used += 1;
+                                    Some((record, record_name, modbase_info))
+                                }
+                            }
+                            Err(e) => {
+                                debug!(
+                                    "record {record_name} failed to extract \
+                                    mod base info, {}",
+                                    e.to_string()
+                                );
+                                self.num_failed += 1;
+                                self.next()
+                            }
+                        }
+                    }
+                }
+            }
+            Some(Err(e)) => {
+                debug!(
+                    "failed to read record from bam information, {}",
+                    e.to_string()
+                );
+                self.num_failed += 1;
+                self.next()
+            }
+            None => None,
+        }
+    }
+}
+
 // todo(arand) make this into a struct that can keep track of how many reads are
 //  skipped, errored, etc.
 pub(crate) fn filter_records_iter<T: bam::Read>(
@@ -1593,5 +1668,14 @@ mod mod_bam_tests {
         assert!(a > c);
         assert!(c > d);
         assert!(d > e);
+    }
+
+    #[test]
+    fn test_one_off_positions() {
+        let mm_raw = "C+m?,14,0,6,10,14,0,5,3";
+        let raw_ml = vec![252u16, 2, 255, 255, 255, 255, 255, 255];
+        let raw_mod_tags = RawModTags::new(mm_raw, &raw_ml, true);
+        let base_mod_positions = BaseModPositions::parse(mm_raw).unwrap();
+        dbg!(base_mod_positions);
     }
 }

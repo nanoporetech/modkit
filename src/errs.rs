@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt::Formatter;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, Hash)]
 pub struct InputError(pub String);
 
 impl InputError {
@@ -35,6 +35,7 @@ impl From<&str> for InputError {
     }
 }
 
+#[derive(Eq, PartialEq, Hash)]
 pub enum RunError {
     BadInput(InputError),
     Skipped(String),
