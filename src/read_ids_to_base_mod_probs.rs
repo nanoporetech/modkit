@@ -81,7 +81,9 @@ impl ReadIdsToBaseModProbs {
                                 Ok(BaseModCall::Modified(f, _)) => Some(f),
                                 Ok(BaseModCall::Canonical(f)) => Some(f),
                                 Ok(BaseModCall::Filtered) => {
-                                    unreachable!("argmax base mod call should not return Filtered")
+                                    unreachable!(
+                                        "argmax base mod call should not return Filtered"
+                                    )
                                 }
                                 Err(e) => {
                                     debug!("{}", e.to_string());
@@ -115,29 +117,27 @@ impl ReadIdsToBaseModProbs {
                         base_mod_probs
                             .iter()
                             // can make this .base_mod_call
-                            .filter_map(|bmc| {
-                                match bmc.argmax_base_mod_call() {
-                                    Ok(BaseModCall::Modified(p, code)) => {
-                                        Some((code.char(), p as f64))
-                                    }
-                                    Ok(BaseModCall::Canonical(p)) => {
-                                        Some((base.char(), p as f64))
-                                    }
-                                    Ok(BaseModCall::Filtered) => {
-                                        unreachable!("argmax base mod call should not return Filtered")
-                                    }
-                                    Err(e) => {
-                                        debug!("{}", e.to_string());
-                                        None
-                                    }
+                            .filter_map(|bmc| match bmc.argmax_base_mod_call() {
+                                Ok(BaseModCall::Modified(p, code)) => {
+                                    Some((code.char(), p as f64))
+                                }
+                                Ok(BaseModCall::Canonical(p)) => {
+                                    Some((base.char(), p as f64))
+                                }
+                                Ok(BaseModCall::Filtered) => {
+                                    unreachable!(
+                                        "argmax base mod call should not return Filtered"
+                                    )
+                                }
+                                Err(e) => {
+                                    debug!("{}", e.to_string());
+                                    None
                                 }
                             })
                             .fold(
                                 HashMap::<char, Vec<f64>>::new(),
                                 |mut acc, (base, p)| {
-                                    acc.entry(base)
-                                        .or_insert(Vec::new())
-                                        .push(p);
+                                    acc.entry(base).or_insert(Vec::new()).push(p);
                                     acc
                                 },
                             )
@@ -187,8 +187,8 @@ impl Moniod for ReadIdsToBaseModProbs {
 impl RecordProcessor for ReadIdsToBaseModProbs {
     type Output = Self;
 
-    fn process_records<T: bam::Read>(
-        records: bam::Records<T>,
+    fn process_records<T: Read>(
+        records: Records<T>,
         with_progress: bool,
         mut record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
@@ -605,18 +605,18 @@ impl ReadsBaseModProfile {
         let mut sc_end = None;
         for op in cigar {
             match op {
-                Cigar::SoftClip(l) => {
-                    match (sc_start, sc_end) {
-                        (None, None) => sc_start = Some(*l as usize),
-                        (Some(_), None) => {
-                            sc_end = Some(*l as usize);
-                        }
-                        (Some(_), Some(_)) => {
-                            return Err(anyhow!("encountered softclip operation more than twice"));
-                        }
-                        (None, Some(_)) => unreachable!("logic error"),
+                Cigar::SoftClip(l) => match (sc_start, sc_end) {
+                    (None, None) => sc_start = Some(*l as usize),
+                    (Some(_), None) => {
+                        sc_end = Some(*l as usize);
                     }
-                }
+                    (Some(_), Some(_)) => {
+                        return Err(anyhow!(
+                            "encountered softclip operation more than twice"
+                        ));
+                    }
+                    (None, Some(_)) => unreachable!("logic error"),
+                },
                 _ => {}
             }
         }

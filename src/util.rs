@@ -175,24 +175,30 @@ pub(crate) fn get_targets(
 ) -> Vec<ReferenceRecord> {
     (0..header.target_count())
         .filter_map(|tid| {
-            let chrom_name =
-                String::from_utf8(header.tid2name(tid).to_vec()).unwrap_or("???".to_owned());
+            let chrom_name = String::from_utf8(header.tid2name(tid).to_vec())
+                .unwrap_or("???".to_owned());
             if let Some(region) = &region {
                 if chrom_name == region.name {
-                    Some(ReferenceRecord::new(tid, region.start, region.length(), chrom_name))
+                    Some(ReferenceRecord::new(
+                        tid,
+                        region.start,
+                        region.length(),
+                        chrom_name,
+                    ))
                 } else {
                     None
                 }
             } else {
                 match header.target_len(tid) {
-                    Some(size) => Some(ReferenceRecord::new(tid, 0, size as u32, chrom_name)),
+                    Some(size) => {
+                        Some(ReferenceRecord::new(tid, 0, size as u32, chrom_name))
+                    }
                     None => {
                         debug!("> no size information for {chrom_name} (tid: {tid})");
                         None
                     }
                 }
             }
-
         })
         .collect::<Vec<ReferenceRecord>>()
 }

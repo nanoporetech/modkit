@@ -374,8 +374,8 @@ pub struct ModBamPileup {
     /// Number of threads to use while processing chunks concurrently.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
-    /// Interval chunk size to process concurrently. Smaller interval chunk
-    /// sizes will use less memory but incur more overhead.
+    /// Interval chunk size in base pairs to process concurrently. Smaller
+    /// interval chunk sizes will use less memory but incur more overhead.
     #[arg(
         short = 'i',
         long,
@@ -466,7 +466,7 @@ pub struct ModBamPileup {
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     sample_region: Option<String>,
-    /// Interval chunk size to process concurrently when estimating the threshold
+    /// Interval chunk size in base pairs to process concurrently when estimating the threshold
     /// probability, can be larger than the pileup processing interval.
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
@@ -937,8 +937,8 @@ pub struct SampleModBaseProbs {
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     region: Option<String>,
-    /// Interval chunk size to process concurrently. Smaller interval chunk
-    /// sizes will use less memory but incur more overhead. Only used when
+    /// Interval chunk size in base pairs to process concurrently. Smaller interval
+    /// chunk sizes will use less memory but incur more overhead. Only used when
     /// sampling probs from an indexed bam.
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
@@ -1136,7 +1136,7 @@ pub struct ModSummarize {
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     region: Option<String>,
-    /// When using regions, interval chunk size to process concurrently.
+    /// When using regions, interval chunk size in base pairs to process concurrently.
     /// Smaller interval chunk sizes will use less memory but incur more
     /// overhead.
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
@@ -1150,12 +1150,12 @@ impl ModSummarize {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()?;
-        let region = if let Some(raw_region) = &self.region {
-            info!("parsing region {raw_region}");
-            Some(Region::parse_str(&raw_region, reader.header())?)
-        } else {
-            None
-        };
+
+        let region = self
+            .region
+            .as_ref()
+            .map(|raw_region| Region::parse_str(raw_region, reader.header()))
+            .transpose()?;
 
         let (sample_frac, num_reads) = get_sampling_options(
             self.no_sampling,

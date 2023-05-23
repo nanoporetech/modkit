@@ -9,7 +9,7 @@ use histo_fp::Histogram;
 use log::{debug, warn};
 use prettytable::format::FormatBuilder;
 use prettytable::{cell, row, Table};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
 use std::path::{Path, PathBuf};
@@ -527,6 +527,7 @@ pub struct TsvWriterWithContigNames<W: Write> {
     tsv_writer: TsvWriter<W>,
     tid_to_name: HashMap<u32, String>,
     name_to_seq: HashMap<String, Vec<u8>>,
+    written_reads: HashSet<String>,
 }
 
 impl<W: Write> OutWriter<ReadsBaseModProfile> for TsvWriterWithContigNames<W> {
@@ -534,19 +535,24 @@ impl<W: Write> OutWriter<ReadsBaseModProfile> for TsvWriterWithContigNames<W> {
         let missing_chrom = ".".to_string();
         let mut rows_written = 0u64;
         for profile in item.profiles.iter() {
-            let chrom_name = if let Some(chrom_id) = profile.chrom_id {
-                self.tid_to_name.get(&chrom_id)
+            if self.written_reads.contains(&profile.record_name) {
+                continue;
             } else {
-                None
-            };
-            for mod_profile in profile.profile.iter() {
-                let row = mod_profile.to_row(
-                    &profile.record_name,
-                    chrom_name.unwrap_or(&missing_chrom),
-                    &self.name_to_seq,
-                );
-                self.tsv_writer.buf_writer.write(row.as_bytes())?;
-                rows_written += 1;
+                let chrom_name = if let Some(chrom_id) = profile.chrom_id {
+                    self.tid_to_name.get(&chrom_id)
+                } else {
+                    None
+                };
+                for mod_profile in profile.profile.iter() {
+                    let row = mod_profile.to_row(
+                        &profile.record_name,
+                        chrom_name.unwrap_or(&missing_chrom),
+                        &self.name_to_seq,
+                    );
+                    self.tsv_writer.buf_writer.write(row.as_bytes())?;
+                    rows_written += 1;
+                }
+                self.written_reads.insert(profile.record_name.to_owned());
             }
         }
         Ok(rows_written)

@@ -1,3 +1,20 @@
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
+use std::thread;
+
+use bio::io::fasta::Reader as FastaReader;
+use clap::Args;
+use crossbeam_channel::{bounded, Sender};
+use derive_new::new;
+use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
+use log::{debug, error, info};
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
+use rust_htslib::bam::{self, FetchDefinition, Read};
+use rust_lapper as lapper;
+
 use crate::errs::RunError;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
@@ -11,24 +28,9 @@ use crate::reads_sampler::sample_reads_from_interval;
 use crate::record_processor::WithRecords;
 use crate::util::{
     get_master_progress_bar, get_spinner, get_subroutine_progress_bar,
-    get_targets, ReferenceRecord, Strand,
+    get_targets, ReferenceRecord, Region, Strand,
 };
 use crate::writers::{OutWriter, TsvWriter, TsvWriterWithContigNames};
-use bio::io::fasta::Reader as FastaReader;
-use clap::Args;
-use crossbeam_channel::bounded;
-use derive_new::new;
-use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
-use log::{debug, error, info};
-use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
-use rust_htslib::bam::{self, Read};
-use rust_lapper as lapper;
-use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
-use std::thread;
 
 #[derive(Args)]
 pub struct ExtractMods {
@@ -42,28 +44,48 @@ pub struct ExtractMods {
     /// Path to file to write run log.
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
+    /// Include unmapped reads in output (alias: unmapped).
+    #[arg(
+        long,
+        conflicts_with = "include_bed",
+        alias = "unmapped",
+        default_value_t = false
+    )]
+    use_unmapped: bool,
+    /// Number of reads to use
+    #[arg(long)]
+    num_reads: Option<usize>,
+    /// Process only reads that are aligned to a specified region of the BAM.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    #[arg(long)]
+    region: Option<String>,
     /// Force overwrite of output file
-    #[arg(long, default_value_t = true)]
+    #[arg(long, default_value_t = false)]
     force: bool,
 
     /// Path to reference FASTA to extract reference context information from.
+    /// If no reference is provided, `ref_kmer` column will be "." in the output.
     #[arg(long, alias = "ref")]
     reference: Option<PathBuf>,
 
-    /// BED file with regions to include
+    /// BED file with regions to include (alias: include).
     #[arg(long, alias = "include")]
     include_bed: Option<PathBuf>,
-    /// BED file with regions to _exclude_
+    /// BED file with regions to _exclude_ (alias: exclude).
     #[arg(long, alias = "exclude", short = 'v')]
     exclude_bed: Option<PathBuf>,
 
-    /// Base modification code to ignore when generating output table
-    #[arg(long)]
+    /// Ignore a modified base class  _in_situ_ by redistributing base modification
+    /// probability equally across other options. For example, if collapsing 'h',
+    /// with 'm' and canonical options, half of the probability of 'h' will be added to
+    /// both 'm' and 'C'. A full description of the methods can be found in
+    /// collapse.md.
+    #[arg(long, hide_short_help = true)]
     ignore: Option<char>,
 
-    /// Interval chunk size to process concurrently. Smaller interval chunk
-    /// sizes will use less memory but incur more overhead. Only used
-    /// when an indexed modBAM is provided.
+    /// Interval chunk size in base pairs to process concurrently. Smaller interval
+    /// chunk sizes will use less memory but incur more overhead. Only used when an
+    /// indexed modBAM is provided.
     #[arg(
         short = 'i',
         long,
@@ -81,6 +103,7 @@ impl ExtractMods {
     fn load_regions(
         &self,
         name_to_tid: &HashMap<&str, u32>,
+        region: Option<&Region>,
     ) -> anyhow::Result<(Option<ReferenceAndIntervals>, ReferencePositionFilter)>
     {
         let include_positions = self
@@ -97,7 +120,8 @@ impl ExtractMods {
         let reference_and_intervals =
             match bam::IndexedReader::from_path(&self.in_bam) {
                 Ok(reader) => {
-                    let reference_records = get_targets(reader.header(), None);
+                    let reference_records =
+                        get_targets(reader.header(), region);
                     let reference_and_intervals = reference_records
                         .into_iter()
                         .map(|reference_record| {
@@ -112,35 +136,19 @@ impl ExtractMods {
                         })
                         .collect::<ReferenceAndIntervals>();
                     Some(reference_and_intervals)
-                    // todo(arand) make intervals from included positions, if provided
-                    // if let Some(positions) = include_positions.as_ref() {
-                    //     Some(
-                    //         positions
-                    //             .get_reference_intervals(self.interval_size),
-                    //     )
-                    // } else {
-                    //     let reference_records =
-                    //         get_targets(reader.header(), None);
-                    //     let reference_and_intervals = reference_records
-                    //         .into_iter()
-                    //         .map(|reference_record| {
-                    //             let interval_chunks = IntervalChunks::new(
-                    //                 reference_record.start,
-                    //                 reference_record.length,
-                    //                 self.interval_size,
-                    //                 reference_record.tid,
-                    //                 None,
-                    //             );
-                    //             (reference_record, interval_chunks)
-                    //         })
-                    //         .collect::<ReferenceAndIntervals>();
-                    //     Some(reference_and_intervals)
-                    // }
                 }
-                Err(_) => None,
+                Err(_) => {
+                    info!(
+                    "did not find index to modBAM, defaulting to serial scan"
+                );
+                    None
+                }
             };
-        let reference_position_filter =
-            ReferencePositionFilter::new(include_positions, exclude_positions);
+        let reference_position_filter = ReferencePositionFilter::new(
+            include_positions,
+            exclude_positions,
+            self.use_unmapped,
+        );
 
         Ok((reference_and_intervals, reference_position_filter))
     }
@@ -201,100 +209,127 @@ impl ExtractMods {
             None => HashMap::new(),
         };
 
+        let region = self
+            .region
+            .as_ref()
+            .map(|raw_region| Region::parse_str(raw_region, reader.header()))
+            .transpose()?;
+
         let (regions, reference_position_filter) =
-            self.load_regions(&name_to_tid)?;
+            self.load_regions(&name_to_tid, region.as_ref())?;
 
         let multi_prog = MultiProgress::new();
         let n_failed = multi_prog.add(get_spinner());
+        n_failed.set_message("~records failed");
         let n_skipped = multi_prog.add(get_spinner());
+        n_skipped.set_message("~records skipped");
         let n_used = multi_prog.add(get_spinner());
+        n_used.set_message("~records used");
+        let n_rows = multi_prog.add(get_spinner());
+        n_rows.set_message("rows written");
         reader.set_threads(self.threads)?;
+        let n_reads = self.num_reads;
+        let threads = self.threads;
+
         thread::spawn(move || {
             pool.install(|| {
                 if let Some(interval_chunks) = regions {
+                    drop(reader);
                     let master_progress = multi_prog.add(get_master_progress_bar(interval_chunks.len()));
                     master_progress.set_message("contigs");
+
+                    let total_length = interval_chunks.iter().map(|(r, _)| r.length as usize).sum::<usize>();
+                    let mut num_aligned_reads_used = 0usize;
                     for (reference_record, interval_chunks) in interval_chunks {
                         let interval_chunks =
                             interval_chunks.collect::<Vec<(u32, u32)>>();
+
+                        // todo use the index api to pre-calculate the number of reads per ref
+                        let n_reads_for_reference = if let Some(nr) = n_reads {
+                            let f = reference_record.length as f64 / total_length as f64;
+                            let nr = nr as f64 * f;
+                            Some(std::cmp::max(nr.floor() as usize, 1usize))
+                        } else {
+                            None
+                        };
+
                         let interval_pb = multi_prog.add(get_subroutine_progress_bar(interval_chunks.len()));
                         interval_pb.set_message(format!("processing {}", &reference_record.name));
-                        interval_chunks.into_par_iter()
+                        let n_reads_used = interval_chunks.into_par_iter()
                             .progress_with(interval_pb)
-                            .for_each(
-                            |(start, end)| {
-                                let res = sample_reads_from_interval::<
-                                    ReadsBaseModProfile,
-                                >(
-                                    &in_bam,
-                                    reference_record.tid,
-                                    start,
-                                    end,
-                                    RecordSampler::new_passthrough(),
-                                    collapse_method.as_ref(),
-                                );
-                                let res = res.map(|reads_base_mod_profile| {
-                                    reference_position_filter.filter_read_base_mod_probs(reads_base_mod_profile)
-                                });
+                            .map(
+                                |(start, end)| {
+                                    let record_sampler = n_reads_for_reference.map(|nr| {
+                                        let f = (end - start) as f64 / reference_record.length as f64;
+                                        let nr = nr as f64 * f;
+                                        let nr = std::cmp::max(nr.floor() as usize, 1usize);
+                                        RecordSampler::new_num_reads(nr)
+                                    }).unwrap_or(RecordSampler::new_passthrough());
 
-                                match snd.send(res) {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        error!(
-                                            "failed to send result to writer, {}",
-                                            e.to_string()
-                                        );
+                                    let batch_result = sample_reads_from_interval::<
+                                        ReadsBaseModProfile,
+                                    >(
+                                        &in_bam,
+                                        reference_record.tid,
+                                        start,
+                                        end,
+                                        record_sampler,
+                                        collapse_method.as_ref(),
+                                    ).map(|reads_base_mod_profile| {
+                                        reference_position_filter.filter_read_base_mod_probs(reads_base_mod_profile)
+                                    });
+                                    let num_reads_success = batch_result.as_ref().map(|batch| batch.num_reads()).unwrap_or(0);
+
+                                    match snd.send(batch_result) {
+                                        Ok(_) => {
+                                            num_reads_success
+                                        }
+                                        Err(e) => {
+                                            error!( "failed to send result to writer, {}", e.to_string() );
+                                            0
+                                        }
                                     }
                                 }
-                            },
-                        )
+                            ).sum::<usize>();
+                        num_aligned_reads_used += n_reads_used;
                     }
-                } else {
-                    let mut mod_iter =
-                        TrackingModRecordIter::new(reader.records());
-                    let pb = multi_prog.add(get_spinner());
-                    pb.set_message("records processed");
-                    for (record, read_id, mod_base_info) in &mut mod_iter {
-                        let mod_profile =
-                            match ReadBaseModProfile::process_record(
-                                &record,
-                                &read_id,
-                                mod_base_info,
-                                collapse_method.as_ref(),
-                            ) {
-                                Ok(mod_profile) => {
-                                    ReadsBaseModProfile::new(vec![mod_profile], 0, 0)
-                                },
-                                Err(run_error) => match run_error {
-                                    RunError::BadInput(_)
-                                    | RunError::Failed(_) => {
-                                        ReadsBaseModProfile::new(
-                                            Vec::new(),
-                                            0,
-                                            1,
-                                        )
-                                    }
-                                    RunError::Skipped(_) => {
-                                        ReadsBaseModProfile::new(
-                                            Vec::new(),
-                                            1,
-                                            0,
-                                        )
-                                    }
-                                },
-                            };
-                        let mod_profile = reference_position_filter.filter_read_base_mod_probs(mod_profile);
-                        match snd.send(Ok(mod_profile)) {
-                            Ok(_) => {}
-                            Err(snd_error) => {
-                                error!(
-                                    "failed to send results to writer, {}",
-                                    snd_error.to_string()
-                                );
+
+                    if reference_position_filter.include_unmapped {
+                        let n_unmapped_reads = n_reads.map(|nr| {
+                            nr - num_aligned_reads_used
+                        });
+                        if let Some(n) = n_unmapped_reads {
+                            debug!("processing {n} unmapped reads");
+                        } else {
+                            debug!("processing unmapped reads");
+                        }
+                        let reader = bam::IndexedReader::from_path(&in_bam)
+                            .and_then(|mut reader| reader.fetch(FetchDefinition::Unmapped).map(|_| reader))
+                            .and_then(|mut reader| reader.set_threads(threads).map(|_| reader));
+                        match reader {
+                            Ok(mut reader) => {
+                                Self::process_records_to_chan(
+                                    reader.records(),
+                                    &multi_prog,
+                                    &reference_position_filter,
+                                    snd.clone(),
+                                    n_unmapped_reads,
+                                    collapse_method.as_ref());
+                            },
+                            Err(e) => {
+                                error!("failed to get indexed reader for unmapped read processing, {}", e.to_string());
                             }
                         }
-                        pb.inc(1);
                     }
+                } else {
+                    Self::process_records_to_chan(
+                        reader.records(),
+                        &multi_prog,
+                        &reference_position_filter,
+                        snd.clone(),
+                        n_reads,
+                        collapse_method.as_ref()
+                    );
                 }
             })
         });
@@ -308,6 +343,7 @@ impl ExtractMods {
                         tsv_writer,
                         tid_to_name,
                         chrom_to_seq,
+                        HashSet::new(),
                     );
                     Box::new(writer)
                 }
@@ -321,6 +357,7 @@ impl ExtractMods {
                         tsv_writer,
                         tid_to_name,
                         chrom_to_seq,
+                        HashSet::new(),
                     );
                     Box::new(writer)
                 }
@@ -329,11 +366,11 @@ impl ExtractMods {
         for result in rcv {
             match result {
                 Ok(mod_profile) => {
-                    n_failed.inc(mod_profile.num_fails as u64);
-                    n_skipped.inc(mod_profile.num_skips as u64);
+                    // n_failed.inc(mod_profile.num_fails as u64);
+                    // n_skipped.inc(mod_profile.num_skips as u64);
                     n_used.inc(mod_profile.num_reads() as u64);
                     match writer.write(mod_profile) {
-                        Ok(_) => {}
+                        Ok(n) => n_rows.inc(n),
                         Err(e) => {
                             error!("failed to write {}", e.to_string());
                         }
@@ -348,6 +385,61 @@ impl ExtractMods {
             }
         }
         Ok(())
+    }
+
+    fn process_records_to_chan<T: Read>(
+        records: bam::Records<T>,
+        multi_pb: &MultiProgress,
+        reference_position_filter: &ReferencePositionFilter,
+        snd: Sender<anyhow::Result<ReadsBaseModProfile>>,
+        n_reads: Option<usize>,
+        collapse_method: Option<&CollapseMethod>,
+    ) {
+        let mut mod_iter = TrackingModRecordIter::new(records);
+        let pb = multi_pb.add(get_spinner());
+        pb.set_message("records processed");
+        for (record, read_id, mod_base_info) in &mut mod_iter {
+            let mod_profile = match ReadBaseModProfile::process_record(
+                &record,
+                &read_id,
+                mod_base_info,
+                collapse_method,
+            ) {
+                Ok(mod_profile) => {
+                    ReadsBaseModProfile::new(vec![mod_profile], 0, 0)
+                }
+                Err(run_error) => match run_error {
+                    RunError::BadInput(_) | RunError::Failed(_) => {
+                        ReadsBaseModProfile::new(Vec::new(), 0, 1)
+                    }
+                    RunError::Skipped(_) => {
+                        ReadsBaseModProfile::new(Vec::new(), 1, 0)
+                    }
+                },
+            };
+            let mod_profile = reference_position_filter
+                .filter_read_base_mod_probs(mod_profile);
+            match snd.send(Ok(mod_profile)) {
+                Ok(_) => {
+                    pb.inc(1);
+                }
+                Err(snd_error) => {
+                    error!(
+                        "failed to send results to writer, {}",
+                        snd_error.to_string()
+                    );
+                }
+            }
+            let done = n_reads
+                .map(|nr| pb.position() as usize >= nr)
+                .unwrap_or(false);
+            if done {
+                // pb.finish_and_clear();
+                debug!("stopping after processing {} reads", pb.position());
+                break;
+            }
+        }
+        pb.finish_and_clear();
     }
 }
 
@@ -464,19 +556,13 @@ impl StrandedPositionFilter {
             .map(|lp| lp.find(position, position + 1).count() > 0)
             .unwrap_or(false)
     }
-
-    fn get_reference_intervals(
-        &self,
-        _interval_size: u32,
-    ) -> ReferenceAndIntervals {
-        todo!()
-    }
 }
 
 #[derive(new)]
 struct ReferencePositionFilter {
     include_pos: Option<StrandedPositionFilter>,
     exclude_pos: Option<StrandedPositionFilter>,
+    include_unmapped: bool,
 }
 
 impl ReferencePositionFilter {
@@ -523,7 +609,16 @@ impl ReferencePositionFilter {
                                 self.exclude_pos.is_none()
                                     && self.include_pos.is_none()
                             }
-                            _ => false,
+                            (None, None, None) => self.include_unmapped,
+                            _ => {
+                                debug!(
+                                    "unexpected combo here? {:?}, {:?}, {:?}",
+                                    chrom_id,
+                                    mod_profile.ref_position,
+                                    mod_profile.alignment_strand
+                                );
+                                false
+                            }
                         }
                     })
                     .collect::<Vec<ModProfile>>();
