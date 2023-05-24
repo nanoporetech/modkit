@@ -65,8 +65,8 @@ pub struct ExtractMods {
     #[arg(long, alias = "ref")]
     reference: Option<PathBuf>,
 
-    /// BED file with regions to include (alias: include).
-    #[arg(long, alias = "include")]
+    /// BED file with regions to include (alias: include-only).
+    #[arg(long, alias = "include-only")]
     include_bed: Option<PathBuf>,
     /// BED file with regions to _exclude_ (alias: exclude).
     #[arg(long, alias = "exclude", short = 'v')]
@@ -103,6 +103,13 @@ impl ExtractMods {
         region: Option<&Region>,
     ) -> anyhow::Result<(Option<ReferenceAndIntervals>, ReferencePositionFilter)>
     {
+        let include_unmapped = if self.include_bed.is_some() {
+            info!("specifying include-only BED outputs only mapped sites");
+            false
+        } else {
+            !self.mapped_only
+        };
+
         let include_positions = self
             .include_bed
             .as_ref()
@@ -144,7 +151,7 @@ impl ExtractMods {
         let reference_position_filter = ReferencePositionFilter::new(
             include_positions,
             exclude_positions,
-            !self.mapped_only,
+            include_unmapped,
         );
 
         Ok((reference_and_intervals, reference_position_filter))
@@ -474,6 +481,7 @@ impl StrandedPositionFilter {
         let mut pos_positions = HashMap::new();
         let mut neg_positions = HashMap::new();
         let lines_processed = get_spinner();
+        lines_processed.set_message("rows processed");
         let mut warned = HashSet::new();
 
         let reader = BufReader::new(fh);
