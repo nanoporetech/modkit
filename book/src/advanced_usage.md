@@ -354,6 +354,7 @@ Options:
 
       --suppress-progress
           Hide the progress bar
+          Output summary as a tab-separated variables stdout instead of a table
 
   -n, --num-reads <NUM_READS>
           Max number of reads to use for estimating the filter threshold and generating the summary,

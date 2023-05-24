@@ -376,10 +376,10 @@ position within the motif.</p>
 </code></pre>
 <p>The output is directed to standard out.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="extracting-base-modification-information"><a class="header" href="#extracting-base-modification-information">Extracting base modification information</a></h1>
-<p>The <code>modkit extract</code> sub-command will produce a table containing the base modification probabilities, 
+<p>The <code>modkit extract</code> sub-command will produce a table containing the base modification probabilities,
 the read sequence context, and optionally aligned reference information.</p>
-<p>The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
-To only include mapped bases use the <code>--mapped</code> flag. To only include sites of interest, pass a 
+<p>The table will by default contain unmapped sections of the read (soft-clipped sections, for example).
+To only include mapped bases use the <code>--mapped</code> flag. To only include sites of interest, pass a
 BED-formatted file to the <code>--include-only</code> option. Similarly, to exclude sites, pass a BED-formatted
 file to the <code>--exclude</code> option.</p>
 <h2 id="description-of-output-table"><a class="header" href="#description-of-output-table">Description of output table</a></h2>
@@ -403,7 +403,7 @@ file to the <code>--exclude</code> option.</p>
 </div>
 <h2 id="examples"><a class="header" href="#examples">Examples:</a></h2>
 <h3 id="extract-a-table-from-an-aligned-and-indexed-bam"><a class="header" href="#extract-a-table-from-an-aligned-and-indexed-bam">Extract a table from an aligned and indexed BAM</a></h3>
-<pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt; 
+<pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt;
 </code></pre>
 <p>If the index <code>input.bam.bai</code> can be found, intervals along the aligned genome can be performed
 in parallel.</p>
@@ -946,7 +946,7 @@ Arguments:
 Options:
   -t, --threads &lt;THREADS&gt;
           Number of threads to use
-          
+
           [default: 4]
 
       --log-filepath &lt;LOG_FILEPATH&gt;
@@ -988,7 +988,7 @@ Options:
   -i, --interval-size &lt;INTERVAL_SIZE&gt;
           Interval chunk size in base pairs to process concurrently. Smaller interval chunk sizes
           will use less memory but incur more overhead. Only used when an indexed modBAM is provided
-          
+
           [default: 100000]
 
   -h, --help
