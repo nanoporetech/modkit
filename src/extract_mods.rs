@@ -65,7 +65,8 @@ pub struct ExtractMods {
     #[arg(long, alias = "ref")]
     reference: Option<PathBuf>,
 
-    /// BED file with regions to include (alias: include-only).
+    /// BED file with regions to include (alias: include-only). Implicitly
+    /// only includes mapped sites.
     #[arg(long, alias = "include-only")]
     include_bed: Option<PathBuf>,
     /// BED file with regions to _exclude_ (alias: exclude).

@@ -1,0 +1,52 @@
+# Extracting base modification information
+
+The `modkit extract` sub-command will produce a table containing the base modification probabilities, 
+the read sequence context, and optionally aligned reference information.
+
+The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
+To only include mapped bases use the `--mapped` flag. To only include sites of interest, pass a 
+BED-formatted file to the `--include-only` option. Similarly, to exclude sites, pass a BED-formatted
+file to the `--exclude` option.
+
+## Description of output table
+
+| column | name                  | description                                                                     | type |
+|--------|-----------------------|---------------------------------------------------------------------------------|------|
+| 1      | read_id               | name of the read                                                                | str  |
+| 2      | forward_read_position | 0-based position on the forward-oriented read sequence                          | int  |
+| 3      | ref_position          | aligned 0-based reference sequence position, -1 means unmapped                  | int  |
+| 4      | chrom                 | name of aligned contig, or '.' if unmapped                                      | str  |
+| 5      | mod_strand            | strand of the molecule the base modification is on                              | str  |
+| 6      | ref_strand            | strand of the reference the read is aligned to, or '.' if unmapped              | str  |
+| 7      | fw_soft_clipped_start | number of bases soft clipped from the start of the forward-oriented read        | int  |
+| 8      | fw_soft_clipped_end   | number of bases soft clipped from the end of the forward-oriented read          | int  |
+| 9      | read_length           | total length of the read                                                        | int  |
+| 10     | mod_qual              | probability of the base modification in the next column                         | int  |
+| 11     | mod_code              | base modification code from the MM tag                                          | str  |
+| 12     | base_qual             | basecall quality score (phred)                                                  | int  |
+| 13     | ref_kmer              | reference 5-mer sequence context (center base is aligned base), '.' if unmapped | str  |
+| 14     | query_kmer            | read 5-mer sequence context (center base is aligned base)                       | str  |
+| 15     | canonical_base        | canonical base from the query sequence, from the MM tag                         | str  |
+
+## Examples:
+
+### Extract a table from an aligned and indexed BAM 
+```
+modkit extract <input.bam> <output.tsv> 
+```
+If the index `input.bam.bai` can be found, intervals along the aligned genome can be performed
+in parallel.
+
+### Extract a table from a region of a large modBAM
+The below example will extract reads from only chr20, and include reference sequence context
+```
+modkit extract <intput.bam> <output.tsv> --region chr20 --ref <ref.fasta>
+```
+
+### Extract only sites aligned to a CG motif
+```
+modkit motif-bed <reference.fasta> CG 0 > CG_motifs.bed
+modkit extract <in.bam> <out.tsv> --ref <ref.fasta> --include-only CG_motigs.bed
+```
+
+See the help string and/or [advanced_usage](./advanced_usage.md) for more details.

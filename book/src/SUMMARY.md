@@ -5,6 +5,7 @@
     - [Updating and adjusting MM tags](./intro_adjust.md)
     - [Summarizing a modBAM](./intro_summary.md)
     - [Making a motif BED file](./intro_motif_bed.md)
+    - [Extracting MM/ML tags to a table](./intro_extract.md)
 - [Extended subcommand help](./advanced_usage.md)
 - [Troubleshooting](./troubleshooting.md)
 - [Current limitations](./limitations.md)
