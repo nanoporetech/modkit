@@ -14,6 +14,11 @@ use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
 use std::path::{Path, PathBuf};
 
+pub trait OutwriterWithMemory<T> {
+    fn write(&mut self, item: T) -> AnyhowResult<u64>;
+    fn num_reads(&self) -> usize;
+}
+
 pub trait OutWriter<T> {
     fn write(&mut self, item: T) -> AnyhowResult<u64>;
 }
@@ -530,7 +535,9 @@ pub struct TsvWriterWithContigNames<W: Write> {
     written_reads: HashSet<String>,
 }
 
-impl<W: Write> OutWriter<ReadsBaseModProfile> for TsvWriterWithContigNames<W> {
+impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
+    for TsvWriterWithContigNames<W>
+{
     fn write(&mut self, item: ReadsBaseModProfile) -> AnyhowResult<u64> {
         let missing_chrom = ".".to_string();
         let mut rows_written = 0u64;
@@ -556,5 +563,9 @@ impl<W: Write> OutWriter<ReadsBaseModProfile> for TsvWriterWithContigNames<W> {
             }
         }
         Ok(rows_written)
+    }
+
+    fn num_reads(&self) -> usize {
+        self.written_reads.len()
     }
 }

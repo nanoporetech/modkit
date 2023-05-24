@@ -59,15 +59,33 @@ impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
                                     Some((record, record_name, modbase_info))
                                 }
                             }
-                            Err(e) => {
-                                debug!(
+                            Err(e) => match e {
+                                RunError::BadInput(e) => {
+                                    debug!(
+                                    "record {record_name} has improper data, {}",
+                                    e.to_string()
+                                );
+                                    self.num_failed += 1;
+                                    self.next()
+                                }
+                                RunError::Failed(e) => {
+                                    debug!(
                                     "record {record_name} failed to extract \
                                     mod base info, {}",
                                     e.to_string()
                                 );
-                                self.num_failed += 1;
-                                self.next()
-                            }
+                                    self.num_failed += 1;
+                                    self.next()
+                                }
+                                RunError::Skipped(reason) => {
+                                    debug!(
+                                        "record {record_name} skipped, {}",
+                                        reason.to_string()
+                                    );
+                                    self.num_skipped += 1;
+                                    self.next()
+                                }
+                            },
                         }
                     }
                 }
@@ -1668,14 +1686,5 @@ mod mod_bam_tests {
         assert!(a > c);
         assert!(c > d);
         assert!(d > e);
-    }
-
-    #[test]
-    fn test_one_off_positions() {
-        let mm_raw = "C+m?,14,0,6,10,14,0,5,3";
-        let raw_ml = vec![252u16, 2, 255, 255, 255, 255, 255, 255];
-        let raw_mod_tags = RawModTags::new(mm_raw, &raw_ml, true);
-        let base_mod_positions = BaseModPositions::parse(mm_raw).unwrap();
-        dbg!(base_mod_positions);
     }
 }

@@ -30,7 +30,9 @@ use crate::util::{
     get_master_progress_bar, get_spinner, get_subroutine_progress_bar,
     get_targets, ReferenceRecord, Region, Strand,
 };
-use crate::writers::{OutWriter, TsvWriter, TsvWriterWithContigNames};
+use crate::writers::{
+    OutwriterWithMemory, TsvWriter, TsvWriterWithContigNames,
+};
 
 #[derive(Args)]
 pub struct ExtractMods {
@@ -44,14 +46,9 @@ pub struct ExtractMods {
     /// Path to file to write run log.
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
-    /// Include unmapped reads in output (alias: unmapped).
-    #[arg(
-        long,
-        conflicts_with = "include_bed",
-        alias = "unmapped",
-        default_value_t = false
-    )]
-    use_unmapped: bool,
+    /// Include only mapped bases in output (alias: mapped).
+    #[arg(long, alias = "mapped", default_value_t = false)]
+    mapped_only: bool,
     /// Number of reads to use
     #[arg(long)]
     num_reads: Option<usize>,
@@ -147,7 +144,7 @@ impl ExtractMods {
         let reference_position_filter = ReferencePositionFilter::new(
             include_positions,
             exclude_positions,
-            self.use_unmapped,
+            !self.mapped_only,
         );
 
         Ok((reference_and_intervals, reference_position_filter))
@@ -219,6 +216,7 @@ impl ExtractMods {
             self.load_regions(&name_to_tid, region.as_ref())?;
 
         let multi_prog = MultiProgress::new();
+        // multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         let n_failed = multi_prog.add(get_spinner());
         n_failed.set_message("~records failed");
         let n_skipped = multi_prog.add(get_spinner());
@@ -308,13 +306,14 @@ impl ExtractMods {
                             .and_then(|mut reader| reader.set_threads(threads).map(|_| reader));
                         match reader {
                             Ok(mut reader) => {
-                                Self::process_records_to_chan(
+                                let (skip, fail) = Self::process_records_to_chan(
                                     reader.records(),
                                     &multi_prog,
                                     &reference_position_filter,
                                     snd.clone(),
                                     n_unmapped_reads,
                                     collapse_method.as_ref());
+                                let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
                             },
                             Err(e) => {
                                 error!("failed to get indexed reader for unmapped read processing, {}", e.to_string());
@@ -322,7 +321,7 @@ impl ExtractMods {
                         }
                     }
                 } else {
-                    Self::process_records_to_chan(
+                    let (skip, fail) = Self::process_records_to_chan(
                         reader.records(),
                         &multi_prog,
                         &reference_position_filter,
@@ -330,11 +329,12 @@ impl ExtractMods {
                         n_reads,
                         collapse_method.as_ref()
                     );
+                    let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
                 }
             })
         });
 
-        let mut writer: Box<dyn OutWriter<ReadsBaseModProfile>> =
+        let mut writer: Box<dyn OutwriterWithMemory<ReadsBaseModProfile>> =
             match self.out_path.as_str() {
                 "stdout" | "-" => {
                     let tsv_writer =
@@ -366,9 +366,9 @@ impl ExtractMods {
         for result in rcv {
             match result {
                 Ok(mod_profile) => {
-                    // n_failed.inc(mod_profile.num_fails as u64);
-                    // n_skipped.inc(mod_profile.num_skips as u64);
                     n_used.inc(mod_profile.num_reads() as u64);
+                    n_failed.inc(mod_profile.num_fails as u64);
+                    n_skipped.inc(mod_profile.num_skips as u64);
                     match writer.write(mod_profile) {
                         Ok(n) => n_rows.inc(n),
                         Err(e) => {
@@ -384,17 +384,28 @@ impl ExtractMods {
                 }
             }
         }
+        n_failed.finish_and_clear();
+        n_skipped.finish_and_clear();
+        n_used.finish_and_clear();
+        n_rows.finish_and_clear();
+        info!(
+            "processed {} reads, {} rows, skipped {} reads, failed {} reads",
+            writer.num_reads(),
+            n_rows.position(),
+            n_skipped.position(),
+            n_failed.position()
+        );
         Ok(())
     }
 
-    fn process_records_to_chan<T: Read>(
+    fn process_records_to_chan<'a, T: Read>(
         records: bam::Records<T>,
         multi_pb: &MultiProgress,
         reference_position_filter: &ReferencePositionFilter,
         snd: Sender<anyhow::Result<ReadsBaseModProfile>>,
         n_reads: Option<usize>,
         collapse_method: Option<&CollapseMethod>,
-    ) {
+    ) -> (usize, usize) {
         let mut mod_iter = TrackingModRecordIter::new(records);
         let pb = multi_pb.add(get_spinner());
         pb.set_message("records processed");
@@ -440,6 +451,7 @@ impl ExtractMods {
             }
         }
         pb.finish_and_clear();
+        (mod_iter.num_skipped, mod_iter.num_failed)
     }
 }
 
@@ -585,7 +597,7 @@ impl ReferencePositionFilter {
         &self,
         reads_base_mods_profile: ReadsBaseModProfile,
     ) -> ReadsBaseModProfile {
-        let n_skipped = reads_base_mods_profile.num_skips;
+        let mut n_skipped = reads_base_mods_profile.num_skips;
         let n_failed = reads_base_mods_profile.num_fails;
         let profiles = reads_base_mods_profile
             .profiles
@@ -605,26 +617,20 @@ impl ReferencePositionFilter {
                             (Some(chrom_id), Some(ref_pos), Some(strand)) => {
                                 self.keep(chrom_id, ref_pos as u64, strand)
                             }
-                            (Some(_), None, Some(_)) => {
-                                self.exclude_pos.is_none()
-                                    && self.include_pos.is_none()
-                            }
-                            (None, None, None) => self.include_unmapped,
-                            _ => {
-                                debug!(
-                                    "unexpected combo here? {:?}, {:?}, {:?}",
-                                    chrom_id,
-                                    mod_profile.ref_position,
-                                    mod_profile.alignment_strand
-                                );
-                                false
-                            }
+                            _ => self.include_unmapped,
                         }
                     })
                     .collect::<Vec<ModProfile>>();
                 ReadBaseModProfile::new(read_name, chrom_id, profile)
             })
             .collect::<Vec<ReadBaseModProfile>>();
+        let empty = profiles
+            .iter()
+            .filter(|read_base_mod_profile| {
+                read_base_mod_profile.profile.is_empty()
+            })
+            .count();
+        n_skipped += empty;
         ReadsBaseModProfile::new(profiles, n_skipped, n_failed)
     }
 }
