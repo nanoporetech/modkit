@@ -364,8 +364,8 @@ pub struct ModBamPileup {
     /// Specify "-" or "stdout" to direct output to stdout.
     out_bed: String,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
-    /// Setting a file is recommended.
-    #[arg(long)]
+    /// Setting a file is recommended. (alias: log)
+    #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Process only the specified region of the BAM when performing pileup.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.

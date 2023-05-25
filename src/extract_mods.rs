@@ -420,7 +420,7 @@ impl ExtractMods {
         n_used.finish_and_clear();
         n_rows.finish_and_clear();
         info!(
-            "processed {} reads, {} rows, skipped {} reads, failed {} reads",
+            "processed {} reads, {} rows, skipped ~{} reads, failed ~{} reads",
             writer.num_reads(),
             n_rows.position(),
             n_skipped.position(),
