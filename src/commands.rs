@@ -23,8 +23,8 @@ use crate::extract_mods::ExtractMods;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
-    format_mm_ml_tag, CollapseMethod, ModBaseInfo, RawModCode, SkipMode,
-    ML_TAGS, MM_TAGS,
+    format_mm_ml_tag, CollapseMethod, EdgeFilter, ModBaseInfo, RawModCode,
+    SkipMode, ML_TAGS, MM_TAGS,
 };
 use crate::mod_base_code::{DnaBase, ModCode, ParseChar};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
@@ -123,6 +123,7 @@ fn get_threshold_from_options(
     seed: Option<u64>,
     region: Option<&Region>,
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+    edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
     suppress_progress: bool,
 ) -> AnyhowResult<MultipleThresholdModCaller> {
@@ -150,6 +151,7 @@ fn get_threshold_from_options(
         filter_percentile,
         seed,
         region,
+        edge_filter,
         collapse_method,
         suppress_progress,
     )?;
@@ -535,6 +537,11 @@ pub struct ModBamPileup {
     /// negative strands into the counts for the positive strand.
     #[arg(long, requires = "cpg", default_value_t = false)]
     combine_strands: bool,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long, hide_short_help = true)]
+    edge_filter: Option<usize>,
 
     // output args
     /// For bedMethyl output, separate columns with only tabs. The default is
@@ -585,6 +592,10 @@ impl ModBamPileup {
         } else {
             None
         };
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
 
         let (pileup_options, combine_strands, threshold_collapse_method) =
             match self.preset {
@@ -670,6 +681,7 @@ impl ModBamPileup {
                         self.seed,
                         sampling_region.as_ref().or(region.as_ref()),
                         per_mod_thresholds,
+                        edge_filter.as_ref(),
                         threshold_collapse_method.as_ref(),
                         self.suppress_progress,
                     )
@@ -809,6 +821,7 @@ impl ModBamPileup {
                                         force_allow,
                                         combine_strands,
                                         motif_locations.as_ref(),
+                                        edge_filter.as_ref(),
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()
@@ -913,6 +926,11 @@ pub struct SampleModBaseProbs {
     /// collapse.md.
     #[arg(long, hide_short_help = true)]
     ignore: Option<char>,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long, hide_short_help = true)]
+    edge_filter: Option<usize>,
 
     // probability histogram options
     /// Output histogram of base modification prediction probabilities.
@@ -971,6 +989,10 @@ impl SampleModBaseProbs {
         } else {
             None
         };
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim| EdgeFilter::new(*trim, *trim));
 
         let (sample_frac, num_reads) = get_sampling_options(
             self.no_sampling,
@@ -1002,6 +1024,7 @@ impl SampleModBaseProbs {
                     self.seed,
                     region.as_ref(),
                     collapse_method.as_ref(),
+                    edge_filter.as_ref(),
                     self.suppress_progress,
                 )?;
 
@@ -1147,6 +1170,11 @@ pub struct ModSummarize {
     /// collapse.md.
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<char>,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long, hide_short_help = true)]
+    edge_filter: Option<usize>,
 
     /// Process only the specified region of the BAM when collecting probabilities.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
@@ -1172,6 +1200,10 @@ impl ModSummarize {
             .as_ref()
             .map(|raw_region| Region::parse_str(raw_region, reader.header()))
             .transpose()?;
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim| EdgeFilter::new(*trim, *trim));
 
         let (sample_frac, num_reads) = get_sampling_options(
             self.no_sampling,
@@ -1221,6 +1253,7 @@ impl ModSummarize {
                 filter_thresholds,
                 per_mod_thresholds,
                 collapse_method.as_ref(),
+                edge_filter.as_ref(),
                 self.suppress_progress,
             )
         })?;
@@ -1531,6 +1564,11 @@ pub struct CallMods {
     /// highest probability prediction.
     #[arg(long, default_value_t = false)]
     no_filtering: bool,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long, hide_short_help = true)]
+    edge_filter: Option<usize>,
 }
 
 impl CallMods {
@@ -1544,6 +1582,10 @@ impl CallMods {
         add_modkit_pg_records(&mut header);
         let mut out_bam =
             bam::Writer::from_path(&self.out_bam, &header, bam::Format::Bam)?;
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim| EdgeFilter::new(*trim, *trim));
 
         let per_mod_thresholds =
             if let Some(raw_per_mod_thresholds) = &self.mod_thresholds {
@@ -1578,6 +1620,7 @@ impl CallMods {
                     self.seed,
                     sampling_region.as_ref(),
                     per_mod_thresholds,
+                    edge_filter.as_ref(),
                     None,
                     self.suppress_progress,
                 )

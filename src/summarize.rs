@@ -7,7 +7,7 @@ use indicatif::ParallelProgressIterator;
 use log::{debug, error, info};
 use rayon::prelude::*;
 
-use crate::mod_bam::{BaseModCall, CollapseMethod};
+use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::monoid::Moniod;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
@@ -64,6 +64,7 @@ pub fn summarize_modbam<'a>(
     filter_thresholds: Option<MultipleThresholdModCaller>,
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
     collapse_method: Option<&CollapseMethod>,
+    edge_filter: Option<&EdgeFilter>,
     suppress_progress: bool,
 ) -> anyhow::Result<ModSummary<'a>> {
     let read_ids_to_base_mod_calls =
@@ -76,6 +77,7 @@ pub fn summarize_modbam<'a>(
             seed,
             region,
             collapse_method,
+            edge_filter,
             suppress_progress,
         )?;
 

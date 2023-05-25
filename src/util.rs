@@ -1,5 +1,4 @@
 use anyhow::anyhow;
-use std::collections::HashMap;
 
 use std::string::FromUtf8Error;
 
@@ -57,9 +56,6 @@ pub(crate) fn get_master_progress_bar(n: usize) -> ProgressBar {
 pub(crate) fn get_subroutine_progress_bar(n: usize) -> ProgressBar {
     ProgressBar::new(n as u64).with_style(get_subroutine_progress_bar_style())
 }
-
-/// mapping of forward query position to aligned reference position
-pub type AlignedPairs = HashMap<usize, u64>;
 
 pub(crate) fn get_aligned_pairs_forward(
     record: &bam::Record,

@@ -7,7 +7,7 @@ use log::{debug, error};
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 
-use crate::mod_bam::{BaseModCall, CollapseMethod};
+use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::motif_bed::{MotifLocations, RegexMotif};
 use crate::read_cache::ReadCache;
@@ -571,6 +571,7 @@ pub fn process_region<T: AsRef<Path>>(
     force_allow: bool,
     combine_strands: bool,
     motif_locations: Option<&MotifLocations>,
+    edge_filter: Option<&EdgeFilter>,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -592,6 +593,7 @@ pub fn process_region<T: AsRef<Path>>(
     let mut read_cache = ReadCache::new(
         pileup_numeric_options.get_collapse_method(),
         caller,
+        edge_filter,
         force_allow,
     );
     let mut position_feature_counts = HashMap::new();

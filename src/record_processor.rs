@@ -1,4 +1,4 @@
-use crate::mod_bam::CollapseMethod;
+use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::monoid::Moniod;
 use crate::reads_sampler::record_sampler::RecordSampler;
 use rust_htslib::bam;
@@ -11,6 +11,7 @@ pub(crate) trait RecordProcessor {
         with_progress: bool,
         record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
+        edge_filter: Option<&EdgeFilter>,
     ) -> anyhow::Result<Self::Output>;
 }
 

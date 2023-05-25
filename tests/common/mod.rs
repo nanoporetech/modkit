@@ -44,6 +44,7 @@ fn run_summary<'a>(
             Some(MultipleThresholdModCaller::new_passthrough()),
             None,
             collapse_method,
+            None,
             true,
         )
     })

@@ -5,7 +5,7 @@ use rust_htslib::bam;
 
 use crate::errs::RunError;
 use crate::mod_bam::{
-    collapse_mod_probs, BaseModCall, CollapseMethod, ModBaseInfo,
+    collapse_mod_probs, BaseModCall, CollapseMethod, EdgeFilter, ModBaseInfo,
     SeqPosBaseModProbs, SkipMode,
 };
 use crate::mod_base_code::{DnaBase, ModCode};
@@ -33,12 +33,15 @@ pub(crate) struct ReadCache<'a> {
     /// Force allowing of implicit canonical
     force_allow: bool,
     caller: &'a MultipleThresholdModCaller,
+    /// Edge filter to remove base mod calls at the ends of reads
+    edge_filter: Option<&'a EdgeFilter>,
 }
 
 impl<'a> ReadCache<'a> {
     pub(crate) fn new(
         method: Option<&'a CollapseMethod>,
         caller: &'a MultipleThresholdModCaller,
+        edge_filter: Option<&'a EdgeFilter>,
         force_allow: bool,
     ) -> Self {
         Self {
@@ -50,6 +53,7 @@ impl<'a> ReadCache<'a> {
             method,
             force_allow,
             caller,
+            edge_filter,
         }
     }
 
@@ -143,14 +147,34 @@ impl<'a> ReadCache<'a> {
             }
         }
 
+        // need a flag here, change to true iff we add probs for at least a single canonical
+        // base if they are all filtered out (due to edge filter), return an Err so that we
+        // don't re-process this read.
+        let mut added_base_mod_probs = false;
         let (_, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
-        for (base, mod_strand, mut seq_base_mod_probs) in mod_prob_iter {
+        for (base, mod_strand, seq_base_mod_probs) in mod_prob_iter {
             match DnaBase::parse(base) {
                 Ok(dna_base) => {
                     let threshold_base = match mod_strand {
                         Strand::Positive => dna_base,
                         Strand::Negative => dna_base.complement(),
                     };
+                    let seq_base_mod_probs =
+                        if let Some(edge_filter) = &self.edge_filter {
+                            seq_base_mod_probs.edge_filter_positions(
+                                edge_filter,
+                                record.seq_len(),
+                            )
+                        } else {
+                            Some(seq_base_mod_probs)
+                        };
+                    // not idiomatic, but fights rightward drift..?
+                    if seq_base_mod_probs.is_none() {
+                        debug!("all base mod positions were removed by edge filter \
+                                for {record_name} and base {base}");
+                        continue;
+                    }
+                    let mut seq_base_mod_probs = seq_base_mod_probs.unwrap();
                     if let Some(method) = &self.method {
                         seq_base_mod_probs =
                             collapse_mod_probs(seq_base_mod_probs, method);
@@ -195,17 +219,25 @@ impl<'a> ReadCache<'a> {
                         dna_base,
                         threshold_base,
                     )?;
+                    added_base_mod_probs = true
                 }
                 Err(e) => {
                     let message = format!(
                         "record {record_name} has unallowed DNA base {base}, {}", e.to_string()
                     );
                     debug!("{}", &message);
+                    // short circuit
                     return Err(RunError::new_failed(message));
                 }
             }
         }
-        Ok(())
+        if added_base_mod_probs {
+            Ok(())
+        } else {
+            Err(RunError::Skipped(format!(
+                "all base mod positions removed in filtering"
+            )))
+        }
     }
 
     #[inline]
@@ -403,7 +435,7 @@ mod read_cache_tests {
             .unwrap();
 
         let caller = MultipleThresholdModCaller::new_passthrough();
-        let mut cache = ReadCache::new(None, &caller, false);
+        let mut cache = ReadCache::new(None, &caller, None, false);
         cache.add_record(&record).unwrap();
         let converter =
             DeltaListConverter::new_from_record(&record, 'C').unwrap();
@@ -467,7 +499,7 @@ mod read_cache_tests {
                 .unwrap();
 
         let caller = MultipleThresholdModCaller::new_passthrough();
-        let mut cache = ReadCache::new(None, &caller, false);
+        let mut cache = ReadCache::new(None, &caller, None, false);
         for r in reader.records() {
             let record = r.unwrap();
             assert!(cache.add_record(&record).is_err());
@@ -493,7 +525,7 @@ mod read_cache_tests {
             .unwrap();
 
         let caller = MultipleThresholdModCaller::new_passthrough();
-        let mut read_cache = ReadCache::new(None, &caller, false);
+        let mut read_cache = ReadCache::new(None, &caller, None, false);
         for p in reader.pileup() {
             let pileup = p.unwrap();
             for alignment in pileup.alignments() {
