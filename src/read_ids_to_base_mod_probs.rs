@@ -47,15 +47,15 @@ impl ReadIdsToBaseModProbs {
         canonical_base: DnaBase,
         mod_probs: Vec<BaseModProbs>,
     ) {
-        let read_id_entry = self
+        let added = self
             .inner
             .entry(read_id.to_owned())
-            .or_insert(HashMap::new());
-        let added = read_id_entry.insert(canonical_base, mod_probs);
+            .or_insert(HashMap::new())
+            .insert(canonical_base, mod_probs);
         if added.is_some() {
-            error!(
+            debug!(
                 "double added base mod calls for base {} and read {},\
-            potentially a logic error!",
+                 potentially a logic error, please submit an issue.",
                 canonical_base.char(),
                 read_id
             );
@@ -110,10 +110,6 @@ impl ReadIdsToBaseModProbs {
                 let grouped = base_mod_probs
                     .iter()
                     .map(|(base, base_mod_probs)| {
-                        // let canonical_code = base
-                        //     .canonical_mod_code()
-                        //     .map(|c| c.char())
-                        //     .unwrap_or(base.char());
                         base_mod_probs
                             .iter()
                             // can make this .base_mod_call
@@ -146,6 +142,10 @@ impl ReadIdsToBaseModProbs {
                 grouped
             })
             .reduce(|| HashMap::zero(), |a, b| a.op(b))
+    }
+
+    pub(crate) fn seen(&self, record_name: &str) -> bool {
+        self.inner.contains_key(record_name)
     }
 }
 
@@ -202,9 +202,19 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         let mut read_ids_to_mod_base_probs = Self::zero();
         for (record, mod_base_info) in mod_base_info_iter {
             match record_sampler.ask() {
-                Indicator::Use => {
-                    let record_name = get_query_name_string(&record)
-                        .unwrap_or("FAILED_UTF_DECODE".to_string());
+                Indicator::Use(token) => {
+                    let record_name = get_query_name_string(&record);
+                    if record_name.is_err() {
+                        debug!("record name failed UTF-8 decode");
+                        continue;
+                    }
+                    let record_name = record_name.unwrap();
+                    if read_ids_to_mod_base_probs.seen(&record_name) {
+                        debug!(
+                            "already processed {record_name}, consider de-duplicating alignments.");
+                        continue;
+                    }
+
                     if mod_base_info.is_empty() {
                         // add count of unused/no calls
                         read_ids_to_mod_base_probs
@@ -247,6 +257,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                     if let Some(pb) = &spinner {
                         pb.inc(1);
                     }
+                    record_sampler.used(token);
                 }
                 Indicator::Skip => continue,
                 Indicator::Done => break,
