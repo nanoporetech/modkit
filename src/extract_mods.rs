@@ -36,7 +36,8 @@ use crate::writers::{
 
 #[derive(Args)]
 pub struct ExtractMods {
-    /// Path to modBAM file to extract read-level information from.
+    /// Path to modBAM file to extract read-level information from, may
+    /// be sorted and have associated index.
     in_bam: PathBuf,
     /// Path to output file, "stdout" or "-" will direct output to stdout.
     out_path: String,
@@ -65,6 +66,7 @@ pub struct ExtractMods {
 
     /// Path to reference FASTA to extract reference context information from.
     /// If no reference is provided, `ref_kmer` column will be "." in the output.
+    /// (alias: ref)
     #[arg(long, alias = "ref")]
     reference: Option<PathBuf>,
 

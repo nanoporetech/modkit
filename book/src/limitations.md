@@ -17,3 +17,7 @@ supported in `pileup`.
 alignment. If a read name is detected more than once, the occurance is logged but both
 alignments will be used. This limiration may be removed in the future with a form of
 dynamic de-duplication.
+
+1. If your modBAM has been pre-filtered to a specific region, you should pass the 
+same region information to `modkit`. In a future release (0.1.z) `modkit` will 
+inspect the bam index directly.

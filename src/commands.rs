@@ -489,7 +489,6 @@ pub struct ModBamPileup {
     /// subcommand is provided to update tags to the new mode. This option allows
     /// the interpretation of implicit mode tags: residues without modified
     /// base probability will be interpreted as being the non-modified base.
-    /// We do not recommend using this option.
     #[arg(
         long,
         hide_short_help = true,
@@ -1061,7 +1060,7 @@ impl SampleModBaseProbs {
 
 #[derive(Args)]
 pub struct ModSummarize {
-    /// Input ModBam file.
+    /// Input modBam file.
     in_bam: PathBuf,
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
@@ -1411,7 +1410,7 @@ impl Update {
 #[derive(Args)]
 pub struct CallMods {
     // running args
-    /// Input BAM, should be sorted and have associated index available.
+    /// Input BAM, may be sorted and have associated index available.
     in_bam: PathBuf,
     /// Output BAM filepath.
     out_bam: PathBuf,
