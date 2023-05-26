@@ -72,6 +72,9 @@ Options:
           
           [default: 100000]
 
+      --suppress-progress
+          Hide the progress bar
+
   -n, --num-reads <NUM_READS>
           Sample this many reads when estimating the filtering threshold. Reads will be sampled
           evenly across aligned genome. If a region is specified, either with the --region option or
@@ -256,6 +259,9 @@ Options:
           Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
           recommended
 
+      --suppress-progress
+          Hide the progress bar
+
   -p, --percentiles <PERCENTILES>
           Percentiles to calculate, a space separated list of floats
           
@@ -345,6 +351,9 @@ Options:
 
       --tsv
           Output summary as a tab-separated variables stdout instead of a table
+
+      --suppress-progress
+          Hide the progress bar
 
   -n, --num-reads <NUM_READS>
           Max number of reads to use for estimating the filter threshold and generating the summary,
@@ -453,6 +462,9 @@ Options:
           Fast fail, stop processing at the first invalid sequence record. Default behavior is to
           continue and report failed/skipped records at the end
 
+      --suppress-progress
+          Hide the progress bar
+
   -t, --threads <THREADS>
           Number of threads to use while processing chunks concurrently
           
@@ -553,6 +565,9 @@ Options:
 
       --force
           Force overwrite of output file
+
+      --suppress-progress
+          Hide the progress bar
 
       --reference <REFERENCE>
           Path to reference FASTA to extract reference context information from. If no reference is

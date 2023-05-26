@@ -148,6 +148,7 @@ pub fn calc_threshold_from_bam(
     seed: Option<u64>,
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
+    suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, f32>> {
     let mut can_base_probs = get_modbase_probs_from_bam(
         bam_fp,
@@ -158,6 +159,7 @@ pub fn calc_threshold_from_bam(
         seed,
         region,
         collapse_method,
+        suppress_progress,
     )?;
     can_base_probs
         .iter_mut()
@@ -178,6 +180,7 @@ pub fn get_modbase_probs_from_bam(
     seed: Option<u64>,
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
+    suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, Vec<f32>>> {
     get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
         bam_fp,
@@ -188,6 +191,7 @@ pub fn get_modbase_probs_from_bam(
         seed,
         region,
         collapse_method,
+        suppress_progress,
     )
     .map(|x| x.mle_probs_per_base())
 }

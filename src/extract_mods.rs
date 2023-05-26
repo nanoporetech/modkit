@@ -59,6 +59,9 @@ pub struct ExtractMods {
     /// Force overwrite of output file
     #[arg(long, default_value_t = false)]
     force: bool,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
 
     /// Path to reference FASTA to extract reference context information from.
     /// If no reference is provided, `ref_kmer` column will be "." in the output.
@@ -114,12 +117,24 @@ impl ExtractMods {
         let include_positions = self
             .include_bed
             .as_ref()
-            .map(|fp| StrandedPositionFilter::from_bed_file(fp, name_to_tid))
+            .map(|fp| {
+                StrandedPositionFilter::from_bed_file(
+                    fp,
+                    name_to_tid,
+                    self.suppress_progress,
+                )
+            })
             .transpose()?;
         let exclude_positions = self
             .exclude_bed
             .as_ref()
-            .map(|fp| StrandedPositionFilter::from_bed_file(fp, name_to_tid))
+            .map(|fp| {
+                StrandedPositionFilter::from_bed_file(
+                    fp,
+                    name_to_tid,
+                    self.suppress_progress,
+                )
+            })
             .transpose()?;
 
         let reference_and_intervals =
@@ -224,7 +239,9 @@ impl ExtractMods {
             self.load_regions(&name_to_tid, region.as_ref())?;
 
         let multi_prog = MultiProgress::new();
-        // multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        if self.suppress_progress {
+            multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
         let n_failed = multi_prog.add(get_spinner());
         n_failed.set_message("~records failed");
         let n_skipped = multi_prog.add(get_spinner());
@@ -241,23 +258,26 @@ impl ExtractMods {
             pool.install(|| {
                 if let Some(interval_chunks) = regions {
                     drop(reader);
-                    let master_progress = multi_prog.add(get_master_progress_bar(interval_chunks.len()));
+                    let prog_length = if reference_position_filter.include_unmapped {
+                        interval_chunks.len() + 1
+                    } else {
+                        interval_chunks.len()
+                    };
+                    let master_progress = multi_prog.add(get_master_progress_bar(prog_length));
                     master_progress.set_message("contigs");
 
-                    let total_length = interval_chunks.iter().map(|(r, _)| r.length as usize).sum::<usize>();
+                    let total_length = interval_chunks.iter().map(|(r, _)| r.length as u64).sum::<u64>();
                     let mut num_aligned_reads_used = 0usize;
                     for (reference_record, interval_chunks) in interval_chunks {
                         let interval_chunks =
                             interval_chunks.collect::<Vec<(u32, u32)>>();
 
                         // todo use the index api to pre-calculate the number of reads per ref
-                        let n_reads_for_reference = if let Some(nr) = n_reads {
+                        let num_reads_for_reference = n_reads.map(|nr| {
                             let f = reference_record.length as f64 / total_length as f64;
                             let nr = nr as f64 * f;
-                            Some(std::cmp::max(nr.floor() as usize, 1usize))
-                        } else {
-                            None
-                        };
+                            std::cmp::max(nr.floor() as usize, 1usize)
+                        });
 
                         let interval_pb = multi_prog.add(get_subroutine_progress_bar(interval_chunks.len()));
                         interval_pb.set_message(format!("processing {}", &reference_record.name));
@@ -265,7 +285,7 @@ impl ExtractMods {
                             .progress_with(interval_pb)
                             .map(
                                 |(start, end)| {
-                                    let record_sampler = n_reads_for_reference.map(|nr| {
+                                    let record_sampler = num_reads_for_reference.map(|nr| {
                                         let f = (end - start) as f64 / reference_record.length as f64;
                                         let nr = nr as f64 * f;
                                         let nr = std::cmp::max(nr.floor() as usize, 1usize);
@@ -320,7 +340,9 @@ impl ExtractMods {
                                     &reference_position_filter,
                                     snd.clone(),
                                     n_unmapped_reads,
-                                    collapse_method.as_ref());
+                                    collapse_method.as_ref(),
+                                    "unmapped "
+                                );
                                 let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
                             },
                             Err(e) => {
@@ -335,7 +357,8 @@ impl ExtractMods {
                         &reference_position_filter,
                         snd.clone(),
                         n_reads,
-                        collapse_method.as_ref()
+                        collapse_method.as_ref(),
+                            "",
                     );
                     let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
                 }
@@ -413,10 +436,11 @@ impl ExtractMods {
         snd: Sender<anyhow::Result<ReadsBaseModProfile>>,
         n_reads: Option<usize>,
         collapse_method: Option<&CollapseMethod>,
+        message: &'static str,
     ) -> (usize, usize) {
         let mut mod_iter = TrackingModRecordIter::new(records);
         let pb = multi_pb.add(get_spinner());
-        pb.set_message("records processed");
+        pb.set_message(format!("{message}records processed"));
         for (record, read_id, mod_base_info) in &mut mod_iter {
             let mod_profile = match ReadBaseModProfile::process_record(
                 &record,
@@ -472,6 +496,7 @@ impl StrandedPositionFilter {
     fn from_bed_file(
         bed_fp: &PathBuf,
         chrom_to_target_id: &HashMap<&str, u32>,
+        suppress_bp: bool,
     ) -> anyhow::Result<Self> {
         info!(
             "parsing BED at {}",
@@ -482,6 +507,10 @@ impl StrandedPositionFilter {
         let mut pos_positions = HashMap::new();
         let mut neg_positions = HashMap::new();
         let lines_processed = get_spinner();
+        if suppress_bp {
+            lines_processed
+                .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
         lines_processed.set_message("rows processed");
         let mut warned = HashSet::new();
 

@@ -25,6 +25,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_probs<P: RecordProcessor>(
     seed: Option<u64>,
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
+    suppress_progress: bool,
 ) -> anyhow::Result<P::Output>
 where
     P::Output: Moniod + WithRecords,
@@ -40,6 +41,7 @@ where
                 seed,
                 region,
                 collapse_method,
+                suppress_progress,
             )?;
         // sample unmapped reads iff we've sampled less than 90% of the number we've wanted to get
         // or 0 (from sample_frac).
@@ -68,7 +70,7 @@ where
             );
             let unmapped_read_ids_to_base_mod_calls = P::process_records(
                 reader.records(),
-                true,
+                !suppress_progress,
                 record_sampler,
                 collapse_method,
             )?;
@@ -92,7 +94,7 @@ where
             RecordSampler::new_from_options(sample_frac, num_reads, seed);
         let read_ids_to_base_mod_probs = P::process_records(
             reader.records(),
-            true,
+            !suppress_progress,
             record_sampler,
             collapse_method,
         )?;
@@ -100,20 +102,6 @@ where
         Ok(read_ids_to_base_mod_probs)
     }
 }
-
-// pub(crate) fn process_records_in_bam<P: RecordProcessor>(
-//     bam_fp: &PathBuf,
-//     interval_size: u32,
-//     regions: &[Region],
-//     collapse_method: Option<&CollapseMethod>,
-// ) -> anyhow::Result<P::Output> {
-//     let use_regions = bam::IndexedReader::from_path(bam_fp).is_ok();
-//     if !use_regions && !regions.is_empty() {
-//         return
-//     }
-//
-//     unimplemented!()
-// }
 
 /// Sample reads evenly over a specified region or over
 /// an entire sorted, aligned BAM.
@@ -125,6 +113,7 @@ fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
     seed: Option<u64>,
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
+    suppress_progress: bool,
 ) -> anyhow::Result<P::Output>
 where
     P::Output: Moniod + WithRecords,
@@ -137,6 +126,10 @@ where
 
     // prog bar stuff
     let master_progress = MultiProgress::new();
+    if suppress_progress {
+        master_progress
+            .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+    }
     let tid_progress =
         master_progress.add(get_master_progress_bar(references.len()));
     tid_progress.set_message("contigs");
@@ -236,12 +229,6 @@ where
         end as i64,
     ))?;
 
-    // sample_read_base_mod_calls(
-    //     bam_reader.records(),
-    //     false,
-    //     record_sampler,
-    //     collapse_method,
-    // )
     P::process_records(
         bam_reader.records(),
         false,
@@ -249,74 +236,3 @@ where
         collapse_method,
     )
 }
-
-// fn sample_read_base_mod_calls<T: Read>(
-//     records: bam::Records<T>,
-//     with_progress: bool,
-//     mut record_sampler: RecordSampler,
-//     collapse_method: Option<&CollapseMethod>,
-// ) -> anyhow::Result<ReadIdsToBaseModProbs> {
-//     let spinner = if with_progress {
-//         Some(record_sampler.get_progress_bar())
-//     } else {
-//         None
-//     };
-//     let mod_base_info_iter = filter_records_iter(records);
-//     let mut read_ids_to_mod_base_probs = ReadIdsToBaseModProbs::zero();
-//     for (record, mod_base_info) in mod_base_info_iter {
-//         match record_sampler.ask() {
-//             Indicator::Use => {
-//                 let record_name = get_query_name_string(&record)
-//                     .unwrap_or("FAILED_UTF_DECODE".to_string());
-//                 if mod_base_info.is_empty() {
-//                     // add count of unused/no calls
-//                     read_ids_to_mod_base_probs
-//                         .add_read_without_probs(&record_name);
-//                     continue;
-//                 }
-//
-//                 let (_, base_mod_probs_iter) =
-//                     mod_base_info.into_iter_base_mod_probs();
-//                 for (raw_canonical_base, strand, seq_pos_base_mod_probs) in
-//                     base_mod_probs_iter
-//                 {
-//                     let canonical_base =
-//                         match (DnaBase::parse(raw_canonical_base), strand) {
-//                             (Err(_), _) => continue,
-//                             (Ok(dna_base), Strand::Positive) => dna_base,
-//                             (Ok(dna_base), Strand::Negative) => {
-//                                 dna_base.complement()
-//                             }
-//                         };
-//                     let mod_probs = seq_pos_base_mod_probs
-//                         .pos_to_base_mod_probs
-//                         .into_iter()
-//                         .map(|(_q_pos, base_mod_probs)| {
-//                             if let Some(method) = collapse_method {
-//                                 base_mod_probs.into_collapsed(method)
-//                             } else {
-//                                 base_mod_probs
-//                             }
-//                         })
-//                         .collect::<Vec<BaseModProbs>>();
-//                     read_ids_to_mod_base_probs.add_mod_probs_for_read(
-//                         &record_name,
-//                         canonical_base,
-//                         mod_probs,
-//                     );
-//                 }
-//                 if let Some(pb) = &spinner {
-//                     pb.inc(1);
-//                 }
-//             }
-//             Indicator::Skip => continue,
-//             Indicator::Done => break,
-//         }
-//     }
-//
-//     if let Some(pb) = &spinner {
-//         pb.finish_and_clear();
-//     }
-//
-//     Ok(read_ids_to_mod_base_probs)
-// }

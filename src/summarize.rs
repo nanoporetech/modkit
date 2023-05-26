@@ -64,6 +64,7 @@ pub fn summarize_modbam<'a>(
     filter_thresholds: Option<MultipleThresholdModCaller>,
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
     collapse_method: Option<&CollapseMethod>,
+    suppress_progress: bool,
 ) -> anyhow::Result<ModSummary<'a>> {
     let read_ids_to_base_mod_calls =
         get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
@@ -75,6 +76,7 @@ pub fn summarize_modbam<'a>(
             seed,
             region,
             collapse_method,
+            suppress_progress,
         )?;
 
     let threshold_caller = if let Some(ft) = filter_thresholds {

@@ -124,6 +124,7 @@ fn get_threshold_from_options(
     region: Option<&Region>,
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
     collapse_method: Option<&CollapseMethod>,
+    suppress_progress: bool,
 ) -> AnyhowResult<MultipleThresholdModCaller> {
     if no_filtering {
         info!("not performing filtering");
@@ -150,6 +151,7 @@ fn get_threshold_from_options(
         seed,
         region,
         collapse_method,
+        suppress_progress,
     )?;
 
     Ok(MultipleThresholdModCaller::new(
@@ -383,6 +385,9 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     interval_size: u32,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
 
     // sampling args
     /// Sample this many reads when estimating the filtering threshold. Reads will
@@ -667,6 +672,7 @@ impl ModBamPileup {
                         sampling_region.as_ref().or(region.as_ref()),
                         per_mod_thresholds,
                         threshold_collapse_method.as_ref(),
+                        self.suppress_progress,
                     )
                 })?
             };
@@ -741,6 +747,10 @@ impl ModBamPileup {
         let interval_size = self.interval_size;
 
         let master_progress = MultiProgress::new();
+        if self.suppress_progress {
+            master_progress
+                .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
         let sty = ProgressStyle::with_template(
             "[{elapsed_precise}] {bar:40.green/yellow} {pos:>7}/{len:7} {msg}",
         )
@@ -878,6 +888,9 @@ pub struct SampleModBaseProbs {
     /// Setting a file is recommended.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
     /// Percentiles to calculate, a space separated list of floats.
     #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
     percentiles: String,
@@ -990,6 +1003,7 @@ impl SampleModBaseProbs {
                     self.seed,
                     region.as_ref(),
                     collapse_method.as_ref(),
+                    self.suppress_progress,
                 )?;
 
             let histograms = if self.histogram {
@@ -1059,6 +1073,9 @@ pub struct ModSummarize {
     /// Output summary as a tab-separated variables stdout instead of a table.
     #[arg(long = "tsv", default_value_t = false)]
     tsv_format: bool,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
 
     // sampling options
     /// Max number of reads to use for estimating the filter threshold and
@@ -1205,6 +1222,7 @@ impl ModSummarize {
                 filter_thresholds,
                 per_mod_thresholds,
                 collapse_method.as_ref(),
+                self.suppress_progress,
             )
         })?;
 
@@ -1409,6 +1427,9 @@ pub struct CallMods {
     /// behavior is to continue and report failed/skipped records at the end.
     #[arg(long = "ff", default_value_t = false)]
     fail_fast: bool,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
 
     // processing args
     /// Number of threads to use while processing chunks concurrently.
@@ -1559,6 +1580,7 @@ impl CallMods {
                     sampling_region.as_ref(),
                     per_mod_thresholds,
                     None,
+                    self.suppress_progress,
                 )
             })?
         };

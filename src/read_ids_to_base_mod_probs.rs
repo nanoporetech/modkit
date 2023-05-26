@@ -580,9 +580,14 @@ impl ReadsBaseModProfile {
             record.seq().as_bytes()
         };
         let missing = 45;
+        let get_back_base_safe = |i| -> Option<u8> {
+            forward_position
+                .checked_sub(i)
+                .and_then(|idx| seq.get(idx).map(|b| *b))
+        };
         let fivemer = [
-            seq.get(forward_position - 2).map(|b| *b),
-            seq.get(forward_position - 1).map(|b| *b),
+            get_back_base_safe(2),
+            get_back_base_safe(1),
             seq.get(forward_position).map(|b| *b),
             seq.get(forward_position + 1).map(|b| *b),
             seq.get(forward_position + 2).map(|b| *b),
@@ -686,7 +691,7 @@ impl RecordProcessor for ReadsBaseModProfile {
     fn process_records<T: Read>(
         records: Records<T>,
         with_progress: bool,
-        _record_sampler: RecordSampler,
+        mut record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
     ) -> anyhow::Result<Self::Output> {
         let mut mod_iter = TrackingModRecordIter::new(records);
@@ -701,30 +706,36 @@ impl RecordProcessor for ReadsBaseModProfile {
         let mut n_fails = 0usize;
         let mut n_skips = 0usize;
         for (record, record_name, modbase_info) in &mut mod_iter {
-            match ReadBaseModProfile::process_record(
-                &record,
-                &record_name,
-                modbase_info,
-                collapse_method,
-            ) {
-                Ok(read_base_mod_profile) => {
-                    if seen.contains(&record_name) {
-                        debug!("double add of record {record_name}");
-                    } else {
-                        seen.insert(record_name);
-                    }
-                    agg.push(read_base_mod_profile);
+            match record_sampler.ask() {
+                Indicator::Use => {
+                    match ReadBaseModProfile::process_record(
+                        &record,
+                        &record_name,
+                        modbase_info,
+                        collapse_method,
+                    ) {
+                        Ok(read_base_mod_profile) => {
+                            if seen.contains(&record_name) {
+                                debug!("double add of record {record_name}");
+                            } else {
+                                seen.insert(record_name);
+                            }
+                            agg.push(read_base_mod_profile);
 
-                    if let Some(pb) = &pb {
-                        pb.inc(1);
+                            if let Some(pb) = &pb {
+                                pb.inc(1);
+                            }
+                        }
+                        Err(run_error) => match run_error {
+                            RunError::Failed(_) | RunError::BadInput(_) => {
+                                n_fails += 1;
+                            }
+                            RunError::Skipped(_) => n_skips += 1,
+                        },
                     }
                 }
-                Err(run_error) => match run_error {
-                    RunError::Failed(_) | RunError::BadInput(_) => {
-                        n_fails += 1;
-                    }
-                    RunError::Skipped(_) => n_skips += 1,
-                },
+                Indicator::Skip => continue,
+                Indicator::Done => break,
             }
         }
 
