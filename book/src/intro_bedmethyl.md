@@ -3,7 +3,12 @@
 A primary use of `modkit` is to create summary counts of modified and unmodified bases in
 an extended [bedMethyl](https://www.encodeproject.org/data-standards/wgbs/) format.
 bedMethyl files tabulate the counts of base modifications from every sequencing read over
-each aligned reference genomic position.
+each aligned reference genomic position. In order to create a bedMethyl table, your modBAM
+must be aligned to a reference genome. The genome sequence is only required if you are using
+the `--cpg` flag or `traditional` preset. Only **primary alignments** are used in generating 
+the table, it is recommended to mark duplicate alignments before running as multiple primary
+alignments can be double counted (but the behavior is logged). See [limitations](./limitations.md)
+for details.
 
 In its simplest form `modkit` creates a bedMethyl file using the following:
 

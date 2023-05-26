@@ -151,7 +151,12 @@
 <p>A primary use of <code>modkit</code> is to create summary counts of modified and unmodified bases in
 an extended <a href="https://www.encodeproject.org/data-standards/wgbs/">bedMethyl</a> format.
 bedMethyl files tabulate the counts of base modifications from every sequencing read over
-each aligned reference genomic position.</p>
+each aligned reference genomic position. In order to create a bedMethyl table, your modBAM
+must be aligned to a reference genome. The genome sequence is only required if you are using
+the <code>--cpg</code> flag or <code>traditional</code> preset. Only <strong>primary alignments</strong> are used in generating 
+the table, it is recommended to mark duplicate alignments before running as multiple primary
+alignments can be double counted (but the behavior is logged). See <a href="./limitations.html">limitations</a>
+for details.</p>
 <p>In its simplest form <code>modkit</code> creates a bedMethyl file using the following:</p>
 <pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed --log-filepath pileup.log
 </code></pre>
@@ -257,6 +262,22 @@ CG-&gt;CH substitution such that no modification call was produced by the baseca
 
         </div>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
 

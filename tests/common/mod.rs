@@ -20,7 +20,7 @@ pub fn run_modkit(args: &[&str]) -> AnyhowResult<Output> {
     if output.status.success() {
         Ok(output)
     } else {
-        Err(anyhow!("failed to run {:?}", args))
+        Err(anyhow!("failed to run {:?}", args.join(" ")))
     }
 }
 

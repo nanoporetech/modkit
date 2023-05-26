@@ -12,7 +12,7 @@ use crate::mod_base_code::{DnaBase, ModCode};
 use crate::motif_bed::{MotifLocations, RegexMotif};
 use crate::read_cache::ReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{record_is_secondary, Strand};
+use crate::util::{get_query_name_string, record_is_secondary, Strand};
 
 #[derive(Debug, Copy, Clone)]
 enum Feature {
@@ -601,23 +601,23 @@ pub fn process_region<T: AsRef<Path>>(
         end_pos,
         motif_positions.as_ref(),
     );
+    let mut dupe_reads = HashMap::new();
     for pileup in pileup_iter {
         let mut feature_vector = FeatureVector::new();
         let mut pos_strand_observed_mod_codes = HashSet::new();
         let mut neg_strand_observed_mod_codes = HashSet::new();
         let pos = pileup.bam_pileup.pos();
 
+        // structures around warning about dupes
+        let mut observed_read_ids_to_pos = HashMap::new();
+
         let alignment_iter =
-            pileup.bam_pileup.alignments().filter_map(|alignment| {
+            pileup.bam_pileup.alignments().filter(|alignment| {
                 if alignment.is_refskip() {
-                    None
+                    false
                 } else {
                     let record = alignment.record();
-                    if record_is_secondary(&record) || record.seq_len() == 0 {
-                        None
-                    } else {
-                        Some(alignment)
-                    }
+                    !(record_is_secondary(&record) || record.seq_len() == 0)
                 }
             });
         for alignment in alignment_iter {
@@ -628,6 +628,12 @@ pub fn process_region<T: AsRef<Path>>(
                 &mut pos_strand_observed_mod_codes,
                 &mut neg_strand_observed_mod_codes,
             );
+
+            if let Ok(read_name) = get_query_name_string(&record) {
+                (*observed_read_ids_to_pos
+                    .entry(read_name)
+                    .or_insert(0usize)) += 1
+            }
 
             // alignment stand is the strand the read is aligned to
             let alignment_strand = if record.is_reverse() {
@@ -738,6 +744,12 @@ pub fn process_region<T: AsRef<Path>>(
                 &pileup_numeric_options,
             ),
         );
+        observed_read_ids_to_pos
+            .into_iter()
+            .filter(|(_, count)| *count > 1usize)
+            .for_each(|(read_id, count)| {
+                dupe_reads.entry(read_id).or_insert(Vec::new()).push(count);
+            })
     } // position loop
 
     let position_feature_counts = if combine_strands {
@@ -751,6 +763,21 @@ pub fn process_region<T: AsRef<Path>>(
     };
     let (processed_records, skipped_records) =
         read_cache.get_records_used_and_skipped();
+
+    let should_warn = !dupe_reads.is_empty();
+    for (read_id, counts) in dupe_reads {
+        let avg_times =
+            counts.iter().map(|c| *c as f32).sum::<f32>() / counts.len() as f32;
+        debug!(
+            "read {read_id} was observed multiple times, \
+            avg {avg_times} at {} positions on contig {chrom_name}, \
+            between {start_pos} and {end_pos}",
+            counts.len()
+        );
+    }
+    if should_warn {
+        debug!("consider marking duplicate alignments");
+    }
 
     Ok(ModBasePileup {
         chrom_name,

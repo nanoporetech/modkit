@@ -301,3 +301,37 @@ fn test_presets_traditional_same_as_options() {
         options_temp_file.to_str().unwrap(),
     );
 }
+
+#[test]
+fn test_duplicated_reads_ignored() {
+    let control_fp =
+        std::env::temp_dir().join("test_duplicated_reads_ignored_control.bed");
+    let test_fp =
+        std::env::temp_dir().join("test_duplicated_reads_ignored_marked.bed");
+    run_modkit(&[
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "--no-filtering",
+        "--only-tabs",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        control_fp.to_str().unwrap(),
+    ])
+    .unwrap();
+
+    run_modkit(&[
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "--no-filtering",
+        "--only-tabs",
+        "tests/resources/duplicated.marked.fixed.bam",
+        test_fp.to_str().unwrap(),
+    ])
+    .unwrap();
+
+    check_against_expected_text_file(
+        control_fp.to_str().unwrap(),
+        test_fp.to_str().unwrap(),
+    );
+}

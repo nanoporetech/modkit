@@ -104,14 +104,13 @@ impl<'a> ReadCache<'a> {
             Strand::Positive => &mut self.pos_reads,
             Strand::Negative => &mut self.neg_reads,
         };
-        let base_to_mod_calls = read_table
+        read_table
             .entry(record_name.to_owned())
-            .or_insert(HashMap::new());
-
-        base_to_mod_calls.insert(
-            canonical_base.char(),
-            (ref_pos_base_mod_calls, seq_pos_base_mod_probs.skip_mode),
-        );
+            .or_insert(HashMap::new())
+            .insert(
+                canonical_base.char(),
+                (ref_pos_base_mod_calls, seq_pos_base_mod_probs.skip_mode),
+            );
         Ok(())
     }
 
@@ -183,10 +182,10 @@ impl<'a> ReadCache<'a> {
                             }
                             (Strand::Negative, true) => &mut self.pos_mod_codes,
                         };
-                    let record_mod_codes = mod_codes_for_read
+                    mod_codes_for_read
                         .entry(record_name.to_owned())
-                        .or_insert(HashSet::new());
-                    record_mod_codes.extend(mod_codes);
+                        .or_insert(HashSet::new())
+                        .extend(mod_codes);
 
                     self.add_modbase_probs_for_record_and_canonical_base(
                         &record_name,

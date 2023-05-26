@@ -68,18 +68,16 @@ impl RecordSampler {
     }
 
     fn check_num_reads(&mut self) -> Indicator {
-        let indicator = if self.reads_sampled >= self.num_reads.unwrap() {
+        if self.reads_sampled >= self.num_reads.unwrap() {
             Indicator::Done
         } else {
-            Indicator::Use
-        };
-        self.reads_sampled += 1;
-        indicator
+            Indicator::Use(Token)
+        }
     }
 
     fn check_sample_frac(&mut self) -> Indicator {
         if self.rng.gen_bool(self.sample_frac.unwrap()) {
-            Indicator::Use
+            Indicator::Use(Token)
         } else {
             Indicator::Skip
         }
@@ -89,13 +87,19 @@ impl RecordSampler {
         match (self.num_reads, self.sample_frac) {
             (Some(_nr), _) => self.check_num_reads(),
             (_, Some(_sample_frac)) => self.check_sample_frac(),
-            (None, None) => Indicator::Use,
+            (None, None) => Indicator::Use(Token),
         }
+    }
+
+    pub(crate) fn used(&mut self, _token: Token) {
+        self.reads_sampled += 1;
     }
 }
 
+pub(crate) struct Token;
+
 pub(crate) enum Indicator {
-    Use,
+    Use(Token),
     Skip,
     Done,
 }
