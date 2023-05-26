@@ -8,7 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changes
 ### Adds
     - `modkit extract` sub-command that produces a table of per-read base modification probabilities.
+    - Allow suppression of progress bar with `--suppress-progress`
 ### Fixes
+    - Don't count skipped reads towards total when sampling.
 
 ## [v0.1.6]
 ### Changes
