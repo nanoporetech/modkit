@@ -718,7 +718,7 @@ impl RecordProcessor for ReadsBaseModProfile {
         let mut n_skips = 0usize;
         for (record, record_name, modbase_info) in &mut mod_iter {
             match record_sampler.ask() {
-                Indicator::Use => {
+                Indicator::Use(token) => {
                     match ReadBaseModProfile::process_record(
                         &record,
                         &record_name,
@@ -736,6 +736,7 @@ impl RecordProcessor for ReadsBaseModProfile {
                             if let Some(pb) = &pb {
                                 pb.inc(1);
                             }
+                            record_sampler.used(token);
                         }
                         Err(run_error) => match run_error {
                             RunError::Failed(_) | RunError::BadInput(_) => {
