@@ -19,6 +19,7 @@ use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
 use crate::errs::{InputError, RunError};
+use crate::extract_mods::ExtractMods;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
@@ -28,6 +29,7 @@ use crate::mod_bam::{
 use crate::mod_base_code::{DnaBase, ModCode, ParseChar};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
+use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::summarize::{summarize_modbam, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
@@ -64,6 +66,9 @@ pub enum Commands {
     /// Create BED file with all locations of a sequence motif.
     /// Example: modkit motif-bed CG 0
     MotifBed(MotifBed),
+    /// Extract read-level base modification information from a modBAM into a
+    /// tab-separated values table.
+    Extract(ExtractMods),
 }
 
 impl Commands {
@@ -76,6 +81,7 @@ impl Commands {
             Self::MotifBed(x) => x.run().map_err(|e| e.to_string()),
             Self::UpdateTags(x) => x.run(),
             Self::CallMods(x) => x.run().map_err(|e| e.to_string()),
+            Self::Extract(x) => x.run().map_err(|e| e.to_string()),
         }
     }
 }
@@ -118,6 +124,7 @@ fn get_threshold_from_options(
     region: Option<&Region>,
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
     collapse_method: Option<&CollapseMethod>,
+    suppress_progress: bool,
 ) -> AnyhowResult<MultipleThresholdModCaller> {
     if no_filtering {
         info!("not performing filtering");
@@ -144,6 +151,7 @@ fn get_threshold_from_options(
         seed,
         region,
         collapse_method,
+        suppress_progress,
     )?;
 
     Ok(MultipleThresholdModCaller::new(
@@ -368,8 +376,8 @@ pub struct ModBamPileup {
     /// Number of threads to use while processing chunks concurrently.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
-    /// Interval chunk size to process concurrently. Smaller interval chunk
-    /// sizes will use less memory but incur more overhead.
+    /// Interval chunk size in base pairs to process concurrently. Smaller
+    /// interval chunk sizes will use less memory but incur more overhead.
     #[arg(
         short = 'i',
         long,
@@ -377,6 +385,9 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     interval_size: u32,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
 
     // sampling args
     /// Sample this many reads when estimating the filtering threshold. Reads will
@@ -460,7 +471,7 @@ pub struct ModBamPileup {
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     sample_region: Option<String>,
-    /// Interval chunk size to process concurrently when estimating the threshold
+    /// Interval chunk size in base pairs to process concurrently when estimating the threshold
     /// probability, can be larger than the pileup processing interval.
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
@@ -491,7 +502,7 @@ pub struct ModBamPileup {
     #[arg(long, requires = "reference_fasta", default_value_t = false)]
     cpg: bool,
     /// Reference sequence in FASTA format. Required for CpG motif filtering.
-    #[arg(long = "ref")]
+    #[arg(long = "ref", alias = "reference", short = 'r')]
     reference_fasta: Option<PathBuf>,
     /// Respect soft masking in the reference FASTA.
     #[arg(
@@ -661,6 +672,7 @@ impl ModBamPileup {
                         sampling_region.as_ref().or(region.as_ref()),
                         per_mod_thresholds,
                         threshold_collapse_method.as_ref(),
+                        self.suppress_progress,
                     )
                 })?
             };
@@ -735,6 +747,10 @@ impl ModBamPileup {
         let interval_size = self.interval_size;
 
         let master_progress = MultiProgress::new();
+        if self.suppress_progress {
+            master_progress
+                .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
         let sty = ProgressStyle::with_template(
             "[{elapsed_precise}] {bar:40.green/yellow} {pos:>7}/{len:7} {msg}",
         )
@@ -872,6 +888,9 @@ pub struct SampleModBaseProbs {
     /// Setting a file is recommended.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
     /// Percentiles to calculate, a space separated list of floats.
     #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
     percentiles: String,
@@ -931,8 +950,8 @@ pub struct SampleModBaseProbs {
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     region: Option<String>,
-    /// Interval chunk size to process concurrently. Smaller interval chunk
-    /// sizes will use less memory but incur more overhead. Only used when
+    /// Interval chunk size in base pairs to process concurrently. Smaller interval
+    /// chunk sizes will use less memory but incur more overhead. Only used when
     /// sampling probs from an indexed bam.
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
@@ -975,7 +994,7 @@ impl SampleModBaseProbs {
 
         pool.install(|| {
             let read_ids_to_base_mod_calls =
-                get_sampled_read_ids_to_base_mod_probs(
+                get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
                     &self.in_bam,
                     self.threads,
                     self.interval_size,
@@ -984,6 +1003,7 @@ impl SampleModBaseProbs {
                     self.seed,
                     region.as_ref(),
                     collapse_method.as_ref(),
+                    self.suppress_progress,
                 )?;
 
             let histograms = if self.histogram {
@@ -1029,7 +1049,7 @@ impl SampleModBaseProbs {
                     sampled_probs.check_path(p, self.force)?;
                     Box::new(MultiTableWriter::new(p.clone()))
                 } else {
-                    Box::new(TsvWriter::new_stdout())
+                    Box::new(TsvWriter::new_stdout(None))
                 };
 
             writer.write(sampled_probs)?;
@@ -1053,6 +1073,9 @@ pub struct ModSummarize {
     /// Output summary as a tab-separated variables stdout instead of a table.
     #[arg(long = "tsv", default_value_t = false)]
     tsv_format: bool,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
 
     // sampling options
     /// Max number of reads to use for estimating the filter threshold and
@@ -1130,7 +1153,7 @@ pub struct ModSummarize {
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     region: Option<String>,
-    /// When using regions, interval chunk size to process concurrently.
+    /// When using regions, interval chunk size in base pairs to process concurrently.
     /// Smaller interval chunk sizes will use less memory but incur more
     /// overhead.
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
@@ -1144,12 +1167,12 @@ impl ModSummarize {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()?;
-        let region = if let Some(raw_region) = &self.region {
-            info!("parsing region {raw_region}");
-            Some(Region::parse_str(&raw_region, reader.header())?)
-        } else {
-            None
-        };
+
+        let region = self
+            .region
+            .as_ref()
+            .map(|raw_region| Region::parse_str(raw_region, reader.header()))
+            .transpose()?;
 
         let (sample_frac, num_reads) = get_sampling_options(
             self.no_sampling,
@@ -1199,11 +1222,12 @@ impl ModSummarize {
                 filter_thresholds,
                 per_mod_thresholds,
                 collapse_method.as_ref(),
+                self.suppress_progress,
             )
         })?;
 
         let mut writer: Box<dyn OutWriter<ModSummary>> = if self.tsv_format {
-            Box::new(TsvWriter::new_stdout())
+            Box::new(TsvWriter::new_stdout(None))
         } else {
             Box::new(TableWriter::new())
         };
@@ -1403,6 +1427,9 @@ pub struct CallMods {
     /// behavior is to continue and report failed/skipped records at the end.
     #[arg(long = "ff", default_value_t = false)]
     fail_fast: bool,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
 
     // processing args
     /// Number of threads to use while processing chunks concurrently.
@@ -1553,6 +1580,7 @@ impl CallMods {
                     sampling_region.as_ref(),
                     per_mod_thresholds,
                     None,
+                    self.suppress_progress,
                 )
             })?
         };

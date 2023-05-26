@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.7]
+### Changes
+### Adds
+    - `modkit extract` sub-command that produces a table of per-read base modification probabilities.
+### Fixes
+
 ## [v0.1.6]
 ### Changes
 - When ignoring a base modification in pileup, calculate pass thresholds on the probabilities after ignoring the specified probability.

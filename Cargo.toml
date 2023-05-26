@@ -29,6 +29,7 @@ regex = "1.4"
 derive-new = "0.5.9"
 histo_fp = "0.2.1"
 prettytable-rs = "0.10.0"
+rust-lapper = "1.1.0"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"

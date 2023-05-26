@@ -2,16 +2,22 @@ use crate::mod_pileup::ModBasePileup;
 use crate::summarize::ModSummary;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 
+use crate::read_ids_to_base_mod_probs::ReadsBaseModProfile;
 use crate::thresholds::Percentiles;
 use derive_new::new;
 use histo_fp::Histogram;
 use log::{debug, warn};
 use prettytable::format::FormatBuilder;
 use prettytable::{cell, row, Table};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
 use std::path::{Path, PathBuf};
+
+pub trait OutwriterWithMemory<T> {
+    fn write(&mut self, item: T) -> AnyhowResult<u64>;
+    fn num_reads(&self) -> usize;
+}
 
 pub trait OutWriter<T> {
     fn write(&mut self, item: T) -> AnyhowResult<u64>;
@@ -256,11 +262,33 @@ pub struct TsvWriter<W: Write> {
     buf_writer: BufWriter<W>,
 }
 
-impl TsvWriter<std::io::Stdout> {
-    pub fn new_stdout() -> Self {
+impl TsvWriter<Stdout> {
+    pub fn new_stdout(header: Option<String>) -> Self {
         let out = BufWriter::new(std::io::stdout());
+        if let Some(header) = header {
+            println!("{header}");
+        }
 
         Self { buf_writer: out }
+    }
+}
+
+impl TsvWriter<File> {
+    pub fn new_file(
+        fp: &str,
+        force: bool,
+        header: Option<String>,
+    ) -> AnyhowResult<Self> {
+        let p = Path::new(fp);
+        if p.exists() && !force {
+            return Err(anyhow!("refusing to write over existing file {fp}"));
+        }
+        let fh = File::create(p)?;
+        let mut buf_writer = BufWriter::new(fh);
+        if let Some(header) = header {
+            buf_writer.write(format!("{header}\n").as_bytes())?;
+        }
+        Ok(Self { buf_writer })
     }
 }
 
@@ -496,5 +524,48 @@ impl OutWriter<SampledProbs> for TsvWriter<Stdout> {
         }
 
         Ok(rows_written)
+    }
+}
+
+#[derive(new)]
+pub struct TsvWriterWithContigNames<W: Write> {
+    tsv_writer: TsvWriter<W>,
+    tid_to_name: HashMap<u32, String>,
+    name_to_seq: HashMap<String, Vec<u8>>,
+    written_reads: HashSet<String>,
+}
+
+impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
+    for TsvWriterWithContigNames<W>
+{
+    fn write(&mut self, item: ReadsBaseModProfile) -> AnyhowResult<u64> {
+        let missing_chrom = ".".to_string();
+        let mut rows_written = 0u64;
+        for profile in item.profiles.iter() {
+            if self.written_reads.contains(&profile.record_name) {
+                continue;
+            } else {
+                let chrom_name = if let Some(chrom_id) = profile.chrom_id {
+                    self.tid_to_name.get(&chrom_id)
+                } else {
+                    None
+                };
+                for mod_profile in profile.profile.iter() {
+                    let row = mod_profile.to_row(
+                        &profile.record_name,
+                        chrom_name.unwrap_or(&missing_chrom),
+                        &self.name_to_seq,
+                    );
+                    self.tsv_writer.buf_writer.write(row.as_bytes())?;
+                    rows_written += 1;
+                }
+                self.written_reads.insert(profile.record_name.to_owned());
+            }
+        }
+        Ok(rows_written)
+    }
+
+    fn num_reads(&self) -> usize {
+        self.written_reads.len()
     }
 }

@@ -9,9 +9,8 @@ use rust_htslib::bam::{self};
 
 use crate::mod_bam::{CollapseMethod, ModBaseInfo};
 use crate::mod_base_code::{DnaBase, ModCode};
-use crate::reads_sampler::{
-    get_sampled_read_ids_to_base_mod_probs, ReadIdsToBaseModProbs,
-};
+use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
+use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util;
 use crate::util::{record_is_secondary, AlignedPairs, Region};
@@ -149,6 +148,7 @@ pub fn calc_threshold_from_bam(
     seed: Option<u64>,
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
+    suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, f32>> {
     let mut can_base_probs = get_modbase_probs_from_bam(
         bam_fp,
@@ -159,6 +159,7 @@ pub fn calc_threshold_from_bam(
         seed,
         region,
         collapse_method,
+        suppress_progress,
     )?;
     can_base_probs
         .iter_mut()
@@ -179,8 +180,9 @@ pub fn get_modbase_probs_from_bam(
     seed: Option<u64>,
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
+    suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, Vec<f32>>> {
-    get_sampled_read_ids_to_base_mod_probs(
+    get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
         bam_fp,
         threads,
         interval_size,
@@ -189,6 +191,7 @@ pub fn get_modbase_probs_from_bam(
         seed,
         region,
         collapse_method,
+        suppress_progress,
     )
     .map(|x| x.mle_probs_per_base())
 }

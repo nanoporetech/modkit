@@ -1,6 +1,6 @@
 use rust_htslib::bam;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read as StdRead};
+use std::io::{BufRead, BufReader};
 
 use common::{check_against_expected_text_file, run_modkit};
 
