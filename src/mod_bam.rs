@@ -1003,6 +1003,7 @@ impl ModBaseInfo {
         HashMap<char, DeltaListConverter>,
         impl Iterator<Item = (char, Strand, SeqPosBaseModProbs)>,
     ) {
+        // todo(arand) change the Item here to include the converter
         let pos_iter = self.pos_seq_base_mod_probs.into_iter().map(
             |(canonical_base, seq_pos_base_mod_probs)| {
                 (canonical_base, Strand::Positive, seq_pos_base_mod_probs)

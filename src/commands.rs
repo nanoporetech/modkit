@@ -279,8 +279,8 @@ pub struct Adjust {
     /// Modified base code to ignore/remove, see
     /// https://samtools.github.io/hts-specs/SAMtags.pdf for details on
     /// the modified base codes.
-    #[arg(long, conflicts_with = "convert", default_value_t = 'h')]
-    ignore: char,
+    #[arg(long, conflicts_with = "convert")]
+    ignore: Option<char>,
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
@@ -292,6 +292,11 @@ pub struct Adjust {
     /// the retained mod tag is already present.
     #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
     convert: Option<Vec<char>>,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long)]
+    edge_filter: Option<usize>,
 }
 
 impl Adjust {
@@ -313,8 +318,7 @@ impl Adjust {
                 debug_assert_eq!(chunk.len(), 2);
                 let from: RawModCode = chunk[0];
                 let to: RawModCode = chunk[1];
-                let froms = conversions.entry(to).or_insert(HashSet::new());
-                froms.insert(from);
+                conversions.entry(to).or_insert(HashSet::new()).insert(from);
             }
             for (to_code, from_codes) in conversions.iter() {
                 info!(
@@ -335,14 +339,35 @@ impl Adjust {
                 })
                 .collect::<Vec<CollapseMethod>>()
         } else {
-            info!(
-                "Removing mod base {} from {}, new bam {}",
-                self.ignore,
-                fp.to_str().unwrap_or("???"),
-                out_fp.to_str().unwrap_or("???")
-            );
-            let method = CollapseMethod::ReDistribute(self.ignore);
-            vec![method]
+            if let Some(ignore_base) = self.ignore.as_ref() {
+                info!(
+                    "Removing mod base {} from {}, new bam {}",
+                    ignore_base,
+                    fp.to_str().unwrap_or("???"),
+                    out_fp.to_str().unwrap_or("???")
+                );
+                let method = CollapseMethod::ReDistribute(*ignore_base);
+                vec![method]
+            } else {
+                Vec::new()
+            }
+        };
+
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim| {
+                info!("removing base modification calls from {trim} bases from the ends");
+                EdgeFilter::new(*trim, *trim)
+            });
+
+        let methods = if edge_filter.is_none() && methods.is_empty() {
+            warn!("no edge-filter, ignore, or convert was provided. Implicitly deciding to \
+            perform ignore on modified base code h, this behavior will be removed in the next \
+            release and will be considered a fatal error.");
+            vec![CollapseMethod::ReDistribute('h')]
+        } else {
+            methods
         };
 
         adjust_modbam(
@@ -350,6 +375,7 @@ impl Adjust {
             &mut out_bam,
             &methods,
             None,
+            edge_filter.as_ref(),
             self.fail_fast,
             "Adjusting modBAM",
         )?;
@@ -580,18 +606,22 @@ impl ModBamPileup {
         // do this first so we fail when the file isn't readable
         let header = bam::IndexedReader::from_path(&self.in_bam)
             .map(|reader| reader.header().to_owned())?;
-        let region = if let Some(raw_region) = &self.region {
-            info!("parsing region {raw_region}");
-            Some(Region::parse_str(raw_region, &header)?)
-        } else {
-            None
-        };
-        let sampling_region = if let Some(raw_region) = &self.sample_region {
-            info!("parsing sample region {raw_region}");
-            Some(Region::parse_str(raw_region, &header)?)
-        } else {
-            None
-        };
+        let region = self
+            .region
+            .as_ref()
+            .map(|raw_region| {
+                info!("parsing region {raw_region}");
+                Region::parse_str(raw_region, &header)
+            })
+            .transpose()?;
+        let sampling_region = self
+            .sample_region
+            .as_ref()
+            .map(|raw_region| {
+                info!("parsing sample region {raw_region}");
+                Region::parse_str(raw_region, &header)
+            })
+            .transpose()?;
         let edge_filter = self
             .edge_filter
             .as_ref()
@@ -1632,6 +1662,7 @@ impl CallMods {
             &mut out_bam,
             &[],
             Some(&caller),
+            edge_filter.as_ref(),
             self.fail_fast,
             "Calling Mods",
         )?;

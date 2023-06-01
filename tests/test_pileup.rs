@@ -1,3 +1,4 @@
+use anyhow::Context;
 use rust_htslib::bam;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -7,13 +8,13 @@ use common::{check_against_expected_text_file, run_modkit};
 mod common;
 
 #[test]
-fn test_help() {
+fn test_pileup_help() {
     let pileup_help_args = ["pileup", "--help"];
     let _out = run_modkit(&pileup_help_args).unwrap();
 }
 
 #[test]
-fn test_mod_pileup_no_filt() {
+fn test_pileup_no_filt() {
     let temp_file = std::env::temp_dir().join("test_pileup_nofilt.bed");
     let args = [
         "pileup",
@@ -34,7 +35,7 @@ fn test_mod_pileup_no_filt() {
 }
 
 #[test]
-fn test_mod_pileup_with_filt() {
+fn test_pileup_with_filt() {
     let temp_file = std::env::temp_dir().join("test_pileup_withfilt.bed");
     let args = [
         "pileup",
@@ -60,7 +61,7 @@ fn test_mod_pileup_with_filt() {
 }
 
 #[test]
-fn test_mod_pileup_combine() {
+fn test_pileup_combine() {
     let test_adjusted_bam = std::env::temp_dir().join("test_combined.bed");
     let pileup_args = [
         "pileup",
@@ -80,7 +81,7 @@ fn test_mod_pileup_combine() {
 }
 
 #[test]
-fn test_mod_pileup_collapse() {
+fn test_pileup_collapse() {
     let test_collapsed_bam = std::env::temp_dir().join("test_collapsed.bam");
     let test_collapsed_bed = std::env::temp_dir().join("test_collapsed.bed");
     let test_restricted_bed = std::env::temp_dir().join("test_restricted.bed");
@@ -219,7 +220,7 @@ fn test_pileup_duplex_reads() {
 }
 
 #[test]
-fn test_cpg_motif_filtering() {
+fn test_pileup_cpg_motif_filtering() {
     let temp_file = std::env::temp_dir().join("test_cpg_motif_filtering.bed");
     run_modkit(&[
         "pileup",
@@ -238,7 +239,7 @@ fn test_cpg_motif_filtering() {
 }
 
 #[test]
-fn test_cpg_motif_filtering_strand_combine() {
+fn test_pileup_cpg_motif_filtering_strand_combine() {
     let temp_file = std::env::temp_dir()
         .join("test_cpg_motif_filtering_strand_combine.bed");
     for interval_size in
@@ -265,7 +266,7 @@ fn test_cpg_motif_filtering_strand_combine() {
 }
 
 #[test]
-fn test_presets_traditional_same_as_options() {
+fn test_pileup_presets_traditional_same_as_options() {
     let preset_temp_file = std::env::temp_dir()
         .join("test_presets_traditional_same_as_options.bed");
     let options_temp_file = std::env::temp_dir()
@@ -303,7 +304,7 @@ fn test_presets_traditional_same_as_options() {
 }
 
 #[test]
-fn test_duplicated_reads_ignored() {
+fn test_pileup_duplicated_reads_ignored() {
     let control_fp =
         std::env::temp_dir().join("test_duplicated_reads_ignored_control.bed");
     let test_fp =
@@ -333,5 +334,58 @@ fn test_duplicated_reads_ignored() {
     check_against_expected_text_file(
         control_fp.to_str().unwrap(),
         test_fp.to_str().unwrap(),
+    );
+}
+
+#[test]
+fn test_pileup_edge_filter_regression() {
+    let adjusted_bam =
+        std::env::temp_dir().join("test_pileup_edge_filter_adjusted.bam");
+    let edge_filter_bed = std::env::temp_dir()
+        .join("test_pileup_edge_filter_edge_filter_50.pileup.bed");
+    let edge_filter_bed_2 = std::env::temp_dir()
+        .join("test_pileup_edge_filter_edge_filter_50_2.pileup.bed");
+
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        edge_filter_bed.to_str().unwrap(),
+        "--no-filtering",
+        "--edge-filter",
+        "50",
+    ])
+    .context("test_pileup_edge_filter_regression failed to make bedMethyl")
+    .unwrap();
+    check_against_expected_text_file(
+        edge_filter_bed.to_str().unwrap(),
+        "tests/resources/bc_anchored_10_reads_edge_filter50.bed",
+    );
+
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        adjusted_bam.to_str().unwrap(),
+        "--edge-filter",
+        "50",
+    ])
+    .context("test_pileup_edge_filter_regression failed to run adjust-mods")
+    .unwrap();
+
+    bam::index::build(adjusted_bam.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    run_modkit(&[
+        "pileup",
+        adjusted_bam.to_str().unwrap(),
+        edge_filter_bed_2.to_str().unwrap(),
+        "--no-filtering",
+        "--edge-filter",
+        "50",
+    ])
+        .context("test_pileup_edge_filter_regression failed to make bedMethyl on adjusted bam")
+        .unwrap();
+    check_against_expected_text_file(
+        edge_filter_bed.to_str().unwrap(),
+        edge_filter_bed_2.to_str().unwrap(),
     );
 }

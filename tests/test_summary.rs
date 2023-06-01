@@ -1,8 +1,10 @@
 use crate::common::{
-    run_simple_summary, run_simple_summary_with_collapse_method,
+    run_modkit, run_simple_summary, run_simple_summary_with_collapse_method,
+    run_simple_summary_with_edge_filter,
 };
-use mod_kit::mod_bam::CollapseMethod;
-use mod_kit::mod_base_code::ModCode;
+use anyhow::Context;
+use mod_kit::mod_bam::{CollapseMethod, EdgeFilter};
+use mod_kit::mod_base_code::{DnaBase, ModCode};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -65,4 +67,70 @@ fn test_summary_ignore() {
         .into_iter()
         .collect::<HashSet<_>>();
     assert_eq!(mod_codes, expected);
+}
+
+#[test]
+fn test_summary_edge_filter() {
+    let bam_fp = Path::new("tests/resources/bc_anchored_10_reads.sorted.bam");
+    let summary_wo_edge_filter =
+        run_simple_summary(bam_fp.to_str().unwrap(), 25)
+            .context("test_summary_edge_filter failed to make control summary")
+            .unwrap();
+
+    let trim = 50;
+    let edge_filter = EdgeFilter::new(trim, trim);
+    let summary_w_edge_filter = run_simple_summary_with_edge_filter(
+        bam_fp.to_str().unwrap(),
+        25,
+        &edge_filter,
+    )
+    .context("test_summary_edge_filter failed to make summary with edge filter")
+    .unwrap();
+    assert_eq!(
+        summary_w_edge_filter
+            .reads_with_mod_calls
+            .get(&DnaBase::C)
+            .unwrap(),
+        summary_wo_edge_filter
+            .reads_with_mod_calls
+            .get(&DnaBase::C)
+            .unwrap()
+    );
+    assert_eq!(
+        summary_w_edge_filter.total_reads_used,
+        summary_wo_edge_filter.total_reads_used
+    );
+    let total_mod_calls_wo_filter = summary_wo_edge_filter
+        .mod_call_counts
+        .get(&DnaBase::C)
+        .unwrap()
+        .values()
+        .sum::<u64>();
+    let total_mod_calls_w_filter = summary_w_edge_filter
+        .mod_call_counts
+        .get(&DnaBase::C)
+        .unwrap()
+        .values()
+        .sum::<u64>();
+    // weak assertion but better than nothing.
+    assert!(total_mod_calls_wo_filter > total_mod_calls_w_filter);
+
+    let adjusted_bam =
+        std::env::temp_dir().join("test_summary_edge_filter_adjusted.bam");
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        adjusted_bam.to_str().unwrap(),
+        "--edge-filter",
+        &format!("{}", trim),
+    ])
+    .context("test_summary_edge_filter failed to run adjust-mods")
+    .unwrap();
+    let summary_on_adjusted = run_simple_summary(
+        adjusted_bam.to_str().unwrap(),
+        25,
+    )
+    .context("test_summary_edge_filter failed to make summary on adjusted bam")
+    .unwrap();
+    assert_eq!(summary_w_edge_filter, summary_on_adjusted);
 }

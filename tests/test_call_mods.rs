@@ -123,6 +123,6 @@ fn test_call_mods_same_pileup() {
     .unwrap();
     check_against_expected_text_file(
         mod_called_pileup.to_str().unwrap(),
-        mod_called_pileup.to_str().unwrap(),
+        in_situ_threshold_pileup.to_str().unwrap(),
     );
 }

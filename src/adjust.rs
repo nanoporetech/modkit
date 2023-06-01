@@ -1,10 +1,13 @@
 use crate::errs::{InputError, RunError};
 use crate::mod_bam::{
-    collapse_mod_probs, format_mm_ml_tag, CollapseMethod, ModBaseInfo,
+    collapse_mod_probs, format_mm_ml_tag, CollapseMethod, EdgeFilter,
+    ModBaseInfo,
 };
 use crate::mod_base_code::DnaBase;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{self, get_spinner, record_is_secondary};
+use crate::util::{
+    self, get_query_name_string, get_spinner, record_is_secondary,
+};
 use anyhow::anyhow;
 use log::{debug, info};
 use rust_htslib::bam::record::{Aux, AuxArray};
@@ -24,6 +27,7 @@ pub fn adjust_mod_probs(
     mut record: bam::Record,
     methods: &[CollapseMethod],
     caller: Option<&MultipleThresholdModCaller>,
+    edge_filter: Option<&EdgeFilter>,
 ) -> Result<bam::Record, RunError> {
     let _ok = record_is_valid(&record)?;
 
@@ -34,31 +38,55 @@ pub fn adjust_mod_probs(
     let mut mm_agg = String::new();
     let mut ml_agg = Vec::new();
 
+    let record_name = get_query_name_string(&record)
+        .unwrap_or("FAILED-UTF8-DECODE".to_string());
     let (converters, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
-    for (base, strand, mut seq_pos_mod_probs) in mod_prob_iter {
+    for (base, strand, seq_pos_mod_probs) in mod_prob_iter {
         let converter = converters.get(&base).unwrap();
-        for method in methods {
-            seq_pos_mod_probs = collapse_mod_probs(seq_pos_mod_probs, method);
-        }
-        match (caller, DnaBase::parse(base)) {
-            (Some(caller), Ok(dna_base)) => {
-                seq_pos_mod_probs = caller
-                    .call_seq_pos_mod_probs(&dna_base, seq_pos_mod_probs)
-                    .map_err(|e| RunError::new_input_error(e.to_string()))?;
+        let filtered_seq_pos_mod_probs = if let Some(edge_filter) = edge_filter
+        {
+            match seq_pos_mod_probs
+                .edge_filter_positions(edge_filter, record.seq_len())
+            {
+                Some(x) => Some(x),
+                None => {
+                    debug!("all base mod positions for record {record_name} and canonical \
+                        base {base} were filtered out");
+                    None
+                }
             }
-            (Some(_), Err(e)) => {
-                let e = e.context(format!(
-                    "failed to parse DNA base, cannot use threshold."
-                ));
-                return Err(RunError::new_input_error(e.to_string()));
+        } else {
+            Some(seq_pos_mod_probs)
+        };
+        if let Some(mut seq_pos_mod_probs) = filtered_seq_pos_mod_probs {
+            for method in methods {
+                seq_pos_mod_probs =
+                    collapse_mod_probs(seq_pos_mod_probs, method);
             }
-            _ => {}
-        }
+            match (caller, DnaBase::parse(base)) {
+                (Some(caller), Ok(dna_base)) => {
+                    seq_pos_mod_probs = caller
+                        .call_seq_pos_mod_probs(&dna_base, seq_pos_mod_probs)
+                        .map_err(|e| {
+                            RunError::new_input_error(e.to_string())
+                        })?;
+                }
+                (Some(_), Err(e)) => {
+                    let e = e.context(format!(
+                        "failed to parse DNA base, cannot use threshold."
+                    ));
+                    return Err(RunError::new_input_error(e.to_string()));
+                }
+                _ => {}
+            }
 
-        let (mm, mut ml) =
-            format_mm_ml_tag(seq_pos_mod_probs, strand, converter);
-        mm_agg.push_str(&mm);
-        ml_agg.extend_from_slice(&mut ml);
+            let (mm, mut ml) =
+                format_mm_ml_tag(seq_pos_mod_probs, strand, converter);
+            mm_agg.push_str(&mm);
+            ml_agg.extend_from_slice(&mut ml);
+        } else {
+            continue;
+        }
     }
 
     record.remove_aux(mm_style.as_bytes()).map_err(|e| {
@@ -95,6 +123,7 @@ pub fn adjust_modbam(
     writer: &mut bam::Writer,
     collapse_methods: &[CollapseMethod],
     threshold_caller: Option<&MultipleThresholdModCaller>,
+    edge_filter: Option<&EdgeFilter>,
     fail_fast: bool,
     verb: &'static str,
 ) -> anyhow::Result<()> {
@@ -107,8 +136,12 @@ pub fn adjust_modbam(
         if let Ok(record) = result {
             let record_name = util::get_query_name_string(&record)
                 .unwrap_or("???".to_owned());
-            match adjust_mod_probs(record, &collapse_methods, threshold_caller)
-            {
+            match adjust_mod_probs(
+                record,
+                &collapse_methods,
+                threshold_caller,
+                edge_filter,
+            ) {
                 Err(RunError::BadInput(InputError(err)))
                 | Err(RunError::Failed(err)) => {
                     if fail_fast {

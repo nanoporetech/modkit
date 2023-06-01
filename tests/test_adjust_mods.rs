@@ -1,6 +1,8 @@
+use anyhow::Context;
 use rust_htslib::{bam, bam::Read};
+use std::collections::{HashMap, HashSet};
 
-use crate::common::run_simple_summary;
+use crate::common::{parse_mod_profile, run_simple_summary};
 use common::run_modkit;
 use mod_kit::mod_bam::parse_raw_mod_tags;
 use mod_kit::mod_base_code::{DnaBase, ModCode};
@@ -303,4 +305,40 @@ fn test_adjust_out_of_spec_codes() {
         run_simple_summary(adjusted_bam.to_str().unwrap(), 25)
             .expect("should get adjusted summary");
     assert_eq!(expected_summary, adjusted_summary);
+}
+
+#[test]
+fn test_adjust_edge_filter() {
+    let adjusted_bam = std::env::temp_dir().join("test_adjust_edge_filter.bam");
+    for edge_filter in [0usize, 10, 50, 100] {
+        run_modkit(&[
+            "adjust-mods",
+            "tests/resources/bc_anchored_10_reads_old_tags.bam",
+            adjusted_bam.to_str().unwrap(),
+            "--edge-filter",
+            &format!("{edge_filter}"),
+        ])
+        .context("test_adjust_edge_filter failed to run adjust-mods")
+        .unwrap();
+        let methyl_profile_fp = std::env::temp_dir()
+            .join("test_adjust_edge_filter_methyl_profile.tsv");
+        run_modkit(&[
+            "extract",
+            adjusted_bam.to_str().unwrap(),
+            methyl_profile_fp.to_str().unwrap(),
+            "--force",
+        ])
+        .context("test_adjust_edge_filter failed to run extract")
+        .unwrap();
+
+        let low_bound = edge_filter;
+        let mod_profile = parse_mod_profile(&methyl_profile_fp).unwrap();
+        for (_read_name, mut mod_datas) in mod_profile {
+            for mod_data in mod_datas.iter() {
+                let high_bound = mod_data.read_length - edge_filter;
+                assert!(mod_data.q_pos >= low_bound);
+                assert!(mod_data.q_pos <= high_bound);
+            }
+        }
+    }
 }
