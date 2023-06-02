@@ -64,8 +64,8 @@ stages:
 
 # build images
 .rust_image: &rust_image
-  # 1.67.1
-  image: rust@sha256:02a53e734724bef4a58d856c694f826aa9e7ea84353516b76d9a6d241e9da60e
+  # 1.69.0
+  image: rust@sha256:c2dcc19371a976065950915307b03a9c5514e5143bdd833635d5501a0642992e
 
 .ubuntu_1604_image: &ub16_image
   image: ubuntu@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6
@@ -76,14 +76,12 @@ stages:
 
 # rules/stages
 format:
-  # 1.67.1
   <<: *rust_image
   stage: format
   script:
     - cargo fmt --check
 
 test:
-  # 1.67.1
   <<: *rust_image
   stage: test
   script:
@@ -153,7 +151,6 @@ manual_build_modkit_linux_centos:
       - modkit_centos7_x86_64.tar.gz
 
 deploy_linux_artefact:
-  # 1.67.1
   <<: *rust_image
   stage: release
   rules:
