@@ -100,6 +100,7 @@ pub fn summarize_modbam<'a>(
         read_ids_to_base_mod_calls,
         &threshold_caller,
         region,
+        suppress_progress,
     )
 }
 
@@ -107,12 +108,16 @@ fn sampled_reads_to_summary<'a>(
     read_ids_to_mod_calls: ReadIdsToBaseModProbs,
     threshold_caller: &MultipleThresholdModCaller,
     region: Option<&'a Region>,
+    suppress_progress: bool,
 ) -> anyhow::Result<ModSummary<'a>> {
     let total_reads_used = read_ids_to_mod_calls.num_reads();
     let start_t = std::time::Instant::now();
 
     let pb = get_master_progress_bar(read_ids_to_mod_calls.num_reads());
     pb.set_message("compiling summary");
+    if suppress_progress {
+        pb.set_draw_target(indicatif::ProgressDrawTarget::hidden())
+    }
     let read_summary_chunk = read_ids_to_mod_calls
         .inner
         .par_iter()

@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Result as AnyhowResult};
 use derive_new::new;
-use indexmap::Equivalent;
 use mod_kit::mod_bam::{CollapseMethod, EdgeFilter};
 use mod_kit::summarize::{summarize_modbam, ModSummary};
 use mod_kit::threshold_mod_caller::MultipleThresholdModCaller;

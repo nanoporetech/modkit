@@ -1,8 +1,6 @@
 use crate::common::{parse_mod_profile, ModData};
 use anyhow::{anyhow, Context};
 use common::run_modkit;
-use derive_new::new;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufRead;

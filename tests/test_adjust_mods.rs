@@ -1,6 +1,5 @@
 use anyhow::Context;
 use rust_htslib::{bam, bam::Read};
-use std::collections::{HashMap, HashSet};
 
 use crate::common::{parse_mod_profile, run_simple_summary};
 use common::run_modkit;
@@ -333,7 +332,7 @@ fn test_adjust_edge_filter() {
 
         let low_bound = edge_filter;
         let mod_profile = parse_mod_profile(&methyl_profile_fp).unwrap();
-        for (_read_name, mut mod_datas) in mod_profile {
+        for (_read_name, mod_datas) in mod_profile {
             for mod_data in mod_datas.iter() {
                 let high_bound = mod_data.read_length - edge_filter;
                 assert!(mod_data.q_pos >= low_bound);

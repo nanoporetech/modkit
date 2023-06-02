@@ -156,6 +156,13 @@ fn get_threshold_from_options(
         suppress_progress,
     )?;
 
+    for (dna_base, threshold) in per_base_thresholds.iter() {
+        debug!(
+            "estimated pass threshold {threshold} for primary sequence base {}",
+            dna_base.char()
+        );
+    }
+
     Ok(MultipleThresholdModCaller::new(
         per_base_thresholds,
         per_mod_thresholds.unwrap_or(HashMap::new()),
@@ -364,7 +371,7 @@ impl Adjust {
         let methods = if edge_filter.is_none() && methods.is_empty() {
             warn!("no edge-filter, ignore, or convert was provided. Implicitly deciding to \
             perform ignore on modified base code h, this behavior will be removed in the next \
-            release and will be considered a fatal error.");
+            release and will result in an error.");
             vec![CollapseMethod::ReDistribute('h')]
         } else {
             methods
