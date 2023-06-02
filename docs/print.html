@@ -87,7 +87,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting MM/ML tags to a table</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting MM/ML tags to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.8.</strong> Calling base modifications</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -169,10 +169,13 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 <li><a href="./intro_summary.html">Summarizing a modBAM with <code>summary</code></a></li>
 <li><a href="./intro_motif_bed.html">Making a motif BED file with <code>motif-bed</code></a></li>
 <li><a href="./intro_extract.html">Extracting per-read base modification data into a table</a></li>
+<li><a href="./intro_call_mods.html">Convert modification probabilities into hard calls</a></li>
+<li><a href="./intro_edge_filter.html">Removing base modification calls at the ends of reads</a></li>
 </ol>
 <h2 id="notes-and-troubleshooting"><a class="header" href="#notes-and-troubleshooting">Notes and troubleshooting</a></h2>
 <ol>
 <li><a href="./troubleshooting.html">General troubleshooting</a></li>
+<li><a href="./filtering_details.html">Threshold evaluation examples</a> (for advanced users)</li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="constructing-bedmethyl-tables"><a class="header" href="#constructing-bedmethyl-tables">Constructing bedMethyl tables.</a></h1>
 <p>A primary use of <code>modkit</code> is to create summary counts of modified and unmodified bases in
@@ -382,7 +385,8 @@ position within the motif.</p>
 <p>The output is directed to standard out.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="extracting-base-modification-information"><a class="header" href="#extracting-base-modification-information">Extracting base modification information</a></h1>
 <p>The <code>modkit extract</code> sub-command will produce a table containing the base modification probabilities, 
-the read sequence context, and optionally aligned reference information.</p>
+the read sequence context, and optionally aligned reference information. If alignment information is 
+present, only the <strong>primary alignment</strong> is used.</p>
 <p>The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
 To only include mapped bases use the <code>--mapped</code> flag. To only include sites of interest, pass a 
 BED-formatted file to the <code>--include-only</code> option. Similarly, to exclude sites, pass a BED-formatted
@@ -409,7 +413,7 @@ or <code>stdout</code> and filter the columns before writing to disk.</p>
 <tr><td>15</td><td>canonical_base</td><td>canonical base from the query sequence, from the MM tag</td><td>str</td></tr>
 </tbody></table>
 </div>
-<h2 id="examples"><a class="header" href="#examples">Examples:</a></h2>
+<h2 id="example-usages"><a class="header" href="#example-usages">Example usages:</a></h2>
 <h3 id="extract-a-table-from-an-aligned-and-indexed-bam"><a class="header" href="#extract-a-table-from-an-aligned-and-indexed-bam">Extract a table from an aligned and indexed BAM</a></h3>
 <pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt; 
 </code></pre>
@@ -423,7 +427,56 @@ in parallel.</p>
 <pre><code>modkit motif-bed &lt;reference.fasta&gt; CG 0 &gt; CG_motifs.bed
 modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-only CG_motigs.bed
 </code></pre>
+<h3 id="extract-only-sites-that-are-at-least-50-bases-from-the-ends-of-the-reads"><a class="header" href="#extract-only-sites-that-are-at-least-50-bases-from-the-ends-of-the-reads">Extract only sites that are at least 50 bases from the ends of the reads</a></h3>
+<pre><code>modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --edge-filter 50
+</code></pre>
 <p>See the help string and/or <a href="./advanced_usage.html">advanced_usage</a> for more details.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="calling-mods-in-a-modbam"><a class="header" href="#calling-mods-in-a-modbam">Calling mods in a modBAM</a></h1>
+<p>The <code>call-mods</code> subcommand in <code>modkit</code> transforms one modBAM into another modBAM where the base modification probabilities have been clamped to 100% and 0%. If the <code>--filter-threshold</code> and/or <code>--mod-threshold</code> <a href="./advanced_usage.html#call-mods">options</a> are provided, base modification calls failing the threshold will be removed prior to changing the probabilities. The resultant modBAM can be used for visualization, <code>pileup</code>, or other applications. </p>
+<p>A modBAM that has been transformed with <code>call-mods</code> using <code>--filter-threshold</code> and/or <code>--mod-threshold</code> cannot be re-transformed with different thresholds.</p>
+<p>Note on <code>pileup</code> with clamped probabilities: <code>modkit pileup</code> will attempt to estimate the threshold probability by default, but it is unnecessary if the modBAM is the result of <code>call-mods</code>. The threshold probabilities will be artificially high (i.e. not representative of the model's output probabilities). Similarly, specifying <code>--filter-threshold</code> and <code>--mod-threshold</code> is not useful because all the ML probabilities have been set to 0 and 100%.</p>
+<h2 id="example-usages-1"><a class="header" href="#example-usages-1">Example usages</a></h2>
+<h3 id="estimate-the-threshold-on-the-fly-apply-to-modbam-and-clamp-the-modification-calls-to-certainty"><a class="header" href="#estimate-the-threshold-on-the-fly-apply-to-modbam-and-clamp-the-modification-calls-to-certainty">Estimate the threshold on the fly, apply to modBAM and clamp the modification calls to certainty.</a></h3>
+<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt;
+</code></pre>
+<h3 id="specify-a-filter-threshold-for-your-use-case"><a class="header" href="#specify-a-filter-threshold-for-your-use-case">Specify a filter threshold for your use-case</a></h3>
+<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --filter-threshold A:0.9 --mod-threshold a:0.95 --filter-threshold C:0.97
+</code></pre>
+<h3 id="call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reds"><a class="header" href="#call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reds">Call mods with the estimated threshold and ignore modification calls within 100 base pairs of the ends of the reds</a></h3>
+<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --edge-filter 100
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="removing-modification-calls-at-the-ends-of-reads"><a class="header" href="#removing-modification-calls-at-the-ends-of-reads">Removing modification calls at the ends of reads</a></h1>
+<p>If you have reads where you know base modifications near the ends should not be used (for example, if they are in adapters), you can use the <code>--edge-filter &lt;n_basepairs&gt;</code> option. This option is available in the following subcommands:</p>
+<ol>
+<li><code>pileup</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
+<li><code>adjust-mods</code>, will <strong>remove</strong> base mofification calls that are <code>&lt;n_basepairs&gt;</code> from the ends from the resultant output modBAM.</li>
+<li><code>summary</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
+<li><code>sample-probs</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
+<li><code>call-mods</code>, will <strong>remove</strong> base mofification calls that are <code>&lt;n_basepairs&gt;</code> from the ends from the resultant output modBAM.</li>
+<li><code>extract</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
+</ol>
+<p>In <code>pileup</code> and <code>call-mods</code> the edge-filter is also respected when estimating the pass-thresholds.</p>
+<h2 id="example-usages-2"><a class="header" href="#example-usages-2">Example usages</a></h2>
+<h3 id="call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">call mods with the estimated threshold and ignore modification calls within 100 base pairs of the ends of the reads</a></h3>
+<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --edge-filter 100
+</code></pre>
+<h3 id="perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">Perform pileup, ignoring base modification calls within 100 base pairs of the ends of the reads</a></h3>
+<pre><code>modkit puleup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 100
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="calling-mods-in-a-modbam-1"><a class="header" href="#calling-mods-in-a-modbam-1">Calling mods in a modBAM</a></h1>
+<p>The <code>call-mods</code> subcommand in <code>modkit</code> transforms one modBAM into another modBAM where the base modification probabilities have been clamped to 100% and 0%. If the <code>--filter-threshold</code> and/or <code>--mod-threshold</code> <a href="./advanced_usage.html#call-mods">options</a> are provided, base modification calls failing the threshold will be removed prior to changing the probabilities. The resultant modBAM can be used for visualization, <code>pileup</code>, or other applications. </p>
+<p>A modBAM that has been transformed with <code>call-mods</code> using <code>--filter-threshold</code> and/or <code>--mod-threshold</code> cannot be re-transformed with different thresholds.</p>
+<p>Note on <code>pileup</code> with clamped probabilities: <code>modkit pileup</code> will attempt to estimate the threshold probability by default, but it is unnecessary if the modBAM is the result of <code>call-mods</code>. The threshold probabilities will be artificially high (i.e. not representative of the model's output probabilities). Similarly, specifying <code>--filter-threshold</code> and <code>--mod-threshold</code> is not useful because all the ML probabilities have been set to 0 and 100%.</p>
+<h2 id="example-usages-3"><a class="header" href="#example-usages-3">Example usages</a></h2>
+<h3 id="estimate-the-threshold-on-the-fly-apply-to-modbam-and-clamp-the-modification-calls-to-certainty-1"><a class="header" href="#estimate-the-threshold-on-the-fly-apply-to-modbam-and-clamp-the-modification-calls-to-certainty-1">Estimate the threshold on the fly, apply to modBAM and clamp the modification calls to certainty.</a></h3>
+<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt;
+</code></pre>
+<h3 id="specify-a-filter-threshold-for-your-use-case-1"><a class="header" href="#specify-a-filter-threshold-for-your-use-case-1">Specify a filter threshold for your use-case</a></h3>
+<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --filter-threshold A:0.9 --mod-threshold a:0.95 --filter-threshold C:0.97
+</code></pre>
+<h3 id="call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reds-1"><a class="header" href="#call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reds-1">Call mods with the estimated threshold and ignore modification calls within 100 base pairs of the ends of the reds</a></h3>
+<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --edge-filter 100
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="modkit-subcommand-documentation"><a class="header" href="#modkit-subcommand-documentation">modkit, subcommand documentation</a></h1>
 <p>The goal of <code>modkit</code> is to enable best-practices manipulation of BAM files containing
 modified base information (modBAMs). The various sub-commands and tools available in
@@ -588,6 +641,11 @@ Options:
           When performing CpG analysis, sum the counts from the positive and negative strands into
           the counts for the positive strand.
 
+      --edge-filter &lt;EDGE_FILTER&gt;
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
+
       --only-tabs
           For bedMethyl output, separate columns with only tabs. The default is to use tabs for the
           first 10 fields and spaces thereafter. The default behavior is more likely to be
@@ -621,13 +679,17 @@ Options:
       --log-filepath &lt;LOG_FILEPATH&gt;  Output debug logs to file at this path.
       --ignore &lt;IGNORE&gt;              Modified base code to ignore/remove, see
                                      https://samtools.github.io/hts-specs/SAMtags.pdf for details on
-                                     the modified base codes. [default: h]
+                                     the modified base codes.
   -t, --threads &lt;THREADS&gt;            Number of threads to use. [default: 4]
   -f, --ff                           Fast fail, stop processing at the first invalid sequence
                                      record. Default behavior is to continue and report
                                      failed/skipped records at the end.
       --convert &lt;CONVERT&gt; &lt;CONVERT&gt;  Convert one mod-tag to another, summing the probabilities
                                      together if the retained mod tag is already present.
+      --edge-filter &lt;EDGE_FILTER&gt;    Discard base modification calls that are this many bases from
+                                     the start or the end of the read. For example, a value of 10
+                                     will require that the base modification is at least the 11th
+                                     base or 11 bases from the end.
   -h, --help                         Print help information.
 </code></pre>
 <h2 id="update-tags"><a class="header" href="#update-tags">update-tags</a></h2>
@@ -699,6 +761,11 @@ Options:
           equally across other options. For example, if collapsing 'h', with 'm' and canonical
           options, half of the probability of 'h' will be added to both 'm' and 'C'. A full
           description of the methods can be found in collapse.md.
+
+      --edge-filter &lt;EDGE_FILTER&gt;
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
 
       --hist
           Output histogram of base modification prediction probabilities.
@@ -821,6 +888,11 @@ Options:
           options, half of the probability of 'h' will be added to both 'm' and 'C'. A full
           description of the methods can be found in collapse.md.
 
+      --edge-filter &lt;EDGE_FILTER&gt;
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
+
       --region &lt;REGION&gt;
           Process only the specified region of the BAM when collecting probabilities. Format should
           be &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or &lt;chrom_name&gt;.
@@ -935,6 +1007,11 @@ Options:
           Don't filter base modification calls, assign each base modification to the highest
           probability prediction.
 
+      --edge-filter &lt;EDGE_FILTER&gt;
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
+
   -h, --help
           Print help information (use `-h` for a summary).
 </code></pre>
@@ -985,7 +1062,12 @@ Options:
           sites.
 
   -v, --exclude-bed &lt;EXCLUDE_BED&gt;
-          BED file with regions to _exclude_ (alias: exclude).
+          BED file with regions to _exclude_. (alias: exclude)
+
+      --edge-filter &lt;EDGE_FILTER&gt;
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
 
       --ignore &lt;IGNORE&gt;
           Ignore a modified base class  _in_situ_ by redistributing base modification probability
@@ -1212,22 +1294,6 @@ and <code>schema.yaml</code> in this project for details on the notation for cou
 
         </div>
 
-        <!-- Livereload script (if served using the cli tool) -->
-        <script>
-            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
-            const socket = new WebSocket(wsAddress);
-            socket.onmessage = function (event) {
-                if (event.data === "reload") {
-                    socket.close();
-                    location.reload();
-                }
-            };
-
-            window.onbeforeunload = function() {
-                socket.close();
-            }
-        </script>
 
 
 
