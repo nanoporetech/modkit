@@ -5,6 +5,7 @@ use crate::util::{get_tag, record_is_secondary, Strand};
 use indexmap::{indexset, IndexSet};
 use std::cmp::Ordering;
 
+use derive_new::new;
 use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
@@ -309,6 +310,10 @@ impl BaseModProbs {
         self.probs.iter_mut()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&char, &mut f32)> {
+        self.mod_codes.iter().zip(self.probs.iter_mut())
+    }
+
     pub(crate) fn into_collapsed(
         self,
         method: &CollapseMethod,
@@ -513,6 +518,7 @@ fn quals_to_probs(quals: &mut [f32]) {
     });
 }
 
+/// Container for the information in the MM and ML tags
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct BaseModPositions {
     pub(crate) canonical_base: char,
@@ -646,8 +652,41 @@ impl SeqPosBaseModProbs {
             pos_to_base_mod_probs: HashMap::new(),
         }
     }
+
+    /// Remove positions that are outside the bounds of the `EdgeFilter`.
+    /// Returning None means that either the read was too short or all
+    /// of the positions were filtered out.
+    pub(crate) fn edge_filter_positions(
+        self,
+        edge_filter: &EdgeFilter,
+        read_length: usize,
+    ) -> Option<Self> {
+        if read_length <= edge_filter.edge_filter_start {
+            None
+        } else {
+            read_length
+                .checked_sub(edge_filter.edge_filter_end)
+                .and_then(|edge_filter_end| {
+                    let pos_to_base_mod_probs = self
+                        .pos_to_base_mod_probs
+                        .into_iter()
+                        .filter(|(pos, _)| {
+                            *pos >= edge_filter.edge_filter_start
+                                && *pos < edge_filter_end
+                        })
+                        .collect::<HashMap<usize, BaseModProbs>>();
+                    if pos_to_base_mod_probs.is_empty() {
+                        // all positions filtered out
+                        None
+                    } else {
+                        Some(Self::new(pos_to_base_mod_probs, self.skip_mode))
+                    }
+                })
+        }
+    }
 }
 
+// todo(arand) remove, or put behind cfg(test)
 pub fn extract_mod_probs(
     record: &bam::Record,
     raw_mm: &str,
@@ -968,6 +1007,7 @@ impl ModBaseInfo {
         HashMap<char, DeltaListConverter>,
         impl Iterator<Item = (char, Strand, SeqPosBaseModProbs)>,
     ) {
+        // todo(arand) change the Item here to include the converter
         let pos_iter = self.pos_seq_base_mod_probs.into_iter().map(
             |(canonical_base, seq_pos_base_mod_probs)| {
                 (canonical_base, Strand::Positive, seq_pos_base_mod_probs)
@@ -1056,9 +1096,16 @@ pub fn base_mod_probs_from_record(
         .map_err(|input_err| RunError::BadInput(input_err))
 }
 
+#[derive(new)]
+pub struct EdgeFilter {
+    edge_filter_start: usize,
+    edge_filter_end: usize,
+}
+
 #[cfg(test)]
 mod mod_bam_tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     fn qual_to_prob(qual: u16) -> f32 {
         let q = qual as f32;
@@ -1686,5 +1733,85 @@ mod mod_bam_tests {
         assert!(a > c);
         assert!(c > d);
         assert!(d > e);
+    }
+
+    #[test]
+    fn test_seq_pos_base_mod_probs_edge_filter() {
+        //               012345678901234
+        let dna = "GATCGACTACGTCGA";
+        let tag = "C+h?,0,1,0;A+a?,0,1,0;C+m?,0,1,0;";
+        let quals = vec![1, 1, 1, 200, 200, 200, 100, 100, 100];
+        let raw_mod_tags = RawModTags::new(tag, &quals, true);
+        let mut obs_mod_base_info =
+            ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
+        let c_seq_base_mod_probs = obs_mod_base_info
+            .pos_seq_base_mod_probs
+            .remove(&'C')
+            .unwrap();
+        let expected_pos = vec![3, 9, 12];
+        let obs_pos = c_seq_base_mod_probs
+            .pos_to_base_mod_probs
+            .keys()
+            .map(|p| *p)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(expected_pos, obs_pos);
+        let edge_filter = EdgeFilter::new(4, 4);
+        let c_seq_base_mod_probs = c_seq_base_mod_probs
+            .edge_filter_positions(&edge_filter, dna.len())
+            .unwrap();
+        let obs_pos = c_seq_base_mod_probs
+            .pos_to_base_mod_probs
+            .keys()
+            .map(|p| *p)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(vec![9], obs_pos);
+
+        // trim larger than read
+        let edge_filter = EdgeFilter::new(50, 50);
+        let mut obs_mod_base_info =
+            ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
+        let c_seq_base_mod_probs = obs_mod_base_info
+            .pos_seq_base_mod_probs
+            .remove(&'C')
+            .unwrap();
+        let c_seq_base_mod_probs =
+            c_seq_base_mod_probs.edge_filter_positions(&edge_filter, dna.len());
+        assert!(c_seq_base_mod_probs.is_none());
+
+        // trim with mod call _at_ the position to be trimmed
+        let mut obs_mod_base_info =
+            ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
+        let c_seq_base_mod_probs = obs_mod_base_info
+            .pos_seq_base_mod_probs
+            .remove(&'C')
+            .unwrap();
+        let expected_pos = vec![3, 9, 12];
+        let obs_pos = c_seq_base_mod_probs
+            .pos_to_base_mod_probs
+            .keys()
+            .map(|p| *p)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(expected_pos, obs_pos);
+        let edge_filter = EdgeFilter::new(3, 3);
+        let c_seq_base_mod_probs = c_seq_base_mod_probs
+            .edge_filter_positions(&edge_filter, dna.len())
+            .unwrap();
+        let obs_pos = c_seq_base_mod_probs
+            .pos_to_base_mod_probs
+            .keys()
+            .map(|p| *p)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(vec![3, 9], obs_pos);
+
+        // todo edge_filter_start larger than read length
+        //  edge_filter_end larger than read length
     }
 }

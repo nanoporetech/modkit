@@ -167,6 +167,11 @@ Options:
           When performing CpG analysis, sum the counts from the positive and negative strands into
           the counts for the positive strand.
 
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
+
       --only-tabs
           For bedMethyl output, separate columns with only tabs. The default is to use tabs for the
           first 10 fields and spaces thereafter. The default behavior is more likely to be
@@ -202,13 +207,17 @@ Options:
       --log-filepath <LOG_FILEPATH>  Output debug logs to file at this path.
       --ignore <IGNORE>              Modified base code to ignore/remove, see
                                      https://samtools.github.io/hts-specs/SAMtags.pdf for details on
-                                     the modified base codes. [default: h]
+                                     the modified base codes.
   -t, --threads <THREADS>            Number of threads to use. [default: 4]
   -f, --ff                           Fast fail, stop processing at the first invalid sequence
                                      record. Default behavior is to continue and report
                                      failed/skipped records at the end.
       --convert <CONVERT> <CONVERT>  Convert one mod-tag to another, summing the probabilities
                                      together if the retained mod tag is already present.
+      --edge-filter <EDGE_FILTER>    Discard base modification calls that are this many bases from
+                                     the start or the end of the read. For example, a value of 10
+                                     will require that the base modification is at least the 11th
+                                     base or 11 bases from the end.
   -h, --help                         Print help information.
 ```
 
@@ -284,6 +293,11 @@ Options:
           equally across other options. For example, if collapsing 'h', with 'm' and canonical
           options, half of the probability of 'h' will be added to both 'm' and 'C'. A full
           description of the methods can be found in collapse.md.
+
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
 
       --hist
           Output histogram of base modification prediction probabilities.
@@ -408,6 +422,11 @@ Options:
           options, half of the probability of 'h' will be added to both 'm' and 'C'. A full
           description of the methods can be found in collapse.md.
 
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
+
       --region <REGION>
           Process only the specified region of the BAM when collecting probabilities. Format should
           be <chrom_name>:<start>-<end> or <chrom_name>.
@@ -526,6 +545,11 @@ Options:
           Don't filter base modification calls, assign each base modification to the highest
           probability prediction.
 
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
+
   -h, --help
           Print help information (use `-h` for a summary).
 ```
@@ -578,7 +602,12 @@ Options:
           sites.
 
   -v, --exclude-bed <EXCLUDE_BED>
-          BED file with regions to _exclude_ (alias: exclude).
+          BED file with regions to _exclude_. (alias: exclude)
+
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. For example, a value of 10 will require that the base modification is at least the
+          11th base or 11 bases from the end.
 
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base modification probability

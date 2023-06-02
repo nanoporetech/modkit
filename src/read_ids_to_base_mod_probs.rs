@@ -1,5 +1,5 @@
 use crate::mod_bam::{
-    filter_records_iter, BaseModCall, BaseModProbs, CollapseMethod,
+    filter_records_iter, BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
     ModBaseInfo, TrackingModRecordIter,
 };
 use crate::mod_base_code::DnaBase;
@@ -192,6 +192,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         with_progress: bool,
         mut record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
+        edge_filter: Option<&EdgeFilter>,
     ) -> anyhow::Result<Self::Output> {
         let spinner = if with_progress {
             Some(record_sampler.get_progress_bar())
@@ -214,7 +215,6 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                             "already processed {record_name}, consider de-duplicating alignments.");
                         continue;
                     }
-
                     if mod_base_info.is_empty() {
                         // add count of unused/no calls
                         read_ids_to_mod_base_probs
@@ -224,6 +224,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
 
                     let (_, base_mod_probs_iter) =
                         mod_base_info.into_iter_base_mod_probs();
+                    let mut added_probs_for_record = false;
                     for (raw_canonical_base, strand, seq_pos_base_mod_probs) in
                         base_mod_probs_iter
                     {
@@ -237,27 +238,53 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                                 dna_base.complement()
                             }
                         };
-                        let mod_probs = seq_pos_base_mod_probs
-                            .pos_to_base_mod_probs
-                            .into_iter()
-                            .map(|(_q_pos, base_mod_probs)| {
-                                if let Some(method) = collapse_method {
-                                    base_mod_probs.into_collapsed(method)
-                                } else {
-                                    base_mod_probs
-                                }
-                            })
-                            .collect::<Vec<BaseModProbs>>();
-                        read_ids_to_mod_base_probs.add_mod_probs_for_read(
-                            &record_name,
-                            canonical_base,
-                            mod_probs,
-                        );
+
+                        let seq_pos_base_mod_probs = if let Some(edge_filter) =
+                            edge_filter
+                        {
+                            let probs = seq_pos_base_mod_probs
+                                .edge_filter_positions(
+                                    edge_filter,
+                                    record.seq_len(),
+                                );
+                            if probs.is_none() {
+                                debug!("all base mod positions were removed by edge filter \
+                                for {record_name} and base {raw_canonical_base}");
+                            }
+                            probs
+                        } else {
+                            Some(seq_pos_base_mod_probs)
+                        };
+                        if let Some(seq_pos_base_mod_probs) =
+                            seq_pos_base_mod_probs
+                        {
+                            let mod_probs = seq_pos_base_mod_probs
+                                .pos_to_base_mod_probs
+                                .into_iter()
+                                .map(|(_q_pos, base_mod_probs)| {
+                                    if let Some(method) = collapse_method {
+                                        base_mod_probs.into_collapsed(method)
+                                    } else {
+                                        base_mod_probs
+                                    }
+                                })
+                                .collect::<Vec<BaseModProbs>>();
+                            read_ids_to_mod_base_probs.add_mod_probs_for_read(
+                                &record_name,
+                                canonical_base,
+                                mod_probs,
+                            );
+                            added_probs_for_record = true
+                        } else {
+                            continue;
+                        }
                     }
                     if let Some(pb) = &spinner {
                         pb.inc(1);
                     }
-                    record_sampler.used(token);
+                    if added_probs_for_record {
+                        record_sampler.used(token);
+                    }
                 }
                 Indicator::Skip => continue,
                 Indicator::Done => break,
@@ -401,6 +428,7 @@ impl ReadBaseModProfile {
         record_name: &str,
         mod_base_info: ModBaseInfo,
         collapse_method: Option<&CollapseMethod>,
+        edge_filter: Option<&EdgeFilter>,
     ) -> Result<Self, RunError> {
         let read_length = record.seq_len();
         let (num_clip_start, num_clip_end) =
@@ -441,13 +469,16 @@ impl ReadBaseModProfile {
                 .aligned_pairs_full()
                 .filter_map(|pair| {
                     match (pair[0], pair[1]) {
-                        // aligned
+                        // aligned or insert (r_pos is None)
                         (Some(qpos), r_pos) => {
                             if qpos < 0 {
                                 None
                             } else {
                                 let qpos = qpos as usize;
                                 if record.is_reverse() {
+                                    // shouldn't _really_ need to perform this checked_sub
+                                    // but better to do it this way than to panic when there
+                                    // is some bug/invalid CIGAR in a dependency
                                     read_length
                                         .checked_sub(qpos as usize + 1)
                                         // todo make sure you dont need to check that r_pos is < 0
@@ -472,6 +503,21 @@ impl ReadBaseModProfile {
             record.qual().to_vec()
         };
         let mut mod_profiles = mod_probs_iter
+            .filter_map(|(primary_base, mod_strand, seq_pos_base_mod_probs)| {
+                let filtered = if let Some(edge_filter) = edge_filter {
+                    seq_pos_base_mod_probs.edge_filter_positions(edge_filter, record.seq_len())
+                } else {
+                    Some(seq_pos_base_mod_probs)
+                };
+                match (&filtered, edge_filter) {
+                    (None, Some(_)) => {
+                        debug!("all base mod positions for record {record_name} and canonical \
+                        base {primary_base} were filtered out");
+                    },
+                    _ => {}
+                }
+                filtered.map(|seq_pos_base_mod_probs| (primary_base, mod_strand, seq_pos_base_mod_probs))
+            })
             .flat_map(|(primary_base, mod_strand, seq_pos_base_mod_probs)| {
                 seq_pos_base_mod_probs
                     .pos_to_base_mod_probs
@@ -704,6 +750,7 @@ impl RecordProcessor for ReadsBaseModProfile {
         with_progress: bool,
         mut record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
+        edge_filter: Option<&EdgeFilter>,
     ) -> anyhow::Result<Self::Output> {
         let mut mod_iter = TrackingModRecordIter::new(records);
         let mut agg = Vec::new();
@@ -724,6 +771,7 @@ impl RecordProcessor for ReadsBaseModProfile {
                         &record_name,
                         modbase_info,
                         collapse_method,
+                        edge_filter,
                     ) {
                         Ok(read_base_mod_profile) => {
                             if seen.contains(&record_name) {

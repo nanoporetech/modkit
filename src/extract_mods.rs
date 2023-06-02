@@ -18,7 +18,7 @@ use rust_lapper as lapper;
 use crate::errs::RunError;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
-use crate::mod_bam::{CollapseMethod, TrackingModRecordIter};
+use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCode;
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
@@ -77,6 +77,11 @@ pub struct ExtractMods {
     /// BED file with regions to _exclude_ (alias: exclude).
     #[arg(long, alias = "exclude", short = 'v')]
     exclude_bed: Option<PathBuf>,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long)]
+    edge_filter: Option<usize>,
 
     /// Ignore a modified base class  _in_situ_ by redistributing base modification
     /// probability equally across other options. For example, if collapsing 'h',
@@ -188,6 +193,11 @@ impl ExtractMods {
             }
             None => None,
         };
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
+
         let mut reader = bam::Reader::from_path(&self.in_bam)?;
         let header = reader.header().to_owned();
 
@@ -303,6 +313,7 @@ impl ExtractMods {
                                         end,
                                         record_sampler,
                                         collapse_method.as_ref(),
+                                        edge_filter.as_ref(),
                                     ).map(|reads_base_mod_profile| {
                                         reference_position_filter.filter_read_base_mod_probs(reads_base_mod_profile)
                                     });
@@ -343,6 +354,7 @@ impl ExtractMods {
                                     snd.clone(),
                                     n_unmapped_reads,
                                     collapse_method.as_ref(),
+                                    edge_filter.as_ref(),
                                     "unmapped "
                                 );
                                 let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
@@ -360,6 +372,7 @@ impl ExtractMods {
                         snd.clone(),
                         n_reads,
                         collapse_method.as_ref(),
+                            edge_filter.as_ref(),
                             "",
                     );
                     let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
@@ -438,6 +451,7 @@ impl ExtractMods {
         snd: Sender<anyhow::Result<ReadsBaseModProfile>>,
         n_reads: Option<usize>,
         collapse_method: Option<&CollapseMethod>,
+        edge_filter: Option<&EdgeFilter>,
         message: &'static str,
     ) -> (usize, usize) {
         let mut mod_iter = TrackingModRecordIter::new(records);
@@ -449,6 +463,7 @@ impl ExtractMods {
                 &read_id,
                 mod_base_info,
                 collapse_method,
+                edge_filter,
             ) {
                 Ok(mod_profile) => {
                     ReadsBaseModProfile::new(vec![mod_profile], 0, 0)

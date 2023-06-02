@@ -1,7 +1,7 @@
 pub(crate) mod record_sampler;
 
 use crate::interval_chunks::IntervalChunks;
-use crate::mod_bam::CollapseMethod;
+use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::monoid::Moniod;
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
@@ -25,6 +25,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_probs<P: RecordProcessor>(
     seed: Option<u64>,
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
+    edge_filter: Option<&EdgeFilter>,
     suppress_progress: bool,
 ) -> anyhow::Result<P::Output>
 where
@@ -40,6 +41,7 @@ where
                 num_reads,
                 seed,
                 region,
+                edge_filter,
                 collapse_method,
                 suppress_progress,
             )?;
@@ -73,6 +75,7 @@ where
                 !suppress_progress,
                 record_sampler,
                 collapse_method,
+                edge_filter,
             )?;
             debug!(
                 "sampled {} unmapped records",
@@ -97,6 +100,7 @@ where
             !suppress_progress,
             record_sampler,
             collapse_method,
+            edge_filter,
         )?;
         debug!("sampled {} records", read_ids_to_base_mod_probs.len());
         Ok(read_ids_to_base_mod_probs)
@@ -112,6 +116,7 @@ fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
     num_reads: Option<usize>,
     seed: Option<u64>,
     region: Option<&Region>,
+    edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
     suppress_progress: bool,
 ) -> anyhow::Result<P::Output>
@@ -183,6 +188,7 @@ where
                     end,
                     record_sampler,
                     collapse_method,
+                    edge_filter,
                 ) {
                     Ok(res) => {
                         let sampled_count = res.size();
@@ -218,6 +224,7 @@ pub(crate) fn sample_reads_from_interval<P: RecordProcessor>(
     end: u32,
     record_sampler: RecordSampler,
     collapse_method: Option<&CollapseMethod>,
+    edge_filter: Option<&EdgeFilter>,
 ) -> anyhow::Result<P::Output>
 where
     P::Output: Moniod,
@@ -234,5 +241,6 @@ where
         false,
         record_sampler,
         collapse_method,
+        edge_filter,
     )
 }

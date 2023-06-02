@@ -23,8 +23,8 @@ use crate::extract_mods::ExtractMods;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{
-    format_mm_ml_tag, CollapseMethod, ModBaseInfo, RawModCode, SkipMode,
-    ML_TAGS, MM_TAGS,
+    format_mm_ml_tag, CollapseMethod, EdgeFilter, ModBaseInfo, RawModCode,
+    SkipMode, ML_TAGS, MM_TAGS,
 };
 use crate::mod_base_code::{DnaBase, ModCode, ParseChar};
 use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
@@ -123,6 +123,7 @@ fn get_threshold_from_options(
     seed: Option<u64>,
     region: Option<&Region>,
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+    edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
     suppress_progress: bool,
 ) -> AnyhowResult<MultipleThresholdModCaller> {
@@ -150,9 +151,17 @@ fn get_threshold_from_options(
         filter_percentile,
         seed,
         region,
+        edge_filter,
         collapse_method,
         suppress_progress,
     )?;
+
+    for (dna_base, threshold) in per_base_thresholds.iter() {
+        debug!(
+            "estimated pass threshold {threshold} for primary sequence base {}",
+            dna_base.char()
+        );
+    }
 
     Ok(MultipleThresholdModCaller::new(
         per_base_thresholds,
@@ -277,8 +286,8 @@ pub struct Adjust {
     /// Modified base code to ignore/remove, see
     /// https://samtools.github.io/hts-specs/SAMtags.pdf for details on
     /// the modified base codes.
-    #[arg(long, conflicts_with = "convert", default_value_t = 'h')]
-    ignore: char,
+    #[arg(long, conflicts_with = "convert")]
+    ignore: Option<char>,
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
@@ -290,6 +299,11 @@ pub struct Adjust {
     /// the retained mod tag is already present.
     #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
     convert: Option<Vec<char>>,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long)]
+    edge_filter: Option<usize>,
 }
 
 impl Adjust {
@@ -311,8 +325,7 @@ impl Adjust {
                 debug_assert_eq!(chunk.len(), 2);
                 let from: RawModCode = chunk[0];
                 let to: RawModCode = chunk[1];
-                let froms = conversions.entry(to).or_insert(HashSet::new());
-                froms.insert(from);
+                conversions.entry(to).or_insert(HashSet::new()).insert(from);
             }
             for (to_code, from_codes) in conversions.iter() {
                 info!(
@@ -333,14 +346,35 @@ impl Adjust {
                 })
                 .collect::<Vec<CollapseMethod>>()
         } else {
-            info!(
-                "Removing mod base {} from {}, new bam {}",
-                self.ignore,
-                fp.to_str().unwrap_or("???"),
-                out_fp.to_str().unwrap_or("???")
-            );
-            let method = CollapseMethod::ReDistribute(self.ignore);
-            vec![method]
+            if let Some(ignore_base) = self.ignore.as_ref() {
+                info!(
+                    "Removing mod base {} from {}, new bam {}",
+                    ignore_base,
+                    fp.to_str().unwrap_or("???"),
+                    out_fp.to_str().unwrap_or("???")
+                );
+                let method = CollapseMethod::ReDistribute(*ignore_base);
+                vec![method]
+            } else {
+                Vec::new()
+            }
+        };
+
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim| {
+                info!("removing base modification calls from {trim} bases from the ends");
+                EdgeFilter::new(*trim, *trim)
+            });
+
+        let methods = if edge_filter.is_none() && methods.is_empty() {
+            warn!("no edge-filter, ignore, or convert was provided. Implicitly deciding to \
+            perform ignore on modified base code h, this behavior will be removed in the next \
+            release and will result in an error.");
+            vec![CollapseMethod::ReDistribute('h')]
+        } else {
+            methods
         };
 
         adjust_modbam(
@@ -348,6 +382,7 @@ impl Adjust {
             &mut out_bam,
             &methods,
             None,
+            edge_filter.as_ref(),
             self.fail_fast,
             "Adjusting modBAM",
         )?;
@@ -535,6 +570,11 @@ pub struct ModBamPileup {
     /// negative strands into the counts for the positive strand.
     #[arg(long, requires = "cpg", default_value_t = false)]
     combine_strands: bool,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long, hide_short_help = true)]
+    edge_filter: Option<usize>,
 
     // output args
     /// For bedMethyl output, separate columns with only tabs. The default is
@@ -573,18 +613,26 @@ impl ModBamPileup {
         // do this first so we fail when the file isn't readable
         let header = bam::IndexedReader::from_path(&self.in_bam)
             .map(|reader| reader.header().to_owned())?;
-        let region = if let Some(raw_region) = &self.region {
-            info!("parsing region {raw_region}");
-            Some(Region::parse_str(raw_region, &header)?)
-        } else {
-            None
-        };
-        let sampling_region = if let Some(raw_region) = &self.sample_region {
-            info!("parsing sample region {raw_region}");
-            Some(Region::parse_str(raw_region, &header)?)
-        } else {
-            None
-        };
+        let region = self
+            .region
+            .as_ref()
+            .map(|raw_region| {
+                info!("parsing region {raw_region}");
+                Region::parse_str(raw_region, &header)
+            })
+            .transpose()?;
+        let sampling_region = self
+            .sample_region
+            .as_ref()
+            .map(|raw_region| {
+                info!("parsing sample region {raw_region}");
+                Region::parse_str(raw_region, &header)
+            })
+            .transpose()?;
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
 
         let (pileup_options, combine_strands, threshold_collapse_method) =
             match self.preset {
@@ -670,6 +718,7 @@ impl ModBamPileup {
                         self.seed,
                         sampling_region.as_ref().or(region.as_ref()),
                         per_mod_thresholds,
+                        edge_filter.as_ref(),
                         threshold_collapse_method.as_ref(),
                         self.suppress_progress,
                     )
@@ -809,6 +858,7 @@ impl ModBamPileup {
                                         force_allow,
                                         combine_strands,
                                         motif_locations.as_ref(),
+                                        edge_filter.as_ref(),
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()
@@ -913,6 +963,11 @@ pub struct SampleModBaseProbs {
     /// collapse.md.
     #[arg(long, hide_short_help = true)]
     ignore: Option<char>,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long, hide_short_help = true)]
+    edge_filter: Option<usize>,
 
     // probability histogram options
     /// Output histogram of base modification prediction probabilities.
@@ -971,6 +1026,10 @@ impl SampleModBaseProbs {
         } else {
             None
         };
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim| EdgeFilter::new(*trim, *trim));
 
         let (sample_frac, num_reads) = get_sampling_options(
             self.no_sampling,
@@ -1002,6 +1061,7 @@ impl SampleModBaseProbs {
                     self.seed,
                     region.as_ref(),
                     collapse_method.as_ref(),
+                    edge_filter.as_ref(),
                     self.suppress_progress,
                 )?;
 
@@ -1147,6 +1207,11 @@ pub struct ModSummarize {
     /// collapse.md.
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<char>,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long, hide_short_help = true)]
+    edge_filter: Option<usize>,
 
     /// Process only the specified region of the BAM when collecting probabilities.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
@@ -1172,6 +1237,10 @@ impl ModSummarize {
             .as_ref()
             .map(|raw_region| Region::parse_str(raw_region, reader.header()))
             .transpose()?;
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim| EdgeFilter::new(*trim, *trim));
 
         let (sample_frac, num_reads) = get_sampling_options(
             self.no_sampling,
@@ -1221,6 +1290,7 @@ impl ModSummarize {
                 filter_thresholds,
                 per_mod_thresholds,
                 collapse_method.as_ref(),
+                edge_filter.as_ref(),
                 self.suppress_progress,
             )
         })?;
@@ -1531,6 +1601,11 @@ pub struct CallMods {
     /// highest probability prediction.
     #[arg(long, default_value_t = false)]
     no_filtering: bool,
+    /// Discard base modification calls that are this many bases from the start or the end
+    /// of the read. For example, a value of 10 will require that the base modification is
+    /// at least the 11th base or 11 bases from the end.
+    #[arg(long, hide_short_help = true)]
+    edge_filter: Option<usize>,
 }
 
 impl CallMods {
@@ -1544,6 +1619,10 @@ impl CallMods {
         add_modkit_pg_records(&mut header);
         let mut out_bam =
             bam::Writer::from_path(&self.out_bam, &header, bam::Format::Bam)?;
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|trim| EdgeFilter::new(*trim, *trim));
 
         let per_mod_thresholds =
             if let Some(raw_per_mod_thresholds) = &self.mod_thresholds {
@@ -1573,11 +1652,12 @@ impl CallMods {
                     self.sampling_interval_size,
                     self.sampling_frac,
                     self.num_reads,
-                    false,
+                    self.no_filtering,
                     self.filter_percentile,
                     self.seed,
                     sampling_region.as_ref(),
                     per_mod_thresholds,
+                    edge_filter.as_ref(),
                     None,
                     self.suppress_progress,
                 )
@@ -1589,6 +1669,7 @@ impl CallMods {
             &mut out_bam,
             &[],
             Some(&caller),
+            edge_filter.as_ref(),
             self.fail_fast,
             "Calling Mods",
         )?;

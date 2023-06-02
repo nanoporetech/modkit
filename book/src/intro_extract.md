@@ -1,7 +1,8 @@
 # Extracting base modification information
 
 The `modkit extract` sub-command will produce a table containing the base modification probabilities, 
-the read sequence context, and optionally aligned reference information.
+the read sequence context, and optionally aligned reference information. If alignment information is 
+present, only the **primary alignment** is used.
 
 The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
 To only include mapped bases use the `--mapped` flag. To only include sites of interest, pass a 
@@ -31,7 +32,7 @@ or `stdout` and filter the columns before writing to disk.
 | 14     | query_kmer            | read 5-mer sequence context (center base is aligned base)                       | str  |
 | 15     | canonical_base        | canonical base from the query sequence, from the MM tag                         | str  |
 
-## Examples:
+## Example usages:
 
 ### Extract a table from an aligned and indexed BAM 
 ```
@@ -50,6 +51,11 @@ modkit extract <intput.bam> <output.tsv> --region chr20 --ref <ref.fasta>
 ```
 modkit motif-bed <reference.fasta> CG 0 > CG_motifs.bed
 modkit extract <in.bam> <out.tsv> --ref <ref.fasta> --include-only CG_motigs.bed
+```
+
+### Extract only sites that are at least 50 bases from the ends of the reads
+```
+modkit extract <in.bam> <out.tsv> --edge-filter 50
 ```
 
 See the help string and/or [advanced_usage](./advanced_usage.md) for more details.

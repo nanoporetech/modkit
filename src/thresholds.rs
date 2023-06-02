@@ -5,15 +5,13 @@ use anyhow::{anyhow, Context, Result as AnyhowResult};
 
 use log::{debug, info};
 use rayon::prelude::*;
-use rust_htslib::bam::{self};
 
-use crate::mod_bam::{CollapseMethod, ModBaseInfo};
+use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util;
-use crate::util::{record_is_secondary, AlignedPairs, Region};
+use crate::util::Region;
 
 fn percentile_linear_interp(xs: &[f32], q: f32) -> AnyhowResult<f32> {
     if xs.len() < 2 {
@@ -36,33 +34,6 @@ fn percentile_linear_interp(xs: &[f32], q: f32) -> AnyhowResult<f32> {
             Ok(y)
         }
     }
-}
-
-pub fn modbase_records<T: bam::Read>(
-    records: bam::Records<T>,
-) -> impl Iterator<Item = (ModBaseInfo, AlignedPairs, String)> + '_ {
-    records
-        // skip records that fail to parse htslib (todo this could be cleaned up)
-        .filter_map(|res| res.ok())
-        // skip non-primary
-        .filter(|record| !record_is_secondary(&record))
-        // skip records with empty sequences
-        .filter(|record| record.seq_len() > 0)
-        .filter_map(|record| {
-            ModBaseInfo::new_from_record(&record).ok().and_then(|mbi| {
-                if mbi.is_empty() {
-                    None
-                } else {
-                    let record_name = util::get_query_name_string(&record)
-                        .unwrap_or("failed_utf".to_string());
-                    let aligned_pairs =
-                        util::get_aligned_pairs_forward(&record)
-                            .filter_map(|ap| ap.ok())
-                            .collect::<AlignedPairs>();
-                    Some((mbi, aligned_pairs, record_name))
-                }
-            })
-        })
 }
 
 pub struct Percentiles {
@@ -147,6 +118,7 @@ pub fn calc_threshold_from_bam(
     filter_percentile: f32,
     seed: Option<u64>,
     region: Option<&Region>,
+    edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
     suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, f32>> {
@@ -159,6 +131,7 @@ pub fn calc_threshold_from_bam(
         seed,
         region,
         collapse_method,
+        edge_filter,
         suppress_progress,
     )?;
     can_base_probs
@@ -180,6 +153,7 @@ pub fn get_modbase_probs_from_bam(
     seed: Option<u64>,
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
+    edge_filter: Option<&EdgeFilter>,
     suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, Vec<f32>>> {
     get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
@@ -191,6 +165,7 @@ pub fn get_modbase_probs_from_bam(
         seed,
         region,
         collapse_method,
+        edge_filter,
         suppress_progress,
     )
     .map(|x| x.mle_probs_per_base())

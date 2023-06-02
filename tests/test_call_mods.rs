@@ -3,6 +3,9 @@ use anyhow::anyhow;
 use mod_kit::mod_bam::ModBaseInfo;
 use rust_htslib::bam::{self, Read};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 
 mod common;
 
@@ -75,6 +78,46 @@ fn test_call_mods_basic_regression() {
 }
 
 #[test]
+fn test_call_mods_keeps_all_mod_calls() {
+    let n_lines_in_file = |fp: &PathBuf| -> anyhow::Result<usize> {
+        let reader = BufReader::new(File::open(fp)?);
+        Ok(reader.lines().map(|_| 1).sum::<usize>())
+    };
+    let extract_control_fp = std::env::temp_dir()
+        .join("test_call_mods_keeps_all_mod_calls_control.tsv");
+    let extract_call_mods_fp = std::env::temp_dir()
+        .join("test_call_mods_keeps_all_mod_calls_call_mods.bam");
+    let extract_call_mods_fp_tsv = std::env::temp_dir()
+        .join("test_call_mods_keeps_all_mod_calls_call_mods.tsv");
+
+    run_modkit(&[
+        "extract",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        extract_control_fp.to_str().unwrap(),
+        "--force",
+    ])
+    .unwrap();
+
+    run_modkit(&[
+        "call-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        extract_call_mods_fp.to_str().unwrap(),
+        "--no-filtering",
+    ])
+    .unwrap();
+    run_modkit(&[
+        "extract",
+        extract_call_mods_fp.to_str().unwrap(),
+        extract_call_mods_fp_tsv.to_str().unwrap(),
+        "--force",
+    ])
+    .unwrap();
+    let before_call_mods = n_lines_in_file(&extract_control_fp).unwrap();
+    let after_call_mods = n_lines_in_file(&extract_call_mods_fp_tsv).unwrap();
+    assert_eq!(before_call_mods, after_call_mods);
+}
+
+#[test]
 fn test_call_mods_same_pileup() {
     // tests that the pileup generated from a pre-thresholded BAM is equivalent
     // to one where the thresholds are used _during_ pileup
@@ -123,6 +166,6 @@ fn test_call_mods_same_pileup() {
     .unwrap();
     check_against_expected_text_file(
         mod_called_pileup.to_str().unwrap(),
-        mod_called_pileup.to_str().unwrap(),
+        in_situ_threshold_pileup.to_str().unwrap(),
     );
 }

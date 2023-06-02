@@ -6,8 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.1.8]
 ### Changes
+- [call-mods] Emit 0 ML value when a mod code is not called, previously the call was omitted (only the called mod was emitted).
 ### Adds
+- [adjust-mods, call-mods, pileup, sample-probs, summary, extract] Allow `--edge-filter` that will remove base modification probabilities at the ends of reads.
 ### Fixes
+- [call-mods] `--no-filtering` flag properly handled. 
+### Deprecated
+- [adjust-mods] In order to allow `--edge-filter` without also performing an ignore or convert, in the next release `--ignore` will require a explicit argument (`h` is no longer the default). In this release, when no edge filter, conversion, or ignore is provided, `h` will be used for ignore, but this behavior will be removed in the next release.
 
 ## [v0.1.7]
 ### Changes

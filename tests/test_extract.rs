@@ -1,8 +1,6 @@
-use crate::common::check_against_expected_text_file;
+use crate::common::{parse_mod_profile, ModData};
 use anyhow::{anyhow, Context};
 use common::run_modkit;
-use derive_new::new;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufRead;
@@ -10,60 +8,6 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 mod common;
-
-#[derive(new, Eq, PartialEq, Debug)]
-struct ModData {
-    q_pos: usize,
-    ref_pos: i64,
-    mod_code: char,
-    strand: char,
-    contig: String,
-    data: String,
-}
-
-impl PartialOrd for ModData {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ModData {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.q_pos.cmp(&other.q_pos) {
-            Ordering::Equal => match self.mod_code.cmp(&other.mod_code) {
-                Ordering::Equal => self.strand.cmp(&other.strand),
-                ord => ord,
-            },
-            ord => ord,
-        }
-    }
-}
-
-fn parse_mod_profile(
-    fp: &PathBuf,
-) -> anyhow::Result<HashMap<String, Vec<ModData>>> {
-    let mut reader =
-        BufReader::new(File::open(fp)?).lines().map(|l| l.unwrap());
-    let mut agg = HashMap::new();
-    let _ = reader.next(); // discard header
-    while let Some(line) = reader.next() {
-        let parts = line.split_ascii_whitespace().collect::<Vec<&str>>();
-        let read_id = parts[0].to_owned();
-        let q_pos = parts[1].parse::<usize>().unwrap();
-        let ref_pos = parts[2].parse::<i64>().unwrap();
-        let mod_code = parts[10].parse::<char>().unwrap();
-        let strand = parts[5].parse::<char>().unwrap();
-        let contig = parts[3].to_owned();
-        agg.entry(read_id)
-            .or_insert(Vec::new())
-            .push(ModData::new(q_pos, ref_pos, mod_code, strand, contig, line));
-    }
-    for (_, dat) in agg.iter_mut() {
-        dat.sort()
-    }
-
-    Ok(agg)
-}
 
 fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {
     let reader = BufReader::new(File::open(fp).unwrap());
@@ -88,11 +32,11 @@ fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {
 #[test]
 fn test_mod_data_ord() {
     let mod_data1 =
-        ModData::new(0, 1, 'm', '+', "".to_string(), "".to_string());
+        ModData::new(0, 1, 'm', '+', 100, "".to_string(), "".to_string());
     let mod_data2 =
-        ModData::new(0, 1, 'h', '+', "".to_string(), "".to_string());
+        ModData::new(0, 1, 'h', '+', 100, "".to_string(), "".to_string());
     let mod_data3 =
-        ModData::new(1, 1, 'h', '+', "".to_string(), "".to_string());
+        ModData::new(1, 1, 'h', '+', 100, "".to_string(), "".to_string());
     assert!(mod_data2 < mod_data1);
     assert!(mod_data1 < mod_data3);
 }
