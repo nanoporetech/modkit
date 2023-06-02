@@ -1770,10 +1770,48 @@ mod mod_bam_tests {
             .collect::<Vec<_>>();
         assert_eq!(vec![9], obs_pos);
 
-        // todo check when read is too short
-        //  edge_filter_start larger than read length
+        // trim larger than read
+        let edge_filter = EdgeFilter::new(50, 50);
+        let mut obs_mod_base_info =
+            ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
+        let c_seq_base_mod_probs = obs_mod_base_info
+            .pos_seq_base_mod_probs
+            .remove(&'C')
+            .unwrap();
+        let c_seq_base_mod_probs =
+            c_seq_base_mod_probs.edge_filter_positions(&edge_filter, dna.len());
+        assert!(c_seq_base_mod_probs.is_none());
+
+        // trim with mod call _at_ the position to be trimmed
+        let mut obs_mod_base_info =
+            ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
+        let c_seq_base_mod_probs = obs_mod_base_info
+            .pos_seq_base_mod_probs
+            .remove(&'C')
+            .unwrap();
+        let expected_pos = vec![3, 9, 12];
+        let obs_pos = c_seq_base_mod_probs
+            .pos_to_base_mod_probs
+            .keys()
+            .map(|p| *p)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(expected_pos, obs_pos);
+        let edge_filter = EdgeFilter::new(3, 3);
+        let c_seq_base_mod_probs = c_seq_base_mod_probs
+            .edge_filter_positions(&edge_filter, dna.len())
+            .unwrap();
+        let obs_pos = c_seq_base_mod_probs
+            .pos_to_base_mod_probs
+            .keys()
+            .map(|p| *p)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(vec![3, 9], obs_pos);
+
+        // todo edge_filter_start larger than read length
         //  edge_filter_end larger than read length
-        //  check boundary, site _at_ the edge filter number
-        //  check when all positions are removed
     }
 }
