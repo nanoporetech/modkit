@@ -8,7 +8,6 @@
     - [Extracting MM/ML tags to a table](./intro_extract.md)
     - [Calling mods in a modBAM](./intro_call_mods.md)
     - [Removing modification calls at the ends of reads](./intro_edge_filter.md)
-    - [Calling base modifications](./intro_call_mods.md)
 - [Extended subcommand help](./advanced_usage.md)
 - [Troubleshooting](./troubleshooting.md)
 - [Current limitations](./limitations.md)
