@@ -6,8 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.1.8]
 ### Changes
+- [adjust-mods] Allow `--edge-filter` that will remove base modification probabilities at the ends of reads.
 ### Adds
 ### Fixes
+### Deprecated
+- [adjust-mods] In order to allow `--edge-filter` without also performing an ignore or convert, the latter are now required (`h` is no longer the default for `--ignore`). When no edge filter, conversion, or ignore is provided, `h` will be used for ignore, but this behavior will be removed in the next release.
 
 ## [v0.1.7]
 ### Changes

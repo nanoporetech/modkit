@@ -52,4 +52,9 @@ modkit motif-bed <reference.fasta> CG 0 > CG_motifs.bed
 modkit extract <in.bam> <out.tsv> --ref <ref.fasta> --include-only CG_motigs.bed
 ```
 
+### Extract only sites that are at least 50 bases from the ends of the reads
+```
+modkit extract <in.bam> <out.tsv> --edge-filter 50
+```
+
 See the help string and/or [advanced_usage](./advanced_usage.md) for more details.

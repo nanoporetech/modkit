@@ -24,7 +24,10 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 1. [Summarizing a modBAM with `summary`](./intro_summary.md)
 1. [Making a motif BED file with `motif-bed`](./intro_motif_bed.md)
 1. [Extracting per-read base modification data into a table](./intro_extract.md)
+2. [Convert modification probabilities into hard calls](./intro_call_mods.md)
+3. [Removing base modification calls at the ends of reads](./intro_edge_filter.md)
 
 ## Notes and troubleshooting
 1. [General troubleshooting](./troubleshooting.md)
+3. [Threshold evaluation examples](./filtering_details.md) (for advanced users)
 
