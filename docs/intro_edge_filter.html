@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Extracting MM/ML tags to a table - Modkit</title>
+        <title>Removing modification calls at the ends of reads - Modkit</title>
 
 
         <!-- Custom HTML head -->
@@ -86,7 +86,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html" class="active"><strong aria-hidden="true">1.5.</strong> Extracting MM/ML tags to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.8.</strong> Calling base modifications</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting MM/ML tags to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html" class="active"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.8.</strong> Calling base modifications</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -147,60 +147,30 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="extracting-base-modification-information"><a class="header" href="#extracting-base-modification-information">Extracting base modification information</a></h1>
-<p>The <code>modkit extract</code> sub-command will produce a table containing the base modification probabilities, 
-the read sequence context, and optionally aligned reference information. If alignment information is 
-present, only the <strong>primary alignment</strong> is used.</p>
-<p>The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
-To only include mapped bases use the <code>--mapped</code> flag. To only include sites of interest, pass a 
-BED-formatted file to the <code>--include-only</code> option. Similarly, to exclude sites, pass a BED-formatted
-file to the <code>--exclude</code> option. One caution, the files generated by <code>modkit extract</code> can be large (2-2.5x
-the size of the BAM). You may want to either use the <code>--num-reads</code> option, the <code>--region</code> option, or
-pre-filter the modBAM ahead of time. You can also stream the output to stdout by setting the output to <code>-</code>
-or <code>stdout</code> and filter the columns before writing to disk.</p>
-<h2 id="description-of-output-table"><a class="header" href="#description-of-output-table">Description of output table</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>column</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
-<tr><td>1</td><td>read_id</td><td>name of the read</td><td>str</td></tr>
-<tr><td>2</td><td>forward_read_position</td><td>0-based position on the forward-oriented read sequence</td><td>int</td></tr>
-<tr><td>3</td><td>ref_position</td><td>aligned 0-based reference sequence position, -1 means unmapped</td><td>int</td></tr>
-<tr><td>4</td><td>chrom</td><td>name of aligned contig, or '.' if unmapped</td><td>str</td></tr>
-<tr><td>5</td><td>mod_strand</td><td>strand of the molecule the base modification is on</td><td>str</td></tr>
-<tr><td>6</td><td>ref_strand</td><td>strand of the reference the read is aligned to, or '.' if unmapped</td><td>str</td></tr>
-<tr><td>7</td><td>fw_soft_clipped_start</td><td>number of bases soft clipped from the start of the forward-oriented read</td><td>int</td></tr>
-<tr><td>8</td><td>fw_soft_clipped_end</td><td>number of bases soft clipped from the end of the forward-oriented read</td><td>int</td></tr>
-<tr><td>9</td><td>read_length</td><td>total length of the read</td><td>int</td></tr>
-<tr><td>10</td><td>mod_qual</td><td>probability of the base modification in the next column</td><td>int</td></tr>
-<tr><td>11</td><td>mod_code</td><td>base modification code from the MM tag</td><td>str</td></tr>
-<tr><td>12</td><td>base_qual</td><td>basecall quality score (phred)</td><td>int</td></tr>
-<tr><td>13</td><td>ref_kmer</td><td>reference 5-mer sequence context (center base is aligned base), '.' if unmapped</td><td>str</td></tr>
-<tr><td>14</td><td>query_kmer</td><td>read 5-mer sequence context (center base is aligned base)</td><td>str</td></tr>
-<tr><td>15</td><td>canonical_base</td><td>canonical base from the query sequence, from the MM tag</td><td>str</td></tr>
-</tbody></table>
-</div>
-<h2 id="example-usages"><a class="header" href="#example-usages">Example usages:</a></h2>
-<h3 id="extract-a-table-from-an-aligned-and-indexed-bam"><a class="header" href="#extract-a-table-from-an-aligned-and-indexed-bam">Extract a table from an aligned and indexed BAM</a></h3>
-<pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt; 
+                        <h1 id="removing-modification-calls-at-the-ends-of-reads"><a class="header" href="#removing-modification-calls-at-the-ends-of-reads">Removing modification calls at the ends of reads</a></h1>
+<p>If you have reads where you know base modifications near the ends should not be used (for example, if they are in adapters), you can use the <code>--edge-filter &lt;n_basepairs&gt;</code> option. This option is available in the following subcommands:</p>
+<ol>
+<li><code>pileup</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
+<li><code>adjust-mods</code>, will <strong>remove</strong> base mofification calls that are <code>&lt;n_basepairs&gt;</code> from the ends from the resultant output modBAM.</li>
+<li><code>summary</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
+<li><code>sample-probs</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
+<li><code>call-mods</code>, will <strong>remove</strong> base mofification calls that are <code>&lt;n_basepairs&gt;</code> from the ends from the resultant output modBAM.</li>
+<li><code>extract</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
+</ol>
+<p>In <code>pileup</code> and <code>call-mods</code> the edge-filter is also respected when estimating the pass-thresholds.</p>
+<h2 id="example-usages"><a class="header" href="#example-usages">Example usages</a></h2>
+<h3 id="call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">call mods with the estimated threshold and ignore modification calls within 100 base pairs of the ends of the reads</a></h3>
+<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --edge-filter 100
 </code></pre>
-<p>If the index <code>input.bam.bai</code> can be found, intervals along the aligned genome can be performed
-in parallel.</p>
-<h3 id="extract-a-table-from-a-region-of-a-large-modbam"><a class="header" href="#extract-a-table-from-a-region-of-a-large-modbam">Extract a table from a region of a large modBAM</a></h3>
-<p>The below example will extract reads from only chr20, and include reference sequence context</p>
-<pre><code>modkit extract &lt;intput.bam&gt; &lt;output.tsv&gt; --region chr20 --ref &lt;ref.fasta&gt;
+<h3 id="perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">Perform pileup, ignoring base modification calls within 100 base pairs of the ends of the reads</a></h3>
+<pre><code>modkit puleup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 100
 </code></pre>
-<h3 id="extract-only-sites-aligned-to-a-cg-motif"><a class="header" href="#extract-only-sites-aligned-to-a-cg-motif">Extract only sites aligned to a CG motif</a></h3>
-<pre><code>modkit motif-bed &lt;reference.fasta&gt; CG 0 &gt; CG_motifs.bed
-modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-only CG_motigs.bed
-</code></pre>
-<h3 id="extract-only-sites-that-are-at-least-50-bases-from-the-ends-of-the-reads"><a class="header" href="#extract-only-sites-that-are-at-least-50-bases-from-the-ends-of-the-reads">Extract only sites that are at least 50 bases from the ends of the reads</a></h3>
-<pre><code>modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --edge-filter 50
-</code></pre>
-<p>See the help string and/or <a href="./advanced_usage.html">advanced_usage</a> for more details.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="intro_motif_bed.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="intro_call_mods.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
@@ -214,7 +184,7 @@ modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="intro_motif_bed.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="intro_call_mods.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
