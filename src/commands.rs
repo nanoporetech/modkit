@@ -1645,7 +1645,7 @@ impl CallMods {
                     self.sampling_interval_size,
                     self.sampling_frac,
                     self.num_reads,
-                    false,
+                    self.no_filtering,
                     self.filter_percentile,
                     self.seed,
                     sampling_region.as_ref(),

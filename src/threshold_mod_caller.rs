@@ -77,7 +77,15 @@ impl MultipleThresholdModCaller {
         let base_mod_call = self.call(canonical_base, &base_mod_probs)?;
         match base_mod_call {
             BaseModCall::Modified(_, mod_code) => {
-                Ok(Some(BaseModProbs::new(mod_code.char(), 1.0)))
+                let called_mod_code = mod_code.char();
+                base_mod_probs.iter_mut().for_each(|(&mod_code, prob)| {
+                    if mod_code == called_mod_code {
+                        *prob = 1.0
+                    } else {
+                        *prob = 0.0
+                    }
+                });
+                Ok(Some(base_mod_probs))
             }
             BaseModCall::Canonical(_) => {
                 base_mod_probs.iter_mut_probs().for_each(|p| *p = 0f32);
@@ -410,6 +418,18 @@ mod threshold_mod_caller_tests {
 
     #[test]
     fn test_multi_threshold_call_probs_multiple_mods_semantics() {
+        let base_mod_probs_eq = |a: &BaseModProbs, b: &BaseModProbs| -> bool {
+            let a = a
+                .iter_probs()
+                .map(|(base, prob)| (*base, *prob))
+                .collect::<HashMap<char, f32>>();
+            let b = b
+                .iter_probs()
+                .map(|(base, prob)| (*base, *prob))
+                .collect::<HashMap<char, f32>>();
+            a == b
+        };
+
         let per_mod_thresholds = vec![(ModCode::m, 0.7), (ModCode::h, 0.8)]
             .into_iter()
             .collect();
@@ -426,7 +446,10 @@ mod threshold_mod_caller_tests {
             .call_probs(&DnaBase::C, base_mod_probs)
             .unwrap()
             .unwrap();
-        assert_eq!(call, BaseModProbs::new('h', 1.0));
+
+        let mut expected = BaseModProbs::new('h', 1.0);
+        expected.insert_base_mod_prob('m', 0.0);
+        assert!(base_mod_probs_eq(&call, &expected));
 
         let mut base_mod_probs = BaseModProbs::new('m', 0.2);
         base_mod_probs.insert_base_mod_prob('h', 0.7);

@@ -5,9 +5,7 @@ use crate::mod_bam::{
 };
 use crate::mod_base_code::DnaBase;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{
-    self, get_query_name_string, get_spinner, record_is_secondary,
-};
+use crate::util::{get_query_name_string, get_spinner, record_is_secondary};
 use anyhow::anyhow;
 use log::{debug, info};
 use rust_htslib::bam::record::{Aux, AuxArray};
@@ -134,8 +132,8 @@ pub fn adjust_modbam(
     let mut total_skipped = 0usize;
     for (i, result) in reader.records().enumerate() {
         if let Ok(record) = result {
-            let record_name = util::get_query_name_string(&record)
-                .unwrap_or("???".to_owned());
+            let record_name =
+                get_query_name_string(&record).unwrap_or("???".to_owned());
             match adjust_mod_probs(
                 record,
                 &collapse_methods,

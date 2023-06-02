@@ -310,6 +310,10 @@ impl BaseModProbs {
         self.probs.iter_mut()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&char, &mut f32)> {
+        self.mod_codes.iter().zip(self.probs.iter_mut())
+    }
+
     pub(crate) fn into_collapsed(
         self,
         method: &CollapseMethod,
