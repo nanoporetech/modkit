@@ -1,4 +1,4 @@
-use crate::mod_pileup::ModBasePileup;
+use crate::pileup::{ModBasePileup, PartitionKey};
 use crate::summarize::ModSummary;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 
@@ -43,6 +43,9 @@ impl<T: Write> OutWriter<ModBasePileup> for BedMethylWriter<T> {
         let tab = '\t';
         let space = if self.tabs_and_spaces { tab } else { ' ' };
         for (pos, feature_counts) in item.iter_counts() {
+            let feature_counts = feature_counts
+                .get(&PartitionKey::NoKey)
+                .unwrap_or(&Vec::new());
             for feature_count in feature_counts {
                 let row = format!(
                     "{}{tab}\
@@ -146,6 +149,9 @@ impl OutWriter<ModBasePileup> for BedGraphWriter {
         let mut rows_written = 0;
         let tab = '\t';
         for (pos, feature_counts) in item.iter_counts() {
+            let feature_counts = feature_counts
+                .get(&PartitionKey::NoKey)
+                .unwrap_or(&Vec::new());
             for feature_count in feature_counts {
                 let fh = self.get_writer_for_modstrand(
                     feature_count.raw_strand,

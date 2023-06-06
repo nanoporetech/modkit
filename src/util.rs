@@ -363,3 +363,10 @@ pub fn add_modkit_pg_records(header: &mut bam::Header) {
 
     header.push_record(&modkit_header_record);
 }
+
+pub(crate) fn get_stringable_aux(
+    record: &bam::Record,
+    tag: &[u8],
+) -> AnyhowResult<Option<String>> {
+    unimplemented!()
+}

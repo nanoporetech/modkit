@@ -27,8 +27,8 @@ use crate::mod_bam::{
     SkipMode, ML_TAGS, MM_TAGS,
 };
 use crate::mod_base_code::{DnaBase, ModCode, ParseChar};
-use crate::mod_pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
+use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::summarize::{summarize_modbam, ModSummary};
