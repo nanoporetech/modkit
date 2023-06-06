@@ -43,52 +43,57 @@ impl<T: Write> OutWriter<ModBasePileup> for BedMethylWriter<T> {
         let tab = '\t';
         let space = if self.tabs_and_spaces { tab } else { ' ' };
         for (pos, feature_counts) in item.iter_counts() {
-            let feature_counts = feature_counts
-                .get(&PartitionKey::NoKey)
-                .unwrap_or(&Vec::new());
-            for feature_count in feature_counts {
-                let row = format!(
-                    "{}{tab}\
-                    {}{tab}\
-                    {}{tab}\
-                    {}{tab}\
-                    {}{tab}\
-                    {}{tab}\
-                    {}{tab}\
-                    {}{tab}\
-                    {}{tab}\
-                    {}{space}\
-                    {}{space}\
-                    {}{space}\
-                    {}{space}\
-                    {}{space}\
-                    {}{space}\
-                    {}{space}\
-                    {}{space}\
-                    {}\n",
-                    item.chrom_name,
-                    pos,
-                    pos + 1,
-                    feature_count.raw_mod_code,
-                    feature_count.filtered_coverage,
-                    feature_count.raw_strand,
-                    pos,
-                    pos + 1,
-                    "255,0,0",
-                    feature_count.filtered_coverage,
-                    format!("{:.2}", feature_count.fraction_modified * 100f32),
-                    feature_count.n_modified,
-                    feature_count.n_canonical,
-                    feature_count.n_other_modified,
-                    feature_count.n_delete,
-                    feature_count.n_filtered,
-                    feature_count.n_diff,
-                    feature_count.n_nocall,
-                );
-                self.buf_writer
-                    .write(row.as_bytes())
-                    .with_context(|| "failed to write row")?;
-                rows_written += 1;
+            match feature_counts.get(&PartitionKey::NoKey) {
+                Some(feature_counts) => {
+                    for feature_count in feature_counts {
+                        let row = format!(
+                            "{}{tab}\
+                             {}{tab}\
+                             {}{tab}\
+                             {}{tab}\
+                             {}{tab}\
+                             {}{tab}\
+                             {}{tab}\
+                             {}{tab}\
+                             {}{tab}\
+                             {}{space}\
+                             {}{space}\
+                             {}{space}\
+                             {}{space}\
+                             {}{space}\
+                             {}{space}\
+                             {}{space}\
+                             {}{space}\
+                             {}\n",
+                            item.chrom_name,
+                            pos,
+                            pos + 1,
+                            feature_count.raw_mod_code,
+                            feature_count.filtered_coverage,
+                            feature_count.raw_strand,
+                            pos,
+                            pos + 1,
+                            "255,0,0",
+                            feature_count.filtered_coverage,
+                            format!(
+                                "{:.2}",
+                                feature_count.fraction_modified * 100f32
+                            ),
+                            feature_count.n_modified,
+                            feature_count.n_canonical,
+                            feature_count.n_other_modified,
+                            feature_count.n_delete,
+                            feature_count.n_filtered,
+                            feature_count.n_diff,
+                            feature_count.n_nocall,
+                        );
+                        self.buf_writer
+                            .write(row.as_bytes())
+                            .with_context(|| "failed to write row")?;
+                        rows_written += 1;
+                    }
+                }
+                None => {}
             }
         }
         Ok(rows_written)
@@ -149,28 +154,30 @@ impl OutWriter<ModBasePileup> for BedGraphWriter {
         let mut rows_written = 0;
         let tab = '\t';
         for (pos, feature_counts) in item.iter_counts() {
-            let feature_counts = feature_counts
-                .get(&PartitionKey::NoKey)
-                .unwrap_or(&Vec::new());
-            for feature_count in feature_counts {
-                let fh = self.get_writer_for_modstrand(
-                    feature_count.raw_strand,
-                    feature_count.raw_mod_code,
-                );
-                let row = format!(
-                    "{}{tab}\
+            match feature_counts.get(&PartitionKey::NoKey) {
+                Some(feature_counts) => {
+                    for feature_count in feature_counts {
+                        let fh = self.get_writer_for_modstrand(
+                            feature_count.raw_strand,
+                            feature_count.raw_mod_code,
+                        );
+                        let row = format!(
+                            "{}{tab}\
                      {}{tab}\
                      {}{tab}\
                      {}{tab}\
                      {}\n",
-                    item.chrom_name,
-                    pos,
-                    pos + 1,
-                    feature_count.fraction_modified,
-                    feature_count.filtered_coverage,
-                );
-                fh.write(row.as_bytes()).unwrap();
-                rows_written += 1;
+                            item.chrom_name,
+                            pos,
+                            pos + 1,
+                            feature_count.fraction_modified,
+                            feature_count.filtered_coverage,
+                        );
+                        fh.write(row.as_bytes()).unwrap();
+                        rows_written += 1;
+                    }
+                }
+                None => {}
             }
         }
 

@@ -15,6 +15,7 @@ pub mod threshold_mod_caller;
 pub mod thresholds;
 pub mod writers;
 
+pub(crate) mod command_utils;
 mod extract_mods;
 mod read_cache;
 mod read_ids_to_base_mod_probs;

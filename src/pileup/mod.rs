@@ -1,4 +1,4 @@
-mod subcommand;
+pub mod subcommand;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -382,29 +382,23 @@ fn combine_strand_features(
     let mut combined_position_feature_counts = HashMap::new();
     for (pos_position, neg_position) in positions_to_combine {
         // features for the positive and negative position, grouped by partition key
-        let mut pos_feature_mappings =
-            position_feature_counts.remove(&pos_position);
-        let mut neg_feature_mappings =
-            position_feature_counts.remove(&neg_position);
-        // collect all partition keys
-        let partition_keys = {
-            let pos_keys = pos_feature_mappings
-                .map(|mapping| mapping.keys().collect::<Vec<&PartitionKey>>())
-                .unwrap_or(Vec::new());
-            let neg_keys = neg_feature_mappings
-                .map(|mapping| mapping.keys().collect::<Vec<&PartitionKey>>())
-                .unwrap_or(Vec::new());
-            pos_keys
-                .into_iter()
-                .chain(neg_keys.into_iter())
-                .collect::<HashSet<&PartitionKey>>()
-        };
-        for &partition_key in partition_keys {
-            let pos_features = pos_feature_mappings
-                .and_then(|mut mapping| mapping.remove(&partition_key));
-            let neg_features = neg_feature_mappings
-                .and_then(|mut mapping| mapping.remove(&partition_key));
+        let mut pos_feature_mappings = position_feature_counts
+            .remove(&pos_position)
+            .unwrap_or(HashMap::new());
+        let mut neg_feature_mappings = position_feature_counts
+            .remove(&neg_position)
+            .unwrap_or(HashMap::new());
 
+        // collect all partition keys
+        let partition_keys = pos_feature_mappings
+            .keys()
+            .chain(neg_feature_mappings.keys())
+            .map(|k| *k)
+            .collect::<HashSet<PartitionKey>>();
+
+        for partition_key in partition_keys {
+            let pos_features = pos_feature_mappings.remove(&partition_key);
+            let neg_features = neg_feature_mappings.remove(&partition_key);
             match (pos_features, neg_features) {
                 (Some(pos_feats), Some(neg_feats)) => {
                     // important to use b-tree map here so that ordering is deterministic
@@ -840,18 +834,16 @@ pub fn process_region<T: AsRef<Path>>(
             .into_iter()
             .map(|(partition_key, fv)| {
                 let pos_strand_observed_mod_codes_for_key =
-                    pos_strand_observed_mod_codes
-                        .get(&partition_key)
-                        .unwrap_or(&HashSet::new());
+                    pos_strand_observed_mod_codes.get(&partition_key);
                 let neg_strand_observed_mod_codes_for_key =
-                    neg_strand_observed_mod_codes
-                        .get(&partition_key)
-                        .unwrap_or(&HashSet::new());
+                    neg_strand_observed_mod_codes.get(&partition_key);
                 (
                     partition_key,
                     fv.decode(
-                        &pos_strand_observed_mod_codes_for_key,
-                        &neg_strand_observed_mod_codes_for_key,
+                        pos_strand_observed_mod_codes_for_key
+                            .unwrap_or(&HashSet::new()),
+                        neg_strand_observed_mod_codes_for_key
+                            .unwrap_or(&HashSet::new()),
                         &pileup_numeric_options,
                     ),
                 )
