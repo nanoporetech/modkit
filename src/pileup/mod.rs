@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use derive_new::new;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::{IndexSet};
 use itertools::Itertools;
 use log::{debug, error};
 use rust_htslib::bam;
@@ -679,7 +679,7 @@ pub fn process_region<T: AsRef<Path>>(
             let record = alignment.record();
             let partition_key = if let Some(tag) = partition_tag {
                 match get_stringable_aux(&record, tag) {
-                    Ok(Some(s)) => {
+                    Some(s) => {
                         if let Some(idx) = partition_keys.get_index_of(&s) {
                             PartitionKey::Key(idx)
                         } else {
@@ -693,11 +693,7 @@ pub fn process_region<T: AsRef<Path>>(
                             )
                         }
                     }
-                    Ok(None) => PartitionKey::NoKey,
-                    Err(_) => {
-                        read_cache.add_to_skip_list(&record);
-                        continue;
-                    }
+                    None => PartitionKey::NoKey,
                 }
             } else {
                 PartitionKey::NoKey

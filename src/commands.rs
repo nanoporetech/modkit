@@ -1,20 +1,18 @@
 use std::collections::{HashMap, HashSet};
 use std::num::ParseFloatError;
 use std::path::PathBuf;
-use std::thread;
+
 
 use crate::adjust::{adjust_modbam, record_is_valid};
 use crate::command_utils::{
     get_threshold_from_options, parse_per_mod_thresholds, parse_thresholds,
 };
-use anyhow::{anyhow, Context, Result as AnyhowResult};
+use anyhow::{Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
-use crossbeam_channel::bounded;
+
 use histo_fp::Histogram;
-use indicatif::{
-    MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle,
-};
-use log::{debug, error, info, warn};
+
+use log::{debug, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
@@ -22,27 +20,26 @@ use rust_htslib::bam::Read;
 
 use crate::errs::{InputError, RunError};
 use crate::extract_mods::ExtractMods;
-use crate::interval_chunks::IntervalChunks;
+
 use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, EdgeFilter, ModBaseInfo, RawModCode,
     SkipMode, ML_TAGS, MM_TAGS,
 };
-use crate::mod_base_code::{DnaBase, ModCode, ParseChar};
-use crate::motif_bed::{motif_bed, MotifLocations, RegexMotif};
+use crate::mod_base_code::{ModCode};
+use crate::motif_bed::{motif_bed};
 use crate::pileup::{
-    process_region, subcommand::ModBamPileup, ModBasePileup,
-    PileupNumericOptions,
+    subcommand::ModBamPileup,
 };
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::summarize::{summarize_modbam, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::thresholds::{calc_threshold_from_bam, Percentiles};
+use crate::thresholds::{Percentiles};
 use crate::util;
-use crate::util::{add_modkit_pg_records, get_spinner, get_targets, Region};
+use crate::util::{add_modkit_pg_records, get_spinner, Region};
 use crate::writers::{
-    BedGraphWriter, BedMethylWriter, MultiTableWriter, OutWriter, SampledProbs,
+    MultiTableWriter, OutWriter, SampledProbs,
     TableWriter, TsvWriter,
 };
 

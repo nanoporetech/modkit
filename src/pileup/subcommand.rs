@@ -10,7 +10,7 @@ use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::util::{get_spinner, get_targets, Region};
 use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter};
 use anyhow::{anyhow, Context};
-use clap::{Args, Subcommand, ValueEnum};
+use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{
     MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle,

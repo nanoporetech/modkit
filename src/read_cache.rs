@@ -403,12 +403,6 @@ impl<'a> ReadCache<'a> {
         let n_skipped = self.skip_set.len();
         (used.len(), n_skipped)
     }
-
-    pub(crate) fn add_to_skip_list(&mut self, record: &bam::Record) {
-        let read_id = String::from_utf8(record.qname().to_vec())
-            .unwrap_or("???".to_string());
-        self.skip_set.insert(read_id);
-    }
 }
 
 #[cfg(test)]

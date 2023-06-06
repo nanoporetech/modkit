@@ -367,6 +367,45 @@ pub fn add_modkit_pg_records(header: &mut bam::Header) {
 pub(crate) fn get_stringable_aux(
     record: &bam::Record,
     tag: &[u8],
-) -> AnyhowResult<Option<String>> {
-    unimplemented!()
+) -> Option<String> {
+    record.aux(tag).ok()
+        .and_then(|aux| match aux {
+            Aux::String(s) => Some(s.to_string()),
+            Aux::Char(c) => Some(format!("{}", c)),
+            Aux::Double(f) => Some(format!("{}", f)),
+            Aux::Float(f)=> Some(format!("{}", f)),
+            Aux::HexByteArray(a) => Some(a.to_string()),
+            Aux::I8(i) => Some(format!("{}", i)),
+            Aux::I16(i) => Some(format!("{}", i)),
+            Aux::I32(i) => Some(format!("{}", i)),
+            Aux::U8(u) => Some(format!("{}", u)),
+            Aux::U16(u) => Some(format!("{}", u)),
+            Aux::U32(u) => Some(format!("{}", u)),
+            _ => None
+        })
+}
+
+#[cfg(test)]
+mod utils_tests {
+    use rust_htslib::bam;
+    use rust_htslib::bam::Read;
+    use crate::util::{get_query_name_string, get_stringable_aux};
+
+    #[test]
+    fn test_get_stringable_tag() {
+        let bam_fp = "tests/resources/bc_anchored_10_reads.sorted.bam";
+        let mut reader = bam::Reader::from_path(bam_fp).unwrap();
+        let mut checked = false;
+        for record in reader.records().filter_map(|r| r.ok()) {
+            let read_id = get_query_name_string(&record).unwrap();
+            if read_id == "068ce426-129e-4870-bd34-16cd78edaa43".to_string() {
+                assert!(get_stringable_aux(&record, "fb".as_bytes()).is_none());
+                let expected_rg = "5598049b1b3264566b162bf035344e7ec610d608_dna_r10.4.1_e8.2_400bps_hac@v3.5.2".to_string();
+                assert_eq!(get_stringable_aux(&record, "RG".as_bytes()), Some(expected_rg));
+                assert_eq!(get_stringable_aux(&record, "rn".as_bytes()), Some("6335".to_string()));
+                checked = true
+            }
+        }
+        assert!(checked)
+    }
 }
