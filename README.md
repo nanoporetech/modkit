@@ -63,7 +63,7 @@ the reference,
 Using this option is equivalent to running with the options:
 
 ```bash
-modkit pileup --cpg --ref <reference.fasta> --collapse h --combine-strands
+modkit pileup --cpg --ref <reference.fasta> --ignore h --combine-strands
 ```
 
 For more information on the individual options see the [Advanced Usage](./book/src/advanced_usage.md) help document.
