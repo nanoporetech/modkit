@@ -364,32 +364,36 @@ pub fn add_modkit_pg_records(header: &mut bam::Header) {
     header.push_record(&modkit_header_record);
 }
 
+#[derive(new)]
+pub struct SamTag {
+    inner: [u8; 2],
+}
+
 pub(crate) fn get_stringable_aux(
     record: &bam::Record,
-    tag: &[u8],
+    sam_tag: &SamTag,
 ) -> Option<String> {
-    record.aux(tag).ok()
-        .and_then(|aux| match aux {
-            Aux::String(s) => Some(s.to_string()),
-            Aux::Char(c) => Some(format!("{}", c)),
-            Aux::Double(f) => Some(format!("{}", f)),
-            Aux::Float(f)=> Some(format!("{}", f)),
-            Aux::HexByteArray(a) => Some(a.to_string()),
-            Aux::I8(i) => Some(format!("{}", i)),
-            Aux::I16(i) => Some(format!("{}", i)),
-            Aux::I32(i) => Some(format!("{}", i)),
-            Aux::U8(u) => Some(format!("{}", u)),
-            Aux::U16(u) => Some(format!("{}", u)),
-            Aux::U32(u) => Some(format!("{}", u)),
-            _ => None
-        })
+    record.aux(&sam_tag.inner).ok().and_then(|aux| match aux {
+        Aux::String(s) => Some(s.to_string()),
+        Aux::Char(c) => Some(format!("{}", c)),
+        Aux::Double(f) => Some(format!("{}", f)),
+        Aux::Float(f) => Some(format!("{}", f)),
+        Aux::HexByteArray(a) => Some(a.to_string()),
+        Aux::I8(i) => Some(format!("{}", i)),
+        Aux::I16(i) => Some(format!("{}", i)),
+        Aux::I32(i) => Some(format!("{}", i)),
+        Aux::U8(u) => Some(format!("{}", u)),
+        Aux::U16(u) => Some(format!("{}", u)),
+        Aux::U32(u) => Some(format!("{}", u)),
+        _ => None,
+    })
 }
 
 #[cfg(test)]
 mod utils_tests {
+    use crate::util::{get_query_name_string, get_stringable_aux, SamTag};
     use rust_htslib::bam;
     use rust_htslib::bam::Read;
-    use crate::util::{get_query_name_string, get_stringable_aux};
 
     #[test]
     fn test_get_stringable_tag() {
@@ -399,10 +403,21 @@ mod utils_tests {
         for record in reader.records().filter_map(|r| r.ok()) {
             let read_id = get_query_name_string(&record).unwrap();
             if read_id == "068ce426-129e-4870-bd34-16cd78edaa43".to_string() {
-                assert!(get_stringable_aux(&record, "fb".as_bytes()).is_none());
+                let tag = SamTag {
+                    inner: [102, 98], // 'fb' not a tag that's there
+                };
+                assert!(get_stringable_aux(&record, &tag).is_none());
                 let expected_rg = "5598049b1b3264566b162bf035344e7ec610d608_dna_r10.4.1_e8.2_400bps_hac@v3.5.2".to_string();
-                assert_eq!(get_stringable_aux(&record, "RG".as_bytes()), Some(expected_rg));
-                assert_eq!(get_stringable_aux(&record, "rn".as_bytes()), Some("6335".to_string()));
+                let tag = SamTag { inner: [82, 71] };
+                assert_eq!(
+                    get_stringable_aux(&record, &tag),
+                    Some(expected_rg)
+                );
+                let tag = SamTag { inner: [114, 110] };
+                assert_eq!(
+                    get_stringable_aux(&record, &tag),
+                    Some("6335".to_string())
+                );
                 checked = true
             }
         }

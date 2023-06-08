@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::num::ParseFloatError;
 use std::path::PathBuf;
 
-
 use crate::adjust::{adjust_modbam, record_is_valid};
 use crate::command_utils::{
     get_threshold_from_options, parse_per_mod_thresholds, parse_thresholds,
@@ -13,7 +12,6 @@ use clap::{Args, Subcommand, ValueEnum};
 use histo_fp::Histogram;
 
 use log::{debug, info, warn};
-use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
@@ -26,21 +24,18 @@ use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, EdgeFilter, ModBaseInfo, RawModCode,
     SkipMode, ML_TAGS, MM_TAGS,
 };
-use crate::mod_base_code::{ModCode};
-use crate::motif_bed::{motif_bed};
-use crate::pileup::{
-    subcommand::ModBamPileup,
-};
+use crate::mod_base_code::ModCode;
+use crate::motif_bed::motif_bed;
+use crate::pileup::subcommand::ModBamPileup;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::summarize::{summarize_modbam, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::thresholds::{Percentiles};
+use crate::thresholds::Percentiles;
 use crate::util;
 use crate::util::{add_modkit_pg_records, get_spinner, Region};
 use crate::writers::{
-    MultiTableWriter, OutWriter, SampledProbs,
-    TableWriter, TsvWriter,
+    MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
 };
 
 #[derive(Subcommand)]

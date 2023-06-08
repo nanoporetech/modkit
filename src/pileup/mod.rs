@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use derive_new::new;
-use indexmap::{IndexSet};
+use indexmap::IndexSet;
 use itertools::Itertools;
 use log::{debug, error};
 use rust_htslib::bam;
@@ -16,7 +16,8 @@ use crate::motif_bed::{MotifLocations, RegexMotif};
 use crate::read_cache::ReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
-    get_query_name_string, get_stringable_aux, record_is_secondary, Strand,
+    get_query_name_string, get_stringable_aux, record_is_secondary, SamTag,
+    Strand,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -559,10 +560,40 @@ impl<'a> Iterator for PileupIter<'a> {
     }
 }
 
-#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone, Ord, PartialOrd)]
 pub enum PartitionKey {
     NoKey,
     Key(usize),
+}
+
+fn parse_tags_from_record(
+    record: &bam::Record,
+    tags: &[SamTag],
+) -> Option<String> {
+    let mut values = Vec::with_capacity(tags.len());
+    let mut got_match = false;
+    for tag in tags {
+        let value = get_stringable_aux(&record, tag);
+        if value.is_some() {
+            got_match = true
+        }
+        values.push(value);
+    }
+    let values = if got_match {
+        Some(
+            values
+                .into_iter()
+                .map(|v| match v {
+                    Some(v) => v,
+                    None => "missing".to_string(),
+                })
+                .collect::<Vec<String>>(),
+        )
+    } else {
+        None
+    };
+
+    values.map(|keys| keys.into_iter().join("_"))
 }
 
 pub struct ModBasePileup {
@@ -571,7 +602,7 @@ pub struct ModBasePileup {
         HashMap<u32, HashMap<PartitionKey, Vec<PileupFeatureCounts>>>,
     pub(crate) skipped_records: usize,
     pub(crate) processed_records: usize,
-    partition_keys: IndexSet<String>,
+    pub(crate) partition_keys: IndexSet<String>,
 }
 
 impl ModBasePileup {
@@ -579,7 +610,7 @@ impl ModBasePileup {
         self.position_feature_counts.len()
     }
 
-    pub fn iter_counts(
+    pub fn iter_counts_sorted(
         &self,
     ) -> impl Iterator<Item = (&u32, &HashMap<PartitionKey, Vec<PileupFeatureCounts>>)>
     {
@@ -615,7 +646,7 @@ pub fn process_region<T: AsRef<Path>>(
     combine_strands: bool,
     motif_locations: Option<&MotifLocations>,
     edge_filter: Option<&EdgeFilter>,
-    partition_tag: Option<&[u8]>,
+    partition_tags: Option<&Vec<SamTag>>,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -677,8 +708,8 @@ pub fn process_region<T: AsRef<Path>>(
         for alignment in alignment_iter {
             assert!(!alignment.is_refskip());
             let record = alignment.record();
-            let partition_key = if let Some(tag) = partition_tag {
-                match get_stringable_aux(&record, tag) {
+            let partition_key = if let Some(tags) = partition_tags {
+                match parse_tags_from_record(&record, tags) {
                     Some(s) => {
                         if let Some(idx) = partition_keys.get_index_of(&s) {
                             PartitionKey::Key(idx)

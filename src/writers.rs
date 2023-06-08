@@ -1,4 +1,4 @@
-use crate::pileup::{ModBasePileup, PartitionKey};
+use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
 use crate::summarize::ModSummary;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 
@@ -6,9 +6,10 @@ use crate::read_ids_to_base_mod_probs::ReadsBaseModProfile;
 use crate::thresholds::Percentiles;
 use derive_new::new;
 use histo_fp::Histogram;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use prettytable::format::FormatBuilder;
 use prettytable::{cell, row, Table};
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
@@ -35,63 +36,82 @@ impl<T: Write + Sized> BedMethylWriter<T> {
             tabs_and_spaces,
         }
     }
+
+    #[inline]
+    fn write_feature_counts(
+        pos: u32,
+        chrom_name: &str,
+        feature_counts: &[PileupFeatureCounts],
+        writer: &mut BufWriter<T>,
+        tabs_and_spaces: bool,
+    ) -> AnyhowResult<u64> {
+        let tab = '\t';
+        let space = if tabs_and_spaces { ' ' } else { tab };
+        let mut rows_written = 0u64;
+        for feature_count in feature_counts {
+            let row = format!(
+                "{}{tab}\
+                 {}{tab}\
+                 {}{tab}\
+                 {}{tab}\
+                 {}{tab}\
+                 {}{tab}\
+                 {}{tab}\
+                 {}{tab}\
+                 {}{tab}\
+                 {}{space}\
+                 {}{space}\
+                 {}{space}\
+                 {}{space}\
+                 {}{space}\
+                 {}{space}\
+                 {}{space}\
+                 {}{space}\
+                 {}\n",
+                chrom_name,
+                pos,
+                pos + 1,
+                feature_count.raw_mod_code,
+                feature_count.filtered_coverage,
+                feature_count.raw_strand,
+                pos,
+                pos + 1,
+                "255,0,0",
+                feature_count.filtered_coverage,
+                format!("{:.2}", feature_count.fraction_modified * 100f32),
+                feature_count.n_modified,
+                feature_count.n_canonical,
+                feature_count.n_other_modified,
+                feature_count.n_delete,
+                feature_count.n_filtered,
+                feature_count.n_diff,
+                feature_count.n_nocall,
+            );
+            writer
+                .write(row.as_bytes())
+                .with_context(|| "failed to write row")?;
+            rows_written += 1;
+        }
+
+        Ok(rows_written)
+    }
 }
 
 impl<T: Write> OutWriter<ModBasePileup> for BedMethylWriter<T> {
     fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
         let mut rows_written = 0;
-        let tab = '\t';
-        let space = if self.tabs_and_spaces { tab } else { ' ' };
-        for (pos, feature_counts) in item.iter_counts() {
+        // let tab = '\t';
+        // let space = if self.tabs_and_spaces { tab } else { ' ' };
+        for (pos, feature_counts) in item.iter_counts_sorted() {
             match feature_counts.get(&PartitionKey::NoKey) {
                 Some(feature_counts) => {
-                    for feature_count in feature_counts {
-                        let row = format!(
-                            "{}{tab}\
-                             {}{tab}\
-                             {}{tab}\
-                             {}{tab}\
-                             {}{tab}\
-                             {}{tab}\
-                             {}{tab}\
-                             {}{tab}\
-                             {}{tab}\
-                             {}{space}\
-                             {}{space}\
-                             {}{space}\
-                             {}{space}\
-                             {}{space}\
-                             {}{space}\
-                             {}{space}\
-                             {}{space}\
-                             {}\n",
-                            item.chrom_name,
-                            pos,
-                            pos + 1,
-                            feature_count.raw_mod_code,
-                            feature_count.filtered_coverage,
-                            feature_count.raw_strand,
-                            pos,
-                            pos + 1,
-                            "255,0,0",
-                            feature_count.filtered_coverage,
-                            format!(
-                                "{:.2}",
-                                feature_count.fraction_modified * 100f32
-                            ),
-                            feature_count.n_modified,
-                            feature_count.n_canonical,
-                            feature_count.n_other_modified,
-                            feature_count.n_delete,
-                            feature_count.n_filtered,
-                            feature_count.n_diff,
-                            feature_count.n_nocall,
-                        );
-                        self.buf_writer
-                            .write(row.as_bytes())
-                            .with_context(|| "failed to write row")?;
-                        rows_written += 1;
-                    }
+                    rows_written += BedMethylWriter::write_feature_counts(
+                        *pos,
+                        &item.chrom_name,
+                        &feature_counts,
+                        &mut self.buf_writer,
+                        self.tabs_and_spaces,
+                    )?;
                 }
                 None => {}
             }
@@ -100,37 +120,54 @@ impl<T: Write> OutWriter<ModBasePileup> for BedMethylWriter<T> {
     }
 }
 
+#[derive(new, Hash, Eq, PartialEq, Copy, Clone)]
+struct BedGraphFileKey {
+    partition_key: PartitionKey,
+    strand: char,
+    raw_mode_code: char,
+}
+
 pub struct BedGraphWriter {
     prefix: Option<String>,
     out_dir: PathBuf,
-    router: HashMap<(char, char), BufWriter<File>>,
+    router: HashMap<BedGraphFileKey, BufWriter<File>>,
+    use_groupings: bool,
 }
 
 impl BedGraphWriter {
-    pub fn new(out_dir: &str, prefix: Option<&String>) -> AnyhowResult<Self> {
-        let out_dir = Path::new(out_dir).to_path_buf();
-        if out_dir.is_file() {
-            Err(anyhow!("out dir cannot be a file, needs to be a directory"))
-        } else {
-            if !out_dir.exists() {
-                std::fs::create_dir_all(out_dir.clone())?;
-            }
-            Ok(Self {
-                prefix: prefix.map(|s| s.to_owned()),
-                out_dir,
-                router: HashMap::new(),
-            })
+    pub fn new(
+        out_dir: &str,
+        prefix: Option<&String>,
+        use_groupings: bool,
+    ) -> AnyhowResult<Self> {
+        let out_dir_fp = Path::new(out_dir).to_path_buf();
+        if !out_dir_fp.exists() {
+            info!("creating directory for bedgraph output at {out_dir}");
+            std::fs::create_dir_all(out_dir_fp.clone())?;
         }
+        Ok(Self {
+            prefix: prefix.map(|s| s.to_owned()),
+            out_dir: out_dir_fp,
+            router: HashMap::new(),
+            use_groupings,
+        })
     }
 
     fn get_writer_for_modstrand(
         &mut self,
-        strand: char,
-        raw_mod_code: char,
+        key: BedGraphFileKey,
+        key_name: &str,
     ) -> &mut BufWriter<File> {
         self.router
-            .entry((raw_mod_code, strand))
+            .entry(key)
             .or_insert_with(|| {
+                let strand = key.strand;
+                let raw_mod_code = key.raw_mode_code;
+                let delim = if key_name == "" {
+                    ""
+                } else {
+                    "_"
+                };
                 let strand_label = match strand {
                     '+' => "positive",
                     '-' => "negative",
@@ -138,11 +175,12 @@ impl BedGraphWriter {
                     _ => "_unknown",
                 };
                 let filename = if let Some(p) = &self.prefix {
-                    format!("{}_{}_{}.bedgraph", p, raw_mod_code, strand_label)
+                    format!("{p}{delim}{key_name}{delim}{raw_mod_code}_{strand_label}.bedgraph")
                 } else {
-                    format!("{}_{}.bedgraph", raw_mod_code, strand_label)
+                    format!("{key_name}{delim}{raw_mod_code}_{strand_label}.bedgraph")
                 };
                 let fp = self.out_dir.join(filename);
+                // todo(arand) danger, should remove this unwrap
                 let fh = File::create(fp).unwrap();
                 BufWriter::new(fh)
             })
@@ -153,31 +191,44 @@ impl OutWriter<ModBasePileup> for BedGraphWriter {
     fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
         let mut rows_written = 0;
         let tab = '\t';
-        for (pos, feature_counts) in item.iter_counts() {
-            match feature_counts.get(&PartitionKey::NoKey) {
-                Some(feature_counts) => {
-                    for feature_count in feature_counts {
-                        let fh = self.get_writer_for_modstrand(
-                            feature_count.raw_strand,
-                            feature_count.raw_mod_code,
-                        );
-                        let row = format!(
-                            "{}{tab}\
-                     {}{tab}\
-                     {}{tab}\
-                     {}{tab}\
-                     {}\n",
-                            item.chrom_name,
-                            pos,
-                            pos + 1,
-                            feature_count.fraction_modified,
-                            feature_count.filtered_coverage,
-                        );
-                        fh.write(row.as_bytes()).unwrap();
-                        rows_written += 1;
+        for (pos, feature_counts) in item.iter_counts_sorted() {
+            for (partition_key, pileup_feature_counts) in feature_counts {
+                let key_name = match partition_key {
+                    PartitionKey::NoKey => {
+                        if self.use_groupings {
+                            UNGROUPED
+                        } else {
+                            ""
+                        }
                     }
+                    PartitionKey::Key(idx) => item
+                        .partition_keys
+                        .get_index(*idx)
+                        .map(|s| s.as_str())
+                        .unwrap_or(NOT_FOUND),
+                };
+                for feature_count in pileup_feature_counts {
+                    let key = BedGraphFileKey::new(
+                        *partition_key,
+                        feature_count.raw_strand,
+                        feature_count.raw_mod_code,
+                    );
+                    let fh = self.get_writer_for_modstrand(key, key_name);
+                    let row = format!(
+                        "{}{tab}\
+                             {}{tab}\
+                             {}{tab}\
+                             {}{tab}\
+                             {}\n",
+                        item.chrom_name,
+                        pos,
+                        pos + 1,
+                        feature_count.fraction_modified,
+                        feature_count.filtered_coverage,
+                    );
+                    fh.write(row.as_bytes()).unwrap();
+                    rows_written += 1;
                 }
-                None => {}
             }
         }
 
@@ -580,5 +631,86 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
 
     fn num_reads(&self) -> usize {
         self.written_reads.len()
+    }
+}
+
+pub struct PartitioningBedMethylWriter {
+    prefix: Option<String>,
+    out_dir: PathBuf,
+    tabs_and_spaces: bool,
+    router: FxHashMap<PartitionKey, BufWriter<File>>,
+}
+
+impl PartitioningBedMethylWriter {
+    pub fn new(
+        out_path: &String,
+        only_tabs: bool,
+        prefix: Option<&String>,
+    ) -> anyhow::Result<Self> {
+        let dir_path = Path::new(out_path);
+        if !dir_path.is_dir() {
+            info!("creating {out_path}");
+            std::fs::create_dir_all(dir_path)?;
+        }
+        let out_dir = dir_path.to_path_buf();
+        let prefix = prefix.cloned();
+        let router = FxHashMap::default();
+        Ok(Self {
+            out_dir,
+            prefix,
+            router,
+            tabs_and_spaces: !only_tabs,
+        })
+    }
+
+    fn get_writer_for_key(
+        &mut self,
+        partition_key: PartitionKey,
+        key_name: &str,
+    ) -> &mut BufWriter<File> {
+        self.router.entry(partition_key).or_insert_with(|| {
+            let filename = if let Some(prefix) = self.prefix.as_ref() {
+                format!("{prefix}_{key_name}.bed")
+            } else {
+                format!("{key_name}.bed")
+            };
+            let fp = self.out_dir.join(filename);
+            let fh = File::create(fp).unwrap();
+            BufWriter::new(fh)
+        })
+    }
+}
+
+const NOT_FOUND: &str = "not_found";
+const UNGROUPED: &str = "ungrouped";
+
+impl OutWriter<ModBasePileup> for PartitioningBedMethylWriter {
+    fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
+        let tabs_and_spaces = self.tabs_and_spaces;
+        let mut rows_written = 0u64;
+        for (&pos, partitioned_feature_counts) in item.iter_counts_sorted() {
+            for (&partition_key, pileup_feature_counts) in
+                partitioned_feature_counts
+            {
+                let key_name = match partition_key {
+                    PartitionKey::NoKey => UNGROUPED,
+                    PartitionKey::Key(idx) => item
+                        .partition_keys
+                        .get_index(idx)
+                        .map(|s| s.as_str())
+                        .unwrap_or(NOT_FOUND),
+                };
+                let writer = self.get_writer_for_key(partition_key, key_name);
+                rows_written += BedMethylWriter::write_feature_counts(
+                    pos,
+                    &item.chrom_name,
+                    &pileup_feature_counts,
+                    writer,
+                    tabs_and_spaces,
+                )?;
+            }
+        }
+
+        Ok(rows_written)
     }
 }

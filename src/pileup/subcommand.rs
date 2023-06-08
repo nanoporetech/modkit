@@ -7,9 +7,11 @@ use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::ModCode;
 use crate::motif_bed::{MotifLocations, RegexMotif};
 use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
-use crate::util::{get_spinner, get_targets, Region};
-use crate::writers::{BedGraphWriter, BedMethylWriter, OutWriter};
-use anyhow::{anyhow, Context};
+use crate::util::{get_spinner, get_targets, Region, SamTag};
+use crate::writers::{
+    BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
+};
+use anyhow::{anyhow, bail, Context};
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{
@@ -235,8 +237,11 @@ pub struct ModBamPileup {
     bedgraph: bool,
     /// Prefix to prepend on bedgraph output file names. Without this option the files
     /// will be <mod_code>_<strand>.bedgraph
-    #[arg(long, requires = "bedgraph")]
+    #[arg(long)]
     prefix: Option<String>,
+    /// Partition output based on tag values
+    #[arg(long)]
+    partition_tag: Option<Vec<String>>,
 }
 
 impl ModBamPileup {
@@ -307,22 +312,37 @@ impl ModBamPileup {
 
         // setup the writer here so we fail before doing any work (if there are problems).
         let out_fp_str = self.out_bed.clone();
-        let mut writer: Box<dyn OutWriter<ModBasePileup>> = if self.bedgraph {
-            Box::new(BedGraphWriter::new(&out_fp_str, self.prefix.as_ref())?)
-        } else {
-            match out_fp_str.as_str() {
-                "stdout" | "-" => {
-                    let writer = BufWriter::new(std::io::stdout());
-                    Box::new(BedMethylWriter::new(writer, self.only_tabs))
-                }
-                _ => {
-                    let fh = std::fs::File::create(out_fp_str)
-                        .context("failed to make output file")?;
-                    let writer = BufWriter::new(fh);
-                    Box::new(BedMethylWriter::new(writer, self.only_tabs))
-                }
-            }
-        };
+        let partition_tags = self
+            .partition_tag
+            .as_ref()
+            .map(|raw_tags| parse_partition_tags(raw_tags))
+            .transpose()?;
+        let mut writer: Box<dyn OutWriter<ModBasePileup>> =
+            match (self.bedgraph, partition_tags.is_some()) {
+                (true, _) => Box::new(BedGraphWriter::new(
+                    &out_fp_str,
+                    self.prefix.as_ref(),
+                    partition_tags.is_some(),
+                )?),
+                (false, true) => Box::new(PartitioningBedMethylWriter::new(
+                    &self.out_bed,
+                    self.only_tabs,
+                    self.prefix.as_ref(),
+                )?),
+                (false, false) => match out_fp_str.as_str() {
+                    "stdout" | "-" => {
+                        let writer = BufWriter::new(std::io::stdout());
+                        Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+                    }
+                    _ => {
+                        let fh = std::fs::File::create(out_fp_str)
+                            .context("failed to make output file")?;
+                        let writer = BufWriter::new(fh);
+                        Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+                    }
+                },
+            };
+
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()
@@ -491,7 +511,7 @@ impl ModBamPileup {
                                         combine_strands,
                                         motif_locations.as_ref(),
                                         edge_filter.as_ref(),
-                                        None,
+                                        partition_tags.as_ref(),
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()
@@ -548,4 +568,21 @@ impl ModBamPileup {
 #[allow(non_camel_case_types)]
 enum Presets {
     traditional,
+}
+
+fn parse_partition_tags(raw_tags: &[String]) -> anyhow::Result<Vec<SamTag>> {
+    let mut tags = Vec::with_capacity(raw_tags.len());
+    for raw_tag in raw_tags {
+        if raw_tag.len() != 2 {
+            bail!("illegal tag {raw_tag} should be length 2")
+        }
+        let raw_tag = raw_tag.chars().collect::<Vec<char>>();
+        assert_eq!(raw_tag.len(), 2);
+        let inner = [raw_tag[0] as u8, raw_tag[1] as u8];
+        let tag = SamTag::new(inner);
+
+        tags.push(tag);
+    }
+
+    Ok(tags)
 }
