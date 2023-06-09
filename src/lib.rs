@@ -15,6 +15,7 @@ pub mod writers;
 
 pub(crate) mod command_utils;
 mod extract_mods;
+pub(crate) mod position_filter;
 mod read_cache;
 mod read_ids_to_base_mod_probs;
 /// Module contains functions for parallel processing

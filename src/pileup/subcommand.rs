@@ -7,11 +7,13 @@ use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::ModCode;
 use crate::motif_bed::{MotifLocations, RegexMotif};
 use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
+use crate::position_filter::StrandedPositionFilter;
 use crate::util::{get_spinner, get_targets, Region, SamTag};
 use crate::writers::{
     BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
 };
 use anyhow::{anyhow, bail, Context};
+use clap::error::ErrorKind;
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{
@@ -144,6 +146,13 @@ pub struct ModBamPileup {
     /// probability, can be larger than the pileup processing interval.
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
+    /// Threshold sites BED, use only base modification probabilities aligned to these sites
+    /// when estimating the pass threshold
+    #[arg(long, hide_short_help = true)]
+    threshold_bed: Option<PathBuf>,
+    /// Include unmapped base modifications when estimating the pass threshold
+    #[arg(long, hide_short_help = true, default_value_t = false)]
+    include_unmapped: bool,
 
     // collapsing and combining args
     /// Ignore a modified base class  _in_situ_ by redistributing base modification
@@ -271,6 +280,12 @@ impl ModBamPileup {
             .as_ref()
             .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
 
+        if self.filter_percentile > 1.0 {
+            bail!("filter percentile must be <= 1.0")
+        }
+
+        let tids = get_targets(&header, region.as_ref());
+
         let (pileup_options, combine_strands, threshold_collapse_method) =
             match self.preset {
                 Some(Presets::traditional) => {
@@ -354,6 +369,25 @@ impl ModBamPileup {
             } else {
                 None
             };
+
+        let position_filter = self
+            .threshold_bed
+            .as_ref()
+            .map(|bed_fp| {
+                let chrom_to_tid = tids
+                    .iter()
+                    .map(|reference_record| {
+                        (reference_record.name.as_str(), reference_record.tid)
+                    })
+                    .collect::<HashMap<&str, u32>>();
+                StrandedPositionFilter::from_bed_file(
+                    bed_fp,
+                    &chrom_to_tid,
+                    self.suppress_progress,
+                )
+            })
+            .transpose()?;
+
         let threshold_caller =
             if let Some(raw_threshold) = &self.filter_threshold {
                 parse_thresholds(raw_threshold, per_mod_thresholds)?
@@ -372,6 +406,8 @@ impl ModBamPileup {
                         per_mod_thresholds,
                         edge_filter.as_ref(),
                         threshold_collapse_method.as_ref(),
+                        position_filter.as_ref(),
+                        !self.include_unmapped,
                         self.suppress_progress,
                     )
                 })?
@@ -406,7 +442,6 @@ impl ModBamPileup {
             }
         }
 
-        let tids = get_targets(&header, region.as_ref());
         let use_cpg_motifs = self.cpg
             || self
                 .preset

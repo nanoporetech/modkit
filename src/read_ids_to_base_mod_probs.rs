@@ -14,14 +14,17 @@ use rust_htslib::bam::{self, Read, Records};
 use std::collections::{HashMap, HashSet};
 
 use crate::errs::RunError;
+use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
-    get_master_progress_bar, get_query_name_string, get_spinner, Strand,
+    get_aligned_pairs_forward, get_master_progress_bar, get_query_name_string,
+    get_spinner, Strand,
 };
 use rayon::prelude::*;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Cigar;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Read IDs mapped to their base modification probabilities, organized
 /// by the canonical base. This data structure contains essentially all
@@ -193,18 +196,34 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         mut record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
+        position_filter: Option<&StrandedPositionFilter>,
+        only_mapped: bool,
     ) -> anyhow::Result<Self::Output> {
         let spinner = if with_progress {
             Some(record_sampler.get_progress_bar())
         } else {
             None
         };
-        let mod_base_info_iter = filter_records_iter(records);
+        let mod_base_info_iter =
+            filter_records_iter(records).filter(|(record, _)| {
+                if only_mapped || edge_filter.is_some() {
+                    !record.is_unmapped()
+                } else {
+                    true
+                }
+            });
         let mut read_ids_to_mod_base_probs = Self::zero();
         for (record, mod_base_info) in mod_base_info_iter {
             match record_sampler.ask() {
                 Indicator::Use(token) => {
                     let record_name = get_query_name_string(&record);
+                    let aligned_pairs = if only_mapped {
+                        get_aligned_pairs_forward(&record)
+                            .filter_map(|pair| pair.ok())
+                            .collect::<FxHashMap<usize, u64>>()
+                    } else {
+                        FxHashMap::default()
+                    };
                     if record_name.is_err() {
                         debug!("record name failed UTF-8 decode");
                         continue;
@@ -238,23 +257,33 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                                 dna_base.complement()
                             }
                         };
+                        let seq_pos_base_mod_probs = seq_pos_base_mod_probs
+                            .filter_positions(
+                                edge_filter,
+                                position_filter,
+                                only_mapped,
+                                &aligned_pairs,
+                                strand,
+                                &record,
+                            );
 
-                        let seq_pos_base_mod_probs = if let Some(edge_filter) =
-                            edge_filter
-                        {
-                            let probs = seq_pos_base_mod_probs
-                                .edge_filter_positions(
-                                    edge_filter,
-                                    record.seq_len(),
-                                );
-                            if probs.is_none() {
-                                debug!("all base mod positions were removed by edge filter \
-                                for {record_name} and base {raw_canonical_base}");
-                            }
-                            probs
-                        } else {
-                            Some(seq_pos_base_mod_probs)
-                        };
+                        // let seq_pos_base_mod_probs = if let Some(edge_filter) =
+                        //     edge_filter
+                        // {
+                        //     let probs = seq_pos_base_mod_probs
+                        //         .edge_filter_positions(
+                        //             edge_filter,
+                        //             record.seq_len(),
+                        //         );
+                        //     if probs.is_none() {
+                        //         debug!("all base mod positions were removed by edge filter \
+                        //         for {record_name} and base {raw_canonical_base}");
+                        //     }
+                        //     probs
+                        // } else {
+                        //     Some(seq_pos_base_mod_probs)
+                        // };
+
                         if let Some(seq_pos_base_mod_probs) =
                             seq_pos_base_mod_probs
                         {
@@ -276,6 +305,8 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                             );
                             added_probs_for_record = true
                         } else {
+                            debug!("all base mod positions were removed by edge filter \
+                                for {record_name} and base {raw_canonical_base}");
                             continue;
                         }
                     }
@@ -448,7 +479,7 @@ impl ReadBaseModProfile {
                         e.to_string()
                     );
                     return Err(RunError::new_failed(
-                        "inproper CIGAR".to_string(),
+                        "improper CIGAR".to_string(),
                     ));
                 }
             };
@@ -614,6 +645,7 @@ pub(crate) struct ReadsBaseModProfile {
 }
 
 impl ReadsBaseModProfile {
+    // todo(arand) need to make these safe subtractions
     fn get_fivemer(seq: &[u8], pos: usize) -> [u8; 5] {
         let missing = 45u8;
         let fivemer = [
@@ -751,8 +783,10 @@ impl RecordProcessor for ReadsBaseModProfile {
         mut record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
+        _position_filter: Option<&StrandedPositionFilter>,
+        _only_mapped: bool,
     ) -> anyhow::Result<Self::Output> {
-        let mut mod_iter = TrackingModRecordIter::new(records);
+        let mut mod_iter = TrackingModRecordIter::new(records, false);
         let mut agg = Vec::new();
         let mut seen = HashSet::new();
         let pb = if with_progress {

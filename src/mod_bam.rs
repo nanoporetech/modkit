@@ -5,23 +5,30 @@ use crate::util::{get_tag, record_is_secondary, Strand};
 use indexmap::{indexset, IndexSet};
 use std::cmp::Ordering;
 
+use crate::position_filter::StrandedPositionFilter;
 use derive_new::new;
 use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{HashMap, HashSet};
 
 pub(crate) struct TrackingModRecordIter<'a, T: bam::Read> {
     records: bam::Records<'a, T>,
+    skip_unmapped: bool,
     pub(crate) num_used: usize,
     pub(crate) num_skipped: usize,
     pub(crate) num_failed: usize,
 }
 
 impl<'a, T: bam::Read> TrackingModRecordIter<'a, T> {
-    pub(crate) fn new(records: bam::Records<'a, T>) -> Self {
+    pub(crate) fn new(
+        records: bam::Records<'a, T>,
+        skip_unmapped: bool,
+    ) -> Self {
         Self {
             records,
+            skip_unmapped,
             num_used: 0,
             num_skipped: 0,
             num_failed: 0,
@@ -37,7 +44,9 @@ impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
             Some(Ok(record)) => {
                 let record_name = String::from_utf8(record.qname().to_vec())
                     .unwrap_or("utf-decode-failed".to_string());
-                if record_is_secondary(&record) {
+                if record_is_secondary(&record)
+                    || (record.is_unmapped() && self.skip_unmapped)
+                {
                     self.num_skipped += 1;
                     self.next()
                 } else {
@@ -104,8 +113,6 @@ impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
     }
 }
 
-// todo(arand) make this into a struct that can keep track of how many reads are
-//  skipped, errored, etc.
 pub(crate) fn filter_records_iter<T: bam::Read>(
     records: bam::Records<T>,
 ) -> impl Iterator<Item = (bam::Record, ModBaseInfo)> + '_ {
@@ -684,6 +691,80 @@ impl SeqPosBaseModProbs {
                 })
         }
     }
+
+    pub(crate) fn filter_positions(
+        self,
+        edge_filter: Option<&EdgeFilter>,
+        position_filter: Option<&StrandedPositionFilter>,
+        only_mapped: bool,
+        aligned_pairs: &FxHashMap<usize, u64>,
+        mod_strand: Strand,
+        record: &bam::Record,
+    ) -> Option<Self> {
+        let read_length = record.seq_len();
+        let (edge_filter_start, edge_filter_end) =
+            if let Some(edge_filter) = edge_filter {
+                if read_length <= edge_filter.edge_filter_start {
+                    return None;
+                }
+                match read_length.checked_sub(edge_filter.edge_filter_end) {
+                    None => return None,
+                    Some(l) => (edge_filter.edge_filter_start, l),
+                }
+            } else {
+                (0, record.seq_len())
+            };
+
+        let probs = self
+            .pos_to_base_mod_probs
+            .into_iter()
+            .filter(|(q_pos, _)| {
+                let edge_keep =
+                    *q_pos >= edge_filter_start && *q_pos < edge_filter_end;
+                let only_mapped_keep = if only_mapped {
+                    aligned_pairs.contains_key(q_pos)
+                } else {
+                    true
+                };
+                let position_keep = match position_filter {
+                    Some(position_filter) => aligned_pairs
+                        .get(q_pos)
+                        .map(|ref_pos| {
+                            let reference_strand =
+                                match (mod_strand, record.is_reverse()) {
+                                    (Strand::Positive, false) => {
+                                        Strand::Positive
+                                    }
+                                    (Strand::Positive, true) => {
+                                        Strand::Negative
+                                    }
+                                    (Strand::Negative, false) => {
+                                        Strand::Negative
+                                    }
+                                    (Strand::Negative, true) => {
+                                        Strand::Positive
+                                    }
+                                };
+
+                            position_filter.contains(
+                                record.tid(),
+                                *ref_pos,
+                                reference_strand,
+                            )
+                        })
+                        .unwrap_or(false),
+                    None => true,
+                };
+
+                edge_keep && only_mapped_keep && position_keep
+            })
+            .collect::<HashMap<usize, BaseModProbs>>();
+        if probs.is_empty() {
+            None
+        } else {
+            Some(Self::new(probs, self.skip_mode))
+        }
+    }
 }
 
 // todo(arand) remove, or put behind cfg(test)
@@ -1105,7 +1186,12 @@ pub struct EdgeFilter {
 #[cfg(test)]
 mod mod_bam_tests {
     use super::*;
+    use crate::util::{get_aligned_pairs_forward, get_query_name_string};
+    use rust_htslib::bam::Read;
     use std::collections::BTreeSet;
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    use std::path::Path;
 
     fn qual_to_prob(qual: u16) -> f32 {
         let q = qual as f32;
@@ -1813,5 +1899,82 @@ mod mod_bam_tests {
 
         // todo edge_filter_start larger than read length
         //  edge_filter_end larger than read length
+    }
+
+    #[test]
+    fn test_seq_pos_base_mod_probs_filter_positions() {
+        let mut reader = bam::Reader::from_path(
+            "tests/resources/bc_anchored_10_reads.sorted.bam",
+        )
+        .unwrap();
+        let header = reader.header().to_owned();
+        let records = reader.records();
+        let chrom_to_tid = (0..header.target_count())
+            .map(|tid| {
+                (
+                    String::from_utf8(header.tid2name(tid).to_vec()).unwrap(),
+                    tid,
+                )
+            })
+            .collect::<HashMap<String, u32>>();
+
+        let position_bed_fp =
+            "tests/resources/CGI_ladder_3.6kb_ref_CG_Motif.bed";
+        let position_filter = StrandedPositionFilter::from_bed_file(
+            &Path::new(position_bed_fp).to_path_buf(),
+            &chrom_to_tid.iter().map(|(k, v)| (k.as_str(), *v)).collect(),
+            true,
+        )
+        .unwrap();
+
+        let mut pos_positions = FxHashSet::default();
+        let mut neg_positions = FxHashSet::default();
+        for line in BufReader::new(File::open(position_bed_fp).unwrap())
+            .lines()
+            .map(|r| r.unwrap())
+        {
+            let parts = line.split_whitespace().collect::<Vec<&str>>();
+            assert_eq!(parts.len(), 6);
+            assert_eq!(parts[0], "oligo_1512_adapters");
+            let pos = parts[1].parse::<u64>().unwrap();
+            match parts[5] {
+                "+" => assert!(pos_positions.insert(pos)),
+                "-" => assert!(neg_positions.insert(pos)),
+                _ => panic!("illegal strand in BED"),
+            }
+        }
+
+        let mod_base_info_iter = filter_records_iter(records);
+        for (record, mod_base_info) in mod_base_info_iter {
+            let aligned_pairs = get_aligned_pairs_forward(&record)
+                .filter_map(|pair| pair.ok())
+                .collect::<FxHashMap<usize, u64>>();
+
+            let (_converters, base_mod_probs_iter) =
+                mod_base_info.into_iter_base_mod_probs();
+            for (_primary_base, mod_strand, seq_pos_mod_base_probs) in
+                base_mod_probs_iter
+            {
+                let seq_pos_mod_base_probs = seq_pos_mod_base_probs
+                    .filter_positions(
+                        None,
+                        Some(&position_filter),
+                        true,
+                        &aligned_pairs,
+                        mod_strand,
+                        &record,
+                    )
+                    .unwrap();
+                let positions_to_check = if record.is_reverse() {
+                    &neg_positions
+                } else {
+                    &pos_positions
+                };
+                for (q_pos, _) in seq_pos_mod_base_probs.pos_to_base_mod_probs {
+                    let r_pos = aligned_pairs.get(&q_pos).unwrap();
+                    assert!(positions_to_check.contains(r_pos));
+                }
+            }
+        }
     }
 }

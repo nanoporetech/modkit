@@ -1,5 +1,6 @@
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCode, ParseChar};
+use crate::position_filter::StrandedPositionFilter;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::calc_threshold_from_bam;
 use crate::util::Region;
@@ -47,6 +48,8 @@ pub(crate) fn get_threshold_from_options(
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
     edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
+    position_filter: Option<&StrandedPositionFilter>,
+    only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<MultipleThresholdModCaller> {
     if no_filtering {
@@ -60,7 +63,7 @@ pub(crate) fn get_threshold_from_options(
             (Some(f), None)
         }
         None => {
-            info!("sampling {num_reads} reads from BAM");
+            info!("attempting to sample {num_reads} reads from BAM");
             (None, Some(num_reads))
         }
     };
@@ -75,6 +78,8 @@ pub(crate) fn get_threshold_from_options(
         region,
         edge_filter,
         collapse_method,
+        position_filter,
+        only_mapped,
         suppress_progress,
     )?;
 

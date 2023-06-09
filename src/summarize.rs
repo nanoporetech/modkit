@@ -78,6 +78,9 @@ pub fn summarize_modbam<'a>(
             region,
             collapse_method,
             edge_filter,
+            // todo
+            None,
+            false,
             suppress_progress,
         )?;
 

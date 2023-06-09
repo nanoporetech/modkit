@@ -50,6 +50,7 @@ fn test_pileup_with_filt() {
         "--only-tabs",
         "--seed",
         "42",
+        "--include-unmapped",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
@@ -524,4 +525,29 @@ fn test_pileup_partition_tags_bedgraph() {
         count += 1;
     }
     assert_eq!(count, 24);
+}
+
+#[test]
+fn test_pileup_with_filt_position_filter() {
+    let temp_file =
+        std::env::temp_dir().join("test_pileup_with_filt_position_filter.bed");
+    let args = [
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "-p",
+        "0.25",
+        "--only-tabs",
+        "--threshold-bed",
+        "tests/resources/CGI_ladder_3.6kb_ref_CG_Motif.bed",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+    ];
+
+    run_modkit(&args).unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/modbam.modpileup_filt_positions_025.methyl.bed",
+    );
 }

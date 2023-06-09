@@ -376,6 +376,9 @@ impl SampleModBaseProbs {
                     region.as_ref(),
                     collapse_method.as_ref(),
                     edge_filter.as_ref(),
+                    // todo(sample with position filter and mapped only)
+                    None,
+                    false,
                     self.suppress_progress,
                 )?;
 
@@ -967,6 +970,8 @@ impl CallMods {
                     per_mod_thresholds,
                     edge_filter.as_ref(),
                     None,
+                    None,
+                    false,
                     self.suppress_progress,
                 )
             })?

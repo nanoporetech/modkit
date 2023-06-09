@@ -3,6 +3,7 @@ pub(crate) mod record_sampler;
 use crate::interval_chunks::IntervalChunks;
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::monoid::Moniod;
+use crate::position_filter::StrandedPositionFilter;
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
     get_master_progress_bar, get_spinner, get_subroutine_progress_bar,
@@ -26,6 +27,8 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_probs<P: RecordProcessor>(
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
+    position_filter: Option<&StrandedPositionFilter>,
+    only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<P::Output>
 where
@@ -43,6 +46,8 @@ where
                 region,
                 edge_filter,
                 collapse_method,
+                position_filter,
+                only_mapped,
                 suppress_progress,
             )?;
         // sample unmapped reads iff we've sampled less than 90% of the number we've wanted to get
@@ -55,7 +60,7 @@ where
                 f <= 0.9f32
             })
             .unwrap_or(read_ids_to_base_mod_calls.len() < 100);
-        if should_sample_unmapped {
+        if should_sample_unmapped && !only_mapped {
             debug!(
                 "sampled {} mapped records, sampling unmapped records",
                 read_ids_to_base_mod_calls.len()
@@ -76,6 +81,8 @@ where
                 record_sampler,
                 collapse_method,
                 edge_filter,
+                position_filter,
+                only_mapped,
             )?;
             debug!(
                 "sampled {} unmapped records",
@@ -101,6 +108,8 @@ where
             record_sampler,
             collapse_method,
             edge_filter,
+            position_filter,
+            only_mapped,
         )?;
         debug!("sampled {} records", read_ids_to_base_mod_probs.len());
         Ok(read_ids_to_base_mod_probs)
@@ -118,6 +127,8 @@ fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
     region: Option<&Region>,
     edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
+    position_filter: Option<&StrandedPositionFilter>,
+    only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<P::Output>
 where
@@ -189,6 +200,8 @@ where
                     record_sampler,
                     collapse_method,
                     edge_filter,
+                    position_filter,
+                    only_mapped,
                 ) {
                     Ok(res) => {
                         let sampled_count = res.size();
@@ -225,6 +238,8 @@ pub(crate) fn sample_reads_from_interval<P: RecordProcessor>(
     record_sampler: RecordSampler,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
+    position_filter: Option<&StrandedPositionFilter>,
+    only_mapped: bool,
 ) -> anyhow::Result<P::Output>
 where
     P::Output: Moniod,
@@ -242,5 +257,7 @@ where
         record_sampler,
         collapse_method,
         edge_filter,
+        position_filter,
+        only_mapped,
     )
 }
