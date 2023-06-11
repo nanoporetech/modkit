@@ -27,13 +27,14 @@ use crate::mod_bam::{
 use crate::mod_base_code::ModCode;
 use crate::motif_bed::motif_bed;
 use crate::pileup::subcommand::ModBamPileup;
+use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::summarize::{summarize_modbam, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::Percentiles;
 use crate::util;
-use crate::util::{add_modkit_pg_records, get_spinner, Region};
+use crate::util::{add_modkit_pg_records, get_spinner, get_targets, Region};
 use crate::writers::{
     MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
 };
@@ -323,6 +324,15 @@ pub struct SampleModBaseProbs {
     /// sampling probs from an indexed bam.
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
+    /// Aligned sites BED. Only sample base modification probabilities that are aligned
+    /// to the positions in this BED file.
+    #[arg(long)]
+    include_positions: Option<PathBuf>,
+    /// Only use base modification probabilities that are aligned (i.e. ignore soft-clipped,
+    /// and inserted bases).
+    #[arg(long, default_value_t = false)]
+    only_mapped: bool,
+
 }
 
 impl SampleModBaseProbs {
@@ -351,6 +361,25 @@ impl SampleModBaseProbs {
             self.num_reads,
         );
 
+        let targets = get_targets(reader.header(), region.as_ref());
+        let position_filter = self
+            .include_positions
+            .as_ref()
+            .map(|bed_fp| {
+                let chrom_to_tid = targets
+                    .iter()
+                    .map(|reference_record| {
+                        (reference_record.name.as_str(), reference_record.tid)
+                    })
+                    .collect::<HashMap<&str, u32>>();
+                StrandedPositionFilter::from_bed_file(
+                    bed_fp,
+                    &chrom_to_tid,
+                    self.suppress_progress,
+                )
+            })
+            .transpose()?;
+
         let collapse_method = if let Some(raw_mod_code_to_ignore) = self.ignore
         {
             let _ = ModCode::parse_raw_mod_code(raw_mod_code_to_ignore)?;
@@ -377,8 +406,8 @@ impl SampleModBaseProbs {
                     collapse_method.as_ref(),
                     edge_filter.as_ref(),
                     // todo(sample with position filter and mapped only)
-                    None,
-                    false,
+                    position_filter.as_ref(),
+                    self.only_mapped || position_filter.is_some(),
                     self.suppress_progress,
                 )?;
 
