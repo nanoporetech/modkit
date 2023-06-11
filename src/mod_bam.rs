@@ -10,7 +10,7 @@ use derive_new::new;
 use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 
 pub(crate) struct TrackingModRecordIter<'a, T: bam::Read> {
@@ -1186,8 +1186,9 @@ pub struct EdgeFilter {
 #[cfg(test)]
 mod mod_bam_tests {
     use super::*;
-    use crate::util::{get_aligned_pairs_forward, get_query_name_string};
+    use crate::util::get_aligned_pairs_forward;
     use rust_htslib::bam::Read;
+    use rustc_hash::FxHashSet;
     use std::collections::BTreeSet;
     use std::fs::File;
     use std::io::{BufRead, BufReader};

@@ -13,7 +13,7 @@ use crate::writers::{
     BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
 };
 use anyhow::{anyhow, bail, Context};
-use clap::error::ErrorKind;
+
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{

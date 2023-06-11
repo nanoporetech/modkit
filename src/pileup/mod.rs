@@ -715,7 +715,8 @@ pub fn process_region<T: AsRef<Path>>(
                             PartitionKey::Key(idx)
                         } else {
                             let inserted = partition_keys.insert(s);
-                            assert!(inserted);
+                            debug_assert!(inserted);
+                            debug_assert!(partition_keys.len() > 0);
                             PartitionKey::Key(
                                 partition_keys
                                     .len()

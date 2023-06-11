@@ -638,7 +638,7 @@ pub struct PartitioningBedMethylWriter {
     prefix: Option<String>,
     out_dir: PathBuf,
     tabs_and_spaces: bool,
-    router: FxHashMap<PartitionKey, BufWriter<File>>,
+    router: FxHashMap<String, BufWriter<File>>,
 }
 
 impl PartitioningBedMethylWriter {
@@ -663,12 +663,8 @@ impl PartitioningBedMethylWriter {
         })
     }
 
-    fn get_writer_for_key(
-        &mut self,
-        partition_key: PartitionKey,
-        key_name: &str,
-    ) -> &mut BufWriter<File> {
-        self.router.entry(partition_key).or_insert_with(|| {
+    fn get_writer_for_key(&mut self, key_name: &str) -> &mut BufWriter<File> {
+        self.router.entry(key_name.to_owned()).or_insert_with(|| {
             let filename = if let Some(prefix) = self.prefix.as_ref() {
                 format!("{prefix}_{key_name}.bed")
             } else {
@@ -676,6 +672,7 @@ impl PartitioningBedMethylWriter {
             };
             let fp = self.out_dir.join(filename);
             let fh = File::create(fp).unwrap();
+
             BufWriter::new(fh)
         })
     }
@@ -700,7 +697,8 @@ impl OutWriter<ModBasePileup> for PartitioningBedMethylWriter {
                         .map(|s| s.as_str())
                         .unwrap_or(NOT_FOUND),
                 };
-                let writer = self.get_writer_for_key(partition_key, key_name);
+
+                let writer = self.get_writer_for_key(key_name);
                 rows_written += BedMethylWriter::write_feature_counts(
                     pos,
                     &item.chrom_name,

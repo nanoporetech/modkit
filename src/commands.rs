@@ -332,7 +332,6 @@ pub struct SampleModBaseProbs {
     /// and inserted bases).
     #[arg(long, default_value_t = false)]
     only_mapped: bool,
-
 }
 
 impl SampleModBaseProbs {
