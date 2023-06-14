@@ -1919,8 +1919,7 @@ mod mod_bam_tests {
             })
             .collect::<HashMap<String, u32>>();
 
-        let position_bed_fp =
-            "tests/resources/CGI_ladder_3.6kb_ref_CG_Motif.bed";
+        let position_bed_fp = "tests/resources/CGI_ladder_3.6kb_ref_CG.bed";
         let position_filter = StrandedPositionFilter::from_bed_file(
             &Path::new(position_bed_fp).to_path_buf(),
             &chrom_to_tid.iter().map(|(k, v)| (k.as_str(), *v)).collect(),

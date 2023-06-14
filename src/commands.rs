@@ -404,7 +404,6 @@ impl SampleModBaseProbs {
                     region.as_ref(),
                     collapse_method.as_ref(),
                     edge_filter.as_ref(),
-                    // todo(sample with position filter and mapped only)
                     position_filter.as_ref(),
                     self.only_mapped || position_filter.is_some(),
                     self.suppress_progress,
@@ -557,6 +556,14 @@ pub struct ModSummarize {
     /// at least the 11th base or 11 bases from the end.
     #[arg(long, hide_short_help = true)]
     edge_filter: Option<usize>,
+    /// Aligned sites BED. Only summarize base modification probabilities that are aligned
+    /// to the positions in this BED file.
+    #[arg(long)]
+    include_positions: Option<PathBuf>,
+    /// Only use base modification probabilities that are aligned (i.e. ignore soft-clipped,
+    /// and inserted bases).
+    #[arg(long, default_value_t = false)]
+    only_mapped: bool,
 
     /// Process only the specified region of the BAM when collecting probabilities.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
@@ -600,6 +607,25 @@ impl ModSummarize {
                 None
             };
 
+        let position_filter = self
+            .include_positions
+            .as_ref()
+            .map(|bed_fp| {
+                let targets = get_targets(reader.header(), region.as_ref());
+                let chrom_to_tid = targets
+                    .iter()
+                    .map(|reference_record| {
+                        (reference_record.name.as_str(), reference_record.tid)
+                    })
+                    .collect::<HashMap<&str, u32>>();
+                StrandedPositionFilter::from_bed_file(
+                    bed_fp,
+                    &chrom_to_tid,
+                    self.suppress_progress,
+                )
+            })
+            .transpose()?;
+
         let filter_thresholds =
             if let Some(raw_thresholds) = &self.filter_threshold {
                 info!("parsing user defined thresholds");
@@ -636,6 +662,8 @@ impl ModSummarize {
                 per_mod_thresholds,
                 collapse_method.as_ref(),
                 edge_filter.as_ref(),
+                position_filter.as_ref(),
+                self.only_mapped || position_filter.is_some(),
                 self.suppress_progress,
             )
         })?;

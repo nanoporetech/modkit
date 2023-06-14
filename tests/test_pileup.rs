@@ -539,7 +539,7 @@ fn test_pileup_with_filt_position_filter() {
         "0.25",
         "--only-tabs",
         "--threshold-bed",
-        "tests/resources/CGI_ladder_3.6kb_ref_CG_Motif.bed",
+        "tests/resources/CGI_ladder_3.6kb_ref_CG.bed",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
