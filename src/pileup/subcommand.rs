@@ -8,7 +8,7 @@ use crate::mod_base_code::ModCode;
 use crate::motif_bed::{MotifLocations, RegexMotif};
 use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
-use crate::util::{get_spinner, get_targets, Region, SamTag};
+use crate::util::{get_spinner, get_targets, parse_partition_tags, Region};
 use crate::writers::{
     BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
 };
@@ -603,21 +603,4 @@ impl ModBamPileup {
 #[allow(non_camel_case_types)]
 enum Presets {
     traditional,
-}
-
-fn parse_partition_tags(raw_tags: &[String]) -> anyhow::Result<Vec<SamTag>> {
-    let mut tags = Vec::with_capacity(raw_tags.len());
-    for raw_tag in raw_tags {
-        if raw_tag.len() != 2 {
-            bail!("illegal tag {raw_tag} should be length 2")
-        }
-        let raw_tag = raw_tag.chars().collect::<Vec<char>>();
-        assert_eq!(raw_tag.len(), 2);
-        let inner = [raw_tag[0] as u8, raw_tag[1] as u8];
-        let tag = SamTag::new(inner);
-
-        tags.push(tag);
-    }
-
-    Ok(tags)
 }

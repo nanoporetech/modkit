@@ -1,4 +1,5 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
+use std::collections::HashSet;
 
 use std::string::FromUtf8Error;
 
@@ -364,9 +365,18 @@ pub fn add_modkit_pg_records(header: &mut bam::Header) {
     header.push_record(&modkit_header_record);
 }
 
-#[derive(new)]
+#[derive(new, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Copy, Clone)]
 pub struct SamTag {
     inner: [u8; 2],
+}
+
+#[cfg(test)]
+impl SamTag {
+    pub(crate) fn parse(chars: [char; 2]) -> Self {
+        Self {
+            inner: [chars[0] as u8, chars[1] as u8],
+        }
+    }
 }
 
 pub(crate) fn get_stringable_aux(
@@ -389,14 +399,42 @@ pub(crate) fn get_stringable_aux(
     })
 }
 
+pub(crate) fn parse_partition_tags(
+    raw_tags: &[String],
+) -> anyhow::Result<Vec<SamTag>> {
+    let mut tags_seen = HashSet::with_capacity(raw_tags.len());
+    let mut tags = Vec::with_capacity(raw_tags.len());
+    for raw_tag in raw_tags {
+        if raw_tag.len() != 2 {
+            bail!("illegal tag {raw_tag} should be length 2")
+        }
+        let raw_tag_parts = raw_tag.chars().collect::<Vec<char>>();
+        assert_eq!(raw_tag_parts.len(), 2);
+        let inner = [raw_tag_parts[0] as u8, raw_tag_parts[1] as u8];
+        let tag = SamTag::new(inner);
+
+        let inserted = tags_seen.insert(tag);
+        if inserted {
+            tags.push(tag);
+        } else {
+            bail!("cannot repeat partition-tags, got {raw_tag} twice")
+        }
+    }
+
+    Ok(tags)
+}
+
 #[cfg(test)]
 mod utils_tests {
-    use crate::util::{get_query_name_string, get_stringable_aux, SamTag};
+    use crate::util::{
+        get_query_name_string, get_stringable_aux, parse_partition_tags, SamTag,
+    };
+    use anyhow::Context;
     use rust_htslib::bam;
     use rust_htslib::bam::Read;
 
     #[test]
-    fn test_get_stringable_tag() {
+    fn test_util_get_stringable_tag() {
         let bam_fp = "tests/resources/bc_anchored_10_reads.sorted.bam";
         let mut reader = bam::Reader::from_path(bam_fp).unwrap();
         let mut checked = false;
@@ -422,5 +460,16 @@ mod utils_tests {
             }
         }
         assert!(checked)
+    }
+
+    #[test]
+    fn test_util_parse_partition_tags() {
+        let raw_tags = ["HP".to_string(), "RG".to_string()];
+        let parsed = parse_partition_tags(&raw_tags)
+            .context("should have parsed raw tags")
+            .unwrap();
+        let expected =
+            vec![SamTag::parse(['H', 'P']), SamTag::parse(['R', 'G'])];
+        assert_eq!(parsed, expected);
     }
 }

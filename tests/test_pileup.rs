@@ -394,7 +394,7 @@ fn test_pileup_edge_filter_regression() {
 }
 
 #[test]
-fn test_pileup_partition_tags() {
+fn test_pileup_partition_tags_just_this_one() {
     let tmp_dir =
         std::env::temp_dir().join("test_pileup_partition_tags_partitioned");
     let control_file =

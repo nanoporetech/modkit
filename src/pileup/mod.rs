@@ -920,13 +920,14 @@ pub fn process_region<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod mod_pileup_tests {
+    use rust_htslib::bam::{self, Read};
     use std::collections::HashSet;
 
     use crate::pileup::{
-        DnaBase, Feature, FeatureVector, ModCode, PileupNumericOptions,
-        StrandRule,
+        parse_tags_from_record, DnaBase, Feature, FeatureVector, ModCode,
+        PileupNumericOptions, StrandRule,
     };
-    use crate::util::Strand;
+    use crate::util::{SamTag, Strand};
 
     #[test]
     fn test_feature_vector_basic() {
@@ -1052,5 +1053,20 @@ mod mod_pileup_tests {
         let count = &counts[0];
         // change alignment strand to Positive and this will be 2
         assert_eq!(count.n_modified, 1);
+    }
+
+    #[test]
+    fn test_parse_tags_from_record() {
+        let mut reader = bam::Reader::from_path(
+            "tests/resources/bc_anchored_10_reads.haplotyped.sorted.bam",
+        )
+        .unwrap();
+        let record = reader.records().next().unwrap().unwrap();
+        let tags = [SamTag::parse(['H', 'P']), SamTag::parse(['R', 'G'])];
+        let key = parse_tags_from_record(&record, &tags);
+        assert_eq!(key, Some("1_A".to_string()));
+        let tags = [SamTag::parse(['R', 'G']), SamTag::parse(['H', 'P'])];
+        let key = parse_tags_from_record(&record, &tags);
+        assert_eq!(key, Some("A_1".to_string()));
     }
 }
