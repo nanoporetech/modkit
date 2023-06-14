@@ -634,7 +634,7 @@ fn combine_positions_to_probs(
 
 // pub type SeqPosBaseModProbs = HashMap<usize, BaseModProbs>;
 /// Mapping of _forward sequence_ position to `BaseModProbs`.
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct SeqPosBaseModProbs {
     /// The `.` or `?` or implied mode, see `SkipMode`.
     pub skip_mode: SkipMode,
@@ -1103,14 +1103,13 @@ impl ModBaseInfo {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        if self.pos_seq_base_mod_probs.is_empty()
-            && self.neg_seq_base_mod_probs.is_empty()
-        {
-            debug_assert!(self.converters.is_empty());
-            true
-        } else {
-            false
-        }
+        let n_probs = self
+            .pos_seq_base_mod_probs
+            .values()
+            .chain(self.neg_seq_base_mod_probs.values())
+            .map(|p| p.pos_to_base_mod_probs.len())
+            .sum::<usize>();
+        n_probs == 0
     }
 
     pub fn iter_seq_base_mod_probs(
@@ -1177,7 +1176,7 @@ pub fn base_mod_probs_from_record(
         .map_err(|input_err| RunError::BadInput(input_err))
 }
 
-#[derive(new)]
+#[derive(new, Debug)]
 pub struct EdgeFilter {
     edge_filter_start: usize,
     edge_filter_end: usize,
@@ -1976,5 +1975,16 @@ mod mod_bam_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_mod_bam_modbase_info_empty() {
+        let dna = "GATCGACTACGTCGA";
+        let tag = "C+h?;C+m?;";
+        let quals = vec![];
+        let raw_mod_tags = RawModTags::new(tag, &quals, true);
+        let obs_mod_base_info =
+            ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
+        assert!(obs_mod_base_info.is_empty());
     }
 }

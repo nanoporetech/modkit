@@ -235,7 +235,10 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                         continue;
                     }
                     if mod_base_info.is_empty() {
+                        // the current iterator should filter these out, but leaving this check
+                        // here in case that changes..
                         // add count of unused/no calls
+                        // debug!("record {record_name} contains no mod-base information");
                         read_ids_to_mod_base_probs
                             .add_read_without_probs(&record_name);
                         continue;
@@ -267,23 +270,6 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                                 &record,
                             );
 
-                        // let seq_pos_base_mod_probs = if let Some(edge_filter) =
-                        //     edge_filter
-                        // {
-                        //     let probs = seq_pos_base_mod_probs
-                        //         .edge_filter_positions(
-                        //             edge_filter,
-                        //             record.seq_len(),
-                        //         );
-                        //     if probs.is_none() {
-                        //         debug!("all base mod positions were removed by edge filter \
-                        //         for {record_name} and base {raw_canonical_base}");
-                        //     }
-                        //     probs
-                        // } else {
-                        //     Some(seq_pos_base_mod_probs)
-                        // };
-
                         if let Some(seq_pos_base_mod_probs) =
                             seq_pos_base_mod_probs
                         {
@@ -305,7 +291,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                             );
                             added_probs_for_record = true
                         } else {
-                            debug!("all base mod positions were removed by edge filter \
+                            debug!("all base mod positions were removed by filtering \
                                 for {record_name} and base {raw_canonical_base}");
                             continue;
                         }

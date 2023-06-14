@@ -6,8 +6,8 @@ use crate::monoid::Moniod;
 use crate::position_filter::StrandedPositionFilter;
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
-    get_master_progress_bar, get_spinner, get_subroutine_progress_bar,
-    get_targets, Region,
+    get_master_progress_bar, get_subroutine_progress_bar, get_targets,
+    get_ticker, Region,
 };
 use anyhow::anyhow;
 use indicatif::{MultiProgress, ParallelProgressIterator};
@@ -149,7 +149,7 @@ where
     let tid_progress =
         master_progress.add(get_master_progress_bar(references.len()));
     tid_progress.set_message("contigs");
-    let sampled_items = master_progress.add(get_spinner());
+    let sampled_items = master_progress.add(get_ticker());
     sampled_items.set_message("base mod calls sampled");
     // end prog bar stuff
 

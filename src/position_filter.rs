@@ -9,6 +9,7 @@ use std::path::PathBuf;
 type Iv = lapper::Interval<u64, ()>;
 type GenomeLapper = lapper::Lapper<u64, ()>;
 
+#[derive(Debug)]
 pub struct StrandedPositionFilter {
     pos_positions: HashMap<u32, GenomeLapper>,
     neg_positions: HashMap<u32, GenomeLapper>,

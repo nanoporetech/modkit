@@ -14,6 +14,11 @@ use rust_htslib::bam::{
 
 use crate::errs::{InputError, RunError};
 
+pub(crate) fn get_ticker() -> ProgressBar {
+    let ticker = ProgressBar::new_spinner();
+    ticker.set_style(ProgressStyle::with_template("> {pos} {msg}").unwrap());
+    ticker
+}
 pub(crate) fn get_spinner() -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(

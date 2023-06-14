@@ -26,7 +26,7 @@ use crate::reads_sampler::sample_reads_from_interval;
 use crate::record_processor::WithRecords;
 use crate::util::{
     get_master_progress_bar, get_spinner, get_subroutine_progress_bar,
-    get_targets, ReferenceRecord, Region, Strand,
+    get_targets, get_ticker, ReferenceRecord, Region, Strand,
 };
 use crate::writers::{
     OutwriterWithMemory, TsvWriter, TsvWriterWithContigNames,
@@ -250,13 +250,13 @@ impl ExtractMods {
         if self.suppress_progress {
             multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
-        let n_failed = multi_prog.add(get_spinner());
+        let n_failed = multi_prog.add(get_ticker());
         n_failed.set_message("~records failed");
-        let n_skipped = multi_prog.add(get_spinner());
+        let n_skipped = multi_prog.add(get_ticker());
         n_skipped.set_message("~records skipped");
-        let n_used = multi_prog.add(get_spinner());
+        let n_used = multi_prog.add(get_ticker());
         n_used.set_message("~records used");
-        let n_rows = multi_prog.add(get_spinner());
+        let n_rows = multi_prog.add(get_ticker());
         n_rows.set_message("rows written");
         reader.set_threads(self.threads)?;
         let n_reads = self.num_reads;

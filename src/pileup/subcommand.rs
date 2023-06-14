@@ -8,7 +8,10 @@ use crate::mod_base_code::ModCode;
 use crate::motif_bed::{MotifLocations, RegexMotif};
 use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
-use crate::util::{get_spinner, get_targets, parse_partition_tags, Region};
+use crate::util::{
+    get_master_progress_bar, get_subroutine_progress_bar, get_targets,
+    get_ticker, parse_partition_tags, Region,
+};
 use crate::writers::{
     BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
 };
@@ -16,9 +19,7 @@ use anyhow::{anyhow, bail, Context};
 
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
-use indicatif::{
-    MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle,
-};
+use indicatif::{MultiProgress, ParallelProgressIterator};
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
@@ -280,11 +281,37 @@ impl ModBamPileup {
             .as_ref()
             .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
 
+        let per_mod_thresholds = self
+            .mod_thresholds
+            .as_ref()
+            .map(|raw_per_mod_thresholds| {
+                parse_per_mod_thresholds(raw_per_mod_thresholds)
+            })
+            .transpose()?;
+
+        let tids = get_targets(&header, region.as_ref());
+
+        let position_filter = self
+            .threshold_bed
+            .as_ref()
+            .map(|bed_fp| {
+                let chrom_to_tid = tids
+                    .iter()
+                    .map(|reference_record| {
+                        (reference_record.name.as_str(), reference_record.tid)
+                    })
+                    .collect::<HashMap<&str, u32>>();
+                StrandedPositionFilter::from_bed_file(
+                    bed_fp,
+                    &chrom_to_tid,
+                    self.suppress_progress,
+                )
+            })
+            .transpose()?;
+
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")
         }
-
-        let tids = get_targets(&header, region.as_ref());
 
         let (pileup_options, combine_strands, threshold_collapse_method) =
             match self.preset {
@@ -362,31 +389,6 @@ impl ModBamPileup {
             .num_threads(self.threads)
             .build()
             .with_context(|| "failed to make threadpool")?;
-
-        let per_mod_thresholds =
-            if let Some(raw_per_mod_thresholds) = &self.mod_thresholds {
-                Some(parse_per_mod_thresholds(raw_per_mod_thresholds)?)
-            } else {
-                None
-            };
-
-        let position_filter = self
-            .threshold_bed
-            .as_ref()
-            .map(|bed_fp| {
-                let chrom_to_tid = tids
-                    .iter()
-                    .map(|reference_record| {
-                        (reference_record.name.as_str(), reference_record.tid)
-                    })
-                    .collect::<HashMap<&str, u32>>();
-                StrandedPositionFilter::from_bed_file(
-                    bed_fp,
-                    &chrom_to_tid,
-                    self.suppress_progress,
-                )
-            })
-            .transpose()?;
 
         let threshold_caller =
             if let Some(raw_threshold) = &self.filter_threshold {
@@ -486,29 +488,17 @@ impl ModBamPileup {
             master_progress
                 .set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
-        let sty = ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.green/yellow} {pos:>7}/{len:7} {msg}",
-        )
-        .unwrap()
-        .progress_chars("##-");
-        let tid_progress = master_progress
-            .add(ProgressBar::new(tids.len() as u64))
-            .with_style(sty.clone());
+        let tid_progress =
+            master_progress.add(get_master_progress_bar(tids.len()));
         tid_progress.set_message("contigs");
-        let write_progress = master_progress.add(get_spinner());
+        let write_progress = master_progress.add(get_ticker());
         write_progress.set_message("rows written");
-        let skipped_reads = master_progress.add(get_spinner());
+        let skipped_reads = master_progress.add(get_ticker());
         skipped_reads.set_message("~records skipped");
-        let processed_reads = master_progress.add(get_spinner());
+        let processed_reads = master_progress.add(get_ticker());
         processed_reads.set_message("~records processed");
 
         let force_allow = self.force_allow_implicit;
-
-        let interval_style = ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
-        )
-        .unwrap()
-        .progress_chars("##-");
 
         std::thread::spawn(move || {
             pool.install(|| {
@@ -522,10 +512,8 @@ impl ModBamPileup {
                     )
                     .collect::<Vec<(u32, u32)>>();
                     let n_intervals = intervals.len();
-                    let interval_progress = master_progress.add(
-                        ProgressBar::new(n_intervals as u64)
-                            .with_style(interval_style.clone()),
-                    );
+                    let interval_progress = master_progress
+                        .add(get_subroutine_progress_bar(n_intervals));
                     interval_progress
                         .set_message(format!("processing {}", &target.name));
                     let mut result: Vec<Result<ModBasePileup, String>> = vec![];
