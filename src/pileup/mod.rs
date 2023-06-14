@@ -576,30 +576,19 @@ fn parse_tags_from_record(
     record: &bam::Record,
     tags: &[SamTag],
 ) -> Option<String> {
-    let mut values = Vec::with_capacity(tags.len());
-    let mut got_match = false;
-    for tag in tags {
-        let value = get_stringable_aux(&record, tag);
-        if value.is_some() {
-            got_match = true
-        }
-        values.push(value);
+    let values = tags
+        .iter()
+        .map(|tag| get_stringable_aux(&record, tag))
+        .collect::<Vec<Option<String>>>();
+    let got_match = values.iter().any(|b| b.is_some());
+    if !got_match {
+        return None;
     }
-    let values = if got_match {
-        Some(
-            values
-                .into_iter()
-                .map(|v| match v {
-                    Some(v) => v,
-                    None => "missing".to_string(),
-                })
-                .collect::<Vec<String>>(),
-        )
-    } else {
-        None
-    };
-
-    values.map(|keys| keys.into_iter().join("_"))
+    let key = values
+        .into_iter()
+        .map(|v| v.unwrap_or("missing".to_string()))
+        .join("_");
+    Some(key)
 }
 
 pub struct ModBasePileup {

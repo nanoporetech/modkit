@@ -551,3 +551,49 @@ fn test_pileup_with_filt_position_filter() {
         "tests/resources/modbam.modpileup_filt_positions_025.methyl.bed",
     );
 }
+
+#[test]
+fn test_pileup_partition_tags_combine_strands() {
+    let exp_dir = std::env::temp_dir()
+        .join("test_pileup_partition_tags_combine_strands_partitioned");
+    let control_file = std::env::temp_dir()
+        .join("test_pileup_partition_tags_combine_strands_control.bed");
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        control_file.to_str().unwrap(),
+        "--combine-strands",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--cpg",
+        "--no-filtering",
+    ])
+    .context("failed to run modkit on control")
+    .unwrap();
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.haplotyped.sorted.bam",
+        exp_dir.to_str().unwrap(),
+        "--partition-tag",
+        "RG",
+        "--partition-tag",
+        "HP",
+        "--combine-strands",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--cpg",
+        "--no-filtering",
+    ])
+    .context("failed to run modkit with partition tags")
+    .unwrap();
+    let mut count = 0;
+    for result in exp_dir.read_dir().unwrap() {
+        let dir_entry = result.unwrap().path();
+        check_against_expected_text_file(
+            dir_entry.to_str().unwrap(),
+            control_file.to_str().unwrap(),
+        );
+        count += 1;
+    }
+    assert_eq!(count, 6);
+}
