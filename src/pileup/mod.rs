@@ -375,8 +375,12 @@ fn combine_strand_features(
             Strand::Positive => {
                 let offset =
                     (motif.reverse_offset - motif.forward_offset) as u32;
+                // total counts will be positive position (pos) and the negative
+                // position (pos + offset)
                 Some((*pos, pos + offset))
             }
+            // negative positions are ignored, I think, because we're going
+            // to combine positions onto the positive strand counts
             Strand::Negative => None,
         });
 
@@ -396,7 +400,6 @@ fn combine_strand_features(
             .chain(neg_feature_mappings.keys())
             .map(|k| *k)
             .collect::<HashSet<PartitionKey>>();
-
         for partition_key in partition_keys {
             let pos_features = pos_feature_mappings.remove(&partition_key);
             let neg_features = neg_feature_mappings.remove(&partition_key);
@@ -424,9 +427,10 @@ fn combine_strand_features(
                             )
                         })
                         .collect::<Vec<PileupFeatureCounts>>();
-                    let combined = HashMap::from([(partition_key, combined)]);
                     combined_position_feature_counts
-                        .insert(pos_position, combined);
+                        .entry(pos_position)
+                        .or_insert(HashMap::new())
+                        .insert(partition_key, combined);
                 }
                 (None, Some(neg_feats)) => {
                     let strand_switched_feats = neg_feats
@@ -448,17 +452,19 @@ fn combine_strand_features(
                             )
                         })
                         .collect::<Vec<_>>();
-                    combined_position_feature_counts.insert(
-                        pos_position,
-                        HashMap::from([(partition_key, strand_switched_feats)]),
-                    );
+                    combined_position_feature_counts
+                        .entry(pos_position)
+                        .or_insert(HashMap::new())
+                        .insert(partition_key, strand_switched_feats);
                 }
                 (Some(pos_feats), None) => {
                     // how come the raw strand doesn't get turned into '.' here?
-                    combined_position_feature_counts.insert(
-                        pos_position,
-                        HashMap::from([(partition_key, pos_feats)]),
-                    );
+                    // little bit strange here, revisit this when I refactor this function
+                    // for the new pileup engine..
+                    combined_position_feature_counts
+                        .entry(pos_position)
+                        .or_insert(HashMap::new())
+                        .insert(partition_key, pos_feats);
                 }
                 (None, None) => {}
             }
