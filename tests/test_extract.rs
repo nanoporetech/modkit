@@ -165,7 +165,7 @@ fn test_extract_include_sites() {
         out_fp.to_str().unwrap(),
         "-i",
         "25",
-        "--include-only",
+        "--include-bed",
         include_bed_fp,
         "--force",
     ])

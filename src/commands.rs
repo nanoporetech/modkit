@@ -325,9 +325,9 @@ pub struct SampleModBaseProbs {
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
     /// Aligned sites BED. Only sample base modification probabilities that are aligned
-    /// to the positions in this BED file.
-    #[arg(long)]
-    include_positions: Option<PathBuf>,
+    /// to the positions in this BED file. (alias: include-positions)
+    #[arg(long, alias = "include-positions")]
+    include_bed: Option<PathBuf>,
     /// Only use base modification probabilities that are aligned (i.e. ignore soft-clipped,
     /// and inserted bases).
     #[arg(long, default_value_t = false)]
@@ -362,7 +362,7 @@ impl SampleModBaseProbs {
 
         let targets = get_targets(reader.header(), region.as_ref());
         let position_filter = self
-            .include_positions
+            .include_bed
             .as_ref()
             .map(|bed_fp| {
                 let chrom_to_tid = targets
@@ -557,9 +557,9 @@ pub struct ModSummarize {
     #[arg(long, hide_short_help = true)]
     edge_filter: Option<usize>,
     /// Aligned sites BED. Only summarize base modification probabilities that are aligned
-    /// to the positions in this BED file.
-    #[arg(long)]
-    include_positions: Option<PathBuf>,
+    /// to the positions in this BED file. (alias: include-positions)
+    #[arg(long, alias = "include-positions")]
+    include_bed: Option<PathBuf>,
     /// Only use base modification probabilities that are aligned (i.e. ignore soft-clipped,
     /// and inserted bases).
     #[arg(long, default_value_t = false)]
@@ -608,7 +608,7 @@ impl ModSummarize {
             };
 
         let position_filter = self
-            .include_positions
+            .include_bed
             .as_ref()
             .map(|bed_fp| {
                 let targets = get_targets(reader.header(), region.as_ref());

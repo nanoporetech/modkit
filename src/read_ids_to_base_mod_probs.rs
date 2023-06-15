@@ -291,8 +291,8 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                             );
                             added_probs_for_record = true
                         } else {
-                            debug!("all base mod positions were removed by filtering \
-                                for {record_name} and base {raw_canonical_base}");
+                            // trace!("all base mod positions were removed by filtering \
+                            //     for {record_name} and base {raw_canonical_base}");
                             continue;
                         }
                     }

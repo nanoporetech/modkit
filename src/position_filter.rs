@@ -1,6 +1,7 @@
 use crate::util::{get_spinner, Strand};
 use log::info;
 use rust_lapper as lapper;
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -11,8 +12,8 @@ type GenomeLapper = lapper::Lapper<u64, ()>;
 
 #[derive(Debug)]
 pub struct StrandedPositionFilter {
-    pos_positions: HashMap<u32, GenomeLapper>,
-    neg_positions: HashMap<u32, GenomeLapper>,
+    pos_positions: FxHashMap<u32, GenomeLapper>,
+    neg_positions: FxHashMap<u32, GenomeLapper>,
 }
 
 impl StrandedPositionFilter {
@@ -27,8 +28,8 @@ impl StrandedPositionFilter {
         );
 
         let fh = File::open(bed_fp)?;
-        let mut pos_positions = HashMap::new();
-        let mut neg_positions = HashMap::new();
+        let mut pos_positions = FxHashMap::default();
+        let mut neg_positions = FxHashMap::default();
         let lines_processed = get_spinner();
         if suppress_pb {
             lines_processed
@@ -100,7 +101,7 @@ impl StrandedPositionFilter {
                 lp.merge_overlaps();
                 (chrom_id, lp)
             })
-            .collect::<HashMap<u32, GenomeLapper>>();
+            .collect::<FxHashMap<u32, GenomeLapper>>();
 
         let neg_lapper = neg_positions
             .into_iter()
@@ -109,7 +110,7 @@ impl StrandedPositionFilter {
                 lp.merge_overlaps();
                 (chrom_id, lp)
             })
-            .collect::<HashMap<u32, GenomeLapper>>();
+            .collect::<FxHashMap<u32, GenomeLapper>>();
 
         lines_processed.finish_and_clear();
         info!("processed {} BED lines", lines_processed.position());
@@ -135,5 +136,28 @@ impl StrandedPositionFilter {
             .get(&(chrom_id as u32))
             .map(|lp| lp.find(position, position + 1).count() > 0)
             .unwrap_or(false)
+    }
+
+    pub fn overlaps_not_stranded(
+        &self,
+        chrom_id: u32,
+        start: u64,
+        end: u64,
+    ) -> bool {
+        // check pos positions first, if overlaps with positive positions eagerly return true
+        // otherwise check negative overlaps
+        let pos_overlaps = self
+            .pos_positions
+            .get(&chrom_id)
+            .map(|lp| lp.find(start, end).count() > 0)
+            .unwrap_or(false);
+        if !pos_overlaps {
+            self.neg_positions
+                .get(&chrom_id)
+                .map(|lp| lp.find(start, end).count() > 0)
+                .unwrap_or(false)
+        } else {
+            true
+        }
     }
 }

@@ -147,12 +147,16 @@ pub struct ModBamPileup {
     /// probability, can be larger than the pileup processing interval.
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
-    /// Threshold sites BED, use only base modification probabilities aligned to these sites
-    /// when estimating the pass threshold
-    #[arg(long, hide_short_help = true)]
-    threshold_bed: Option<PathBuf>,
+    /// BED file that will restrict analysis to positions. (alias: include-positions)
+    #[arg(long, hide_short_help = true, alias = "include-positions")]
+    include_bed: Option<PathBuf>,
     /// Include unmapped base modifications when estimating the pass threshold
-    #[arg(long, hide_short_help = true, default_value_t = false)]
+    #[arg(
+        long,
+        hide_short_help = true,
+        default_value_t = false,
+        conflicts_with = "include_bed"
+    )]
     include_unmapped: bool,
 
     // collapsing and combining args
@@ -260,6 +264,8 @@ impl ModBamPileup {
         // do this first so we fail when the file isn't readable
         let header = bam::IndexedReader::from_path(&self.in_bam)
             .map(|reader| reader.header().to_owned())?;
+
+        // options parsing below
         let region = self
             .region
             .as_ref()
@@ -280,7 +286,6 @@ impl ModBamPileup {
             .edge_filter
             .as_ref()
             .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
-
         let per_mod_thresholds = self
             .mod_thresholds
             .as_ref()
@@ -288,11 +293,14 @@ impl ModBamPileup {
                 parse_per_mod_thresholds(raw_per_mod_thresholds)
             })
             .transpose()?;
-
+        let partition_tags = self
+            .partition_tag
+            .as_ref()
+            .map(|raw_tags| parse_partition_tags(raw_tags))
+            .transpose()?;
         let tids = get_targets(&header, region.as_ref());
-
         let position_filter = self
-            .threshold_bed
+            .include_bed
             .as_ref()
             .map(|bed_fp| {
                 let chrom_to_tid = tids
@@ -308,11 +316,9 @@ impl ModBamPileup {
                 )
             })
             .transpose()?;
-
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")
         }
-
         let (pileup_options, combine_strands, threshold_collapse_method) =
             match self.preset {
                 Some(Presets::traditional) => {
@@ -351,14 +357,8 @@ impl ModBamPileup {
                     (options, self.combine_strands, collapse_method)
                 }
             };
-
         // setup the writer here so we fail before doing any work (if there are problems).
         let out_fp_str = self.out_bed.clone();
-        let partition_tags = self
-            .partition_tag
-            .as_ref()
-            .map(|raw_tags| parse_partition_tags(raw_tags))
-            .transpose()?;
         let mut writer: Box<dyn OutWriter<ModBasePileup>> =
             match (self.bedgraph, partition_tags.is_some()) {
                 (true, _) => Box::new(BedGraphWriter::new(
@@ -385,11 +385,11 @@ impl ModBamPileup {
                 },
             };
 
+        // start the actual work here
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()
             .with_context(|| "failed to make threadpool")?;
-
         let threshold_caller =
             if let Some(raw_threshold) = &self.filter_threshold {
                 parse_thresholds(raw_threshold, per_mod_thresholds)?
@@ -471,6 +471,7 @@ impl ModBamPileup {
                     regex_motif,
                     &names_to_tid,
                     self.mask,
+                    position_filter.as_ref(),
                 )
             })?;
             let filtered_tids = motif_locations.filter_reference_records(tids);
@@ -510,6 +511,18 @@ impl ModBamPileup {
                         target.tid,
                         motif_locations.as_ref(),
                     )
+                    .filter(|(start, end)| {
+                        position_filter
+                            .as_ref()
+                            .map(|pf| {
+                                pf.overlaps_not_stranded(
+                                    target.tid,
+                                    *start as u64,
+                                    *end as u64,
+                                )
+                            })
+                            .unwrap_or(true)
+                    })
                     .collect::<Vec<(u32, u32)>>();
                     let n_intervals = intervals.len();
                     let interval_progress = master_progress
@@ -535,6 +548,7 @@ impl ModBamPileup {
                                         motif_locations.as_ref(),
                                         edge_filter.as_ref(),
                                         partition_tags.as_ref(),
+                                        position_filter.as_ref(),
                                     )
                                 })
                                 .collect::<Vec<Result<ModBasePileup, String>>>()

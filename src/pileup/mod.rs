@@ -13,6 +13,7 @@ use rust_htslib::bam::{FetchDefinition, Read};
 use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::motif_bed::{MotifLocations, RegexMotif};
+use crate::position_filter::StrandedPositionFilter;
 use crate::read_cache::ReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
@@ -507,23 +508,29 @@ struct StrandPileup {
 
 struct PileupIter<'a> {
     pileups: bam::pileup::Pileups<'a, bam::IndexedReader>,
+    chrom_id: u32,
     start_pos: u32,
     end_pos: u32,
     motif_locations: Option<&'a HashMap<u32, Strand>>,
+    position_filter: Option<&'a StrandedPositionFilter>,
 }
 
 impl<'a> PileupIter<'a> {
     fn new(
         pileups: bam::pileup::Pileups<'a, bam::IndexedReader>,
+        chrom_id: u32,
         start_pos: u32,
         end_pos: u32,
         motif_locations: Option<&'a HashMap<u32, Strand>>,
+        position_filter: Option<&'a StrandedPositionFilter>,
     ) -> Self {
         Self {
             pileups,
+            chrom_id,
             start_pos,
             end_pos,
             motif_locations,
+            position_filter,
         }
     }
 }
@@ -542,9 +549,13 @@ impl<'a> Iterator for PileupIter<'a> {
                 // advance into region we're looking at
                 continue;
             } else {
-                match &self.motif_locations {
-                    Some(locations) => {
-                        if let Some(strand) = locations.get(&plp.pos()) {
+                let pos = plp.pos();
+                match (self.motif_locations, self.position_filter) {
+                    // the motif locations should be pre-filtered, so no
+                    // need to handle the case where there is a position filter
+                    // and motif locations
+                    (Some(locations), _) => {
+                        if let Some(strand) = locations.get(&pos) {
                             let strand_rule = match strand {
                                 Strand::Positive => StrandRule::Positive,
                                 Strand::Negative => StrandRule::Negative,
@@ -555,7 +566,43 @@ impl<'a> Iterator for PileupIter<'a> {
                             continue;
                         }
                     }
-                    None => {
+                    (None, Some(positions_filter)) => {
+                        let pos_hit = positions_filter.contains(
+                            self.chrom_id as i32,
+                            pos as u64,
+                            Strand::Positive,
+                        );
+                        let neg_hit = positions_filter.contains(
+                            self.chrom_id as i32,
+                            pos as u64,
+                            Strand::Negative,
+                        );
+                        match (pos_hit, neg_hit) {
+                            (true, true) => {
+                                pileup = Some(StrandPileup::new(
+                                    plp,
+                                    StrandRule::Both,
+                                ));
+                                break;
+                            }
+                            (true, false) => {
+                                pileup = Some(StrandPileup::new(
+                                    plp,
+                                    StrandRule::Positive,
+                                ));
+                                break;
+                            }
+                            (false, true) => {
+                                pileup = Some(StrandPileup::new(
+                                    plp,
+                                    StrandRule::Negative,
+                                ));
+                                break;
+                            }
+                            (false, false) => continue,
+                        }
+                    }
+                    (None, None) => {
                         pileup = Some(StrandPileup::new(plp, StrandRule::Both));
                         break;
                     }
@@ -642,6 +689,7 @@ pub fn process_region<T: AsRef<Path>>(
     motif_locations: Option<&MotifLocations>,
     edge_filter: Option<&EdgeFilter>,
     partition_tags: Option<&Vec<SamTag>>,
+    position_filter: Option<&StrandedPositionFilter>,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -672,9 +720,11 @@ pub fn process_region<T: AsRef<Path>>(
     let mut partition_keys = IndexSet::new();
     let pileup_iter = PileupIter::new(
         bam_reader.pileup(),
+        chrom_tid,
         start_pos,
         end_pos,
         motif_positions.as_ref(),
+        position_filter,
     );
     let mut dupe_reads = HashMap::new();
     for pileup in pileup_iter {

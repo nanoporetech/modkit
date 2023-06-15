@@ -531,24 +531,49 @@ fn test_pileup_partition_tags_bedgraph() {
 fn test_pileup_with_filt_position_filter() {
     let temp_file =
         std::env::temp_dir().join("test_pileup_with_filt_position_filter.bed");
-    let args = [
+    run_modkit(&[
         "pileup",
         "-i",
         "25", // use small interval to make sure chunking works
         "-p",
         "0.25",
-        "--only-tabs",
-        "--threshold-bed",
-        "tests/resources/CGI_ladder_3.6kb_ref_CG.bed",
+        "--include-positions",
+        "tests/resources/CGI_ladder_3.6kb_ref_include_positions.bed",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
-    ];
-
-    run_modkit(&args).unwrap();
+    ])
+    .unwrap();
 
     check_against_expected_text_file(
         temp_file.to_str().unwrap(),
         "tests/resources/modbam.modpileup_filt_positions_025.methyl.bed",
+    );
+}
+
+#[test]
+fn test_pileup_with_filter_positions_and_traditional() {
+    let temp_file = std::env::temp_dir()
+        .join("test_pileup_with_filter_positions_and_traditional.bed");
+    run_modkit(&[
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "-p",
+        "0.25",
+        "--preset",
+        "traditional",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--include-positions",
+        "tests/resources/CGI_ladder_3.6kb_ref_include_positions.bed",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+    ])
+    .unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/modbam.modpileup_filt_positions_025_traditional.methyl.bed",
     );
 }
 

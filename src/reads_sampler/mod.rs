@@ -162,6 +162,18 @@ where
             reference.tid,
             None,
         )
+        .filter(|(start, end)| {
+            position_filter
+                .as_ref()
+                .map(|pf| {
+                    pf.overlaps_not_stranded(
+                        reference.tid,
+                        *start as u64,
+                        *end as u64,
+                    )
+                })
+                .unwrap_or(true)
+        })
         .collect::<Vec<(u32, u32)>>();
         // make the number of reads (if given) proportional to the length
         // of this reference

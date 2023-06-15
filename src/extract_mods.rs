@@ -68,9 +68,9 @@ pub struct ExtractMods {
     #[arg(long, alias = "ref")]
     reference: Option<PathBuf>,
 
-    /// BED file with regions to include (alias: include-only). Implicitly
+    /// BED file with regions to include (alias: include-positions). Implicitly
     /// only includes mapped sites.
-    #[arg(long, alias = "include-only")]
+    #[arg(long, alias = "include-positions")]
     include_bed: Option<PathBuf>,
     /// BED file with regions to _exclude_ (alias: exclude).
     #[arg(long, alias = "exclude", short = 'v')]
@@ -278,7 +278,20 @@ impl ExtractMods {
                     let mut num_aligned_reads_used = 0usize;
                     for (reference_record, interval_chunks) in interval_chunks {
                         let interval_chunks =
-                            interval_chunks.collect::<Vec<(u32, u32)>>();
+                            interval_chunks
+                                .filter(|(start, end)| {
+                                    reference_position_filter.include_pos
+                                        .as_ref()
+                                        .map(|pf| {
+                                            pf.overlaps_not_stranded(
+                                                reference_record.tid,
+                                                *start as u64,
+                                                *end as u64
+                                            )
+                                        })
+                                        .unwrap_or(true)
+                                })
+                                .collect::<Vec<(u32, u32)>>();
 
                         // todo use the index api to pre-calculate the number of reads per ref
                         let num_reads_for_reference = n_reads.map(|nr| {
