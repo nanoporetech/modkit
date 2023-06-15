@@ -243,7 +243,7 @@ impl ExtractMods {
             .map(|raw_region| Region::parse_str(raw_region, reader.header()))
             .transpose()?;
 
-        let (regions, reference_position_filter) =
+        let (references_and_intervals, reference_position_filter) =
             self.load_regions(&name_to_tid, region.as_ref())?;
 
         let multi_prog = MultiProgress::new();
@@ -261,22 +261,23 @@ impl ExtractMods {
         reader.set_threads(self.threads)?;
         let n_reads = self.num_reads;
         let threads = self.threads;
+        let mapped_only = self.mapped_only;
 
         thread::spawn(move || {
             pool.install(|| {
-                if let Some(interval_chunks) = regions {
+                if let Some(reference_and_intervals) = references_and_intervals {
                     drop(reader);
                     let prog_length = if reference_position_filter.include_unmapped {
-                        interval_chunks.len() + 1
+                        reference_and_intervals.len() + 1
                     } else {
-                        interval_chunks.len()
+                        reference_and_intervals.len()
                     };
                     let master_progress = multi_prog.add(get_master_progress_bar(prog_length));
                     master_progress.set_message("contigs");
 
-                    let total_length = interval_chunks.iter().map(|(r, _)| r.length as u64).sum::<u64>();
+                    let total_length = reference_and_intervals.iter().map(|(r, _)| r.length as u64).sum::<u64>();
                     let mut num_aligned_reads_used = 0usize;
-                    for (reference_record, interval_chunks) in interval_chunks {
+                    for (reference_record, interval_chunks) in reference_and_intervals {
                         let interval_chunks =
                             interval_chunks
                                 .filter(|(start, end)| {
@@ -366,6 +367,7 @@ impl ExtractMods {
                                     n_unmapped_reads,
                                     collapse_method.as_ref(),
                                     edge_filter.as_ref(),
+                                    false,
                                     "unmapped "
                                 );
                                 let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
@@ -384,6 +386,7 @@ impl ExtractMods {
                         n_reads,
                         collapse_method.as_ref(),
                             edge_filter.as_ref(),
+                            mapped_only,
                             "",
                     );
                     let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
@@ -463,12 +466,16 @@ impl ExtractMods {
         n_reads: Option<usize>,
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
+        only_mapped: bool,
         message: &'static str,
     ) -> (usize, usize) {
         let mut mod_iter = TrackingModRecordIter::new(records, false);
         let pb = multi_pb.add(get_spinner());
         pb.set_message(format!("{message}records processed"));
         for (record, read_id, mod_base_info) in &mut mod_iter {
+            if record.is_unmapped() && only_mapped {
+                continue;
+            }
             let mod_profile = match ReadBaseModProfile::process_record(
                 &record,
                 &read_id,

@@ -6,7 +6,6 @@ use anyhow::{anyhow, Context, Result as AnyhowResult};
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
-use itertools::{Itertools, MinMaxResult};
 use log::debug;
 use rayon::prelude::*;
 use regex::{Match, Regex};

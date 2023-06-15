@@ -98,6 +98,9 @@ where
         if region.is_some() {
             return Err(anyhow!("cannot use region without indexed BAM"));
         }
+        if position_filter.is_some() {
+            debug!("using include-bed with an indexed bam would improve performance");
+        }
         let mut reader = bam::Reader::from_path(bam_fp)?;
         reader.set_threads(reader_threads)?;
         let record_sampler =
