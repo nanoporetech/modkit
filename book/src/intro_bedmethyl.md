@@ -51,8 +51,19 @@ performs three transforms:
 Using this option is equivalent to running with the options:
 
 ```bash
-modkit pileup --cpg --ref <reference.fasta> --ignore h --combine-strands
+modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref <reference.fasta> --ignore h --combine-strands
 ```
+
+If you want to separate reads by a tag (for example `RG` or `HP`) you can pass the `--partition-tag` option
+and `modkit` will output a separate bedMethyl with counts for only the reads with that tag value. For example,
+if you have haplotype-annotated reads with the `HP` tag, you could use a command like the following:
+
+```bash
+modkit pileup path/to/reads.bam output/directory/ --cpg --ref <reference.fasta> --partition-tag HP --prefix haplotyped
+```
+The output will be multiple files in placed in `output/directory/haplotyped_<1|2|etc>.bed`, multiple `--partition-tag`
+options can be passed.
+
 
 For more information on the individual options see the [Advanced Usage](./advanced_usage.md) help document.
 

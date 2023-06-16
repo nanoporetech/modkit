@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.9]
+### Changes
+- [pileup] When estimating the pass-threshold only use base modification probabilities if the read base is aligned to the reference (don't use soft-clipped and inserts). Use `--include-unmapped` to use all base modification probabilities.
+### Adds
+- [pileup, extract, sample-probs, summary] Allow narrowing of analysis to specific sites with `--include-bed`. 
+- [summary, sample-probs] Add `--only-mapped` flag that will only report on base modification probabilities if they are mapped to the reference.
+- [pileup] Allow partitioning counts to separate bedMethyl files based on SAM tags with `--partition-tag` option.
+
+
 ## [v0.1.8]
 ### Changes
 - [call-mods] Emit 0 ML value when a mod code is not called, previously the call was omitted (only the called mod was emitted).
