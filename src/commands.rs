@@ -6,12 +6,12 @@ use crate::adjust::{adjust_modbam, record_is_valid};
 use crate::command_utils::{
     get_threshold_from_options, parse_per_mod_thresholds, parse_thresholds,
 };
-use anyhow::{Context, Result as AnyhowResult};
+use anyhow::{bail, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
 
 use histo_fp::Histogram;
 
-use log::{debug, info, warn};
+use log::{debug, info};
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
@@ -205,10 +205,8 @@ impl Adjust {
             });
 
         let methods = if edge_filter.is_none() && methods.is_empty() {
-            warn!("no edge-filter, ignore, or convert was provided. Implicitly deciding to \
-            perform ignore on modified base code h, this behavior will be removed in the next \
-            release and will result in an error.");
-            vec![CollapseMethod::ReDistribute('h')]
+            bail!("no edge-filter, ignore, or convert was provided, no work to do. Provide \
+            --edge-filter, --ignore, or --convert option to use modkit adjust-mods")
         } else {
             methods
         };
