@@ -147,7 +147,8 @@ pub struct ModBamPileup {
     /// probability, can be larger than the pileup processing interval.
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
-    /// BED file that will restrict analysis to positions. (alias: include-positions)
+    /// BED file that will restrict threshold estimation and pileup results to
+    /// positions overlapping intervals in the file. (alias: include-positions)
     #[arg(long, hide_short_help = true, alias = "include-positions")]
     include_bed: Option<PathBuf>,
     /// Include unmapped base modifications when estimating the pass threshold
@@ -253,7 +254,10 @@ pub struct ModBamPileup {
     /// will be <mod_code>_<strand>.bedgraph
     #[arg(long)]
     prefix: Option<String>,
-    /// Partition output based on tag values
+    /// Partition output into multiple bedMethyl files based on tag-value pairs. The output
+    /// will be multiple bedMethyl files with the format
+    /// `<prefix>_<tag_value_1>_<tag_value_2>_<tag_value_n>.bed` prefix is optional and set
+    /// with the `--prefix` flag.
     #[arg(long)]
     partition_tag: Option<Vec<String>>,
 }

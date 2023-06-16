@@ -292,11 +292,12 @@ pub struct SampleModBaseProbs {
     #[arg(long, requires = "histogram", default_value_t = 128)]
     buckets: u64,
 
-    /// Max number of reads to use, especially recommended when using a large
-    /// BAM without an index. If an indexed BAM is provided, the reads will be
-    /// sampled evenly over the length of the aligned reference. If a region is
-    /// passed with the --region option, they will be sampled over the genomic
-    /// region.
+    /// Approximate maximum number of reads to use, especially recommended when
+    /// using a large BAM without an index. If an indexed BAM is provided, the
+    /// reads will be sampled evenly over the length of the aligned reference.
+    /// If a region is passed with the --region option, they will be sampled over
+    /// the genomic region. Actual number of reads used may deviate slightly from
+    /// this number.
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -311,7 +312,8 @@ pub struct SampleModBaseProbs {
     /// No sampling, use all of the reads to calculate the filter thresholds.
     #[arg(long, group = "sampling_options", default_value_t = false)]
     no_sampling: bool,
-    /// Random seed for deterministic running, the default is non-deterministic.
+    /// Random seed for deterministic running, the default is non-deterministic, only used
+    /// when no BAM index is provided.
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
 
@@ -324,7 +326,7 @@ pub struct SampleModBaseProbs {
     /// sampling probs from an indexed bam.
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
-    /// Aligned sites BED. Only sample base modification probabilities that are aligned
+    /// Only sample base modification probabilities that are aligned
     /// to the positions in this BED file. (alias: include-positions)
     #[arg(long, alias = "include-positions")]
     include_bed: Option<PathBuf>,
@@ -481,12 +483,12 @@ pub struct ModSummarize {
     suppress_progress: bool,
 
     // sampling options
-    /// Max number of reads to use for estimating the filter threshold and
-    /// generating the summary, especially recommended when using a large
-    /// BAM without an index. If an indexed BAM is provided, the reads will
-    /// be sampled evenly over the length of the aligned reference. If a
-    /// region is passed with the --region option, they will be sampled
-    /// over the genomic region.
+    /// Approximate maximum number of reads to use, especially recommended when
+    /// using a large BAM without an index. If an indexed BAM is provided, the
+    /// reads will be sampled evenly over the length of the aligned reference.
+    /// If a region is passed with the --region option, they will be sampled over
+    /// the genomic region. Actual number of reads used may deviate slightly from
+    /// this number.
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -504,7 +506,7 @@ pub struct ModSummarize {
     #[arg(long, group = "sampling_options", default_value_t = false)]
     no_sampling: bool,
     /// Sets a random seed for deterministic running (when using --sample-frac),
-    /// the default is non-deterministic.
+    /// the default is non-deterministic, only used when no BAM index is provided.
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
 
@@ -556,7 +558,7 @@ pub struct ModSummarize {
     /// at least the 11th base or 11 bases from the end.
     #[arg(long, hide_short_help = true)]
     edge_filter: Option<usize>,
-    /// Aligned sites BED. Only summarize base modification probabilities that are aligned
+    /// Only summarize base modification probabilities that are aligned
     /// to the positions in this BED file. (alias: include-positions)
     #[arg(long, alias = "include-positions")]
     include_bed: Option<PathBuf>,
@@ -883,12 +885,12 @@ pub struct CallMods {
     // interval_size: u32,
 
     // sampling args
-    /// Sample this many reads when estimating the filtering threshold. If alignments are
-    /// present reads will be sampled evenly across aligned genome. If a region is
-    /// specified, either with the --region option or the --sample-region option, then
-    /// reads will be sampled evenly across the region given. This option is useful for
-    /// large BAM files. In practice, 10-50 thousand reads is sufficient to estimate the
-    /// model output distribution and determine the filtering threshold.
+    /// Sample approximately this many reads when estimating the filtering threshold.
+    /// If alignments are present reads will be sampled evenly across aligned genome.
+    /// If a region is specified, either with the --region option or the --sample-region
+    /// option, then reads will be sampled evenly across the region given. This option is
+    /// useful for large BAM files. In practice, 10-50 thousand reads is sufficient to
+    /// estimate the model output distribution and determine the filtering threshold.
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -907,7 +909,8 @@ pub struct CallMods {
         hide_short_help = true
     )]
     sampling_frac: Option<f64>,
-    /// Set a random seed for deterministic running, the default is non-deterministic.
+    /// Set a random seed for deterministic running, the default is non-deterministic,
+    /// only used when no BAM index is provided.
     #[arg(
         long,
         conflicts_with = "num_reads",

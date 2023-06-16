@@ -11,7 +11,7 @@ path = "src/bin/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-rust-htslib = "0.40.2"
+rust-htslib = "0.43.1"
 bio = "1.0.0"
 indexmap = "1.9.2"
 rustc-hash = "1.1.0"

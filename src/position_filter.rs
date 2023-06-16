@@ -160,4 +160,14 @@ impl StrandedPositionFilter {
             true
         }
     }
+
+    pub fn contains_chrom_id(&self, chrom_id: &i64) -> bool {
+        if *chrom_id < 0 {
+            false
+        } else {
+            let chrom_id = *chrom_id as u32;
+            self.pos_positions.contains_key(&chrom_id)
+                || self.neg_positions.contains_key(&chrom_id)
+        }
+    }
 }
