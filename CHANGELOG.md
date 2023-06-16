@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [pileup, extract, sample-probs, summary] Allow narrowing of analysis to specific sites with `--include-bed`. 
 - [summary, sample-probs] Add `--only-mapped` flag that will only report on base modification probabilities if they are mapped to the reference.
 - [pileup] Allow partitioning counts to separate bedMethyl files based on SAM tags with `--partition-tag` option.
+### Fixes
+- [adjust-mods, update-tags, call-mods] Panic when failure to parse SAM header, fixes #29.
 
 
 ## [v0.1.8]
@@ -21,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixes
 - [call-mods] `--no-filtering` flag properly handled. 
 ### Deprecated
-- [adjust-mods] In order to allow `--edge-filter` without also performing an ignore or convert, in the next release `--ignore` will require a explicit argument (`h` is no longer the default). In this release, when no edge filter, conversion, or ignore is provided, `h` will be used for ignore, but this behavior will be removed in the next release.
+- [adjust-mods] In order to allow `--edge-filter` without also performing an ignore or convert, in the next release `--ignore` will require an explicit argument (`h` is no longer the default). In this release, when no edge filter, conversion, or ignore is provided, `h` will be used for ignore, but this behavior will be removed in the next release.
 
 ## [v0.1.7]
 ### Changes

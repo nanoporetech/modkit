@@ -1,12 +1,14 @@
 use anyhow::{anyhow, bail};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use std::string::FromUtf8Error;
 
 use anyhow::Result as AnyhowResult;
 use derive_new::new;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::debug;
+use linear_map::LinearMap;
+use log::{debug, error};
+use regex::Regex;
 use rust_htslib::bam::{
     self, ext::BamRecordExtensions, header::HeaderRecord, record::Aux,
     HeaderView,
@@ -328,8 +330,62 @@ impl Region {
     }
 }
 
+// shouldn't need this once it's fixed in rust-htslib or the repo moves to noodles..
+fn header_to_hashmap(
+    header: &bam::Header,
+) -> anyhow::Result<HashMap<String, Vec<LinearMap<String, String>>>> {
+    let mut header_map = HashMap::default();
+    let record_type_regex = Regex::new(r"@([A-Z][A-Z])").unwrap();
+    let tag_regex = Regex::new(r"([A-Za-z][A-Za-z0-9]):([ -~]*)").unwrap();
+
+    if let Ok(header_string) = String::from_utf8(header.to_bytes()) {
+        for line in header_string.split('\n').filter(|x| !x.is_empty()) {
+            let parts: Vec<_> =
+                line.split('\t').filter(|x| !x.is_empty()).collect();
+            if parts.is_empty() {
+                continue;
+            }
+            let record_type = record_type_regex
+                .captures(parts[0])
+                .and_then(|captures| captures.get(1))
+                .map(|m| m.as_str().to_owned());
+
+            if let Some(record_type) = record_type {
+                if record_type == "CO" {
+                    continue;
+                }
+                let mut field = LinearMap::default();
+                for part in parts.iter().skip(1) {
+                    if let Some(cap) = tag_regex.captures(part) {
+                        let tag = cap.get(1).unwrap().as_str().to_owned();
+                        let value = cap.get(2).unwrap().as_str().to_owned();
+                        field.insert(tag, value);
+                    } else {
+                        debug!("encounted illegal record line {line}");
+                    }
+                }
+                header_map
+                    .entry(record_type)
+                    .or_insert_with(Vec::new)
+                    .push(field);
+            } else {
+                debug!("encountered illegal record type in line {line}");
+            }
+        }
+        Ok(header_map)
+    } else {
+        bail!("failed to parse header string")
+    }
+}
+
 pub fn add_modkit_pg_records(header: &mut bam::Header) {
-    let header_map = header.to_hashmap();
+    let header_map = match header_to_hashmap(&header) {
+        Ok(hm) => hm,
+        Err(_) => {
+            error!("failed to parse input BAM header, not adding PG header record for modkit");
+            return;
+        }
+    };
     let (id, pp) = if let Some(pg_tags) = header_map.get("PG") {
         let modkit_invocations = pg_tags.iter().filter_map(|tags| {
             tags.get("ID").and_then(|v| {
