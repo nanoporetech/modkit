@@ -131,6 +131,13 @@ Options:
           
           [default: 1000000]
 
+      --include-bed <INCLUDE_BED>
+          BED file that will restrict threshold estimation and pileup results to positions
+          overlapping intervals in the file. (alias: include-positions)
+
+      --include-unmapped
+          Include unmapped base modifications when estimating the pass threshold.
+
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base modification probability
           equally across other options. For example, if collapsing 'h', with 'm' and canonical
@@ -187,6 +194,12 @@ Options:
       --prefix <PREFIX>
           Prefix to prepend on bedgraph output file names. Without this option the files will be
           <mod_code>_<strand>.bedgraph.
+
+      --partition-tag <PARTITION_TAG>
+          Partition output into multiple bedMethyl files based on tag-value pairs. The output will
+          be multiple bedMethyl files with the format
+          `<prefix>_<tag_value_1>_<tag_value_2>_<tag_value_n>.bed` prefix is optional and set with
+          the `--prefix` flag.
 
   -h, --help
           Print help information (use `-h` for a summary).
@@ -308,10 +321,11 @@ Options:
           [default: 128]
 
   -n, --num-reads <NUM_READS>
-          Max number of reads to use, especially recommended when using a large BAM without an
-          index. If an indexed BAM is provided, the reads will be sampled evenly over the length of
-          the aligned reference. If a region is passed with the --region option, they will be
-          sampled over the genomic region.
+          Approximate maximum number of reads to use, especially recommended when using a large BAM
+          without an index. If an indexed BAM is provided, the reads will be sampled evenly over the
+          length of the aligned reference. If a region is passed with the --region option, they will
+          be sampled over the genomic region. Actual number of reads used may deviate slightly from
+          this number.
           
           [default: 10042]
 
@@ -323,7 +337,8 @@ Options:
           No sampling, use all of the reads to calculate the filter thresholds.
 
   -s, --seed <SEED>
-          Random seed for deterministic running, the default is non-deterministic.
+          Random seed for deterministic running, the default is non-deterministic, only used when no
+          BAM index is provided.
 
       --region <REGION>
           Process only the specified region of the BAM when collecting probabilities. Format should
@@ -335,6 +350,14 @@ Options:
           indexed bam.
           
           [default: 1000000]
+
+      --include-bed <INCLUDE_BED>
+          Only sample base modification probabilities that are aligned to the positions in this BED
+          file. (alias: include-positions)
+
+      --only-mapped
+          Only use base modification probabilities that are aligned (i.e. ignore soft-clipped, and
+          inserted bases).
 
   -h, --help
           Print help information (use `-h` for a summary).
@@ -369,10 +392,11 @@ Options:
           Hide the progress bar.
 
   -n, --num-reads <NUM_READS>
-          Max number of reads to use for estimating the filter threshold and generating the summary,
-          especially recommended when using a large BAM without an index. If an indexed BAM is
-          provided, the reads will be sampled evenly over the length of the aligned reference. If a
-          region is passed with the --region option, they will be sampled over the genomic region.
+          Approximate maximum number of reads to use, especially recommended when using a large BAM
+          without an index. If an indexed BAM is provided, the reads will be sampled evenly over the
+          length of the aligned reference. If a region is passed with the --region option, they will
+          be sampled over the genomic region. Actual number of reads used may deviate slightly from
+          this number.
           
           [default: 10042]
 
@@ -386,7 +410,7 @@ Options:
 
   -s, --seed <SEED>
           Sets a random seed for deterministic running (when using --sample-frac), the default is
-          non-deterministic.
+          non-deterministic, only used when no BAM index is provided.
 
       --no-filtering
           Do not perform any filtering, include all base modification calls in the summary. See
@@ -426,6 +450,14 @@ Options:
           Discard base modification calls that are this many bases from the start or the end of the
           read. For example, a value of 10 will require that the base modification is at least the
           11th base or 11 bases from the end.
+
+      --include-bed <INCLUDE_BED>
+          Only summarize base modification probabilities that are aligned to the positions in this
+          BED file. (alias: include-positions)
+
+      --only-mapped
+          Only use base modification probabilities that are aligned (i.e. ignore soft-clipped, and
+          inserted bases).
 
       --region <REGION>
           Process only the specified region of the BAM when collecting probabilities. Format should
@@ -489,12 +521,12 @@ Options:
           [default: 4]
 
   -n, --num-reads <NUM_READS>
-          Sample this many reads when estimating the filtering threshold. If alignments are present
-          reads will be sampled evenly across aligned genome. If a region is specified, either with
-          the --region option or the --sample-region option, then reads will be sampled evenly
-          across the region given. This option is useful for large BAM files. In practice, 10-50
-          thousand reads is sufficient to estimate the model output distribution and determine the
-          filtering threshold.
+          Sample approximately this many reads when estimating the filtering threshold. If
+          alignments are present reads will be sampled evenly across aligned genome. If a region is
+          specified, either with the --region option or the --sample-region option, then reads will
+          be sampled evenly across the region given. This option is useful for large BAM files. In
+          practice, 10-50 thousand reads is sufficient to estimate the model output distribution and
+          determine the filtering threshold.
           
           [default: 10042]
 
@@ -504,7 +536,8 @@ Options:
           determine the filtering threshold. See filtering.md for details on filtering.
 
       --seed <SEED>
-          Set a random seed for deterministic running, the default is non-deterministic.
+          Set a random seed for deterministic running, the default is non-deterministic, only used
+          when no BAM index is provided.
 
       --sample-region <SAMPLE_REGION>
           Specify a region for sampling reads from when estimating the threshold probability. If
@@ -562,8 +595,8 @@ Usage: modkit extract [OPTIONS] <IN_BAM> <OUT_PATH>
 
 Arguments:
   <IN_BAM>
-          Path to modBAM file to extract read-level information from, may be sorted with associated
-            index.
+          Path to modBAM file to extract read-level information from, may be sorted and have
+          associated index.
 
   <OUT_PATH>
           Path to output file, "stdout" or "-" will direct output to stdout.
@@ -599,7 +632,7 @@ Options:
 
       --include-bed <INCLUDE_BED>
           BED file with regions to include (alias: include-only). Implicitly only includes mapped
-          sites.
+          sites. (alias: include-positions)
 
   -v, --exclude-bed <EXCLUDE_BED>
           BED file with regions to _exclude_. (alias: exclude)

@@ -87,7 +87,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting MM/ML tags to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting MM/ML tags to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -171,6 +171,7 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 <li><a href="./intro_extract.html">Extracting per-read base modification data into a table</a></li>
 <li><a href="./intro_call_mods.html">Convert modification probabilities into hard calls</a></li>
 <li><a href="./intro_edge_filter.html">Removing base modification calls at the ends of reads</a></li>
+<li><a href="./intro_include_bed.html">Narrow analysis to only specific positions with a BED file</a></li>
 </ol>
 <h2 id="notes-and-troubleshooting"><a class="header" href="#notes-and-troubleshooting">Notes and troubleshooting</a></h2>
 <ol>
@@ -187,6 +188,7 @@ the <code>--cpg</code> flag or <code>traditional</code> preset. Only <strong>pri
 the table, it is recommended to mark duplicate alignments before running as multiple primary
 alignments can be double counted (but the behavior is logged). See <a href="./limitations.html">limitations</a>
 for details.</p>
+<h2 id="basic-usage-1"><a class="header" href="#basic-usage-1">Basic usage</a></h2>
 <p>In its simplest form <code>modkit</code> creates a bedMethyl file using the following:</p>
 <pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed --log-filepath pileup.log
 </code></pre>
@@ -195,11 +197,19 @@ for details.</p>
 final argument here specifies an optional log file output.</p>
 <p>The program performs best-practices filtering and manipulation of the raw data stored in
 the input file. For further details see <a href="./filtering.html">filtering modified-base calls</a>.</p>
+<h3 id="narrowing-output-to-cpg-dinucleotides"><a class="header" href="#narrowing-output-to-cpg-dinucleotides">Narrowing output to CpG dinucleotides</a></h3>
 <p>For user convenience, the counting process can be modulated using several additional
 transforms and filters. The most basic of these is to report only counts from reference
 CpG dinucleotides. This option requires a reference sequence in order to locate the CpGs
 in the reference:</p>
 <pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta
+</code></pre>
+<p>To restrict output to only certain CpGs, pass the <code>--include-bed</code> option with the CpGs to be used, 
+see <a href="./intro_include_bed.html">this page</a> for more details.</p>
+<pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed \
+  --cpg \
+  --ref path/to/reference.fasta \
+  --include-bed path/to/my_cpgs.bed
 </code></pre>
 <p>The program also contains preset which combine several options for ease of use. The
 <code>traditional</code> preset,</p>
@@ -216,8 +226,28 @@ forms of cytosine modification (notably 5hmC), and</li>
 indicating that the strand information has been lost.</li>
 </ul>
 <p>Using this option is equivalent to running with the options:</p>
-<pre><code class="language-bash">modkit pileup --cpg --ref &lt;reference.fasta&gt; --ignore h --combine-strands
+<pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref &lt;reference.fasta&gt; --ignore h --combine-strands
 </code></pre>
+<h3 id="partitioning-reads-based-on-sam-tag-values"><a class="header" href="#partitioning-reads-based-on-sam-tag-values">Partitioning reads based on SAM tag values</a></h3>
+<p>If have a modBAM with reads from different conditions are other SAM tag annotations (for example <code>RG</code> or <code>HP</code>) you 
+can pass the <code>--partition-tag</code> option and <code>modkit</code> will output a separate bedMethyl with counts for only the reads 
+with that tag value. For example, if you have haplotype-annotated reads with the <code>HP</code> tag, you could use a command
+like the following:</p>
+<pre><code class="language-bash">modkit pileup path/to/reads.bam output/directory/ --cpg --ref &lt;reference.fasta&gt; --partition-tag HP --prefix haplotyped
+</code></pre>
+<p>The output will be multiple files in placed in <code>output/directory/haplotyped_&lt;1|2|etc&gt;.bed</code>, multiple <code>--partition-tag</code>
+options can be passed and the output files will correspond to the observed combinations of tags found in the modBAM. 
+For example if <code>--partition-tag RG</code> and <code>--partition-tag HP</code> are passed:</p>
+<pre><code class="language-bash">outdir/
+  &lt;prefix&gt;_&lt;RG_value_1&gt;_&lt;HP_value_1&gt;.bed
+  &lt;prefix&gt;_&lt;RG_value_2&gt;_&lt;HP_value_1&gt;.bed
+  &lt;prefix&gt;_&lt;RG_value_1&gt;_&lt;HP_value_2&gt;.bed
+  &lt;prefix&gt;_&lt;RG_value_2&gt;_&lt;HP_value_2&gt;.bed
+  # ... etc
+</code></pre>
+<p>Note that only tag values that can be easily turned into strings will be considered valid (e.g. numbers, characters,
+strings, etc.), array values will not be used, and will result in <code>missing</code> being used. Reads missing all of the 
+SAM tags will be put in <code>ungrouped.bed</code>.</p>
 <p>For more information on the individual options see the <a href="./advanced_usage.html">Advanced Usage</a> help document.</p>
 <h2 id="description-of-bedmethyl-output"><a class="header" href="#description-of-bedmethyl-output">Description of bedMethyl output.</a></h2>
 <p>Below is a description of the bedMethyl columns generated by <code>modkit pileup</code>. A brief description of the
@@ -463,6 +493,9 @@ modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-
 <h3 id="perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">Perform pileup, ignoring base modification calls within 100 base pairs of the ends of the reads</a></h3>
 <pre><code>modkit puleup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 100
 </code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="narrow-output-to-specific-positions"><a class="header" href="#narrow-output-to-specific-positions">Narrow output to specific positions</a></h1>
+<p>The <code>pileup</code>, <code>sample-probs</code>, <code>summary</code>, and <code>extract</code> sub commands have a <code>--include-bed</code> (or <code>--include-positions</code>) option that will restrict analysis to only positions that overlap with the intervals contained within the BED file. </p>
+<p>In the case of <code>pileup</code>, <code>summary</code>, and <code>sample-probs</code>, the pass-threshold will be estimated with only base modification probabilities that are aligned to positions overlapping intervals in the BED. In the case of <code>pileup</code> and <code>extract</code> only positions will be reported if they overlap intervals in the BED.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="modkit-subcommand-documentation"><a class="header" href="#modkit-subcommand-documentation">modkit, subcommand documentation</a></h1>
 <p>The goal of <code>modkit</code> is to enable best-practices manipulation of BAM files containing
 modified base information (modBAMs). The various sub-commands and tools available in
@@ -591,6 +624,13 @@ Options:
           
           [default: 1000000]
 
+      --include-bed &lt;INCLUDE_BED&gt;
+          BED file that will restrict threshold estimation and pileup results to positions
+          overlapping intervals in the file. (alias: include-positions)
+
+      --include-unmapped
+          Include unmapped base modifications when estimating the pass threshold.
+
       --ignore &lt;IGNORE&gt;
           Ignore a modified base class  _in_situ_ by redistributing base modification probability
           equally across other options. For example, if collapsing 'h', with 'm' and canonical
@@ -647,6 +687,12 @@ Options:
       --prefix &lt;PREFIX&gt;
           Prefix to prepend on bedgraph output file names. Without this option the files will be
           &lt;mod_code&gt;_&lt;strand&gt;.bedgraph.
+
+      --partition-tag &lt;PARTITION_TAG&gt;
+          Partition output into multiple bedMethyl files based on tag-value pairs. The output will
+          be multiple bedMethyl files with the format
+          `&lt;prefix&gt;_&lt;tag_value_1&gt;_&lt;tag_value_2&gt;_&lt;tag_value_n&gt;.bed` prefix is optional and set with
+          the `--prefix` flag.
 
   -h, --help
           Print help information (use `-h` for a summary).
@@ -762,10 +808,11 @@ Options:
           [default: 128]
 
   -n, --num-reads &lt;NUM_READS&gt;
-          Max number of reads to use, especially recommended when using a large BAM without an
-          index. If an indexed BAM is provided, the reads will be sampled evenly over the length of
-          the aligned reference. If a region is passed with the --region option, they will be
-          sampled over the genomic region.
+          Approximate maximum number of reads to use, especially recommended when using a large BAM
+          without an index. If an indexed BAM is provided, the reads will be sampled evenly over the
+          length of the aligned reference. If a region is passed with the --region option, they will
+          be sampled over the genomic region. Actual number of reads used may deviate slightly from
+          this number.
           
           [default: 10042]
 
@@ -777,7 +824,8 @@ Options:
           No sampling, use all of the reads to calculate the filter thresholds.
 
   -s, --seed &lt;SEED&gt;
-          Random seed for deterministic running, the default is non-deterministic.
+          Random seed for deterministic running, the default is non-deterministic, only used when no
+          BAM index is provided.
 
       --region &lt;REGION&gt;
           Process only the specified region of the BAM when collecting probabilities. Format should
@@ -789,6 +837,14 @@ Options:
           indexed bam.
           
           [default: 1000000]
+
+      --include-bed &lt;INCLUDE_BED&gt;
+          Only sample base modification probabilities that are aligned to the positions in this BED
+          file. (alias: include-positions)
+
+      --only-mapped
+          Only use base modification probabilities that are aligned (i.e. ignore soft-clipped, and
+          inserted bases).
 
   -h, --help
           Print help information (use `-h` for a summary).
@@ -821,10 +877,11 @@ Options:
           Hide the progress bar.
 
   -n, --num-reads &lt;NUM_READS&gt;
-          Max number of reads to use for estimating the filter threshold and generating the summary,
-          especially recommended when using a large BAM without an index. If an indexed BAM is
-          provided, the reads will be sampled evenly over the length of the aligned reference. If a
-          region is passed with the --region option, they will be sampled over the genomic region.
+          Approximate maximum number of reads to use, especially recommended when using a large BAM
+          without an index. If an indexed BAM is provided, the reads will be sampled evenly over the
+          length of the aligned reference. If a region is passed with the --region option, they will
+          be sampled over the genomic region. Actual number of reads used may deviate slightly from
+          this number.
           
           [default: 10042]
 
@@ -838,7 +895,7 @@ Options:
 
   -s, --seed &lt;SEED&gt;
           Sets a random seed for deterministic running (when using --sample-frac), the default is
-          non-deterministic.
+          non-deterministic, only used when no BAM index is provided.
 
       --no-filtering
           Do not perform any filtering, include all base modification calls in the summary. See
@@ -878,6 +935,14 @@ Options:
           Discard base modification calls that are this many bases from the start or the end of the
           read. For example, a value of 10 will require that the base modification is at least the
           11th base or 11 bases from the end.
+
+      --include-bed &lt;INCLUDE_BED&gt;
+          Only summarize base modification probabilities that are aligned to the positions in this
+          BED file. (alias: include-positions)
+
+      --only-mapped
+          Only use base modification probabilities that are aligned (i.e. ignore soft-clipped, and
+          inserted bases).
 
       --region &lt;REGION&gt;
           Process only the specified region of the BAM when collecting probabilities. Format should
@@ -937,12 +1002,12 @@ Options:
           [default: 4]
 
   -n, --num-reads &lt;NUM_READS&gt;
-          Sample this many reads when estimating the filtering threshold. If alignments are present
-          reads will be sampled evenly across aligned genome. If a region is specified, either with
-          the --region option or the --sample-region option, then reads will be sampled evenly
-          across the region given. This option is useful for large BAM files. In practice, 10-50
-          thousand reads is sufficient to estimate the model output distribution and determine the
-          filtering threshold.
+          Sample approximately this many reads when estimating the filtering threshold. If
+          alignments are present reads will be sampled evenly across aligned genome. If a region is
+          specified, either with the --region option or the --sample-region option, then reads will
+          be sampled evenly across the region given. This option is useful for large BAM files. In
+          practice, 10-50 thousand reads is sufficient to estimate the model output distribution and
+          determine the filtering threshold.
           
           [default: 10042]
 
@@ -952,7 +1017,8 @@ Options:
           determine the filtering threshold. See filtering.md for details on filtering.
 
       --seed &lt;SEED&gt;
-          Set a random seed for deterministic running, the default is non-deterministic.
+          Set a random seed for deterministic running, the default is non-deterministic, only used
+          when no BAM index is provided.
 
       --sample-region &lt;SAMPLE_REGION&gt;
           Specify a region for sampling reads from when estimating the threshold probability. If
@@ -1008,8 +1074,8 @@ Usage: modkit extract [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_PATH&gt;
 
 Arguments:
   &lt;IN_BAM&gt;
-          Path to modBAM file to extract read-level information from, may be sorted with associated
-            index.
+          Path to modBAM file to extract read-level information from, may be sorted and have
+          associated index.
 
   &lt;OUT_PATH&gt;
           Path to output file, &quot;stdout&quot; or &quot;-&quot; will direct output to stdout.
@@ -1045,7 +1111,7 @@ Options:
 
       --include-bed &lt;INCLUDE_BED&gt;
           BED file with regions to include (alias: include-only). Implicitly only includes mapped
-          sites.
+          sites. (alias: include-positions)
 
   -v, --exclude-bed &lt;EXCLUDE_BED&gt;
           BED file with regions to _exclude_. (alias: exclude)
@@ -1138,11 +1204,6 @@ supported in <code>pileup</code>.</p>
 alignment. If a read name is detected more than once, the occurance is logged but both
 alignments will be used. This limiration may be removed in the future with a form of
 dynamic de-duplication.</p>
-</li>
-<li>
-<p>If your modBAM has been pre-filtered to a specific region, you should pass the 
-same region information to <code>modkit</code>. In a future release (0.1.z) <code>modkit</code> will 
-inspect the bam index directly.</p>
 </li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="performance-considerations"><a class="header" href="#performance-considerations">Performance considerations</a></h1>

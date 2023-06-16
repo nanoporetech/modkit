@@ -11,9 +11,10 @@ path = "src/bin/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-rust-htslib = "0.40.2"
+rust-htslib = "0.43.1"
 bio = "1.0.0"
 indexmap = "1.9.2"
+rustc-hash = "1.1.0"
 pulp = "0.10.3"
 clap = { version = "4.0.29", features = ["derive", "wrap_help"]}
 indicatif = { version = "0.17.1", features = ["rayon"] }
@@ -30,6 +31,7 @@ derive-new = "0.5.9"
 histo_fp = "0.2.1"
 prettytable-rs = "0.10.0"
 rust-lapper = "1.1.0"
+linear-map = "1.2.0"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"

@@ -1,6 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::thread;
 
@@ -13,22 +11,22 @@ use log::{debug, error, info};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use rust_htslib::bam::{self, FetchDefinition, Read};
-use rust_lapper as lapper;
 
 use crate::errs::RunError;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCode;
+use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
 };
-use crate::reads_sampler::record_sampler::RecordSampler;
+use crate::reads_sampler::record_sampler::{RecordSampler, SamplingSchedule};
 use crate::reads_sampler::sample_reads_from_interval;
 use crate::record_processor::WithRecords;
 use crate::util::{
     get_master_progress_bar, get_spinner, get_subroutine_progress_bar,
-    get_targets, ReferenceRecord, Region, Strand,
+    get_targets, get_ticker, ReferenceRecord, Region, Strand,
 };
 use crate::writers::{
     OutwriterWithMemory, TsvWriter, TsvWriterWithContigNames,
@@ -70,9 +68,9 @@ pub struct ExtractMods {
     #[arg(long, alias = "ref")]
     reference: Option<PathBuf>,
 
-    /// BED file with regions to include (alias: include-only). Implicitly
+    /// BED file with regions to include (alias: include-positions). Implicitly
     /// only includes mapped sites.
-    #[arg(long, alias = "include-only")]
+    #[arg(long, alias = "include-positions")]
     include_bed: Option<PathBuf>,
     /// BED file with regions to _exclude_ (alias: exclude).
     #[arg(long, alias = "exclude", short = 'v')]
@@ -104,8 +102,6 @@ pub struct ExtractMods {
 }
 
 type ReferenceAndIntervals = Vec<(ReferenceRecord, IntervalChunks)>;
-type Iv = lapper::Interval<u64, ()>;
-type GenomeLapper = lapper::Lapper<u64, ()>;
 
 impl ExtractMods {
     fn load_regions(
@@ -247,49 +243,80 @@ impl ExtractMods {
             .map(|raw_region| Region::parse_str(raw_region, reader.header()))
             .transpose()?;
 
-        let (regions, reference_position_filter) =
+        let (references_and_intervals, reference_position_filter) =
             self.load_regions(&name_to_tid, region.as_ref())?;
+
+        let schedule = self
+            .num_reads
+            .map(|nr| {
+                SamplingSchedule::from_num_reads(
+                    &in_bam,
+                    nr,
+                    region.as_ref(),
+                    reference_position_filter.include_pos.as_ref(),
+                    reference_position_filter.include_unmapped,
+                )
+            })
+            .transpose()?;
 
         let multi_prog = MultiProgress::new();
         if self.suppress_progress {
             multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
-        let n_failed = multi_prog.add(get_spinner());
+        let n_failed = multi_prog.add(get_ticker());
         n_failed.set_message("~records failed");
-        let n_skipped = multi_prog.add(get_spinner());
+        let n_skipped = multi_prog.add(get_ticker());
         n_skipped.set_message("~records skipped");
-        let n_used = multi_prog.add(get_spinner());
+        let n_used = multi_prog.add(get_ticker());
         n_used.set_message("~records used");
-        let n_rows = multi_prog.add(get_spinner());
+        let n_rows = multi_prog.add(get_ticker());
         n_rows.set_message("rows written");
         reader.set_threads(self.threads)?;
         let n_reads = self.num_reads;
         let threads = self.threads;
+        let mapped_only = self.mapped_only;
 
         thread::spawn(move || {
             pool.install(|| {
-                if let Some(interval_chunks) = regions {
+                if let Some(reference_and_intervals) = references_and_intervals {
                     drop(reader);
-                    let prog_length = if reference_position_filter.include_unmapped {
-                        interval_chunks.len() + 1
+                    let prog_length = if reference_position_filter.include_unmapped &&
+                        schedule.as_ref().map(|s| s.unmapped_count > 0).unwrap_or(true) {
+                        reference_and_intervals.len() + 1
                     } else {
-                        interval_chunks.len()
+                        reference_and_intervals.len()
                     };
                     let master_progress = multi_prog.add(get_master_progress_bar(prog_length));
                     master_progress.set_message("contigs");
 
-                    let total_length = interval_chunks.iter().map(|(r, _)| r.length as u64).sum::<u64>();
                     let mut num_aligned_reads_used = 0usize;
-                    for (reference_record, interval_chunks) in interval_chunks {
+                    for (reference_record, interval_chunks) in reference_and_intervals {
                         let interval_chunks =
-                            interval_chunks.collect::<Vec<(u32, u32)>>();
+                            interval_chunks
+                                .filter(|(start, end)| {
+                                    reference_position_filter.include_pos
+                                        .as_ref()
+                                        .map(|pf| {
+                                            pf.overlaps_not_stranded(
+                                                reference_record.tid,
+                                                *start as u64,
+                                                *end as u64
+                                            )
+                                        })
+                                        .unwrap_or(true)
+                                })
+                                .collect::<Vec<(u32, u32)>>();
 
-                        // todo use the index api to pre-calculate the number of reads per ref
-                        let num_reads_for_reference = n_reads.map(|nr| {
-                            let f = reference_record.length as f64 / total_length as f64;
-                            let nr = nr as f64 * f;
-                            std::cmp::max(nr.floor() as usize, 1usize)
-                        });
+                        let total_interval_length = interval_chunks
+                            .iter()
+                            .map(|(start, end)| end.checked_sub(*start).unwrap_or(0))
+                            .sum::<u32>();
+                        let num_reads_for_reference = schedule.as_ref()
+                            .map(|s| s.get_num_reads(reference_record.tid));
+                        if num_reads_for_reference == Some(0) {
+                            master_progress.inc(1);
+                            continue
+                        }
 
                         let interval_pb = multi_prog.add(get_subroutine_progress_bar(interval_chunks.len()));
                         interval_pb.set_message(format!("processing {}", &reference_record.name));
@@ -297,10 +324,14 @@ impl ExtractMods {
                             .progress_with(interval_pb)
                             .map(
                                 |(start, end)| {
-                                    let record_sampler = num_reads_for_reference.map(|nr| {
-                                        let f = (end - start) as f64 / reference_record.length as f64;
-                                        let nr = nr as f64 * f;
-                                        let nr = std::cmp::max(nr.floor() as usize, 1usize);
+                                    let record_sampler = schedule.as_ref()
+                                        .map(|s| {
+                                        let nr = s.get_num_reads_for_interval(
+                                            &reference_record,
+                                            total_interval_length,
+                                            start,
+                                            end
+                                        );
                                         RecordSampler::new_num_reads(nr)
                                     }).unwrap_or(RecordSampler::new_passthrough());
 
@@ -314,6 +345,8 @@ impl ExtractMods {
                                         record_sampler,
                                         collapse_method.as_ref(),
                                         edge_filter.as_ref(),
+                                        None,
+                                        false,
                                     ).map(|reads_base_mod_profile| {
                                         reference_position_filter.filter_read_base_mod_probs(reads_base_mod_profile)
                                     });
@@ -331,11 +364,12 @@ impl ExtractMods {
                                 }
                             ).sum::<usize>();
                         num_aligned_reads_used += n_reads_used;
+                        master_progress.inc(1);
                     }
 
                     if reference_position_filter.include_unmapped {
                         let n_unmapped_reads = n_reads.map(|nr| {
-                            nr - num_aligned_reads_used
+                            nr.checked_sub(num_aligned_reads_used).unwrap_or(0)
                         });
                         if let Some(n) = n_unmapped_reads {
                             debug!("processing {n} unmapped reads");
@@ -355,6 +389,7 @@ impl ExtractMods {
                                     n_unmapped_reads,
                                     collapse_method.as_ref(),
                                     edge_filter.as_ref(),
+                                    false,
                                     "unmapped "
                                 );
                                 let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
@@ -373,6 +408,7 @@ impl ExtractMods {
                         n_reads,
                         collapse_method.as_ref(),
                             edge_filter.as_ref(),
+                            mapped_only,
                             "",
                     );
                     let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
@@ -452,12 +488,16 @@ impl ExtractMods {
         n_reads: Option<usize>,
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
+        only_mapped: bool,
         message: &'static str,
     ) -> (usize, usize) {
-        let mut mod_iter = TrackingModRecordIter::new(records);
+        let mut mod_iter = TrackingModRecordIter::new(records, false);
         let pb = multi_pb.add(get_spinner());
         pb.set_message(format!("{message}records processed"));
         for (record, read_id, mod_base_info) in &mut mod_iter {
+            if record.is_unmapped() && only_mapped {
+                continue;
+            }
             let mod_profile = match ReadBaseModProfile::process_record(
                 &record,
                 &read_id,
@@ -504,127 +544,6 @@ impl ExtractMods {
     }
 }
 
-struct StrandedPositionFilter {
-    pos_positions: HashMap<u32, GenomeLapper>,
-    neg_positions: HashMap<u32, GenomeLapper>,
-}
-
-impl StrandedPositionFilter {
-    fn from_bed_file(
-        bed_fp: &PathBuf,
-        chrom_to_target_id: &HashMap<&str, u32>,
-        suppress_bp: bool,
-    ) -> anyhow::Result<Self> {
-        info!(
-            "parsing BED at {}",
-            bed_fp.to_str().unwrap_or("invalid-UTF-8")
-        );
-
-        let fh = File::open(bed_fp)?;
-        let mut pos_positions = HashMap::new();
-        let mut neg_positions = HashMap::new();
-        let lines_processed = get_spinner();
-        if suppress_bp {
-            lines_processed
-                .set_draw_target(indicatif::ProgressDrawTarget::hidden());
-        }
-        lines_processed.set_message("rows processed");
-        let mut warned = HashSet::new();
-
-        let reader = BufReader::new(fh);
-        for line in reader.lines().filter_map(|l| l.ok()) {
-            let parts = line.split_ascii_whitespace().collect::<Vec<&str>>();
-            let chrom_name = parts[0];
-            if warned.contains(chrom_name) {
-                continue;
-            }
-            if parts.len() < 6 {
-                info!("improperly formatted BED line {line}");
-                continue;
-            }
-            let raw_start = &parts[1].parse::<u64>();
-            let raw_end = &parts[2].parse::<u64>();
-            let (start, stop) = match (raw_start, raw_end) {
-                (Ok(start), Ok(end)) => (*start, *end),
-                _ => {
-                    info!("improperly formatted BED line {line}");
-                    continue;
-                }
-            };
-            let (pos_strand, neg_strand) = match parts[5] {
-                "+" => (true, false),
-                "-" => (false, true),
-                "." => (true, true),
-                _ => {
-                    info!("improperly formatted strand field {}", &parts[5]);
-                    continue;
-                }
-            };
-            if let Some(chrom_id) = chrom_to_target_id.get(chrom_name) {
-                if pos_strand {
-                    pos_positions.entry(*chrom_id).or_insert(Vec::new()).push(
-                        Iv {
-                            start,
-                            stop,
-                            val: (),
-                        },
-                    )
-                }
-                if neg_strand {
-                    neg_positions.entry(*chrom_id).or_insert(Vec::new()).push(
-                        Iv {
-                            start,
-                            stop,
-                            val: (),
-                        },
-                    )
-                }
-                lines_processed.inc(1);
-            } else {
-                info!("skipping chrom {chrom_name}, not present in BAM header");
-                warned.insert(chrom_name.to_owned());
-                continue;
-            }
-        }
-
-        let pos_lapper = pos_positions
-            .into_iter()
-            .map(|(chrom_id, intervals)| {
-                let mut lp = lapper::Lapper::new(intervals);
-                lp.merge_overlaps();
-                (chrom_id, lp)
-            })
-            .collect::<HashMap<u32, GenomeLapper>>();
-
-        let neg_lapper = neg_positions
-            .into_iter()
-            .map(|(chrom_id, intervals)| {
-                let mut lp = lapper::Lapper::new(intervals);
-                lp.merge_overlaps();
-                (chrom_id, lp)
-            })
-            .collect::<HashMap<u32, GenomeLapper>>();
-
-        lines_processed.finish_and_clear();
-        info!("processed {} BED lines", lines_processed.position());
-        Ok(Self {
-            pos_positions: pos_lapper,
-            neg_positions: neg_lapper,
-        })
-    }
-
-    fn contains(&self, chrom_id: u32, position: u64, strand: Strand) -> bool {
-        let positions = match strand {
-            Strand::Positive => &self.pos_positions,
-            Strand::Negative => &self.neg_positions,
-        };
-        positions
-            .get(&chrom_id)
-            .map(|lp| lp.find(position, position + 1).count() > 0)
-            .unwrap_or(false)
-    }
-}
-
 #[derive(new)]
 struct ReferencePositionFilter {
     include_pos: Option<StrandedPositionFilter>,
@@ -637,12 +556,12 @@ impl ReferencePositionFilter {
         let include_hit = self
             .include_pos
             .as_ref()
-            .map(|flt| flt.contains(chrom_id, position, strand))
+            .map(|flt| flt.contains(chrom_id as i32, position, strand))
             .unwrap_or(true);
         let exclude_hit = self
             .exclude_pos
             .as_ref()
-            .map(|filt| filt.contains(chrom_id, position, strand))
+            .map(|filt| filt.contains(chrom_id as i32, position, strand))
             .unwrap_or(false);
 
         include_hit && !exclude_hit

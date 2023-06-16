@@ -49,6 +49,8 @@ fn run_summary<'a>(
             None,
             collapse_method,
             edge_filter,
+            None,
+            false,
             true,
         )
     })

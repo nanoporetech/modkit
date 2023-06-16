@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.9]
+### Changes
+- [pileup] When estimating the pass-threshold only use base modification probabilities if the read base is aligned to the reference (don't use soft-clipped and inserts). Use `--include-unmapped` to use all base modification probabilities.
+- [adjust-mods] requires `--ignore`, `--convert`, or `--edge-filter`.
+### Adds
+- [pileup, extract, sample-probs, summary] Allow narrowing of analysis to specific sites with `--include-bed`. 
+- [summary, sample-probs] Add `--only-mapped` flag that will only report on base modification probabilities if they are mapped to the reference.
+- [pileup] Allow partitioning counts to separate bedMethyl files based on SAM tags with `--partition-tag` option.
+### Fixes
+- [adjust-mods, update-tags, call-mods] Panic when failure to parse SAM header, fixes #29.
+
+
 ## [v0.1.8]
 ### Changes
 - [call-mods] Emit 0 ML value when a mod code is not called, previously the call was omitted (only the called mod was emitted).
@@ -12,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixes
 - [call-mods] `--no-filtering` flag properly handled. 
 ### Deprecated
-- [adjust-mods] In order to allow `--edge-filter` without also performing an ignore or convert, in the next release `--ignore` will require a explicit argument (`h` is no longer the default). In this release, when no edge filter, conversion, or ignore is provided, `h` will be used for ignore, but this behavior will be removed in the next release.
+- [adjust-mods] In order to allow `--edge-filter` without also performing an ignore or convert, in the next release `--ignore` will require an explicit argument (`h` is no longer the default). In this release, when no edge filter, conversion, or ignore is provided, `h` will be used for ignore, but this behavior will be removed in the next release.
 
 ## [v0.1.7]
 ### Changes

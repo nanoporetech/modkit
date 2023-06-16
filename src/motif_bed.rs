@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::position_filter::StrandedPositionFilter;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
@@ -8,9 +9,10 @@ use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
 use log::debug;
 use rayon::prelude::*;
 use regex::{Match, Regex};
+use rustc_hash::FxHashMap;
 
 use crate::util::{
-    get_master_progress_bar, get_spinner, ReferenceRecord, Strand,
+    get_master_progress_bar, get_spinner, get_ticker, ReferenceRecord, Strand,
 };
 
 fn iupac_to_regex(pattern: &str) -> String {
@@ -225,7 +227,7 @@ pub fn motif_bed(
     let master_pb = MultiProgress::new();
     let records_progress = master_pb.add(get_spinner());
     records_progress.set_message("Reading reference sequences");
-    let motifs_progress = master_pb.add(get_spinner());
+    let motifs_progress = master_pb.add(get_ticker());
     motifs_progress.set_message(format!(
         "{} motifs found",
         regex_motif.forward_pattern.as_str()
@@ -267,7 +269,7 @@ pub fn motif_bed(
 }
 
 pub struct MotifLocations {
-    tid_to_motif_positions: HashMap<u32, HashMap<u32, Strand>>,
+    tid_to_motif_positions: HashMap<u32, FxHashMap<u32, Strand>>,
     motif: RegexMotif,
 }
 
@@ -277,6 +279,7 @@ impl MotifLocations {
         regex_motif: RegexMotif,
         name_to_tid: &HashMap<&str, u32>,
         mask: bool,
+        position_filter: Option<&StrandedPositionFilter>, // todo(arand) should have a suppress progress here?
     ) -> AnyhowResult<Self> {
         let reader = FastaReader::from_file(fasta_fp)?;
         let records_progress = get_spinner();
@@ -306,9 +309,21 @@ impl MotifLocations {
             .progress_with(motif_progress)
             .map(|(seq, tid)| {
                 let positions = find_motif_hits(&seq, &regex_motif)
-                    .into_iter()
-                    .map(|(pos, strand)| (pos as u32, strand))
-                    .collect::<HashMap<u32, Strand>>();
+                    .into_iter() // todo into_par_iter?
+                    .filter_map(|(pos, strand)| {
+                        if let Some(position_filter) = position_filter {
+                            if position_filter
+                                .contains(tid as i32, pos as u64, strand)
+                            {
+                                Some((pos as u32, strand))
+                            } else {
+                                None
+                            }
+                        } else {
+                            Some((pos as u32, strand))
+                        }
+                    })
+                    .collect::<FxHashMap<u32, Strand>>();
                 (tid, positions)
             })
             .collect();
@@ -335,7 +350,7 @@ impl MotifLocations {
     pub fn get_locations_unchecked(
         &self,
         target_id: u32,
-    ) -> &HashMap<u32, Strand> {
+    ) -> &FxHashMap<u32, Strand> {
         self.tid_to_motif_positions.get(&target_id).unwrap()
     }
 

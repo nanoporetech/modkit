@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::monoid::Moniod;
+use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::record_processor::WithRecords;
@@ -65,6 +66,8 @@ pub fn summarize_modbam<'a>(
     per_mod_thresholds: Option<HashMap<ModCode, f32>>,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
+    position_filter: Option<&StrandedPositionFilter>,
+    only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<ModSummary<'a>> {
     let read_ids_to_base_mod_calls =
@@ -78,6 +81,8 @@ pub fn summarize_modbam<'a>(
             region,
             collapse_method,
             edge_filter,
+            position_filter,
+            only_mapped,
             suppress_progress,
         )?;
 

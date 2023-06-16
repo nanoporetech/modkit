@@ -10,6 +10,8 @@ the table, it is recommended to mark duplicate alignments before running as mult
 alignments can be double counted (but the behavior is logged). See [limitations](./limitations.md)
 for details.
 
+## Basic usage
+
 In its simplest form `modkit` creates a bedMethyl file using the following:
 
 ```bash
@@ -23,6 +25,8 @@ final argument here specifies an optional log file output.
 The program performs best-practices filtering and manipulation of the raw data stored in
 the input file. For further details see [filtering modified-base calls](./filtering.md).
 
+### Narrowing output to CpG dinucleotides
+
 For user convenience, the counting process can be modulated using several additional
 transforms and filters. The most basic of these is to report only counts from reference
 CpG dinucleotides. This option requires a reference sequence in order to locate the CpGs
@@ -30,6 +34,16 @@ in the reference:
 
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta
+```
+
+To restrict output to only certain CpGs, pass the `--include-bed` option with the CpGs to be used, 
+see [this page](./intro_include_bed.md) for more details.
+
+```bash
+modkit pileup path/to/reads.bam output/path/pileup.bed \
+  --cpg \
+  --ref path/to/reference.fasta \
+  --include-bed path/to/my_cpgs.bed
 ```
 
 The program also contains preset which combine several options for ease of use. The
@@ -51,8 +65,36 @@ performs three transforms:
 Using this option is equivalent to running with the options:
 
 ```bash
-modkit pileup --cpg --ref <reference.fasta> --ignore h --combine-strands
+modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref <reference.fasta> --ignore h --combine-strands
 ```
+
+### Partitioning reads based on SAM tag values
+
+If have a modBAM with reads from different conditions are other SAM tag annotations (for example `RG` or `HP`) you 
+can pass the `--partition-tag` option and `modkit` will output a separate bedMethyl with counts for only the reads 
+with that tag value. For example, if you have haplotype-annotated reads with the `HP` tag, you could use a command
+like the following:
+
+```bash
+modkit pileup path/to/reads.bam output/directory/ --cpg --ref <reference.fasta> --partition-tag HP --prefix haplotyped
+```
+The output will be multiple files in placed in `output/directory/haplotyped_<1|2|etc>.bed`, multiple `--partition-tag`
+options can be passed and the output files will correspond to the observed combinations of tags found in the modBAM. 
+For example if `--partition-tag RG` and `--partition-tag HP` are passed:
+
+```bash
+outdir/
+  <prefix>_<RG_value_1>_<HP_value_1>.bed
+  <prefix>_<RG_value_2>_<HP_value_1>.bed
+  <prefix>_<RG_value_1>_<HP_value_2>.bed
+  <prefix>_<RG_value_2>_<HP_value_2>.bed
+  # ... etc
+```
+
+Note that only tag values that can be easily turned into strings will be considered valid (e.g. numbers, characters,
+strings, etc.), array values will not be used, and will result in `missing` being used. Reads missing all of the 
+SAM tags will be put in `ungrouped.bed`.
+
 
 For more information on the individual options see the [Advanced Usage](./advanced_usage.md) help document.
 

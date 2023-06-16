@@ -8,6 +8,7 @@ use rayon::prelude::*;
 
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCode};
+use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
@@ -15,7 +16,10 @@ use crate::util::Region;
 
 fn percentile_linear_interp(xs: &[f32], q: f32) -> AnyhowResult<f32> {
     if xs.len() < 2 {
-        Err(anyhow!("not enough data points to calculate percentile",))
+        Err(anyhow!(
+            "not enough data points (got {}) to calculate percentile",
+            xs.len()
+        ))
     } else {
         if q > 1.0 {
             return Err(anyhow!("quantile must be less than 1.0 got {q}"));
@@ -120,6 +124,8 @@ pub fn calc_threshold_from_bam(
     region: Option<&Region>,
     edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
+    position_filter: Option<&StrandedPositionFilter>,
+    only_mapped: bool,
     suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, f32>> {
     let mut can_base_probs = get_modbase_probs_from_bam(
@@ -132,16 +138,19 @@ pub fn calc_threshold_from_bam(
         region,
         collapse_method,
         edge_filter,
+        position_filter,
+        only_mapped,
         suppress_progress,
     )?;
     can_base_probs
         .iter_mut()
-        .map(|(dna_base, mod_base_probs) | {
+        .map(|(dna_base, mod_base_probs)| {
             mod_base_probs.par_sort_by(|x, y| x.partial_cmp(y).unwrap());
-            let threshold = percentile_linear_interp(&mod_base_probs, filter_percentile)
-                .with_context(|| format!("didn't sample enough data, try a larger fraction of another seed"))?;
+            let threshold =
+                percentile_linear_interp(&mod_base_probs, filter_percentile)?;
             Ok((*dna_base, threshold))
-        }).collect()
+        })
+        .collect()
 }
 
 pub fn get_modbase_probs_from_bam(
@@ -154,6 +163,8 @@ pub fn get_modbase_probs_from_bam(
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
+    position_filter: Option<&StrandedPositionFilter>,
+    only_mapped: bool,
     suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, Vec<f32>>> {
     get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
@@ -166,6 +177,8 @@ pub fn get_modbase_probs_from_bam(
         region,
         collapse_method,
         edge_filter,
+        position_filter,
+        only_mapped,
         suppress_progress,
     )
     .map(|x| x.mle_probs_per_base())

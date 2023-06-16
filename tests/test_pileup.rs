@@ -1,7 +1,9 @@
 use anyhow::Context;
 use rust_htslib::bam;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 
 use common::{check_against_expected_text_file, run_modkit};
 
@@ -48,6 +50,7 @@ fn test_pileup_with_filt() {
         "--only-tabs",
         "--seed",
         "42",
+        "--include-unmapped",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
     ];
@@ -88,6 +91,8 @@ fn test_pileup_collapse() {
 
     let collapse_args = [
         "adjust-mods",
+        "--ignore",
+        "h",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_collapsed_bam.to_str().unwrap(),
     ];
@@ -388,4 +393,234 @@ fn test_pileup_edge_filter_regression() {
         edge_filter_bed.to_str().unwrap(),
         edge_filter_bed_2.to_str().unwrap(),
     );
+}
+
+#[test]
+fn test_pileup_partition_tags_just_this_one() {
+    let tmp_dir =
+        std::env::temp_dir().join("test_pileup_partition_tags_partitioned");
+    let control_file =
+        std::env::temp_dir().join("test_pileup_partition_tags_control.bed");
+
+    // control BED, all of the partitioned BED files should be the same as this one
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        control_file.to_str().unwrap(),
+        "--no-filtering",
+    ])
+    .context("failed to run modkit on control")
+    .unwrap();
+
+    // run partitioned on HP and RG tags. This test file has 2 HP tags {1, 2}
+    // and 3 read groups {A, B, C}. So we expect 6 files, all the same as the control
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.haplotyped.sorted.bam",
+        tmp_dir.to_str().unwrap(),
+        "--partition-tag",
+        "RG",
+        "--partition-tag",
+        "HP",
+        "--no-filtering",
+    ])
+    .context("failed to run modkit with partition tags")
+    .unwrap();
+
+    let mut count = 0;
+    for result in tmp_dir.read_dir().unwrap() {
+        let dir_entry = result.unwrap().path();
+        check_against_expected_text_file(
+            dir_entry.to_str().unwrap(),
+            control_file.to_str().unwrap(),
+        );
+        count += 1;
+    }
+    assert_eq!(count, 6);
+}
+
+#[test]
+fn test_pileup_partition_tags_bedgraph() {
+    let tmp_dir = std::env::temp_dir()
+        .join("test_pileup_partition_tags_bedgraph_partitioned");
+    let control_dir = std::env::temp_dir()
+        .join("test_pileup_partition_tags_bedgraph_control");
+
+    let collect_bedgraph_files =
+        |dir_path: &PathBuf| -> std::io::Result<Vec<PathBuf>> {
+            dir_path.read_dir().map(|read_dir| {
+                read_dir
+                    .filter_map(|dir| match dir {
+                        Ok(dir) => {
+                            if dir.path().extension().and_then(|fp| fp.to_str())
+                                == Some("bedgraph")
+                            {
+                                Some(dir.path())
+                            } else {
+                                None
+                            }
+                        }
+                        Err(_) => None,
+                    })
+                    .collect::<Vec<PathBuf>>()
+            })
+        };
+
+    // control BED, all of the partitioned BED files should be the same as this one
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        control_dir.to_str().unwrap(),
+        "--no-filtering",
+        "--bedgraph",
+    ])
+    .context("failed to run modkit on control bedgraph")
+    .unwrap();
+
+    let control_bedgraph_files = collect_bedgraph_files(&control_dir)
+        .unwrap()
+        .into_iter()
+        .map(|fp| {
+            let file_name = fp.file_name().unwrap().to_str().unwrap();
+            match (file_name.starts_with("h"), file_name.contains("positive")) {
+                (true, true) => (('h', "positive"), fp),
+                (true, false) => (('h', "negative"), fp),
+                (false, true) => (('m', "positive"), fp),
+                (false, false) => (('m', "negative"), fp),
+            }
+        })
+        .collect::<HashMap<(char, &str), PathBuf>>();
+
+    // run partitioned on HP and RG tags. This test file has 2 HP tags {1, 2}
+    // and 3 read groups {A, B, C}. So we expect 6 files, all the same as the control
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.haplotyped.sorted.bam",
+        tmp_dir.to_str().unwrap(),
+        "--partition-tag",
+        "RG",
+        "--partition-tag",
+        "HP",
+        "--no-filtering",
+        "--bedgraph",
+    ])
+    .context("failed to run modkit with partition tags")
+    .unwrap();
+
+    let mut count = 0;
+    for result in tmp_dir.read_dir().unwrap() {
+        let dir_entry = result.unwrap().path();
+        if dir_entry.extension().and_then(|s| s.to_str()) != Some("bedgraph") {
+            continue;
+        }
+        let file_name = dir_entry.file_name().unwrap().to_str().unwrap();
+        let stripped = file_name.replace(".bedgraph", "");
+        let parts = stripped.split('_').collect::<Vec<&str>>();
+        let mod_code = parts[2].parse::<char>().unwrap();
+        let strand = parts[3];
+        let key = (mod_code, strand);
+        let file_to_compare_to = control_bedgraph_files.get(&key).unwrap();
+        check_against_expected_text_file(
+            dir_entry.to_str().unwrap(),
+            file_to_compare_to.to_str().unwrap(),
+        );
+        count += 1;
+    }
+    assert_eq!(count, 24);
+}
+
+#[test]
+fn test_pileup_with_filt_position_filter() {
+    let temp_file =
+        std::env::temp_dir().join("test_pileup_with_filt_position_filter.bed");
+    run_modkit(&[
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "-p",
+        "0.25",
+        "--include-positions",
+        "tests/resources/CGI_ladder_3.6kb_ref_include_positions.bed",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+    ])
+    .unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/modbam.modpileup_filt_positions_025.methyl.bed",
+    );
+}
+
+#[test]
+fn test_pileup_with_filter_positions_and_traditional() {
+    let temp_file = std::env::temp_dir()
+        .join("test_pileup_with_filter_positions_and_traditional.bed");
+    run_modkit(&[
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "-p",
+        "0.25",
+        "--preset",
+        "traditional",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--include-positions",
+        "tests/resources/CGI_ladder_3.6kb_ref_include_positions.bed",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+    ])
+    .unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/modbam.modpileup_filt_positions_025_traditional.methyl.bed",
+    );
+}
+
+#[test]
+fn test_pileup_partition_tags_combine_strands() {
+    let exp_dir = std::env::temp_dir()
+        .join("test_pileup_partition_tags_combine_strands_partitioned");
+    let control_file = std::env::temp_dir()
+        .join("test_pileup_partition_tags_combine_strands_control.bed");
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        control_file.to_str().unwrap(),
+        "--combine-strands",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--cpg",
+        "--no-filtering",
+    ])
+    .context("failed to run modkit on control")
+    .unwrap();
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.haplotyped.sorted.bam",
+        exp_dir.to_str().unwrap(),
+        "--partition-tag",
+        "RG",
+        "--partition-tag",
+        "HP",
+        "--combine-strands",
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--cpg",
+        "--no-filtering",
+    ])
+    .context("failed to run modkit with partition tags")
+    .unwrap();
+    let mut count = 0;
+    for result in exp_dir.read_dir().unwrap() {
+        let dir_entry = result.unwrap().path();
+        check_against_expected_text_file(
+            dir_entry.to_str().unwrap(),
+            control_file.to_str().unwrap(),
+        );
+        count += 1;
+    }
+    assert_eq!(count, 6);
 }

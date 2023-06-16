@@ -18,20 +18,18 @@ impl IntervalChunks {
         reference_id: u32,
         motif_locations: Option<&MotifLocations>,
     ) -> Self {
-        let (motif_positions, motif_length) =
-            if let Some(locations) = motif_locations {
+        let (motif_positions, motif_length) = motif_locations
+            .map(|locations| {
                 (
                     locations
-                        // todo this could be more clever to handle breaks at CGCG for example
                         .get_locations_unchecked(reference_id)
                         .keys()
-                        .map(|x| *x)
+                        .copied()
                         .collect(),
                     locations.motif_length() as u32,
                 )
-            } else {
-                (HashSet::new(), 0u32)
-            };
+            })
+            .unwrap_or((HashSet::new(), 0u32));
 
         Self {
             seq_len: start + seq_len,

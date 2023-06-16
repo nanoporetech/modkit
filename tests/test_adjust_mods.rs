@@ -69,6 +69,8 @@ fn test_adjust_no_tags() {
     let temp_file = std::env::temp_dir().join("test_out_no_tags.bam");
     run_modkit(&[
         "adjust-mods",
+        "--ignore",
+        "h",
         "tests/resources/input_C_no_tags.bam",
         temp_file.to_str().unwrap(),
     ])
@@ -250,6 +252,8 @@ fn test_adjust_to_no_mods() {
         std::env::temp_dir().join("test_adjust_to_no_mods_ignore_both.bam");
     let first_adjust_args = [
         "adjust-mods",
+        "--ignore",
+        "h",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_ignore_h_bam.to_str().unwrap(),
     ];
