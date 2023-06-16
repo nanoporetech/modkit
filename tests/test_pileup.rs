@@ -91,6 +91,8 @@ fn test_pileup_collapse() {
 
     let collapse_args = [
         "adjust-mods",
+        "--ignore",
+        "h",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         test_collapsed_bam.to_str().unwrap(),
     ];
