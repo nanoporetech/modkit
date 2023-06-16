@@ -21,7 +21,7 @@ use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
 };
-use crate::reads_sampler::record_sampler::RecordSampler;
+use crate::reads_sampler::record_sampler::{RecordSampler, SamplingSchedule};
 use crate::reads_sampler::sample_reads_from_interval;
 use crate::record_processor::WithRecords;
 use crate::util::{
@@ -246,6 +246,19 @@ impl ExtractMods {
         let (references_and_intervals, reference_position_filter) =
             self.load_regions(&name_to_tid, region.as_ref())?;
 
+        let schedule = self
+            .num_reads
+            .map(|nr| {
+                SamplingSchedule::from_num_reads(
+                    &in_bam,
+                    nr,
+                    region.as_ref(),
+                    reference_position_filter.include_pos.as_ref(),
+                    reference_position_filter.include_unmapped,
+                )
+            })
+            .transpose()?;
+
         let multi_prog = MultiProgress::new();
         if self.suppress_progress {
             multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
@@ -267,7 +280,8 @@ impl ExtractMods {
             pool.install(|| {
                 if let Some(reference_and_intervals) = references_and_intervals {
                     drop(reader);
-                    let prog_length = if reference_position_filter.include_unmapped {
+                    let prog_length = if reference_position_filter.include_unmapped &&
+                        schedule.as_ref().map(|s| s.unmapped_count > 0).unwrap_or(true) {
                         reference_and_intervals.len() + 1
                     } else {
                         reference_and_intervals.len()
@@ -275,7 +289,6 @@ impl ExtractMods {
                     let master_progress = multi_prog.add(get_master_progress_bar(prog_length));
                     master_progress.set_message("contigs");
 
-                    let total_length = reference_and_intervals.iter().map(|(r, _)| r.length as u64).sum::<u64>();
                     let mut num_aligned_reads_used = 0usize;
                     for (reference_record, interval_chunks) in reference_and_intervals {
                         let interval_chunks =
@@ -294,12 +307,16 @@ impl ExtractMods {
                                 })
                                 .collect::<Vec<(u32, u32)>>();
 
-                        // todo use the index api to pre-calculate the number of reads per ref
-                        let num_reads_for_reference = n_reads.map(|nr| {
-                            let f = reference_record.length as f64 / total_length as f64;
-                            let nr = nr as f64 * f;
-                            std::cmp::max(nr.floor() as usize, 1usize)
-                        });
+                        let total_interval_length = interval_chunks
+                            .iter()
+                            .map(|(start, end)| end.checked_sub(*start).unwrap_or(0))
+                            .sum::<u32>();
+                        let num_reads_for_reference = schedule.as_ref()
+                            .map(|s| s.get_num_reads(reference_record.tid));
+                        if num_reads_for_reference == Some(0) {
+                            master_progress.inc(1);
+                            continue
+                        }
 
                         let interval_pb = multi_prog.add(get_subroutine_progress_bar(interval_chunks.len()));
                         interval_pb.set_message(format!("processing {}", &reference_record.name));
@@ -307,10 +324,14 @@ impl ExtractMods {
                             .progress_with(interval_pb)
                             .map(
                                 |(start, end)| {
-                                    let record_sampler = num_reads_for_reference.map(|nr| {
-                                        let f = (end - start) as f64 / reference_record.length as f64;
-                                        let nr = nr as f64 * f;
-                                        let nr = std::cmp::max(nr.floor() as usize, 1usize);
+                                    let record_sampler = schedule.as_ref()
+                                        .map(|s| {
+                                        let nr = s.get_num_reads_for_interval(
+                                            &reference_record,
+                                            total_interval_length,
+                                            start,
+                                            end
+                                        );
                                         RecordSampler::new_num_reads(nr)
                                     }).unwrap_or(RecordSampler::new_passthrough());
 
@@ -343,11 +364,12 @@ impl ExtractMods {
                                 }
                             ).sum::<usize>();
                         num_aligned_reads_used += n_reads_used;
+                        master_progress.inc(1);
                     }
 
                     if reference_position_filter.include_unmapped {
                         let n_unmapped_reads = n_reads.map(|nr| {
-                            nr - num_aligned_reads_used
+                            nr.checked_sub(num_aligned_reads_used).unwrap_or(0)
                         });
                         if let Some(n) = n_unmapped_reads {
                             debug!("processing {n} unmapped reads");
