@@ -21,8 +21,9 @@ use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
 };
-use crate::reads_sampler::record_sampler::{RecordSampler, SamplingSchedule};
+use crate::reads_sampler::record_sampler::RecordSampler;
 use crate::reads_sampler::sample_reads_from_interval;
+use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
 use crate::util::{
     get_master_progress_bar, get_spinner, get_subroutine_progress_bar,

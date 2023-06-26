@@ -17,6 +17,7 @@ use crate::writers::{
 };
 use anyhow::{anyhow, bail, Context};
 
+use crate::reads_sampler::sampling_schedule::IdxStats;
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{MultiProgress, ParallelProgressIterator};
@@ -266,8 +267,8 @@ impl ModBamPileup {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         // do this first so we fail when the file isn't readable
-        let header = bam::IndexedReader::from_path(&self.in_bam)
-            .map(|reader| reader.header().to_owned())?;
+        let mut reader = bam::IndexedReader::from_path(&self.in_bam)?;
+        let header = reader.header().to_owned();
 
         // options parsing below
         let region = self
@@ -320,6 +321,20 @@ impl ModBamPileup {
                 )
             })
             .transpose()?;
+        IdxStats::new_from_reader(
+            &mut reader,
+            region.as_ref(),
+            position_filter.as_ref(),
+        )
+        .and_then(|index_stats| {
+            if index_stats.mapped_read_count > 0 {
+                Ok(())
+            } else {
+                Err(anyhow!("did not find any mapped reads, perform alignment first or use \
+                modkit extract and/or modkit summary to inspect unaligned modBAMs"))
+            }
+        })?;
+
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")
         }
