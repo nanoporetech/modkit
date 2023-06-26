@@ -267,8 +267,8 @@ impl ModBamPileup {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         // do this first so we fail when the file isn't readable
-        let mut reader = bam::IndexedReader::from_path(&self.in_bam)?;
-        let header = reader.header().to_owned();
+        let header = bam::IndexedReader::from_path(&self.in_bam)
+            .map(|reader| reader.header().to_owned())?;
 
         // options parsing below
         let region = self
@@ -321,8 +321,10 @@ impl ModBamPileup {
                 )
             })
             .transpose()?;
-        IdxStats::new_from_reader(
-            &mut reader,
+        // use the path here instead of passing the reader directly to avoid potentially
+        // changing mutable internal state of the reader.
+        IdxStats::new_from_path(
+            &self.in_bam,
             region.as_ref(),
             position_filter.as_ref(),
         )

@@ -6,7 +6,7 @@ use itertools::Itertools;
 use log::debug;
 use rust_htslib::bam::{self, Read};
 use rustc_hash::FxHashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub(crate) struct SamplingSchedule {
@@ -219,6 +219,16 @@ pub(crate) struct IdxStats {
 }
 
 impl IdxStats {
+    pub(crate) fn new_from_path(
+        bam_fp: &PathBuf,
+        region: Option<&Region>,
+        position_filter: Option<&StrandedPositionFilter>,
+    ) -> anyhow::Result<Self> {
+        let mut reader = bam::IndexedReader::from_path(bam_fp)
+            .context("could not create reader for getting mapping stats")?;
+        Self::new_from_reader(&mut reader, region, position_filter)
+    }
+
     pub(crate) fn new_from_reader(
         reader: &mut bam::IndexedReader,
         region: Option<&Region>,
