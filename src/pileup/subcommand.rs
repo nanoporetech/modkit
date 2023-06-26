@@ -17,6 +17,7 @@ use crate::writers::{
 };
 use anyhow::{anyhow, bail, Context};
 
+use crate::reads_sampler::sampling_schedule::IdxStats;
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{MultiProgress, ParallelProgressIterator};
@@ -320,6 +321,22 @@ impl ModBamPileup {
                 )
             })
             .transpose()?;
+        // use the path here instead of passing the reader directly to avoid potentially
+        // changing mutable internal state of the reader.
+        IdxStats::new_from_path(
+            &self.in_bam,
+            region.as_ref(),
+            position_filter.as_ref(),
+        )
+        .and_then(|index_stats| {
+            if index_stats.mapped_read_count > 0 {
+                Ok(())
+            } else {
+                Err(anyhow!("did not find any mapped reads, perform alignment first or use \
+                modkit extract and/or modkit summary to inspect unaligned modBAMs"))
+            }
+        })?;
+
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")
         }

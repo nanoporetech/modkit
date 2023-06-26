@@ -1,10 +1,11 @@
 pub(crate) mod record_sampler;
+pub(crate) mod sampling_schedule;
 
 use crate::interval_chunks::IntervalChunks;
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::monoid::Moniod;
 use crate::position_filter::StrandedPositionFilter;
-use crate::reads_sampler::record_sampler::SamplingSchedule;
+use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
     get_master_progress_bar, get_subroutine_progress_bar, get_targets,

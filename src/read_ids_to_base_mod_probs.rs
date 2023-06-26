@@ -50,19 +50,12 @@ impl ReadIdsToBaseModProbs {
         canonical_base: DnaBase,
         mod_probs: Vec<BaseModProbs>,
     ) {
-        let added = self
-            .inner
+        self.inner
             .entry(read_id.to_owned())
             .or_insert(HashMap::new())
-            .insert(canonical_base, mod_probs);
-        if added.is_some() {
-            debug!(
-                "double added base mod calls for base {} and read {},\
-                 potentially a logic error, please submit an issue.",
-                canonical_base.char(),
-                read_id
-            );
-        }
+            .entry(canonical_base)
+            .or_insert(Vec::new())
+            .extend(mod_probs)
     }
 
     #[inline]
@@ -270,6 +263,9 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                                 &record,
                             );
 
+                        // must stay such that mod_probs will not be empty if seq_pos_base_mod_probs
+                        // is Some otherwise added_mod_probs_for_record should not be flipped to
+                        // true
                         if let Some(seq_pos_base_mod_probs) =
                             seq_pos_base_mod_probs
                         {
@@ -289,7 +285,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                                 canonical_base,
                                 mod_probs,
                             );
-                            added_probs_for_record = true
+                            added_probs_for_record = true;
                         } else {
                             // trace!("all base mod positions were removed by filtering \
                             //     for {record_name} and base {raw_canonical_base}");
