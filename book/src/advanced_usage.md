@@ -631,7 +631,7 @@ Options:
           provided, `ref_kmer` column will be "." in the output. (alias: ref)
 
       --include-bed <INCLUDE_BED>
-          BED file with regions to include (alias: include-only). Implicitly only includes mapped
+          BED file with regions to include (alias: include-positions). Implicitly only includes mapped
           sites. (alias: include-positions)
 
   -v, --exclude-bed <EXCLUDE_BED>
