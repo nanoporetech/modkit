@@ -340,7 +340,7 @@ pub(crate) struct ModProfile {
     raw_mod_code: char,
     q_base: u8,
     query_kmer: [u8; 5],
-    mod_strand: Strand,
+    pub(crate) mod_strand: Strand,
     pub(crate) alignment_strand: Option<Strand>,
     canonical_base: char,
 }

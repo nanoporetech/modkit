@@ -553,16 +553,32 @@ struct ReferencePositionFilter {
 }
 
 impl ReferencePositionFilter {
-    fn keep(&self, chrom_id: u32, position: u64, strand: Strand) -> bool {
+    fn keep(
+        &self,
+        chrom_id: u32,
+        position: u64,
+        alignment_strand: Strand,
+        mod_strand: Strand,
+    ) -> bool {
+        let reference_strand = match (mod_strand, alignment_strand) {
+            (Strand::Positive, Strand::Positive) => Strand::Positive,
+            (Strand::Positive, Strand::Negative) => Strand::Negative,
+            (Strand::Negative, Strand::Positive) => Strand::Negative,
+            (Strand::Negative, Strand::Negative) => Strand::Positive,
+        };
         let include_hit = self
             .include_pos
             .as_ref()
-            .map(|flt| flt.contains(chrom_id as i32, position, strand))
+            .map(|flt| {
+                flt.contains(chrom_id as i32, position, reference_strand)
+            })
             .unwrap_or(true);
         let exclude_hit = self
             .exclude_pos
             .as_ref()
-            .map(|filt| filt.contains(chrom_id as i32, position, strand))
+            .map(|filt| {
+                filt.contains(chrom_id as i32, position, reference_strand)
+            })
             .unwrap_or(false);
 
         include_hit && !exclude_hit
@@ -590,7 +606,12 @@ impl ReferencePositionFilter {
                             mod_profile.alignment_strand,
                         ) {
                             (Some(chrom_id), Some(ref_pos), Some(strand)) => {
-                                self.keep(chrom_id, ref_pos as u64, strand)
+                                self.keep(
+                                    chrom_id,
+                                    ref_pos as u64,
+                                    strand,
+                                    mod_profile.mod_strand,
+                                )
                             }
                             _ => self.include_unmapped,
                         }
