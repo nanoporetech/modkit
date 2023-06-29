@@ -1,4 +1,6 @@
-use crate::common::{parse_mod_profile, ModData};
+use crate::common::{
+    check_against_expected_text_file, parse_mod_profile, ModData,
+};
 use anyhow::{anyhow, Context};
 use common::run_modkit;
 use std::collections::{HashMap, HashSet};
@@ -183,6 +185,26 @@ fn test_extract_include_sites() {
             assert!(sites.contains(&x), "{}", format!("should find {:?}", x))
         }
     }
+}
+
+#[test]
+fn test_extract_include_sites_duplex_regression() {
+    let out_fp =
+        std::env::temp_dir().join("test_extract_include_sites_duplex.bed");
+    let include_bed_fp = "tests/resources/hg38_chr17_CG0_snip.bed";
+    run_modkit(&[
+        "extract",
+        "tests/resources/duplex_modbam.sorted.bam",
+        out_fp.to_str().unwrap(),
+        "--include-bed",
+        include_bed_fp,
+        "--force",
+    ])
+    .unwrap();
+    check_against_expected_text_file(
+        out_fp.to_str().unwrap(),
+        "tests/resources/test_extract_include_sites_duplex_regression_expected.bed",
+    );
 }
 
 #[test]

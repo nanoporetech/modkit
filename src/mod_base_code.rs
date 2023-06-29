@@ -5,6 +5,7 @@ pub trait ParseChar {
     fn parse_char(c: char) -> AnyhowResult<Self>
     where
         Self: Sized;
+    fn char(&self) -> char;
 }
 
 #[allow(non_camel_case_types)]
@@ -88,6 +89,9 @@ impl ParseChar for ModCode {
     fn parse_char(c: char) -> AnyhowResult<Self> {
         ModCode::parse_raw_mod_code(c)
     }
+    fn char(&self) -> char {
+        self.char()
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -144,5 +148,8 @@ impl DnaBase {
 impl ParseChar for DnaBase {
     fn parse_char(c: char) -> AnyhowResult<Self> {
         DnaBase::parse(c)
+    }
+    fn char(&self) -> char {
+        self.char()
     }
 }
