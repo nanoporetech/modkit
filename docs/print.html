@@ -552,7 +552,14 @@ Options:
 
       --region &lt;REGION&gt;
           Process only the specified region of the BAM when performing pileup. Format should be
-          &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or &lt;chrom_name&gt;.
+          &lt;chrom_name&gt;:&lt;start&gt;-&lt;end&gt; or &lt;chrom_name&gt;
+
+      --max-depth &lt;MAX_DEPTH&gt;
+          Maximum number of records to use when calculating puleup. This argument is passed to the
+          pileup engine. If you have high depth data, consider increasing this value substantially.
+          Must be less than 2147483647 or an error will be raised.
+          
+          [default: 8000]
 
   -t, --threads &lt;THREADS&gt;
           Number of threads to use while processing chunks concurrently.
@@ -1110,8 +1117,8 @@ Options:
           provided, `ref_kmer` column will be &quot;.&quot; in the output. (alias: ref)
 
       --include-bed &lt;INCLUDE_BED&gt;
-          BED file with regions to include (alias: include-positions). Implicitly only includes mapped
-          sites. (alias: include-positions)
+          BED file with regions to include (alias: include-positions). Implicitly only includes
+          mapped sites
 
   -v, --exclude-bed &lt;EXCLUDE_BED&gt;
           BED file with regions to _exclude_. (alias: exclude)
