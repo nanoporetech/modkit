@@ -686,6 +686,7 @@ pub fn process_region<T: AsRef<Path>>(
     pileup_numeric_options: &PileupNumericOptions,
     force_allow: bool,
     combine_strands: bool,
+    max_depth: u32,
     motif_locations: Option<&MotifLocations>,
     edge_filter: Option<&EdgeFilter>,
     partition_tags: Option<&Vec<SamTag>>,
@@ -718,8 +719,13 @@ pub fn process_region<T: AsRef<Path>>(
     // collection of all partition keys encountered, ordered so
     // we can can use their index
     let mut partition_keys = IndexSet::new();
+    let hts_pileup = {
+        let mut tmp_pileup = bam_reader.pileup();
+        tmp_pileup.set_max_depth(max_depth);
+        tmp_pileup
+    };
     let pileup_iter = PileupIter::new(
-        bam_reader.pileup(),
+        hts_pileup,
         chrom_tid,
         start_pos,
         end_pos,

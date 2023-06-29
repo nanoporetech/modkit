@@ -44,6 +44,12 @@ pub struct ModBamPileup {
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     region: Option<String>,
+    /// Maximum number of records to use when calculating puleup. This argument is
+    /// passed to the pileup engine. If you have high depth data, consider
+    /// increasing this value substantially. Must be less than 2147483647 or
+    /// an error will be raised.
+    #[arg(long, default_value_t = 8000, hide_short_help = true)]
+    max_depth: u32,
 
     // processing args
     /// Number of threads to use while processing chunks concurrently.
@@ -521,6 +527,7 @@ impl ModBamPileup {
         processed_reads.set_message("~records processed");
 
         let force_allow = self.force_allow_implicit;
+        let max_depth = self.max_depth;
 
         std::thread::spawn(move || {
             pool.install(|| {
@@ -566,6 +573,7 @@ impl ModBamPileup {
                                         &pileup_options,
                                         force_allow,
                                         combine_strands,
+                                        max_depth,
                                         motif_locations.as_ref(),
                                         edge_filter.as_ref(),
                                         partition_tags.as_ref(),
