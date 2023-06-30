@@ -22,6 +22,7 @@ mod read_ids_to_base_mod_probs;
 /// of individual reads and aggregating the results.
 mod reads_sampler;
 mod record_processor;
+mod repair_tags;
 mod util;
 
 #[cfg(test)]

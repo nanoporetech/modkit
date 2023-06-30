@@ -644,7 +644,8 @@ pub struct SeqPosBaseModProbs {
 }
 
 impl SeqPosBaseModProbs {
-    fn new(
+    // todo(arand) derive new?
+    pub(crate) fn new(
         pos_to_base_mod_probs: HashMap<usize, BaseModProbs>,
         skip_mode: SkipMode,
     ) -> Self {

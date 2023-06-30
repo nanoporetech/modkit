@@ -30,6 +30,7 @@ use crate::pileup::subcommand::ModBamPileup;
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
+use crate::repair_tags::RepairTags;
 use crate::summarize::{summarize_modbam, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::Percentiles;
@@ -67,6 +68,14 @@ pub enum Commands {
     /// Extract read-level base modification information from a modBAM into a
     /// tab-separated values table.
     Extract(ExtractMods),
+    /// Repair MM and ML tags in one bam with the correct tags from another. To use
+    /// this command, both modBAMs _must_ be sorted by read name. The "donor" modBAM's
+    /// reads must be a superset of the acceptor's reads. Extra reads in the donor are
+    /// allowed, and multiple reads with the same name (secondary, etc.) are allowed in
+    /// the acceptor. Reads with an empty SEQ field cannot be repaired and will be
+    /// rejected. Reads where there is an ambiguous alignment of the acceptor to the
+    /// donor will be rejected (and logged). See the full documentation for details.
+    Repair(RepairTags),
 }
 
 impl Commands {
@@ -80,6 +89,7 @@ impl Commands {
             Self::UpdateTags(x) => x.run(),
             Self::CallMods(x) => x.run().map_err(|e| e.to_string()),
             Self::Extract(x) => x.run().map_err(|e| e.to_string()),
+            Self::Repair(x) => x.run().map_err(|e| e.to_string()),
         }
     }
 }
