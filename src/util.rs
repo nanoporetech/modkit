@@ -485,6 +485,19 @@ pub(crate) fn parse_partition_tags(
     Ok(tags)
 }
 
+#[inline]
+pub fn get_reference_mod_strand(
+    read_mod_strand: Strand,
+    alignment_strand: Strand,
+) -> Strand {
+    match (read_mod_strand, alignment_strand) {
+        (Strand::Positive, Strand::Positive) => Strand::Positive,
+        (Strand::Positive, Strand::Negative) => Strand::Negative,
+        (Strand::Negative, Strand::Positive) => Strand::Negative,
+        (Strand::Negative, Strand::Negative) => Strand::Positive,
+    }
+}
+
 #[cfg(test)]
 mod utils_tests {
     use crate::util::{

@@ -16,3 +16,5 @@ sourceme.sh
 *.swp
 book/book
 book/book/*
+scripts
+scripts/*
