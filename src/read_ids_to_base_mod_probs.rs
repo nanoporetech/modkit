@@ -19,7 +19,7 @@ use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
     get_aligned_pairs_forward, get_master_progress_bar, get_query_name_string,
-    get_spinner, Strand,
+    get_reference_mod_strand, get_spinner, Strand,
 };
 use rayon::prelude::*;
 use rust_htslib::bam::ext::BamRecordExtensions;
@@ -356,6 +356,7 @@ impl ModProfile {
             chrom{tab}\
             mod_strand{tab}\
             ref_strand{tab}\
+            ref_mod_strand{tab}\
             fw_soft_clipped_start{tab}\
             fw_soft_clipped_end{tab}\
             read_length{tab}\
@@ -364,7 +365,8 @@ impl ModProfile {
             base_qual{tab}\
             ref_kmer{tab}\
             query_kmer{tab}\
-            canonical_base"
+            canonical_base{tab}\
+            modified_primary_base"
         )
     }
 
@@ -393,6 +395,15 @@ impl ModProfile {
             ".".to_string()
         };
         let sep = '\t';
+        let modified_primary_base = DnaBase::parse(self.canonical_base)
+            .map(|b| {
+                if self.mod_strand == Strand::Negative {
+                    b.complement().char()
+                } else {
+                    b.char()
+                }
+            })
+            .unwrap_or('?');
 
         format!(
             "\
@@ -410,11 +421,16 @@ impl ModProfile {
             {}{sep}\
             {}{sep}\
             {}{sep}\
+            {}{sep}\
+            {}{sep}\
             {}\n",
             self.query_position,
             self.ref_position.unwrap_or(-1),
             self.mod_strand.to_char(),
             self.alignment_strand.map(|s| s.to_char()).unwrap_or('.'),
+            self.alignment_strand
+                .map(|s| get_reference_mod_strand(self.mod_strand, s).to_char())
+                .unwrap_or('.'),
             self.num_soft_clipped_start,
             self.num_soft_clipped_end,
             self.read_length,
@@ -423,7 +439,8 @@ impl ModProfile {
             self.q_base,
             ref_kmer,
             query_kmer,
-            self.canonical_base
+            self.canonical_base,
+            modified_primary_base,
         )
     }
 }

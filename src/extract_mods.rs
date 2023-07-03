@@ -26,8 +26,9 @@ use crate::reads_sampler::sample_reads_from_interval;
 use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
 use crate::util::{
-    get_master_progress_bar, get_spinner, get_subroutine_progress_bar,
-    get_targets, get_ticker, ReferenceRecord, Region, Strand,
+    get_master_progress_bar, get_reference_mod_strand, get_spinner,
+    get_subroutine_progress_bar, get_targets, get_ticker, ReferenceRecord,
+    Region, Strand,
 };
 use crate::writers::{
     OutwriterWithMemory, TsvWriter, TsvWriterWithContigNames,
@@ -560,24 +561,20 @@ impl ReferencePositionFilter {
         alignment_strand: Strand,
         mod_strand: Strand,
     ) -> bool {
-        let reference_strand = match (mod_strand, alignment_strand) {
-            (Strand::Positive, Strand::Positive) => Strand::Positive,
-            (Strand::Positive, Strand::Negative) => Strand::Negative,
-            (Strand::Negative, Strand::Positive) => Strand::Negative,
-            (Strand::Negative, Strand::Negative) => Strand::Positive,
-        };
+        let reference_mod_strand =
+            get_reference_mod_strand(mod_strand, alignment_strand);
         let include_hit = self
             .include_pos
             .as_ref()
             .map(|flt| {
-                flt.contains(chrom_id as i32, position, reference_strand)
+                flt.contains(chrom_id as i32, position, reference_mod_strand)
             })
             .unwrap_or(true);
         let exclude_hit = self
             .exclude_pos
             .as_ref()
             .map(|filt| {
-                filt.contains(chrom_id as i32, position, reference_strand)
+                filt.contains(chrom_id as i32, position, reference_mod_strand)
             })
             .unwrap_or(false);
 

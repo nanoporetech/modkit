@@ -142,9 +142,9 @@ pub fn parse_mod_profile(
         let read_id = parts[0].to_owned();
         let q_pos = parts[1].parse::<usize>().unwrap();
         let ref_pos = parts[2].parse::<i64>().unwrap();
-        let mod_code = parts[10].parse::<char>().unwrap();
+        let mod_code = parts[11].parse::<char>().unwrap();
         let strand = parts[5].parse::<char>().unwrap();
-        let read_length = parts[8].parse::<usize>().unwrap();
+        let read_length = parts[9].parse::<usize>().unwrap();
         let contig = parts[3].to_owned();
         agg.entry(read_id).or_insert(Vec::new()).push(ModData::new(
             q_pos,
