@@ -22,15 +22,17 @@ or `stdout` and filter the columns before writing to disk.
 | 4      | chrom                 | name of aligned contig, or '.' if unmapped                                      | str  |
 | 5      | mod_strand            | strand of the molecule the base modification is on                              | str  |
 | 6      | ref_strand            | strand of the reference the read is aligned to, or '.' if unmapped              | str  |
-| 7      | fw_soft_clipped_start | number of bases soft clipped from the start of the forward-oriented read        | int  |
-| 8      | fw_soft_clipped_end   | number of bases soft clipped from the end of the forward-oriented read          | int  |
-| 9      | read_length           | total length of the read                                                        | int  |
-| 10     | mod_qual              | probability of the base modification in the next column                         | int  |
-| 11     | mod_code              | base modification code from the MM tag                                          | str  |
-| 12     | base_qual             | basecall quality score (phred)                                                  | int  |
-| 13     | ref_kmer              | reference 5-mer sequence context (center base is aligned base), '.' if unmapped | str  |
-| 14     | query_kmer            | read 5-mer sequence context (center base is aligned base)                       | str  |
-| 15     | canonical_base        | canonical base from the query sequence, from the MM tag                         | str  |
+| 7      | ref_mod_strand        | strand of the reference with the base modification, or '.' if unmapped          | str  |
+| 8      | fw_soft_clipped_start | number of bases soft clipped from the start of the forward-oriented read        | int  |
+| 9      | fw_soft_clipped_end   | number of bases soft clipped from the end of the forward-oriented read          | int  |
+| 10     | read_length           | total length of the read                                                        | int  |
+| 11     | mod_qual              | probability of the base modification in the next column                         | int  |
+| 12     | mod_code              | base modification code from the MM tag                                          | str  |
+| 13     | base_qual             | basecall quality score (phred)                                                  | int  |
+| 14     | ref_kmer              | reference 5-mer sequence context (center base is aligned base), '.' if unmapped | str  |
+| 15     | query_kmer            | read 5-mer sequence context (center base is aligned base)                       | str  |
+| 16     | canonical_base        | canonical base from the query sequence, from the MM tag                         | str  |
+| 16     | modified_primary_base | primary sequence base with the modification                                     | str  |
 
 ## Example usages:
 
