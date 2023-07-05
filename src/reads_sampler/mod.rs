@@ -9,7 +9,7 @@ use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
     get_master_progress_bar, get_subroutine_progress_bar, get_targets,
-    get_ticker, Region,
+    get_ticker, ReferenceRecord, Region,
 };
 use anyhow::anyhow;
 use indicatif::{MultiProgress, ParallelProgressIterator};
@@ -73,8 +73,8 @@ where
                 only_mapped,
                 suppress_progress,
             )?;
-        let should_sample_unmapped = schedule.unmapped_count > 0
-            || read_ids_to_base_mod_calls.len() < 100;
+        let should_sample_unmapped =
+            schedule.has_unmapped() || read_ids_to_base_mod_calls.len() < 100;
         if should_sample_unmapped && !only_mapped {
             debug!(
                 "sampled {} mapped records, sampling unmapped records",
@@ -153,7 +153,12 @@ where
     let reader = bam::IndexedReader::from_path(bam_fp)?;
     let header = reader.header();
 
-    let contigs = get_targets(header, region);
+    let contigs = get_targets(header, region)
+        .into_iter()
+        .filter(|reference_record| {
+            sampling_schedule.chrom_has_reads(reference_record.tid)
+        })
+        .collect::<Vec<ReferenceRecord>>();
 
     // prog bar stuff
     let master_progress = MultiProgress::new();
@@ -190,17 +195,12 @@ where
                 .unwrap_or(true)
         })
         .collect::<Vec<(u32, u32)>>();
-        // make the number of reads (if given) proportional to the length
-        // of this reference
-        let num_reads_for_contig =
-            sampling_schedule.get_num_reads(reference_record.tid);
-        if num_reads_for_contig == 0 {
-            continue;
-        }
+
         let total_interval_length = intervals
             .iter()
             .map(|(start, end)| end.checked_sub(*start).unwrap_or(0))
             .sum::<u32>();
+
         // progress bar stuff
         let interval_progress =
             master_progress.add(get_subroutine_progress_bar(intervals.len()));
@@ -212,15 +212,12 @@ where
             .into_par_iter()
             .progress_with(interval_progress)
             .filter_map(|(start, end)| {
-                let n_reads_for_interval = sampling_schedule
-                    .get_num_reads_for_interval(
-                        &reference_record,
-                        total_interval_length,
-                        start,
-                        end,
-                    );
-                let record_sampler =
-                    RecordSampler::new_num_reads(n_reads_for_interval);
+                let record_sampler = sampling_schedule.get_record_sampler(
+                    &reference_record,
+                    total_interval_length,
+                    start,
+                    end,
+                );
                 match sample_reads_from_interval::<P>(
                     bam_fp,
                     reference_record.tid,

@@ -738,7 +738,6 @@ pub fn process_region<T: AsRef<Path>>(
 
         // make a mapping of partition keys to feature vectors for this position
         let mut feature_vectors = HashMap::new();
-        // let mut feature_vector = FeatureVector::new();
 
         // Also make mappings of the observed mod codes per partition key
         let mut pos_strand_observed_mod_codes = HashMap::new();

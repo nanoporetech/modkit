@@ -63,7 +63,7 @@ pub(crate) fn get_threshold_from_options(
             (Some(f), None)
         }
         None => {
-            info!("attempting to sample {num_reads} reads from BAM");
+            info!("attempting to sample {num_reads} reads");
             (None, Some(num_reads))
         }
     };
