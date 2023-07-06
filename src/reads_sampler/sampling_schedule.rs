@@ -534,6 +534,8 @@ mod record_sampler_tests {
     use crate::reads_sampler::sampling_schedule::{
         CountOrSample, SamplingSchedule,
     };
+    use rust_htslib::bam;
+    use rust_htslib::bam::Read;
 
     #[test]
     fn test_record_sampler_sampling_schedule() {
@@ -589,6 +591,7 @@ mod record_sampler_tests {
     }
 
     #[test]
+    #[ignore = "no reference server, TODO: figure out workaround for CI"]
     fn test_record_sampler_sampling_schedule_cram() {
         let sched = SamplingSchedule::from_num_reads(
             "tests/resources/bc_anchored_10_reads.sorted.cram",
@@ -620,6 +623,7 @@ mod record_sampler_tests {
     }
 
     #[test]
+    #[ignore = "no reference server, TODO: figure out workaround for CI"]
     fn test_record_sampler_sampling_schedule_cram_unmapped() {
         let sched = SamplingSchedule::from_num_reads(
             "tests/resources/bc_anchored_10_reads_unmapped.sorted.cram",
