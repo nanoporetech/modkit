@@ -1,12 +1,11 @@
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::RecordSampler;
-use crate::util::{ReferenceRecord, Region};
+use crate::util::{reader_is_bam, ReferenceRecord, Region};
 use anyhow::{anyhow, bail, Context};
 use derive_new::new;
 use itertools::Itertools;
 use log::debug;
 use rust_htslib::bam::{self, FetchDefinition, Read};
-use rust_htslib::htslib::htsExactFormat_bam;
 use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -380,7 +379,7 @@ pub(crate) struct IdxStats {
 
 impl IdxStats {
     fn check_is_bam_format(reader: &bam::IndexedReader) -> bool {
-        unsafe { (*reader.htsfile()).format.format == htsExactFormat_bam }
+        reader_is_bam(reader)
     }
 
     pub(crate) fn check_any_mapped_reads(
@@ -534,8 +533,6 @@ mod record_sampler_tests {
     use crate::reads_sampler::sampling_schedule::{
         CountOrSample, SamplingSchedule,
     };
-    use rust_htslib::bam;
-    use rust_htslib::bam::Read;
 
     #[test]
     fn test_record_sampler_sampling_schedule() {

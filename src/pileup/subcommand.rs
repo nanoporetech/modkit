@@ -10,7 +10,7 @@ use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
 use crate::util::{
     get_master_progress_bar, get_subroutine_progress_bar, get_targets,
-    get_ticker, parse_partition_tags, Region,
+    get_ticker, parse_partition_tags, reader_is_bam, Region,
 };
 use crate::writers::{
     BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
@@ -274,7 +274,14 @@ impl ModBamPileup {
         let _handle = init_logging(self.log_filepath.as_ref());
         // do this first so we fail when the file isn't readable
         let header = bam::IndexedReader::from_path(&self.in_bam)
-            .map(|reader| reader.header().to_owned())?;
+            .map(|reader| {
+                if !reader_is_bam(&reader) {
+                    info!("\
+                    detected non-BAM input format, please consider using BAM, CRAM may be unstable\
+                    ");
+                }
+                reader.header().to_owned()
+            })?;
 
         // options parsing below
         let region = self

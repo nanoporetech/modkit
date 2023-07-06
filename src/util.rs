@@ -11,7 +11,7 @@ use log::{debug, error};
 use regex::Regex;
 use rust_htslib::bam::{
     self, ext::BamRecordExtensions, header::HeaderRecord, record::Aux,
-    HeaderView,
+    HeaderView, Read,
 };
 
 use crate::errs::{InputError, RunError};
@@ -495,6 +495,14 @@ pub fn get_reference_mod_strand(
         (Strand::Positive, Strand::Negative) => Strand::Negative,
         (Strand::Negative, Strand::Positive) => Strand::Negative,
         (Strand::Negative, Strand::Negative) => Strand::Positive,
+    }
+}
+
+#[inline]
+pub(crate) fn reader_is_bam(reader: &bam::IndexedReader) -> bool {
+    unsafe {
+        (*reader.htsfile()).format.format
+            == rust_htslib::htslib::htsExactFormat_bam
     }
 }
 
