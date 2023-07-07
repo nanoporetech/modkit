@@ -333,13 +333,6 @@ impl ExtractMods {
                                     let record_sampler = schedule.as_ref()
                                         .map(|sampling_schedule| {
                                             sampling_schedule.get_record_sampler(&reference_record, total_interval_length, start, end)
-                                        // let nr = s.get_num_reads_for_interval(
-                                        //     &reference_record,
-                                        //     total_interval_length,
-                                        //     start,
-                                        //     end
-                                        // );
-                                        // RecordSampler::new_num_reads(nr)
                                     }).unwrap_or(RecordSampler::new_passthrough());
 
                                     let batch_result = sample_reads_from_interval::<

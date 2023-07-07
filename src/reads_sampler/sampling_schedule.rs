@@ -8,6 +8,7 @@ use log::debug;
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
+use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 
 /// Count is an exact count, Sample is a fraction to sample
@@ -17,7 +18,22 @@ enum CountOrSample {
     Sample(f32),
 }
 
+impl Display for CountOrSample {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CountOrSample::Count(x) => write!(f, "{x}"),
+            CountOrSample::Sample(x) => write!(f, "{x}"),
+        }
+    }
+}
+
 impl Eq for CountOrSample {}
+
+impl Ord for CountOrSample {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(&other).unwrap()
+    }
+}
 
 impl PartialOrd for CountOrSample {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -26,9 +42,14 @@ impl PartialOrd for CountOrSample {
                 Some(x.cmp(y))
             }
             (CountOrSample::Sample(x), CountOrSample::Sample(y)) => {
-                x.partial_cmp(y)
+                x.partial_cmp(y).or(Some(Ordering::Equal))
             }
-            _ => None,
+            (CountOrSample::Sample(_), CountOrSample::Count(_)) => {
+                Some(Ordering::Less)
+            }
+            (CountOrSample::Count(_), CountOrSample::Sample(_)) => {
+                Some(Ordering::Greater)
+            }
         }
     }
 }
@@ -108,11 +129,9 @@ impl SamplingSchedule {
 
         let report = counts_for_chroms
             .iter()
-            .sorted_by(|(_, counts_a), (_, counts_b)| {
-                counts_b.partial_cmp(counts_a).unwrap_or(Ordering::Equal)
-            })
+            .sorted_by(|(_, counts_a), (_, counts_b)| counts_b.cmp(counts_a))
             .fold(format!("schedule: "), |mut acc, (contig, counts)| {
-                acc.push_str(&format!("SQ: {}, {:?} reads ", contig, counts));
+                acc.push_str(&format!("SQ: {}, {} reads ", contig, counts));
                 acc
             });
         debug!("{report}");
@@ -317,32 +336,6 @@ impl SamplingSchedule {
         self.counts_for_chroms.contains_key(&chrom_id)
     }
 
-    // pub(crate) fn get_num_reads_for_interval(
-    //     &self,
-    //     reference_record: &ReferenceRecord,
-    //     total_interval_length: u32,
-    //     start: u32,
-    //     end: u32,
-    // ) -> usize {
-    //     let reads_for_chrom = self.get_num_reads(reference_record.tid);
-    //     let reads_aligned_to_chrom = self
-    //         .index_stats
-    //         .get(&(reference_record.tid as i64))
-    //         .map(|counts_frac| counts_frac.counts)
-    //         .unwrap_or(0);
-    //     if reads_for_chrom == 0 || reads_aligned_to_chrom == 0 {
-    //         return 0;
-    //     }
-    //
-    //     if reads_for_chrom == reads_aligned_to_chrom {
-    //         reads_aligned_to_chrom
-    //     } else {
-    //         let f = (end - start) as f64 / total_interval_length as f64;
-    //         let nr = reads_for_chrom as f64 * f;
-    //         nr.ceil() as usize
-    //     }
-    // }
-
     pub(crate) fn get_record_sampler(
         &self,
         reference_record: &ReferenceRecord,
@@ -362,7 +355,7 @@ impl SamplingSchedule {
                     RecordSampler::new_sample_frac(*frac as f64, None)
                 }
             })
-            .unwrap_or_else(|| RecordSampler::new_sample_frac(0.0, None))
+            .unwrap_or_else(|| RecordSampler::new_num_reads(0))
     }
 
     pub(crate) fn has_unmapped(&self) -> bool {
@@ -378,10 +371,6 @@ pub(crate) struct IdxStats {
 }
 
 impl IdxStats {
-    fn check_is_bam_format(reader: &bam::IndexedReader) -> bool {
-        reader_is_bam(reader)
-    }
-
     pub(crate) fn check_any_mapped_reads(
         bam_fp: &PathBuf,
         region: Option<&Region>,
@@ -434,7 +423,7 @@ impl IdxStats {
             })
             .transpose()?;
 
-        let is_bam = Self::check_is_bam_format(&reader);
+        let is_bam = reader_is_bam(&reader);
         if is_bam {
             let idx_stats =
                 reader.index_stats().context("failed to get index stats")?;
