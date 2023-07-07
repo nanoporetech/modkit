@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.11]
+### Fixes
+- [extract] Correctly handles duplex modBAMs when using `--include-bed`
+- Refactors handling of CRAM when sampling records. Fixes #35. Suggests to use BAM.
+### Adds
+- [extract] Output contains `ref_mod_strand` and `modified_primary_base`
+- [pileup] New option `--max-depth` allows increasing depth beyond default in hts-lib and sets the default to 8,000 in case it changes in hts-lib.
+
+
 ## [v0.1.11-rc1]
 ### Fixes
 - [extract] Correctly handles duplex modBAMs when using `--include-bed`
