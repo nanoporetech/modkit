@@ -10,7 +10,7 @@ use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
 use crate::util::{
     get_master_progress_bar, get_subroutine_progress_bar, get_targets,
-    get_ticker, parse_partition_tags, Region,
+    get_ticker, parse_partition_tags, reader_is_bam, Region,
 };
 use crate::writers::{
     BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
@@ -274,7 +274,14 @@ impl ModBamPileup {
         let _handle = init_logging(self.log_filepath.as_ref());
         // do this first so we fail when the file isn't readable
         let header = bam::IndexedReader::from_path(&self.in_bam)
-            .map(|reader| reader.header().to_owned())?;
+            .map(|reader| {
+                if !reader_is_bam(&reader) {
+                    info!("\
+                    detected non-BAM input format, please consider using BAM, CRAM may be unstable\
+                    ");
+                }
+                reader.header().to_owned()
+            })?;
 
         // options parsing below
         let region = self
@@ -329,19 +336,16 @@ impl ModBamPileup {
             .transpose()?;
         // use the path here instead of passing the reader directly to avoid potentially
         // changing mutable internal state of the reader.
-        IdxStats::new_from_path(
+        IdxStats::check_any_mapped_reads(
             &self.in_bam,
             region.as_ref(),
             position_filter.as_ref(),
         )
-        .and_then(|index_stats| {
-            if index_stats.mapped_read_count > 0 {
-                Ok(())
-            } else {
-                Err(anyhow!("did not find any mapped reads, perform alignment first or use \
-                modkit extract and/or modkit summary to inspect unaligned modBAMs"))
-            }
-        })?;
+        .context(
+            "\
+            did not find any mapped reads, perform alignment first or use \
+            modkit extract and/or modkit summary to inspect unaligned modBAMs",
+        )?;
 
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")
@@ -384,6 +388,7 @@ impl ModBamPileup {
                     (options, self.combine_strands, collapse_method)
                 }
             };
+
         // setup the writer here so we fail before doing any work (if there are problems).
         let out_fp_str = self.out_bed.clone();
         let mut writer: Box<dyn OutWriter<ModBasePileup>> =

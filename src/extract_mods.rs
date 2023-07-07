@@ -283,7 +283,7 @@ impl ExtractMods {
                 if let Some(reference_and_intervals) = references_and_intervals {
                     drop(reader);
                     let prog_length = if reference_position_filter.include_unmapped &&
-                        schedule.as_ref().map(|s| s.unmapped_count > 0).unwrap_or(true) {
+                        schedule.as_ref().map(|s| s.has_unmapped()).unwrap_or(true) {
                         reference_and_intervals.len() + 1
                     } else {
                         reference_and_intervals.len()
@@ -313,9 +313,13 @@ impl ExtractMods {
                             .iter()
                             .map(|(start, end)| end.checked_sub(*start).unwrap_or(0))
                             .sum::<u32>();
-                        let num_reads_for_reference = schedule.as_ref()
-                            .map(|s| s.get_num_reads(reference_record.tid));
-                        if num_reads_for_reference == Some(0) {
+
+                        // skip this contig if there aren't any reads
+                        let ref_has_reads = schedule
+                            .as_ref()
+                            .map(|s| s.chrom_has_reads(reference_record.tid))
+                            .unwrap_or(true);
+                        if !ref_has_reads {
                             master_progress.inc(1);
                             continue
                         }
@@ -327,14 +331,8 @@ impl ExtractMods {
                             .map(
                                 |(start, end)| {
                                     let record_sampler = schedule.as_ref()
-                                        .map(|s| {
-                                        let nr = s.get_num_reads_for_interval(
-                                            &reference_record,
-                                            total_interval_length,
-                                            start,
-                                            end
-                                        );
-                                        RecordSampler::new_num_reads(nr)
+                                        .map(|sampling_schedule| {
+                                            sampling_schedule.get_record_sampler(&reference_record, total_interval_length, start, end)
                                     }).unwrap_or(RecordSampler::new_passthrough());
 
                                     let batch_result = sample_reads_from_interval::<
