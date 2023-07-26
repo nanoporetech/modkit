@@ -23,20 +23,20 @@ use std::sync::Arc;
 #[derive(Args)]
 pub struct RepairTags {
     /// Donor modBAM with original MM/ML tags. Must be sorted by read name.
-    #[arg(long, short = 'd')]
+    #[arg(long, short = 'd', alias = "donor")]
     donor_bam: PathBuf,
     /// Acceptor modBAM with reads to have MM/ML base modification data projected
     /// on to. Must be sorted by read name.
-    #[arg(long, short = 'a')]
+    #[arg(long, short = 'a', alias = "acceptor")]
     acceptor_bam: PathBuf,
     /// output modBAM location.
-    #[arg(long, short = 'o')]
+    #[arg(long, short = 'o', alias = "output")]
     output_bam: PathBuf,
     /// File to write logs to, it is recommended to use this option as some reads
     /// may be rejected and logged here.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
-    /// Threads to use.
+    /// The number of threads to use.
     #[arg(long, short = 't', default_value_t = 4)]
     threads: usize,
 }
@@ -388,17 +388,5 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
                 ))
             })?;
         Ok(repaired_record)
-    }
-}
-
-#[cfg(test)]
-mod repair_tests {
-    #[test]
-    fn test_find_matches() {
-        let a = "GATTACA";
-        let b = "TTAC";
-        for x in a.match_indices(b) {
-            dbg!(x);
-        }
     }
 }

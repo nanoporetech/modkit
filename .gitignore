@@ -2,8 +2,8 @@
 /Cargo.lock
 .idea
 .idea/*
-#data
-#data/*
+data
+data/*
 exclude-file.txt
 .DS_Store
 benches/
