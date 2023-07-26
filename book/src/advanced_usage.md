@@ -26,10 +26,17 @@ Commands:
                     table. Descriptions of the columns can be found in the README.
   call-mods     Call mods from a modbam, creates a new modbam with probabilities set to 100% if
                     a base modification is called or 0% if called canonical.
-  motif-bed     Create BED file with all locations of a sequence motif.
+  motif-bed     Create BED file with all locations of a sequence motif. 
                     Example: modkit motif-bed CG 0
   extract       Extract read-level base modification information from a modBAM into a
                     tab-separated values table.
+  repair        Repair MM and ML tags in one bam with the correct tags from another. To use this
+                    command, both modBAMs _must_ be sorted by read name. The "donor" modBAM's reads
+                    must be a superset of the acceptor's reads. Extra reads in the donor are
+                    allowed, and multiple reads with the same name (secondary, etc.) are allowed in
+                    the acceptor. Reads with an empty SEQ field cannot be repaired and will be
+                    rejected. Reads where there is an ambiguous alignment of the acceptor to the
+                    donor will be rejected (and logged). See the full documentation for details.
   help          Print this message or the help of the given subcommand(s).
 
 Options:
@@ -663,4 +670,27 @@ Options:
 
   -h, --help
           Print help information (use `-h` for a summary).
+```
+
+## repair
+```text
+Repair MM and ML tags in one bam with the correct tags from another. To use this command, both
+modBAMs _must_ be sorted by read name. The "donor" modBAM's reads must be a superset of the
+acceptor's reads. Extra reads in the donor are allowed, and multiple reads with the same name
+(secondary, etc.) are allowed in the acceptor. Reads with an empty SEQ field cannot be repaired and
+will be rejected. Reads where there is an ambiguous alignment of the acceptor to the donor will be
+rejected (and logged). See the full documentation for details.
+
+Usage: modkit repair [OPTIONS] --donor-bam <DONOR_BAM> --acceptor-bam <ACCEPTOR_BAM> --output-bam <OUTPUT_BAM>
+
+Options:
+  -d, --donor-bam <DONOR_BAM>        Donor modBAM with original MM/ML tags. Must be sorted by read
+                                     name.
+  -a, --acceptor-bam <ACCEPTOR_BAM>  Acceptor modBAM with reads to have MM/ML base modification data
+                                     projected on to. Must be sorted by read name.
+  -o, --output-bam <OUTPUT_BAM>      output modBAM location.
+      --log-filepath <LOG_FILEPATH>  File to write logs to, it is recommended to use this option as
+                                     some reads may be rejected and logged here.
+  -t, --threads <THREADS>            The number of threads to use. [default: 4]
+  -h, --help                         Print help information.
 ```

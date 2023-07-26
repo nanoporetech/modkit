@@ -534,7 +534,6 @@ impl ExtractMods {
                 .map(|nr| pb.position() as usize >= nr)
                 .unwrap_or(false);
             if done {
-                // pb.finish_and_clear();
                 debug!("stopping after processing {} reads", pb.position());
                 break;
             }

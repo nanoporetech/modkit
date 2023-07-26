@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 
 use crate::position_filter::StrandedPositionFilter;
 use derive_new::new;
+use itertools::Itertools;
 use log::debug;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
@@ -644,7 +645,8 @@ pub struct SeqPosBaseModProbs {
 }
 
 impl SeqPosBaseModProbs {
-    fn new(
+    // todo(arand) derive new?
+    pub(crate) fn new(
         pos_to_base_mod_probs: HashMap<usize, BaseModProbs>,
         skip_mode: SkipMode,
     ) -> Self {
@@ -903,7 +905,12 @@ pub fn format_mm_ml_tag(
     } else {
         // todo(arand) this should emit C+hm style tags when possible
         for ((mod_code, strand), mut positions_and_probs) in
-            mod_code_to_position.into_iter()
+            mod_code_to_position.into_iter().sorted_by(
+                |((mc_a, s_a), _), ((mc_b, s_b), _)| match mc_a.cmp(mc_b) {
+                    Ordering::Equal => s_a.cmp(&s_b),
+                    ordering @ _ => ordering,
+                },
+            )
         {
             positions_and_probs
                 .sort_by(|(x_pos, _), (y_pos, _)| x_pos.cmp(&y_pos));

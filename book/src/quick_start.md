@@ -27,6 +27,7 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 6. [Convert modification probabilities into hard calls](./intro_call_mods.md)
 7. [Removing base modification calls at the ends of reads](./intro_edge_filter.md)
 8. [Narrow analysis to only specific positions with a BED file](./intro_include_bed.md)
+9. [Repairing/adding MM/ML tags to reads with clipped sequences](./intro_repair.md)
 
 ## Notes and troubleshooting
 1. [General troubleshooting](./troubleshooting.md)
