@@ -188,8 +188,13 @@ pub(crate) fn get_serial_reader(
 pub(crate) fn get_bam_writer(
     raw: &str,
     header: &Header,
-    format: bam::Format,
+    output_sam: bool,
 ) -> rust_htslib::errors::Result<bam::Writer> {
+    let format = if output_sam {
+        bam::Format::Sam
+    } else {
+        bam::Format::Bam
+    };
     if using_stream(raw) {
         bam::Writer::from_stdout(&header, format)
     } else {

@@ -168,14 +168,9 @@ impl Adjust {
         let threads = self.threads;
         reader.set_threads(threads)?;
         let mut header = bam::Header::from_template(reader.header());
-        let output_format = if self.output_sam {
-            bam::Format::Sam
-        } else {
-            bam::Format::Bam
-        };
         add_modkit_pg_records(&mut header);
         let mut out_bam =
-            get_bam_writer(&self.out_bam, &header, output_format)?;
+            get_bam_writer(&self.out_bam, &header, self.output_sam)?;
 
         let methods = if let Some(convert) = &self.convert {
             let mut conversions = HashMap::new();
@@ -764,23 +759,6 @@ impl ModSummarize {
                 region.as_ref(),
                 self.suppress_progress,
             )
-            // summarize_modbam(
-            //     &self.in_bam,
-            //     self.threads,
-            //     self.interval_size,
-            //     sample_frac,
-            //     num_reads,
-            //     self.seed,
-            //     region.as_ref(),
-            //     self.filter_percentile,
-            //     filter_thresholds,
-            //     per_mod_thresholds,
-            //     collapse_method.as_ref(),
-            //     edge_filter.as_ref(),
-            //     position_filter.as_ref(),
-            //     self.only_mapped || position_filter.is_some(),
-            //     self.suppress_progress,
-            // )
         })?;
 
         let mut writer: Box<dyn OutWriter<ModSummary>> = if self.tsv_format {
@@ -910,12 +888,8 @@ impl Update {
         let mut header = bam::Header::from_template(reader.header());
         add_modkit_pg_records(&mut header);
 
-        let out_format = if self.output_sam {
-            bam::Format::Sam
-        } else {
-            bam::Format::Bam
-        };
-        let mut out_bam = get_bam_writer(&self.out_bam, &header, out_format)?;
+        let mut out_bam =
+            get_bam_writer(&self.out_bam, &header, self.output_sam)?;
         let spinner = get_ticker();
 
         spinner.set_message("Updating ModBAM");
@@ -1110,13 +1084,8 @@ impl CallMods {
         reader.set_threads(threads)?;
         let mut header = bam::Header::from_template(reader.header());
         add_modkit_pg_records(&mut header);
-        let output_format = if self.output_sam {
-            bam::Format::Sam
-        } else {
-            bam::Format::Bam
-        };
         let mut out_bam =
-            get_bam_writer(&self.out_bam, &header, output_format)?;
+            get_bam_writer(&self.out_bam, &header, self.output_sam)?;
 
         let edge_filter = self
             .edge_filter

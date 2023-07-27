@@ -151,6 +151,7 @@ impl ExtractMods {
         let reference_and_intervals = if !self.using_stdin() {
             match bam::IndexedReader::from_path(&self.in_bam) {
                 Ok(reader) => {
+                    info!("found BAM index, processing reads in {} base pair chunks", self.interval_size);
                     let reference_records =
                         get_targets(reader.header(), region);
                     let reference_and_intervals = reference_records
