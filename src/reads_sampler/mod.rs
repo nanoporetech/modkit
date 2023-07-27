@@ -38,6 +38,7 @@ where
 {
     let use_regions = bam::IndexedReader::from_path(&bam_fp).is_ok();
     if use_regions {
+        debug!("found BAM index, sampling reads in {interval_size} base pair chunks");
         let schedule = match (sample_frac, num_reads) {
             (_, Some(num_reads)) => SamplingSchedule::from_num_reads(
                 bam_fp,
@@ -110,6 +111,7 @@ where
 
         Ok(read_ids_to_base_mod_calls)
     } else {
+        debug!("did not find index to modBAM");
         if region.is_some() {
             return Err(anyhow!("cannot use region without indexed BAM"));
         }

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::thread;
 
+use crate::command_utils::{get_serial_reader, using_stream};
 use bio::io::fasta::Reader as FastaReader;
 use clap::Args;
 use crossbeam_channel::{bounded, Sender};
@@ -36,10 +37,11 @@ use crate::writers::{
 
 #[derive(Args)]
 pub struct ExtractMods {
-    /// Path to modBAM file to extract read-level information from, may
+    /// Path to modBAM file to extract read-level information from, or one of `-` or
+    /// `stdin` to specify a stream from standard input. If a file is used it may
     /// be sorted and have associated index.
-    in_bam: PathBuf,
-    /// Path to output file, "stdout" or "-" will direct output to stdout.
+    in_bam: String,
+    /// Path to output file, "stdout" or "-" will direct output to standard out.
     out_path: String,
     /// Number of threads to use
     #[arg(short = 't', long, default_value_t = 4)]
@@ -106,6 +108,10 @@ pub struct ExtractMods {
 type ReferenceAndIntervals = Vec<(ReferenceRecord, IntervalChunks)>;
 
 impl ExtractMods {
+    fn using_stdin(&self) -> bool {
+        using_stream(&self.in_bam)
+    }
+
     fn load_regions(
         &self,
         name_to_tid: &HashMap<&str, u32>,
@@ -142,9 +148,10 @@ impl ExtractMods {
             })
             .transpose()?;
 
-        let reference_and_intervals =
+        let reference_and_intervals = if !self.using_stdin() {
             match bam::IndexedReader::from_path(&self.in_bam) {
                 Ok(reader) => {
+                    info!("found BAM index, processing reads in {} base pair chunks", self.interval_size);
                     let reference_records =
                         get_targets(reader.header(), region);
                     let reference_and_intervals = reference_records
@@ -168,7 +175,11 @@ impl ExtractMods {
                 );
                     None
                 }
-            };
+            }
+        } else {
+            None
+        };
+
         let reference_position_filter = ReferencePositionFilter::new(
             include_positions,
             exclude_positions,
@@ -196,12 +207,11 @@ impl ExtractMods {
             .as_ref()
             .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
 
-        let mut reader = bam::Reader::from_path(&self.in_bam)?;
+        let mut reader = get_serial_reader(&self.in_bam)?;
         let header = reader.header().to_owned();
 
         let (snd, rcv) = bounded(100_000);
 
-        let in_bam = self.in_bam.clone();
         let tid_to_name = (0..header.target_count())
             .filter_map(|tid| {
                 match String::from_utf8(header.tid2name(tid).to_vec()) {
@@ -242,24 +252,33 @@ impl ExtractMods {
         let region = self
             .region
             .as_ref()
-            .map(|raw_region| Region::parse_str(raw_region, reader.header()))
+            .map(|raw_region| Region::parse_str(raw_region, &header))
             .transpose()?;
 
         let (references_and_intervals, reference_position_filter) =
             self.load_regions(&name_to_tid, region.as_ref())?;
 
-        let schedule = self
-            .num_reads
-            .map(|nr| {
-                SamplingSchedule::from_num_reads(
-                    &in_bam,
-                    nr,
-                    region.as_ref(),
-                    reference_position_filter.include_pos.as_ref(),
-                    reference_position_filter.include_unmapped,
-                )
-            })
-            .transpose()?;
+        // allowed to use the sampling schedule if there is an index, if
+        // asked for num_reads with no index, scan first N reads
+        let schedule = match (self.num_reads, self.using_stdin()) {
+            (_, true) => None,
+            (Some(num_reads), false) => {
+                match bam::IndexedReader::from_path(self.in_bam.as_str()) {
+                    Ok(_) => Some(SamplingSchedule::from_num_reads(
+                        &self.in_bam,
+                        num_reads,
+                        region.as_ref(),
+                        reference_position_filter.include_pos.as_ref(),
+                        reference_position_filter.include_unmapped,
+                    )?),
+                    Err(_) => {
+                        debug!("cannot use sampling schedule without index, keeping first {num_reads} reads");
+                        None
+                    }
+                }
+            }
+            (None, false) => None,
+        };
 
         let multi_prog = MultiProgress::new();
         if self.suppress_progress {
@@ -277,11 +296,17 @@ impl ExtractMods {
         let n_reads = self.num_reads;
         let threads = self.threads;
         let mapped_only = self.mapped_only;
+        let in_bam = self.in_bam.clone();
 
         thread::spawn(move || {
             pool.install(|| {
+                // references_and_intervals is only some when we have an index
                 if let Some(reference_and_intervals) = references_and_intervals {
                     drop(reader);
+                    // should make this a method on this struct?
+                    let bam_fp = std::path::Path::new(&in_bam).to_path_buf();
+
+                    // if using unmapped add 1 to total chrms to traverse
                     let prog_length = if reference_position_filter.include_unmapped &&
                         schedule.as_ref().map(|s| s.has_unmapped()).unwrap_or(true) {
                         reference_and_intervals.len() + 1
@@ -338,7 +363,7 @@ impl ExtractMods {
                                     let batch_result = sample_reads_from_interval::<
                                         ReadsBaseModProfile,
                                     >(
-                                        &in_bam,
+                                        &bam_fp,
                                         reference_record.tid,
                                         start,
                                         end,
@@ -376,7 +401,7 @@ impl ExtractMods {
                         } else {
                             debug!("processing unmapped reads");
                         }
-                        let reader = bam::IndexedReader::from_path(&in_bam)
+                        let reader = bam::IndexedReader::from_path(&bam_fp)
                             .and_then(|mut reader| reader.fetch(FetchDefinition::Unmapped).map(|_| reader))
                             .and_then(|mut reader| reader.set_threads(threads).map(|_| reader));
                         match reader {

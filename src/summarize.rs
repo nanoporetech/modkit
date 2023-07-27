@@ -109,7 +109,7 @@ pub fn summarize_modbam<'a>(
     )
 }
 
-fn sampled_reads_to_summary<'a>(
+pub(crate) fn sampled_reads_to_summary<'a>(
     read_ids_to_mod_calls: ReadIdsToBaseModProbs,
     threshold_caller: &MultipleThresholdModCaller,
     region: Option<&'a Region>,
