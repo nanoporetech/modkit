@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.12]
+## Fixes
+- [extract] no longer requires an index to use `--num-reads`, it will just take the first `--num-reads` reads if no index is found.
+## Adds
+- New command `modkit repair` allows projecting base modifiction calls from one modBAM onto another where the reads have beem trimmed or clipped.
+- `adjust-mods`, `update-tags`, `sample-probs`, `summary`, `call-mods` and `extract` can now be used with standard input/output streams. 
+
 ## [v0.1.11]
 ### Fixes
 - [extract] Correctly handles duplex modBAMs when using `--include-bed`
