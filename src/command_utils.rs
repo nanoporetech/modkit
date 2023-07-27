@@ -6,6 +6,7 @@ use crate::thresholds::calc_threshold_from_bam;
 use crate::util::Region;
 use anyhow::{anyhow, bail, Context};
 use log::{debug, info};
+use rust_htslib::bam::{self, Header};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -169,6 +170,29 @@ fn parse_per_base_thresholds(
         Ok((default, per_base_thresholds))
     }
 }
+
 pub(crate) fn using_stream(raw: &str) -> bool {
-    raw == "-" || raw == "stdin"
+    raw == "-" || raw == "stdin" || raw == "stdout"
+}
+
+pub(crate) fn get_serial_reader(
+    raw: &str,
+) -> rust_htslib::errors::Result<bam::Reader> {
+    if using_stream(raw) {
+        bam::Reader::from_stdin()
+    } else {
+        bam::Reader::from_path(raw)
+    }
+}
+
+pub(crate) fn get_bam_writer(
+    raw: &str,
+    header: &Header,
+    format: bam::Format,
+) -> rust_htslib::errors::Result<bam::Writer> {
+    if using_stream(raw) {
+        bam::Writer::from_stdout(&header, format)
+    } else {
+        bam::Writer::from_path(&raw, &header, format)
+    }
 }

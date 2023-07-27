@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::adjust::{adjust_modbam, record_is_valid};
 use crate::command_utils::{
-    get_threshold_from_options, parse_per_mod_thresholds, parse_thresholds,
-    using_stream,
+    get_bam_writer, get_serial_reader, get_threshold_from_options,
+    parse_per_mod_thresholds, parse_thresholds, using_stream,
 };
 use anyhow::{bail, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
@@ -39,7 +39,7 @@ use crate::summarize::{sampled_reads_to_summary, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{calc_thresholds_per_base, Percentiles};
 use crate::util;
-use crate::util::{add_modkit_pg_records, get_spinner, get_targets, Region};
+use crate::util::{add_modkit_pg_records, get_targets, get_ticker, Region};
 use crate::writers::{
     MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
 };
@@ -83,17 +83,17 @@ pub enum Commands {
 }
 
 impl Commands {
-    pub fn run(&self) -> Result<(), String> {
+    pub fn run(&self) -> AnyhowResult<()> {
         match self {
-            Self::AdjustMods(x) => x.run().map_err(|e| e.to_string()),
-            Self::Pileup(x) => x.run().map_err(|e| e.to_string()),
-            Self::SampleProbs(x) => x.run().map_err(|e| e.to_string()),
-            Self::Summary(x) => x.run().map_err(|e| e.to_string()),
-            Self::MotifBed(x) => x.run().map_err(|e| e.to_string()),
+            Self::AdjustMods(x) => x.run(),
+            Self::Pileup(x) => x.run(),
+            Self::SampleProbs(x) => x.run(),
+            Self::Summary(x) => x.run(),
+            Self::MotifBed(x) => x.run(),
             Self::UpdateTags(x) => x.run(),
-            Self::CallMods(x) => x.run().map_err(|e| e.to_string()),
-            Self::Extract(x) => x.run().map_err(|e| e.to_string()),
-            Self::Repair(x) => x.run().map_err(|e| e.to_string()),
+            Self::CallMods(x) => x.run(),
+            Self::Extract(x) => x.run(),
+            Self::Repair(x) => x.run(),
         }
     }
 }
@@ -126,9 +126,11 @@ fn get_sampling_options(
 
 #[derive(Args)]
 pub struct Adjust {
-    /// BAM file to collapse mod call from.
+    /// BAM file to collapse mod call from. Can be a path to a file or one of `-` or
+    /// `stdin` to specify a stream from standard input.
     in_bam: String,
-    /// File path to new BAM file to be created.
+    /// File path to new BAM file to be created. Can be a path to a file or one of `-` or
+    /// `stdin` to specify a stream from standard output.
     out_bam: String,
     /// Output debug logs to file at this path.
     #[arg(long)]
@@ -162,12 +164,7 @@ pub struct Adjust {
 impl Adjust {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        // let fp = &self.in_bam;
-        // let out_fp = &self.out_bam;
-        let mut reader = match self.in_bam.as_str() {
-            "-" | "stdin" => bam::Reader::from_stdin()?,
-            _ => bam::Reader::from_path(&self.in_bam)?,
-        };
+        let mut reader = get_serial_reader(self.in_bam.as_str())?;
         let threads = self.threads;
         reader.set_threads(threads)?;
         let mut header = bam::Header::from_template(reader.header());
@@ -177,13 +174,8 @@ impl Adjust {
             bam::Format::Bam
         };
         add_modkit_pg_records(&mut header);
-        let mut out_bam = if using_stream(&self.out_bam) {
-            bam::Writer::from_stdout(&header, output_format)
-        } else {
-            bam::Writer::from_path(&self.out_bam, &header, output_format)
-        }?;
-        // let mut out_bam =
-        //     bam::Writer::from_path(out_fp, &header, bam::Format::Bam)?;
+        let mut out_bam =
+            get_bam_writer(&self.out_bam, &header, output_format)?;
 
         let methods = if let Some(convert) = &self.convert {
             let mut conversions = HashMap::new();
@@ -283,7 +275,8 @@ fn parse_percentiles(
 pub struct SampleModBaseProbs {
     /// Input BAM with modified base tags. If a index is found
     /// reads will be sampled evenly across the length of the
-    /// reference sequence.
+    /// reference sequence. Can be a path to a file or one of `-` or
+    /// `stdin` to specify a stream from standard input.
     in_bam: String,
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
@@ -379,11 +372,7 @@ pub struct SampleModBaseProbs {
 impl SampleModBaseProbs {
     fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let mut reader = if using_stream(&self.in_bam) {
-            bam::Reader::from_stdin()?
-        } else {
-            bam::Reader::from_path(&self.in_bam)?
-        };
+        let mut reader = get_serial_reader(&self.in_bam)?;
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -531,7 +520,8 @@ impl SampleModBaseProbs {
 
 #[derive(Args)]
 pub struct ModSummarize {
-    /// Input modBam file.
+    /// Input modBam, can be a path to a file or one of `-` or
+    /// `stdin` to specify a stream from standard input.
     in_bam: String,
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
@@ -646,11 +636,7 @@ pub struct ModSummarize {
 impl ModSummarize {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let mut reader = if using_stream(&self.in_bam) {
-            bam::Reader::from_stdin()?
-        } else {
-            bam::Reader::from_path(&self.in_bam)?
-        };
+        let mut reader = get_serial_reader(&self.in_bam)?;
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -845,10 +831,12 @@ impl ModMode {
 
 #[derive(Args)]
 pub struct Update {
-    /// BAM file to update modified base tags in.
-    in_bam: PathBuf,
-    /// File path to new BAM file to be created.
-    out_bam: PathBuf,
+    /// BAM to update modified base tags in. Can be a path to a file or one of `-` or
+    /// `stdin` to specify a stream from standard input.
+    in_bam: String,
+    /// File to new BAM file to be created or one of `-` or `stdin` to specify
+    /// a stream from standard output.
+    out_bam: String,
     /// Mode, change mode to this value, options {'ambiguous', 'implicit'}.
     /// See spec at: https://samtools.github.io/hts-specs/SAMtags.pdf.
     /// 'ambiguous' ('?') means residues without explicit modification
@@ -863,6 +851,9 @@ pub struct Update {
     /// Output debug logs to file at this path.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
+    /// Output SAM format instead of BAM.
+    #[arg(long, default_value_t = false)]
+    output_sam: bool,
 }
 
 fn update_mod_tags(
@@ -911,21 +902,21 @@ fn update_mod_tags(
 }
 
 impl Update {
-    fn run(&self) -> Result<(), String> {
+    fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let fp = &self.in_bam;
-        let out_fp = &self.out_bam;
         let threads = self.threads;
-        let mut reader =
-            bam::Reader::from_path(fp).map_err(|e| e.to_string())?;
-        reader.set_threads(threads).map_err(|e| e.to_string())?;
+        let mut reader = get_serial_reader(&self.in_bam)?;
+        reader.set_threads(threads)?;
         let mut header = bam::Header::from_template(reader.header());
         add_modkit_pg_records(&mut header);
 
-        let mut out_bam =
-            bam::Writer::from_path(out_fp, &header, bam::Format::Bam)
-                .map_err(|e| e.to_string())?;
-        let spinner = get_spinner();
+        let out_format = if self.output_sam {
+            bam::Format::Sam
+        } else {
+            bam::Format::Bam
+        };
+        let mut out_bam = get_bam_writer(&self.out_bam, &header, out_format)?;
+        let spinner = get_ticker();
 
         spinner.set_message("Updating ModBAM");
         let mut total = 0usize;
@@ -976,9 +967,11 @@ impl Update {
 #[derive(Args)]
 pub struct CallMods {
     // running args
-    /// Input BAM, may be sorted and have associated index available.
+    /// Input BAM, may be sorted and have associated index available. Can be a path
+    /// to a file or one of `-` or `stdin` to specify a stream from standard input.
     in_bam: String,
-    /// Output BAM filepath.
+    /// Output BAM, can be a path to a file or one of `-` or
+    /// `stdin` to specify a stream from standard input.
     out_bam: String,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended.
@@ -1111,11 +1104,7 @@ pub struct CallMods {
 impl CallMods {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let mut reader = if using_stream(&self.in_bam) {
-            bam::Reader::from_stdin()?
-        } else {
-            bam::Reader::from_path(&self.in_bam)?
-        };
+        let mut reader = get_serial_reader(&self.in_bam)?;
 
         let threads = self.threads;
         reader.set_threads(threads)?;
@@ -1126,11 +1115,9 @@ impl CallMods {
         } else {
             bam::Format::Bam
         };
-        let mut out_bam = if using_stream(&self.out_bam) {
-            bam::Writer::from_stdout(&header, output_format)
-        } else {
-            bam::Writer::from_path(&self.out_bam, &header, output_format)
-        }?;
+        let mut out_bam =
+            get_bam_writer(&self.out_bam, &header, output_format)?;
+
         let edge_filter = self
             .edge_filter
             .as_ref()

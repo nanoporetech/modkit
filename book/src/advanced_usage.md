@@ -227,8 +227,10 @@ converting base modification codes and ignoring modification calls. Produces a B
 Usage: modkit adjust-mods [OPTIONS] <IN_BAM> <OUT_BAM>
 
 Arguments:
-  <IN_BAM>   BAM file to collapse mod call from.
-  <OUT_BAM>  File path to new BAM file to be created.
+  <IN_BAM>   BAM file to collapse mod call from. Can be a path to a file or one of `-` or `stdin` to
+             specify a stream from standard input.
+  <OUT_BAM>  File path to new BAM file to be created. Can be a path to a file or one of `-` or
+             `stdin` to specify a stream from standard output.
 
 Options:
       --log-filepath <LOG_FILEPATH>  Output debug logs to file at this path.
@@ -245,6 +247,7 @@ Options:
                                      the start or the end of the read. For example, a value of 10
                                      will require that the base modification is at least the 11th
                                      base or 11 bases from the end.
+      --output-sam                   Output SAM format instead of BAM.
   -h, --help                         Print help information.
 ```
 
@@ -256,8 +259,10 @@ Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag from sile
 Usage: modkit update-tags [OPTIONS] <IN_BAM> <OUT_BAM>
 
 Arguments:
-  <IN_BAM>   BAM file to update modified base tags in.
-  <OUT_BAM>  File path to new BAM file to be created.
+  <IN_BAM>   BAM to update modified base tags in. Can be a path to a file or one of `-` or `stdin`
+             to specify a stream from standard input.
+  <OUT_BAM>  File to new BAM file to be created or one of `-` or `stdin` to specify a stream from
+             standard output.
 
 Options:
   -m, --mode <MODE>                  Mode, change mode to this value, options {'ambiguous',
@@ -270,6 +275,7 @@ Options:
                                      ambiguous, implicit]
   -t, --threads <THREADS>            Number of threads to use. [default: 4]
       --log-filepath <LOG_FILEPATH>  Output debug logs to file at this path.
+      --output-sam                   Output SAM format instead of BAM.
   -h, --help                         Print help information.
 ```
 
@@ -282,7 +288,8 @@ Usage: modkit sample-probs [OPTIONS] <IN_BAM>
 Arguments:
   <IN_BAM>
           Input BAM with modified base tags. If a index is found reads will be sampled evenly across
-          the length of the reference sequence.
+          the length of the reference sequence. Can be a path to a file or one of `-` or `stdin` to
+          specify a stream from standard input.
 
 Options:
   -t, --threads <THREADS>
@@ -387,7 +394,8 @@ Usage: modkit summary [OPTIONS] <IN_BAM>
 
 Arguments:
   <IN_BAM>
-          Input modBam file.
+          Input modBam, can be a path to a file or one of `-` or `stdin` to specify a stream from
+          standard input.
 
 Options:
   -t, --threads <THREADS>
@@ -512,10 +520,12 @@ Usage: modkit call-mods [OPTIONS] <IN_BAM> <OUT_BAM>
 
 Arguments:
   <IN_BAM>
-          Input BAM, may be sorted and have associated index available.
+          Input BAM, may be sorted and have associated index available. Can be a path to a file or
+          one of `-` or `stdin` to specify a stream from standard input.
 
   <OUT_BAM>
-          Output BAM filepath.
+          Output BAM, can be a path to a file or one of `-` or `stdin` to specify a stream from
+          standard input.
 
 Options:
       --log-filepath <LOG_FILEPATH>
@@ -597,6 +607,9 @@ Options:
           read. For example, a value of 10 will require that the base modification is at least the
           11th base or 11 bases from the end.
 
+      --output-sam
+          Output SAM format instead of BAM.
+
   -h, --help
           Print help information (use `-h` for a summary).
 ```
@@ -609,11 +622,12 @@ Usage: modkit extract [OPTIONS] <IN_BAM> <OUT_PATH>
 
 Arguments:
   <IN_BAM>
-          Path to modBAM file to extract read-level information from, may be sorted and have
+          Path to modBAM file to extract read-level information from, or one of `-` or `stdin` to
+          specify a stream from standard input. If a file is used it may be sorted and have
           associated index.
 
   <OUT_PATH>
-          Path to output file, "stdout" or "-" will direct output to stdout.
+          Path to output file, "stdout" or "-" will direct output to standard out.
 
 Options:
   -t, --threads <THREADS>

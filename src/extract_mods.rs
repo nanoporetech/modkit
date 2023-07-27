@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::thread;
 
+use crate::command_utils::{get_serial_reader, using_stream};
 use bio::io::fasta::Reader as FastaReader;
 use clap::Args;
 use crossbeam_channel::{bounded, Sender};
@@ -36,10 +37,11 @@ use crate::writers::{
 
 #[derive(Args)]
 pub struct ExtractMods {
-    /// Path to modBAM file to extract read-level information from, may
+    /// Path to modBAM file to extract read-level information from, or one of `-` or
+    /// `stdin` to specify a stream from standard input. If a file is used it may
     /// be sorted and have associated index.
     in_bam: String,
-    /// Path to output file, "stdout" or "-" will direct output to stdout.
+    /// Path to output file, "stdout" or "-" will direct output to standard out.
     out_path: String,
     /// Number of threads to use
     #[arg(short = 't', long, default_value_t = 4)]
@@ -107,7 +109,7 @@ type ReferenceAndIntervals = Vec<(ReferenceRecord, IntervalChunks)>;
 
 impl ExtractMods {
     fn using_stdin(&self) -> bool {
-        self.in_bam.as_str() == "-" || self.in_bam == "stdin"
+        using_stream(&self.in_bam)
     }
 
     fn load_regions(
@@ -204,17 +206,11 @@ impl ExtractMods {
             .as_ref()
             .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
 
-        let mut reader = if self.using_stdin() {
-            bam::Reader::from_stdin()?
-        } else {
-            bam::Reader::from_path(&self.in_bam)?
-        };
-
+        let mut reader = get_serial_reader(&self.in_bam)?;
         let header = reader.header().to_owned();
 
         let (snd, rcv) = bounded(100_000);
 
-        // let in_bam = self.in_bam.clone();
         let tid_to_name = (0..header.target_count())
             .filter_map(|tid| {
                 match String::from_utf8(header.tid2name(tid).to_vec()) {
