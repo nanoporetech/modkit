@@ -87,7 +87,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting MM/ML tags to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Basic Usage</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting MM/ML tags to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -172,6 +172,7 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 <li><a href="./intro_call_mods.html">Convert modification probabilities into hard calls</a></li>
 <li><a href="./intro_edge_filter.html">Removing base modification calls at the ends of reads</a></li>
 <li><a href="./intro_include_bed.html">Narrow analysis to only specific positions with a BED file</a></li>
+<li><a href="./intro_repair.html">Repairing/adding MM/ML tags to reads with clipped sequences</a></li>
 </ol>
 <h2 id="notes-and-troubleshooting"><a class="header" href="#notes-and-troubleshooting">Notes and troubleshooting</a></h2>
 <ol>
@@ -498,6 +499,42 @@ modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-
 <div style="break-before: page; page-break-before: always;"></div><h1 id="narrow-output-to-specific-positions"><a class="header" href="#narrow-output-to-specific-positions">Narrow output to specific positions</a></h1>
 <p>The <code>pileup</code>, <code>sample-probs</code>, <code>summary</code>, and <code>extract</code> sub commands have a <code>--include-bed</code> (or <code>--include-positions</code>) option that will restrict analysis to only positions that overlap with the intervals contained within the BED file. </p>
 <p>In the case of <code>pileup</code>, <code>summary</code>, and <code>sample-probs</code>, the pass-threshold will be estimated with only base modification probabilities that are aligned to positions overlapping intervals in the BED. In the case of <code>pileup</code> and <code>extract</code> only positions will be reported if they overlap intervals in the BED.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="repair-mmml-tags-on-trimmed-reads"><a class="header" href="#repair-mmml-tags-on-trimmed-reads">Repair MM/ML tags on trimmed reads</a></h1>
+<p>The <code>modkit repair</code> command is useful when you have a BAM with reads where the
+canonical sequences have been altered in some way that either renders the <code>MM</code>
+and <code>ML</code> tags invalid (for example, trimmed or hard-clipped) or the data has
+been lost completely. This command requires that you have the original base
+modification calls for each read you want to repair, and it will project these
+base modification calls onto the sequences in the altered BAM.</p>
+<p>The command uses two arguments called the &quot;donor&quot; and the &quot;acceptor&quot;. The
+donor, contains the original, correct, <code>MM</code> and <code>ML</code> tags and the acceptor is
+either missing <code>MM</code> and <code>ML</code> tags or they are invalid (they will be discarded
+either way). The reads in the donor must be a superset of the reads in the
+acceptor, meaning you can have extra reads in the donor BAM if some reads have
+been removed or filtered earlier in the workflow. Both the donor and the
+acceptor must be sorted by read name prior to running <code>modkit repair</code>.
+Duplicate reads in the acceptor are allowed so long as they have valid SEQ
+fields. Lastly, <code>modkit repair</code> only works on reads that have been trimmed,
+other kinds of alteration such as run-length-encoding are not currently
+supported. Split reads, or other derived transformations, are not currently
+repairable with this command.</p>
+<p>For example a typical workflow may look like this:</p>
+<pre><code class="language-text"># original base modification calls
+basecalls_5mC_5hmC.bam
+
+# basecalls that have been trimmed
+trimmed.bam # could also be fastq, but would require conversion to BAM
+
+# the two BAM files need to be sorted
+samtools -n trimmed.bam -O BAM &gt; trimed_read_sort.bam 
+samtools -n basecalls_5mC_5hmC.bam -O BAM &gt; basecalls_5mC_5hmC_read_sort.bam
+
+modkit repair \
+    --donor-bam basecalls_5mC_5hmC_read_sort.bam \
+    --acceptor-bam trimed_read_sort.bam \
+    --log-filepath modkit_repair.log \
+    --output-bam trimmed_repaired.bam
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="modkit-subcommand-documentation"><a class="header" href="#modkit-subcommand-documentation">modkit, subcommand documentation</a></h1>
 <p>The goal of <code>modkit</code> is to enable best-practices manipulation of BAM files containing
 modified base information (modBAMs). The various sub-commands and tools available in
@@ -523,10 +560,17 @@ Commands:
                     table. Descriptions of the columns can be found in the README.
   call-mods     Call mods from a modbam, creates a new modbam with probabilities set to 100% if
                     a base modification is called or 0% if called canonical.
-  motif-bed     Create BED file with all locations of a sequence motif.
+  motif-bed     Create BED file with all locations of a sequence motif. 
                     Example: modkit motif-bed CG 0
   extract       Extract read-level base modification information from a modBAM into a
                     tab-separated values table.
+  repair        Repair MM and ML tags in one bam with the correct tags from another. To use this
+                    command, both modBAMs _must_ be sorted by read name. The &quot;donor&quot; modBAM's reads
+                    must be a superset of the acceptor's reads. Extra reads in the donor are
+                    allowed, and multiple reads with the same name (secondary, etc.) are allowed in
+                    the acceptor. Reads with an empty SEQ field cannot be repaired and will be
+                    rejected. Reads where there is an ambiguous alignment of the acceptor to the
+                    donor will be rejected (and logged). See the full documentation for details.
   help          Print this message or the help of the given subcommand(s).
 
 Options:
@@ -713,8 +757,10 @@ converting base modification codes and ignoring modification calls. Produces a B
 Usage: modkit adjust-mods [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BAM&gt;
 
 Arguments:
-  &lt;IN_BAM&gt;   BAM file to collapse mod call from.
-  &lt;OUT_BAM&gt;  File path to new BAM file to be created.
+  &lt;IN_BAM&gt;   BAM file to collapse mod call from. Can be a path to a file or one of `-` or `stdin` to
+             specify a stream from standard input.
+  &lt;OUT_BAM&gt;  File path to new BAM file to be created. Can be a path to a file or one of `-` or
+             `stdin` to specify a stream from standard output.
 
 Options:
       --log-filepath &lt;LOG_FILEPATH&gt;  Output debug logs to file at this path.
@@ -731,6 +777,7 @@ Options:
                                      the start or the end of the read. For example, a value of 10
                                      will require that the base modification is at least the 11th
                                      base or 11 bases from the end.
+      --output-sam                   Output SAM format instead of BAM.
   -h, --help                         Print help information.
 </code></pre>
 <h2 id="update-tags"><a class="header" href="#update-tags">update-tags</a></h2>
@@ -740,8 +787,10 @@ Options:
 Usage: modkit update-tags [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BAM&gt;
 
 Arguments:
-  &lt;IN_BAM&gt;   BAM file to update modified base tags in.
-  &lt;OUT_BAM&gt;  File path to new BAM file to be created.
+  &lt;IN_BAM&gt;   BAM to update modified base tags in. Can be a path to a file or one of `-` or `stdin`
+             to specify a stream from standard input.
+  &lt;OUT_BAM&gt;  File to new BAM file to be created or one of `-` or `stdin` to specify a stream from
+             standard output.
 
 Options:
   -m, --mode &lt;MODE&gt;                  Mode, change mode to this value, options {'ambiguous',
@@ -754,6 +803,7 @@ Options:
                                      ambiguous, implicit]
   -t, --threads &lt;THREADS&gt;            Number of threads to use. [default: 4]
       --log-filepath &lt;LOG_FILEPATH&gt;  Output debug logs to file at this path.
+      --output-sam                   Output SAM format instead of BAM.
   -h, --help                         Print help information.
 </code></pre>
 <h2 id="sample-probs"><a class="header" href="#sample-probs">sample-probs</a></h2>
@@ -764,7 +814,8 @@ Usage: modkit sample-probs [OPTIONS] &lt;IN_BAM&gt;
 Arguments:
   &lt;IN_BAM&gt;
           Input BAM with modified base tags. If a index is found reads will be sampled evenly across
-          the length of the reference sequence.
+          the length of the reference sequence. Can be a path to a file or one of `-` or `stdin` to
+          specify a stream from standard input.
 
 Options:
   -t, --threads &lt;THREADS&gt;
@@ -867,7 +918,8 @@ Usage: modkit summary [OPTIONS] &lt;IN_BAM&gt;
 
 Arguments:
   &lt;IN_BAM&gt;
-          Input modBam file.
+          Input modBam, can be a path to a file or one of `-` or `stdin` to specify a stream from
+          standard input.
 
 Options:
   -t, --threads &lt;THREADS&gt;
@@ -988,10 +1040,12 @@ Usage: modkit call-mods [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_BAM&gt;
 
 Arguments:
   &lt;IN_BAM&gt;
-          Input BAM, may be sorted and have associated index available.
+          Input BAM, may be sorted and have associated index available. Can be a path to a file or
+          one of `-` or `stdin` to specify a stream from standard input.
 
   &lt;OUT_BAM&gt;
-          Output BAM filepath.
+          Output BAM, can be a path to a file or one of `-` or `stdin` to specify a stream from
+          standard input.
 
 Options:
       --log-filepath &lt;LOG_FILEPATH&gt;
@@ -1073,6 +1127,9 @@ Options:
           read. For example, a value of 10 will require that the base modification is at least the
           11th base or 11 bases from the end.
 
+      --output-sam
+          Output SAM format instead of BAM.
+
   -h, --help
           Print help information (use `-h` for a summary).
 </code></pre>
@@ -1083,11 +1140,12 @@ Usage: modkit extract [OPTIONS] &lt;IN_BAM&gt; &lt;OUT_PATH&gt;
 
 Arguments:
   &lt;IN_BAM&gt;
-          Path to modBAM file to extract read-level information from, may be sorted and have
+          Path to modBAM file to extract read-level information from, or one of `-` or `stdin` to
+          specify a stream from standard input. If a file is used it may be sorted and have
           associated index.
 
   &lt;OUT_PATH&gt;
-          Path to output file, &quot;stdout&quot; or &quot;-&quot; will direct output to stdout.
+          Path to output file, &quot;stdout&quot; or &quot;-&quot; will direct output to standard out.
 
 Options:
   -t, --threads &lt;THREADS&gt;
@@ -1144,6 +1202,27 @@ Options:
 
   -h, --help
           Print help information (use `-h` for a summary).
+</code></pre>
+<h2 id="repair"><a class="header" href="#repair">repair</a></h2>
+<pre><code class="language-text">Repair MM and ML tags in one bam with the correct tags from another. To use this command, both
+modBAMs _must_ be sorted by read name. The &quot;donor&quot; modBAM's reads must be a superset of the
+acceptor's reads. Extra reads in the donor are allowed, and multiple reads with the same name
+(secondary, etc.) are allowed in the acceptor. Reads with an empty SEQ field cannot be repaired and
+will be rejected. Reads where there is an ambiguous alignment of the acceptor to the donor will be
+rejected (and logged). See the full documentation for details.
+
+Usage: modkit repair [OPTIONS] --donor-bam &lt;DONOR_BAM&gt; --acceptor-bam &lt;ACCEPTOR_BAM&gt; --output-bam &lt;OUTPUT_BAM&gt;
+
+Options:
+  -d, --donor-bam &lt;DONOR_BAM&gt;        Donor modBAM with original MM/ML tags. Must be sorted by read
+                                     name.
+  -a, --acceptor-bam &lt;ACCEPTOR_BAM&gt;  Acceptor modBAM with reads to have MM/ML base modification data
+                                     projected on to. Must be sorted by read name.
+  -o, --output-bam &lt;OUTPUT_BAM&gt;      output modBAM location.
+      --log-filepath &lt;LOG_FILEPATH&gt;  File to write logs to, it is recommended to use this option as
+                                     some reads may be rejected and logged here.
+  -t, --threads &lt;THREADS&gt;            The number of threads to use. [default: 4]
+  -h, --help                         Print help information.
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h1>
 <p>It's recommended to run all <code>modkit</code> commands with the <code>--log-filepath &lt;path-to-file&gt;</code>
