@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::num::ParseFloatError;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::adjust::{adjust_modbam, record_is_valid};
 use crate::command_utils::{
     get_threshold_from_options, parse_per_mod_thresholds, parse_thresholds,
+    using_stream,
 };
 use anyhow::{bail, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
@@ -25,15 +26,18 @@ use crate::mod_bam::{
     SkipMode, ML_TAGS, MM_TAGS,
 };
 use crate::mod_base_code::ModCode;
+use crate::monoid::Moniod;
 use crate::motif_bed::motif_bed;
 use crate::pileup::subcommand::ModBamPileup;
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
+use crate::reads_sampler::record_sampler::RecordSampler;
+use crate::record_processor::RecordProcessor;
 use crate::repair_tags::RepairTags;
-use crate::summarize::{summarize_modbam, ModSummary};
+use crate::summarize::{sampled_reads_to_summary, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::thresholds::Percentiles;
+use crate::thresholds::{calc_thresholds_per_base, Percentiles};
 use crate::util;
 use crate::util::{add_modkit_pg_records, get_spinner, get_targets, Region};
 use crate::writers::{
@@ -123,9 +127,9 @@ fn get_sampling_options(
 #[derive(Args)]
 pub struct Adjust {
     /// BAM file to collapse mod call from.
-    in_bam: PathBuf,
+    in_bam: String,
     /// File path to new BAM file to be created.
-    out_bam: PathBuf,
+    out_bam: String,
     /// Output debug logs to file at this path.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
@@ -150,20 +154,36 @@ pub struct Adjust {
     /// at least the 11th base or 11 bases from the end.
     #[arg(long)]
     edge_filter: Option<usize>,
+    /// Output SAM format instead of BAM.
+    #[arg(long, default_value_t = false)]
+    output_sam: bool,
 }
 
 impl Adjust {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let fp = &self.in_bam;
-        let out_fp = &self.out_bam;
-        let mut reader = bam::Reader::from_path(fp)?;
+        // let fp = &self.in_bam;
+        // let out_fp = &self.out_bam;
+        let mut reader = match self.in_bam.as_str() {
+            "-" | "stdin" => bam::Reader::from_stdin()?,
+            _ => bam::Reader::from_path(&self.in_bam)?,
+        };
         let threads = self.threads;
         reader.set_threads(threads)?;
         let mut header = bam::Header::from_template(reader.header());
+        let output_format = if self.output_sam {
+            bam::Format::Sam
+        } else {
+            bam::Format::Bam
+        };
         add_modkit_pg_records(&mut header);
-        let mut out_bam =
-            bam::Writer::from_path(out_fp, &header, bam::Format::Bam)?;
+        let mut out_bam = if using_stream(&self.out_bam) {
+            bam::Writer::from_stdout(&header, output_format)
+        } else {
+            bam::Writer::from_path(&self.out_bam, &header, output_format)
+        }?;
+        // let mut out_bam =
+        //     bam::Writer::from_path(out_fp, &header, bam::Format::Bam)?;
 
         let methods = if let Some(convert) = &self.convert {
             let mut conversions = HashMap::new();
@@ -196,8 +216,20 @@ impl Adjust {
                 info!(
                     "Removing mod base {} from {}, new bam {}",
                     ignore_base,
-                    fp.to_str().unwrap_or("???"),
-                    out_fp.to_str().unwrap_or("???")
+                    {
+                        if using_stream(&self.in_bam) {
+                            "stdin"
+                        } else {
+                            self.in_bam.as_str()
+                        }
+                    },
+                    {
+                        if using_stream(&self.out_bam) {
+                            "stdout"
+                        } else {
+                            self.out_bam.as_str()
+                        }
+                    }
                 );
                 let method = CollapseMethod::ReDistribute(*ignore_base);
                 vec![method]
@@ -252,7 +284,7 @@ pub struct SampleModBaseProbs {
     /// Input BAM with modified base tags. If a index is found
     /// reads will be sampled evenly across the length of the
     /// reference sequence.
-    in_bam: PathBuf,
+    in_bam: String,
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
@@ -347,7 +379,11 @@ pub struct SampleModBaseProbs {
 impl SampleModBaseProbs {
     fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let reader = bam::Reader::from_path(&self.in_bam)?;
+        let mut reader = if using_stream(&self.in_bam) {
+            bam::Reader::from_stdin()?
+        } else {
+            bam::Reader::from_path(&self.in_bam)?
+        };
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -403,9 +439,29 @@ impl SampleModBaseProbs {
             })?;
 
         pool.install(|| {
-            let read_ids_to_base_mod_calls =
+            let read_ids_to_base_mod_calls = if using_stream(&self.in_bam) {
+                reader.set_threads(self.threads)?;
+                let record_sampler = RecordSampler::new_from_options(
+                    sample_frac,
+                    num_reads,
+                    self.seed,
+                );
+                let read_ids_to_base_mod_probs =
+                    ReadIdsToBaseModProbs::process_records(
+                        reader.records(),
+                        !self.suppress_progress,
+                        record_sampler,
+                        collapse_method.as_ref(),
+                        edge_filter.as_ref(),
+                        position_filter.as_ref(),
+                        self.only_mapped || position_filter.is_some(),
+                    )?;
+                debug!("sampled {} records", read_ids_to_base_mod_probs.len());
+                read_ids_to_base_mod_probs
+            } else {
+                drop(reader);
                 get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
-                    &self.in_bam,
+                    &Path::new(&self.in_bam).to_path_buf(),
                     self.threads,
                     self.interval_size,
                     sample_frac,
@@ -417,7 +473,8 @@ impl SampleModBaseProbs {
                     position_filter.as_ref(),
                     self.only_mapped || position_filter.is_some(),
                     self.suppress_progress,
-                )?;
+                )?
+            };
 
             let histograms = if self.histogram {
                 let mod_call_probs =
@@ -475,7 +532,7 @@ impl SampleModBaseProbs {
 #[derive(Args)]
 pub struct ModSummarize {
     /// Input modBam file.
-    in_bam: PathBuf,
+    in_bam: String,
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
@@ -589,7 +646,12 @@ pub struct ModSummarize {
 impl ModSummarize {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let reader = bam::Reader::from_path(&self.in_bam)?;
+        let mut reader = if using_stream(&self.in_bam) {
+            bam::Reader::from_stdin()?
+        } else {
+            bam::Reader::from_path(&self.in_bam)?
+        };
+
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()?;
@@ -659,23 +721,80 @@ impl ModSummarize {
         };
 
         let mod_summary = pool.install(|| {
-            summarize_modbam(
-                &self.in_bam,
-                self.threads,
-                self.interval_size,
-                sample_frac,
-                num_reads,
-                self.seed,
+            let read_ids_to_base_mod_calls = if using_stream(&self.in_bam) {
+                reader.set_threads(self.threads)?;
+                let record_sampler = RecordSampler::new_from_options(
+                    sample_frac,
+                    num_reads,
+                    self.seed,
+                );
+                let read_ids_to_base_mod_probs =
+                    ReadIdsToBaseModProbs::process_records(
+                        reader.records(),
+                        !self.suppress_progress,
+                        record_sampler,
+                        collapse_method.as_ref(),
+                        edge_filter.as_ref(),
+                        position_filter.as_ref(),
+                        self.only_mapped || position_filter.is_some(),
+                    )?;
+                debug!("sampled {} records", read_ids_to_base_mod_probs.len());
+                read_ids_to_base_mod_probs
+            } else {
+                drop(reader);
+                get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
+                    &Path::new(&self.in_bam).to_path_buf(),
+                    self.threads,
+                    self.interval_size,
+                    sample_frac,
+                    num_reads,
+                    self.seed,
+                    region.as_ref(),
+                    collapse_method.as_ref(),
+                    edge_filter.as_ref(),
+                    position_filter.as_ref(),
+                    self.only_mapped || position_filter.is_some(),
+                    self.suppress_progress,
+                )?
+            };
+            let threshold_caller = if let Some(ft) = filter_thresholds {
+                // filter thresholds provided, use those
+                ft
+            } else {
+                // calculate the filter thresholds at the requested percentile
+                let pct = (self.filter_percentile * 100f32).floor();
+                info!("calculating threshold at {pct}% percentile");
+                calc_thresholds_per_base(
+                    &read_ids_to_base_mod_calls,
+                    self.filter_percentile,
+                    None,
+                    per_mod_thresholds,
+                )?
+            };
+
+            sampled_reads_to_summary(
+                read_ids_to_base_mod_calls,
+                &threshold_caller,
                 region.as_ref(),
-                self.filter_percentile,
-                filter_thresholds,
-                per_mod_thresholds,
-                collapse_method.as_ref(),
-                edge_filter.as_ref(),
-                position_filter.as_ref(),
-                self.only_mapped || position_filter.is_some(),
                 self.suppress_progress,
             )
+            // summarize_modbam(
+            //     &self.in_bam,
+            //     self.threads,
+            //     self.interval_size,
+            //     sample_frac,
+            //     num_reads,
+            //     self.seed,
+            //     region.as_ref(),
+            //     self.filter_percentile,
+            //     filter_thresholds,
+            //     per_mod_thresholds,
+            //     collapse_method.as_ref(),
+            //     edge_filter.as_ref(),
+            //     position_filter.as_ref(),
+            //     self.only_mapped || position_filter.is_some(),
+            //     self.suppress_progress,
+            // )
         })?;
 
         let mut writer: Box<dyn OutWriter<ModSummary>> = if self.tsv_format {
@@ -858,9 +977,9 @@ impl Update {
 pub struct CallMods {
     // running args
     /// Input BAM, may be sorted and have associated index available.
-    in_bam: PathBuf,
+    in_bam: String,
     /// Output BAM filepath.
-    out_bam: PathBuf,
+    out_bam: String,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended.
     #[arg(long)]
@@ -984,19 +1103,34 @@ pub struct CallMods {
     /// at least the 11th base or 11 bases from the end.
     #[arg(long, hide_short_help = true)]
     edge_filter: Option<usize>,
+    /// Output SAM format instead of BAM.
+    #[arg(long, default_value_t = false)]
+    output_sam: bool,
 }
 
 impl CallMods {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        let mut reader = if using_stream(&self.in_bam) {
+            bam::Reader::from_stdin()?
+        } else {
+            bam::Reader::from_path(&self.in_bam)?
+        };
 
-        let mut reader = bam::Reader::from_path(&self.in_bam)?;
         let threads = self.threads;
         reader.set_threads(threads)?;
         let mut header = bam::Header::from_template(reader.header());
         add_modkit_pg_records(&mut header);
-        let mut out_bam =
-            bam::Writer::from_path(&self.out_bam, &header, bam::Format::Bam)?;
+        let output_format = if self.output_sam {
+            bam::Format::Sam
+        } else {
+            bam::Format::Bam
+        };
+        let mut out_bam = if using_stream(&self.out_bam) {
+            bam::Writer::from_stdout(&header, output_format)
+        } else {
+            bam::Writer::from_path(&self.out_bam, &header, output_format)
+        }?;
         let edge_filter = self
             .edge_filter
             .as_ref()
@@ -1019,13 +1153,17 @@ impl CallMods {
         let caller = if let Some(raw_threshold) = &self.filter_threshold {
             parse_thresholds(raw_threshold, per_mod_thresholds)?
         } else {
+            if using_stream(&self.in_bam) {
+                bail!("must specify all thresholds with --filter-threshold and (optionally) --mod-threshold \
+                    when using stdin stream")
+            }
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(self.threads)
                 .build()
                 .with_context(|| "failed to make threadpool")?;
             pool.install(|| {
                 get_threshold_from_options(
-                    &self.in_bam,
+                    &Path::new(&self.in_bam).to_path_buf(),
                     self.threads,
                     self.sampling_interval_size,
                     self.sampling_frac,

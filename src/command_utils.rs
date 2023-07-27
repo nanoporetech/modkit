@@ -169,3 +169,6 @@ fn parse_per_base_thresholds(
         Ok((default, per_base_thresholds))
     }
 }
+pub(crate) fn using_stream(raw: &str) -> bool {
+    raw == "-" || raw == "stdin"
+}
