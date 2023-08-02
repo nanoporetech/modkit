@@ -534,6 +534,7 @@ impl ModBamPileup {
         let force_allow = self.force_allow_implicit;
         let max_depth = self.max_depth;
 
+        let chunk_size = self.threads;
         std::thread::spawn(move || {
             pool.install(|| {
                 for target in tids {
@@ -557,47 +558,62 @@ impl ModBamPileup {
                             .unwrap_or(true)
                     })
                     .collect::<Vec<(u32, u32)>>();
+
                     let n_intervals = intervals.len();
                     let interval_progress = master_progress
                         .add(get_subroutine_progress_bar(n_intervals));
                     interval_progress
                         .set_message(format!("processing {}", &target.name));
-                    let mut result: Vec<Result<ModBasePileup, String>> = vec![];
-                    let (res, _) = rayon::join(
-                        || {
-                            intervals
-                                .into_par_iter()
-                                .progress_with(interval_progress)
-                                .map(|(start, end)| {
-                                    process_region(
-                                        &in_bam_fp,
-                                        target.tid,
-                                        start,
-                                        end,
-                                        &threshold_caller,
-                                        &pileup_options,
-                                        force_allow,
-                                        combine_strands,
-                                        max_depth,
-                                        motif_locations.as_ref(),
-                                        edge_filter.as_ref(),
-                                        partition_tags.as_ref(),
-                                        position_filter.as_ref(),
-                                    )
-                                })
-                                .collect::<Vec<Result<ModBasePileup, String>>>()
-                        },
-                        || {
-                            result.into_iter().for_each(|mod_base_pileup| {
-                                snd.send(mod_base_pileup)
-                                    .expect("failed to send")
-                            });
-                        },
-                    );
-                    result = res;
-                    result.into_iter().for_each(|pileup| {
-                        snd.send(pileup).expect("failed to send")
-                    });
+                    for work_chunk in intervals.chunks(chunk_size) {
+                        let mut result: Vec<Result<ModBasePileup, String>> = vec![];
+                        let (res, _) = rayon::join(
+                            || {
+                                work_chunk
+                                    .into_par_iter()
+                                    .map(|(start, end)| {
+                                        process_region(
+                                            &in_bam_fp,
+                                            target.tid,
+                                            *start,
+                                            *end,
+                                            &threshold_caller,
+                                            &pileup_options,
+                                            force_allow,
+                                            combine_strands,
+                                            max_depth,
+                                            motif_locations.as_ref(),
+                                            edge_filter.as_ref(),
+                                            partition_tags.as_ref(),
+                                            position_filter.as_ref(),
+                                        )
+                                    })
+                                    .collect::<Vec<Result<ModBasePileup, String>>>()
+                            },
+                            || {
+                                result.into_iter().for_each(|mod_base_pileup| {
+                                    match snd.send(mod_base_pileup) {
+                                        Ok(_) => {
+                                            interval_progress.inc(1)
+                                        }
+                                        Err(e) => {
+                                            error!("failed to send results, {}", e.to_string())
+                                        },
+                                    }
+                                });
+                            },
+                        );
+                        result = res;
+                        result.into_iter().for_each(|pileup| {
+                            match snd.send(pileup) {
+                                Ok(_) => {
+                                    interval_progress.inc(1)
+                                }
+                                Err(e) => {
+                                    error!("failed to send results, {}", e.to_string())
+                                },
+                            }
+                        });
+                    }
                     tid_progress.inc(1);
                 }
                 tid_progress.finish_and_clear();
