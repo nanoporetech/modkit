@@ -9,6 +9,10 @@ use crate::position_filter::StrandedPositionFilter;
 use derive_new::new;
 use itertools::Itertools;
 use log::debug;
+use nom::bytes::complete::tag;
+use nom::character::complete::{digit1, multispace0};
+use nom::multi::separated_list1;
+use nom::IResult;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
 use rustc_hash::FxHashMap;
@@ -520,7 +524,7 @@ fn quals_to_probs(quals: &mut [f32]) {
     let arch = pulp::Arch::new();
     arch.dispatch(|| {
         for q in quals {
-            let qual = *q as f32;
+            let qual = *q;
             *q = (qual + 0.5f32) / 256f32;
         }
     });
@@ -528,7 +532,7 @@ fn quals_to_probs(quals: &mut [f32]) {
 
 /// Container for the information in the MM and ML tags
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct BaseModPositions {
+pub struct BaseModPositions {
     pub(crate) canonical_base: char,
     mode: SkipMode,
     strand: Strand,
@@ -536,8 +540,79 @@ pub(crate) struct BaseModPositions {
     delta_list: Vec<u32>,
 }
 
+fn parse_int_list<'a>(input: &'a str) -> IResult<&str, Vec<u32>> {
+    separated_list1(tag(","), |input: &'a str| {
+        let (input, _) = multispace0(input)?;
+        let (input, num) = digit1(input)?;
+        let num = num.parse::<u32>().unwrap();
+        let (input, _) = multispace0(input)?;
+        Ok((input, num))
+    })(input)
+}
+
 impl BaseModPositions {
-    pub(crate) fn parse(mod_positions: &str) -> Result<Self, InputError> {
+    pub fn parse(mod_positions: &str) -> Result<Self, InputError> {
+        let mut parts = mod_positions.split(',');
+        let mut header = parts
+            .nth(0)
+            .ok_or(InputError::new(
+                "failed to get leader for base mod position line",
+            ))?
+            .chars();
+
+        let canonical_base = header
+            .nth(0)
+            .ok_or(InputError::new("failed to get canonical base"))?;
+
+        let raw_stand = header
+            .nth(0)
+            .ok_or(InputError::new("failed to get strand"))?;
+
+        let strand = Strand::parse_char(raw_stand)?;
+
+        let mut mod_base_codes = Vec::new();
+        let mut mode: Option<SkipMode> = None;
+
+        let mut offset = 2usize;
+        while let Some(c) = header.next() {
+            match c {
+                '?' | '.' => {
+                    mode = Some(SkipMode::parse(c).unwrap());
+                    offset += 1;
+                }
+                _ => {
+                    mod_base_codes.push(c);
+                    offset += 1;
+                }
+            }
+        }
+        // default to the "old version"
+        let mode = mode.unwrap_or(SkipMode::ImplicitProbModified);
+
+        let delta_list = if offset + 1 <= mod_positions.len() {
+            let (_, raw_delta_list) = mod_positions.split_at(offset + 1);
+            let (_, delta_list) =
+                parse_int_list(raw_delta_list).map_err(|e| {
+                    InputError::from(format!(
+                        "invalid MM delta list, {}",
+                        e.to_string()
+                    ))
+                })?;
+            delta_list
+        } else {
+            vec![]
+        };
+
+        Ok(Self {
+            canonical_base,
+            mod_base_codes,
+            mode,
+            strand,
+            delta_list,
+        })
+    }
+
+    pub fn parse_old(mod_positions: &str) -> Result<Self, InputError> {
         let mut parts = mod_positions.split(',');
         let mut header = parts
             .nth(0)
@@ -641,13 +716,13 @@ pub struct SeqPosBaseModProbs {
     pub skip_mode: SkipMode,
     /// Mapping of _forward_ sequence position to the predicted base
     /// modification probabilities for that position.
-    pub pos_to_base_mod_probs: HashMap<usize, BaseModProbs>,
+    pub pos_to_base_mod_probs: FxHashMap<usize, BaseModProbs>,
 }
 
 impl SeqPosBaseModProbs {
     // todo(arand) derive new?
     pub(crate) fn new(
-        pos_to_base_mod_probs: HashMap<usize, BaseModProbs>,
+        pos_to_base_mod_probs: FxHashMap<usize, BaseModProbs>,
         skip_mode: SkipMode,
     ) -> Self {
         Self {
@@ -658,7 +733,7 @@ impl SeqPosBaseModProbs {
     fn new_empty(skip_mode: SkipMode) -> Self {
         Self {
             skip_mode,
-            pos_to_base_mod_probs: HashMap::new(),
+            pos_to_base_mod_probs: FxHashMap::default(),
         }
     }
 
@@ -683,7 +758,7 @@ impl SeqPosBaseModProbs {
                             *pos >= edge_filter.edge_filter_start
                                 && *pos < edge_filter_end
                         })
-                        .collect::<HashMap<usize, BaseModProbs>>();
+                        .collect::<FxHashMap<usize, BaseModProbs>>();
                     if pos_to_base_mod_probs.is_empty() {
                         // all positions filtered out
                         None
@@ -760,7 +835,7 @@ impl SeqPosBaseModProbs {
 
                 edge_keep && only_mapped_keep && position_keep
             })
-            .collect::<HashMap<usize, BaseModProbs>>();
+            .collect::<FxHashMap<usize, BaseModProbs>>();
         if probs.is_empty() {
             None
         } else {
@@ -823,7 +898,7 @@ fn get_base_mod_probs(
         probs
     };
 
-    let mut positions_to_probs = HashMap::<usize, BaseModProbs>::new();
+    let mut positions_to_probs = FxHashMap::<usize, BaseModProbs>::default();
     let stride = base_mod_positions.stride();
     debug_assert_eq!(probs.len() / stride, positions.len());
     for (chunk, position) in probs.chunks(stride).zip(positions) {
@@ -1478,7 +1553,7 @@ mod mod_bam_tests {
             (8, BaseModProbs::new('m', 0.2)),
         ]
         .into_iter()
-        .collect::<HashMap<usize, BaseModProbs>>();
+        .collect::<FxHashMap<usize, BaseModProbs>>();
 
         let seq_pos_base_mod_probs =
             SeqPosBaseModProbs::new(positions_and_probs, SkipMode::Ambiguous);
@@ -1498,7 +1573,7 @@ mod mod_bam_tests {
             (8, BaseModProbs::new('m', 0.2)),
         ]
         .into_iter()
-        .collect::<HashMap<usize, BaseModProbs>>();
+        .collect::<FxHashMap<usize, BaseModProbs>>();
 
         let seq_pos_base_mod_probs =
             SeqPosBaseModProbs::new(positions_and_probs, skip_mode);

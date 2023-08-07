@@ -1,6 +1,7 @@
 use crate::mod_bam::{BaseModCall, BaseModProbs, SeqPosBaseModProbs};
 use crate::mod_base_code::{DnaBase, ModCode};
 use derive_new::new;
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
 #[derive(new)]
@@ -110,7 +111,7 @@ impl MultipleThresholdModCaller {
             .collect::<anyhow::Result<HashMap<_, _>>>()?
             .into_iter()
             .filter_map(|(q_pos, probs)| probs.map(|p| (q_pos, p)))
-            .collect::<HashMap<usize, BaseModProbs>>();
+            .collect::<FxHashMap<usize, BaseModProbs>>();
 
         Ok(SeqPosBaseModProbs {
             pos_to_base_mod_probs,

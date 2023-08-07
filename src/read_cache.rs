@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use log::{debug, error};
 use rust_htslib::bam;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::errs::RunError;
 use crate::mod_bam::{
@@ -15,19 +16,20 @@ use crate::util::Strand;
 
 /// Mapping of _reference position_ to base mod calls as determined by the aligned pairs for the
 /// read
-type RefPosBaseModCalls = HashMap<u64, BaseModCall>; // todo use FxHasher
+type RefPosBaseModCalls = FxHashMap<u64, BaseModCall>; // todo use FxHasher
 
-// todo last position (for gc)
 pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that read
     /// organized by the canonical base (the 'char') todo: should use DnaBase here
-    pos_reads: HashMap<String, HashMap<char, (RefPosBaseModCalls, SkipMode)>>,
-    neg_reads: HashMap<String, HashMap<char, (RefPosBaseModCalls, SkipMode)>>,
+    pos_reads:
+        FxHashMap<String, FxHashMap<char, (RefPosBaseModCalls, SkipMode)>>,
+    neg_reads:
+        FxHashMap<String, FxHashMap<char, (RefPosBaseModCalls, SkipMode)>>,
     /// these reads don't have mod tags or should be skipped for some other reason
     skip_set: HashSet<String>,
     /// mapping of read_id (query_name) to the mod codes contained in that read
-    pos_mod_codes: HashMap<String, HashSet<ModCode>>,
-    neg_mod_codes: HashMap<String, HashSet<ModCode>>,
+    pos_mod_codes: FxHashMap<String, FxHashSet<ModCode>>,
+    neg_mod_codes: FxHashMap<String, FxHashSet<ModCode>>,
     /// collapse method
     method: Option<&'a CollapseMethod>,
     /// Force allowing of implicit canonical
@@ -45,11 +47,11 @@ impl<'a> ReadCache<'a> {
         force_allow: bool,
     ) -> Self {
         Self {
-            pos_reads: HashMap::new(),
-            neg_reads: HashMap::new(),
+            pos_reads: FxHashMap::default(),
+            neg_reads: FxHashMap::default(),
             skip_set: HashSet::new(),
-            pos_mod_codes: HashMap::new(),
-            neg_mod_codes: HashMap::new(),
+            pos_mod_codes: FxHashMap::default(),
+            neg_mod_codes: FxHashMap::default(),
             method,
             force_allow,
             caller,
@@ -72,7 +74,7 @@ impl<'a> ReadCache<'a> {
     ) -> Result<(), RunError> {
         let aligned_pairs = util::get_aligned_pairs_forward(&record)
             .filter_map(|ap| ap.ok())
-            .collect::<HashMap<usize, u64>>();
+            .collect::<FxHashMap<usize, u64>>();
 
         let mut warned = false;
         let ref_pos_base_mod_calls = seq_pos_base_mod_probs
@@ -102,7 +104,7 @@ impl<'a> ReadCache<'a> {
                     None
                 }
             })
-            .collect::<HashMap<u64, BaseModCall>>();
+            .collect::<FxHashMap<u64, BaseModCall>>();
 
         let read_table = match mod_strand {
             Strand::Positive => &mut self.pos_reads,
@@ -110,7 +112,7 @@ impl<'a> ReadCache<'a> {
         };
         read_table
             .entry(record_name.to_owned())
-            .or_insert(HashMap::new())
+            .or_insert(FxHashMap::default())
             .insert(
                 canonical_base.char(),
                 (ref_pos_base_mod_calls, seq_pos_base_mod_probs.skip_mode),
@@ -208,7 +210,7 @@ impl<'a> ReadCache<'a> {
                         };
                     mod_codes_for_read
                         .entry(record_name.to_owned())
-                        .or_insert(HashSet::new())
+                        .or_insert(FxHashSet::default())
                         .extend(mod_codes);
 
                     self.add_modbase_probs_for_record_and_canonical_base(
@@ -242,7 +244,7 @@ impl<'a> ReadCache<'a> {
 
     #[inline]
     fn get_mod_call_from_mapping(
-        strand_calls: &HashMap<char, (RefPosBaseModCalls, SkipMode)>,
+        strand_calls: &FxHashMap<char, (RefPosBaseModCalls, SkipMode)>,
         canonical_base: char,
         position: u32,
     ) -> Option<BaseModCall> {

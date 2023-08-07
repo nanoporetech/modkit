@@ -20,7 +20,7 @@ use anyhow::{anyhow, bail, Context};
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
-use indicatif::{MultiProgress, ParallelProgressIterator};
+use indicatif::MultiProgress;
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
@@ -64,6 +64,9 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     interval_size: u32,
+
+    #[arg(long, hide_short_help = true)]
+    chunk_size: Option<usize>,
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
@@ -534,7 +537,11 @@ impl ModBamPileup {
         let force_allow = self.force_allow_implicit;
         let max_depth = self.max_depth;
 
-        let chunk_size = self.threads;
+        let chunk_size = self.chunk_size.unwrap_or_else(|| {
+            let cs = (self.threads as f32 * 1.5).floor() as usize;
+            debug!("using chunk size {cs}");
+            cs
+        });
         std::thread::spawn(move || {
             pool.install(|| {
                 for target in tids {

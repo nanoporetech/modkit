@@ -16,6 +16,7 @@ use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::{self, Read};
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -348,7 +349,7 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
                         None
                     }
                 })
-                .collect::<HashMap<usize, BaseModProbs>>();
+                .collect::<FxHashMap<usize, BaseModProbs>>();
             let repaired_seq_pos_base_mod_probs =
                 SeqPosBaseModProbs::new(adjusted, skip_mode);
             let (mm, mut ml) = format_mm_ml_tag(
