@@ -186,9 +186,9 @@ impl<'a> ReadCache<'a> {
                         .pos_to_base_mod_probs
                         .values()
                         .flat_map(|base_mod_probs| {
-                            base_mod_probs.mod_codes.iter().filter_map(
-                                |raw_mod_code| {
-                                    ModCode::parse_raw_mod_code(*raw_mod_code)
+                            base_mod_probs.iter_probs().filter_map(
+                                |(&raw_mod_code, _)| {
+                                    ModCode::parse_raw_mod_code(raw_mod_code)
                                         .ok()
                                 },
                             )

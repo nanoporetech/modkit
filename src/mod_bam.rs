@@ -170,6 +170,10 @@ impl RawModTags {
         &self.raw_mm
     }
 
+    pub fn get_raw_ml(&self) -> &[u16] {
+        &self.raw_ml
+    }
+
     pub fn mm_is_new_style(&self) -> bool {
         self.mm_style == MM_TAGS[0]
     }
@@ -268,32 +272,24 @@ impl PartialOrd for BaseModCall {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct BaseModProbs {
-    // todo(arand) simplify to just use a hashmap
-    pub(crate) mod_codes: IndexSet<char>,
-    probs: Vec<f32>,
+    probs: FxHashMap<char, f32>,
     // skip_mode: SkipMode,
     // strand: Strand,
 }
 
 impl BaseModProbs {
-    pub(crate) fn new(mod_code: char, prob: f32) -> Self {
-        let mod_codes = indexset! {mod_code};
-        let probs = vec![prob];
-        Self { mod_codes, probs }
+    pub fn new(mod_code: char, prob: f32) -> Self {
+        let mut probs = FxHashMap::default();
+        probs.insert(mod_code, prob);
+        Self { probs }
     }
 
-    pub(crate) fn insert_base_mod_prob(&mut self, mod_code: char, prob: f32) {
-        if let Some(idx) = self.mod_codes.get_index_of(&mod_code) {
-            self.probs[idx] += prob;
-        } else {
-            self.mod_codes.insert(mod_code);
-            self.probs.push(prob);
-        }
+    pub fn insert_base_mod_prob(&mut self, mod_code: char, prob: f32) {
+        (*self.probs.entry(mod_code).or_insert(0f32)) += prob;
     }
 
     pub fn argmax_base_mod_call(&self) -> anyhow::Result<BaseModCall> {
         let canonical_prob = self.canonical_prob();
-        // todo(arand) use iterprobs here
         let max_mod_prob = self
             .iter_probs()
             .max_by(|(_, p), (_, q)| p.partial_cmp(q).unwrap());
@@ -311,19 +307,20 @@ impl BaseModProbs {
     }
 
     pub fn canonical_prob(&self) -> f32 {
-        1f32 - self.probs.iter().sum::<f32>()
+        1f32 - self.probs.values().sum::<f32>()
     }
 
+    // todo(arand): these methods should be removed/renamed to be more useful
     pub fn iter_probs(&self) -> impl Iterator<Item = (&char, &f32)> {
-        self.mod_codes.iter().zip(self.probs.iter())
+        self.probs.iter()
     }
 
     pub fn iter_mut_probs(&mut self) -> impl Iterator<Item = &mut f32> {
-        self.probs.iter_mut()
+        self.probs.iter_mut().map(|(_, p)| p)
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&char, &mut f32)> {
-        self.mod_codes.iter().zip(self.probs.iter_mut())
+        self.probs.iter_mut()
     }
 
     pub(crate) fn into_collapsed(
@@ -343,16 +340,21 @@ impl BaseModProbs {
                     .sum::<f32>()
                     + canonical_prob;
 
-                let mut mod_codes = IndexSet::new();
-                let mut probs = Vec::new();
-                for (mod_code, mod_prob) in marginal_collapsed_prob {
-                    let collapsed_prob =
-                        mod_prob / total_marginal_collapsed_prob;
-                    mod_codes.insert(*mod_code);
-                    probs.push(collapsed_prob)
-                }
-
-                Self { mod_codes, probs }
+                // let mut probs = FxHashMap::default();
+                let probs = marginal_collapsed_prob
+                    .into_iter()
+                    .map(|(&mod_code, &mod_prob)| {
+                        let collapsed_prob =
+                            mod_prob / total_marginal_collapsed_prob;
+                        (mod_code, collapsed_prob)
+                    })
+                    .collect();
+                // for (&mod_code, &mod_prob) in marginal_collapsed_prob {
+                //     let collapsed_prob =
+                //         mod_prob / total_marginal_collapsed_prob;
+                //     probs.push(collapsed_prob)
+                // }
+                Self { probs }
             }
             CollapseMethod::ReDistribute(mod_to_collapse) => {
                 let marginal_prob = self
@@ -368,44 +370,50 @@ impl BaseModProbs {
                 let other_mods = self
                     .iter_probs()
                     .filter(|(mod_code, _prob)| *mod_code != mod_to_collapse)
-                    .collect::<Vec<_>>();
+                    .collect::<Vec<(&char, &f32)>>();
+
                 let n_other_mods = other_mods.len() as f32 + 1f32; // plus 1 for the canonical base
                 let prob_to_redistribute = marginal_prob / n_other_mods;
 
                 let mut check_total = 0f32;
-                let mut mod_codes = IndexSet::new();
-                let mut probs = Vec::new();
-                for (mod_code, prob) in other_mods {
-                    let new_prob = prob + prob_to_redistribute;
-                    check_total += new_prob;
-                    mod_codes.insert(*mod_code);
-                    probs.push(new_prob);
-                }
+                // let mut mod_codes = IndexSet::new();
+                // let mut probs = Vec::new();
+                let probs = other_mods
+                    .into_iter()
+                    .map(|(&mod_code, prob)| {
+                        let new_prob = prob + prob_to_redistribute;
+                        check_total += new_prob;
+                        (mod_code, new_prob)
+                    })
+                    .collect();
+                // for (mod_code, prob) in other_mods {
+                //     let new_prob = prob + prob_to_redistribute;
+                //     check_total += new_prob;
+                //     mod_codes.insert(*mod_code);
+                //     probs.push(new_prob);
+                // }
                 if check_total - 100f32 > 0.00001 {
                     debug!(
                         "total probability {check_total} did not re-normalize"
                     )
                 }
 
-                Self { mod_codes, probs }
+                Self { probs }
             }
             CollapseMethod::Convert { from, to } => {
-                let mut probs = Vec::new();
-                let mut mod_codes = IndexSet::new();
-
                 let mut converted_prob = 0f32;
+                let mut probs = FxHashMap::default();
                 for (raw_mod_code, prob) in self.iter_probs() {
                     // if we're converting from, add to the accumulator
                     if from.contains(&raw_mod_code) {
                         converted_prob += prob;
                     } else {
                         // keep track as before
-                        probs.push(*prob);
-                        mod_codes.insert(*raw_mod_code);
+                        probs.insert(*raw_mod_code, *prob);
                     }
                 }
 
-                let mut new_base_mod_probs = Self { probs, mod_codes };
+                let mut new_base_mod_probs = Self { probs };
 
                 if converted_prob > 0f32 {
                     new_base_mod_probs
@@ -418,17 +426,23 @@ impl BaseModProbs {
     }
 
     fn combine(&mut self, other: Self) {
-        for (mod_code, prob) in
-            other.mod_codes.into_iter().zip(other.probs.into_iter())
-        {
-            if let Some(idx) = self.mod_codes.get_index_of(&mod_code) {
-                self.probs[idx] += prob
-            } else {
-                self.mod_codes.insert(mod_code);
-                self.probs.push(prob);
-            }
+        for (mod_code, prob) in other.iter_probs() {
+            (*self.probs.entry(*mod_code).or_insert(0f32)) += *prob;
         }
     }
+
+    // fn combine(&mut self, other: Self) {
+    //     for (mod_code, prob) in
+    //         other.mod_codes.into_iter().zip(other.probs.into_iter())
+    //     {
+    //         if let Some(idx) = self.mod_codes.get_index_of(&mod_code) {
+    //             self.probs[idx] += prob
+    //         } else {
+    //             self.mod_codes.insert(mod_code);
+    //             self.probs.push(prob);
+    //         }
+    //     }
+    // }
 }
 
 pub struct DeltaListConverter {
@@ -1389,20 +1403,29 @@ mod mod_bam_tests {
 
     #[test]
     fn test_mod_prob_collapse() {
-        let mod_base_probs = BaseModProbs {
-            mod_codes: indexset! {'h', 'm'},
-            probs: vec![0.85, 0.10],
-        };
+        let probs = vec![('h', 0.85), ('m', 0.10)].into_iter().collect();
+
+        let mod_base_probs = BaseModProbs { probs };
         let collapsed = mod_base_probs
             .clone()
             .into_collapsed(&CollapseMethod::ReDistribute('h'));
-        assert_eq!(collapsed.probs, vec![0.52500004]);
-        assert_eq!(collapsed.mod_codes, indexset! {'m'});
+        assert_eq!(
+            collapsed.probs,
+            vec![('m', 0.52500004)]
+                .into_iter()
+                .collect::<FxHashMap<char, f32>>()
+        );
+        // assert_eq!(collapsed.mod_codes, indexset! {'m'});
         let collapsed = mod_base_probs
             .clone()
             .into_collapsed(&CollapseMethod::ReNormalize('h'));
-        assert_eq!(collapsed.probs, vec![0.6666669]);
-        assert_eq!(collapsed.mod_codes, indexset! {'m'});
+        assert_eq!(
+            collapsed.probs,
+            vec![('m', 0.6666669)]
+                .into_iter()
+                .collect::<FxHashMap<char, f32>>()
+        );
+        // assert_eq!(collapsed.mod_codes, indexset! {'m'});
 
         let collapsed = mod_base_probs
             .clone()
@@ -1416,110 +1439,159 @@ mod mod_bam_tests {
 
     #[test]
     fn test_mod_prob_collapse_norm_examples() {
-        let mod_base_probs = BaseModProbs {
-            mod_codes: indexset! {'h', 'm'},
-            probs: vec![0.05273438, 0.03320312],
-        };
+        let probs = vec![('h', 0.05273438), ('m', 0.03320312)]
+            .into_iter()
+            .collect();
+
+        let mod_base_probs = BaseModProbs { probs };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::ReNormalize('h'));
-        assert_eq!(collapsed.probs, vec![0.035051543]);
-        assert_eq!(collapsed.mod_codes, indexset! {'m'});
+        assert_eq!(
+            collapsed.probs,
+            vec![('m', 0.035051543)]
+                .into_iter()
+                .collect::<FxHashMap<char, f32>>()
+        );
+        // assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
 
     #[test]
     fn test_mod_prob_collapse_dist_examples() {
-        let mod_base_probs = BaseModProbs {
-            mod_codes: indexset! {'h', 'm'},
-            probs: vec![0.05273438, 0.03320312],
-        };
+        let probs = vec![('h', 0.05273438), ('m', 0.03320312)]
+            .into_iter()
+            .collect();
+        let mod_base_probs = BaseModProbs { probs };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::ReDistribute('h'));
-        assert_eq!(collapsed.probs, vec![0.059570313]);
-        assert_eq!(collapsed.mod_codes, indexset! {'m'});
+        assert_eq!(
+            collapsed.probs,
+            vec![('m', 0.059570313)]
+                .into_iter()
+                .collect::<FxHashMap<char, f32>>()
+        );
+        // assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
 
     #[test]
     fn test_mod_prob_convert() {
+        let probs = vec![('h', 0.10), ('m', 0.75)]
+            .into_iter()
+            .collect::<FxHashMap<char, f32>>();
         let mod_base_probs = BaseModProbs {
-            mod_codes: indexset! {'h', 'm'},
-            probs: vec![0.10, 0.75],
+            probs: probs.clone(),
         };
+
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
                 from: HashSet::from(['h']),
                 to: 'C',
             });
-        assert_eq!(collapsed.probs, vec![0.75, 0.10]);
-        assert_eq!(collapsed.mod_codes, indexset! {'m', 'C'});
+        assert_eq!(
+            collapsed.probs,
+            vec![('m', 0.75), ('C', 0.10)]
+                .into_iter()
+                .collect::<FxHashMap<char, f32>>()
+        );
+        // assert_eq!(collapsed.mod_codes, indexset! {'m', 'C'});
 
+        // let probs = vec![
+        //     ('h', 0.10),
+        //     ('m', 0.75),
+        // ].into_iter().collect();
         let mod_base_probs = BaseModProbs {
-            mod_codes: indexset! {'h', 'm'},
-            probs: vec![0.10, 0.75],
+            probs: probs.clone(),
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
                 from: HashSet::from(['h', 'm']),
                 to: 'C',
             });
-        assert_eq!(collapsed.probs, vec![0.85]);
-        assert_eq!(collapsed.mod_codes, indexset! {'C'});
+        assert_eq!(
+            collapsed.probs,
+            vec![('C', 0.85)]
+                .into_iter()
+                .collect::<FxHashMap<char, f32>>()
+        );
+        // assert_eq!(collapsed.mod_codes, indexset! {'C'});
     }
 
     #[test]
     fn test_mod_prob_convert_sums_prob() {
-        let mod_base_probs = BaseModProbs {
-            mod_codes: indexset! {'h', 'm'},
-            probs: vec![0.10, 0.75],
-        };
+        let probs = vec![('h', 0.10), ('m', 0.75)].into_iter().collect();
+        let mod_base_probs = BaseModProbs { probs };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
                 from: HashSet::from(['h']),
                 to: 'm',
             });
-        assert_eq!(collapsed.probs, vec![0.85]);
-        assert_eq!(collapsed.mod_codes, indexset! {'m'});
+        assert_eq!(
+            collapsed.probs,
+            vec![('m', 0.85)]
+                .into_iter()
+                .collect::<FxHashMap<char, f32>>()
+        );
+        // assert_eq!(collapsed.mod_codes, indexset! {'m'});
     }
 
     #[test]
     fn test_mod_prob_convert_noop() {
+        let probs = vec![('h', 0.10), ('m', 0.75)]
+            .into_iter()
+            .collect::<FxHashMap<char, f32>>();
         let mod_base_probs = BaseModProbs {
-            mod_codes: indexset! {'h', 'm'},
-            probs: vec![0.10, 0.75],
+            probs: probs.clone(),
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
                 from: HashSet::from(['a']),
                 to: 'A',
             });
-        assert_eq!(collapsed.probs, vec![0.10, 0.75]);
-        assert_eq!(collapsed.mod_codes, indexset! {'h', 'm'});
+        assert_eq!(collapsed.probs, probs);
+        // assert_eq!(collapsed.probs, vec![('h', 0.10), ('m', 0.75]);
+        // assert_eq!(collapsed.mod_codes, indexset! {'h', 'm'});
     }
 
     #[test]
     fn test_mod_prob_combine() {
-        let mut a = BaseModProbs {
-            mod_codes: indexset! {'h', 'm'},
-            probs: vec![0.05273438, 0.03320312],
-        };
+        let a_probs = vec![('h', 0.05273438), ('m', 0.03320312)]
+            .into_iter()
+            .collect();
+        let mut a = BaseModProbs { probs: a_probs };
+        let b_probs = vec![('m', 0.03320312)].into_iter().collect();
         let b = BaseModProbs {
-            mod_codes: indexset! {'m'},
-            probs: vec![0.03320312],
+            probs: b_probs,
+            // mod_codes: indexset! {'m'},
+            // probs: vec![0.03320312],
         };
         a.combine(b);
-        assert_eq!(&a.probs, &[0.05273438, 0.06640624]);
+        assert_eq!(
+            &a.probs,
+            &vec![('h', 0.05273438), ('m', 0.06640624)]
+                .into_iter()
+                .collect::<FxHashMap<char, f32>>()
+        );
+
+        let a_probs = vec![('m', 0.03320312)].into_iter().collect();
+        let b_probs = vec![('h', 0.05273438)].into_iter().collect();
 
         let mut a = BaseModProbs {
-            mod_codes: indexset! {'m'},
-            probs: vec![0.03320312],
+            probs: a_probs, // mod_codes: indexset! {'m'},
+                            // probs: vec![0.03320312],
         };
 
         let b = BaseModProbs {
-            mod_codes: indexset! {'h'},
-            probs: vec![0.05273438],
+            probs: b_probs,
+            // mod_codes: indexset! {'h'},
+            // probs: vec![0.05273438],
         };
         a.combine(b);
-        assert_eq!(&a.probs, &[0.03320312, 0.05273438]);
-        assert_eq!(&a.mod_codes, &indexset! {'m', 'h'});
+        assert_eq!(
+            &a.probs,
+            &[('m', 0.03320312), ('h', 0.05273438)]
+                .into_iter()
+                .collect::<FxHashMap<char, f32>>()
+        );
+        // assert_eq!(&a.mod_codes, &indexset! {'m', 'h'});
     }
 
     #[test]
@@ -1647,7 +1719,7 @@ mod mod_bam_tests {
             let quals = base_mod_probs
                 .probs
                 .iter()
-                .map(|p| prob_to_qual(*p))
+                .map(|(_, p)| prob_to_qual(*p))
                 .collect::<Vec<_>>();
             assert_eq!(&quals, &[1, 200]);
         }
@@ -1677,8 +1749,13 @@ mod mod_bam_tests {
         for (_pos, base_mod_probs) in
             positions_to_probs.pos_to_base_mod_probs.iter()
         {
-            assert_eq!(&base_mod_probs.probs, &[0.005859375, 0.005859375]);
-            assert_eq!(&base_mod_probs.mod_codes, &indexset! { 'h', 'm' });
+            assert_eq!(
+                &base_mod_probs.probs,
+                &[('h', 0.005859375), ('m', 0.005859375)]
+                    .into_iter()
+                    .collect::<FxHashMap<char, f32>>()
+            );
+            // assert_eq!(&base_mod_probs.mod_codes, &indexset! { 'h', 'm' });
         }
 
         let tag = "C+hm?,0,1,0;A+a?,0,1,0;";
@@ -1698,7 +1775,7 @@ mod mod_bam_tests {
                 .get(position)
                 .unwrap();
             assert_eq!(base_mod_probs.probs, other.probs);
-            assert_eq!(base_mod_probs.mod_codes, other.mod_codes);
+            // assert_eq!(base_mod_probs.mod_codes, other.mod_codes);
         }
     }
 
@@ -1731,13 +1808,18 @@ mod mod_bam_tests {
         )
         .unwrap();
 
+        let c_expected_probs = vec![('h', 0.005859375), ('m', 0.39257813)]
+            .into_iter()
+            .collect();
         let c_expected = BaseModProbs {
-            mod_codes: indexset! { 'h', 'm' },
-            probs: vec![0.005859375, 0.39257813],
+            probs: c_expected_probs,
+            // mod_codes: indexset! { 'h', 'm' },
+            // probs: vec![0.005859375, 0.39257813],
         };
+        let a_expected_probs = vec![('a', 0.7832031)].into_iter().collect();
         let a_expected = BaseModProbs {
-            mod_codes: indexset! {'a'},
-            probs: vec![0.7832031],
+            probs: a_expected_probs, // mod_codes: indexset! {'a'},
+                                     // probs: vec![0.7832031],
         };
         assert_eq!(
             c_expected_seq_pos_base_mod_probs
@@ -1861,9 +1943,13 @@ mod mod_bam_tests {
                         .collect::<HashSet<usize>>(),
                     HashSet::from([12, 15, 4])
                 );
+                let expected_probs =
+                    vec![('h', 0.39257813), ('m', 0.005859375)]
+                        .into_iter()
+                        .collect();
                 let expected_modbase_probs = BaseModProbs {
-                    probs: vec![0.39257813, 0.005859375],
-                    mod_codes: indexset! { 'h', 'm'},
+                    probs: expected_probs, // probs: vec![0.39257813, 0.005859375],
+                                           // mod_codes: indexset! { 'h', 'm'},
                 };
                 for mod_probs in probs.pos_to_base_mod_probs.values() {
                     assert_eq!(mod_probs, &expected_modbase_probs);
@@ -1879,9 +1965,12 @@ mod mod_bam_tests {
                         .collect::<HashSet<usize>>(),
                     HashSet::from([13, 16, 5])
                 );
+                let expected_probs = vec![('h', 0.5878906), ('m', 0.009765625)]
+                    .into_iter()
+                    .collect();
                 let expected_modbase_probs = BaseModProbs {
-                    probs: vec![0.5878906, 0.009765625],
-                    mod_codes: indexset! { 'h', 'm'},
+                    probs: expected_probs, // probs: vec![0.5878906, 0.009765625],
+                                           // mod_codes: indexset! { 'h', 'm'},
                 };
                 for mod_probs in probs.pos_to_base_mod_probs.values() {
                     assert_eq!(mod_probs, &expected_modbase_probs);
