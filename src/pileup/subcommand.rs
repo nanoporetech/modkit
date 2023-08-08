@@ -64,6 +64,14 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     interval_size: u32,
+
+    /// Break contigs into chunks containing this many intervals (see `interval_size`).
+    /// This option can be used to help prevent excessive memory usage, usually with
+    /// no performance penalty. By default, modkit will set this value to 1.5x the number
+    /// of threads specified, so if 4 threads are specified the chunk_size will be 6.
+    /// A warning will be shown if this option is less than the number of threads specified.
+    #[arg(long, hide_short_help = true)]
+    chunk_size: Option<usize>,
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
@@ -346,6 +354,22 @@ impl ModBamPileup {
             did not find any mapped reads, perform alignment first or use \
             modkit extract and/or modkit summary to inspect unaligned modBAMs",
         )?;
+        let chunk_size = if let Some(chunk_size) = self.chunk_size {
+            if chunk_size < self.threads {
+                warn!("chunk size {chunk_size} is less than number of threads ({}), \
+                this will limit parallelism", self.threads);
+            }
+            chunk_size
+        } else {
+            let cs = (self.threads as f32 * 1.5).floor() as usize;
+            info!(
+                "calculated chunk size: {cs}, interval size {}, \
+            processing {} positions concurrently",
+                self.interval_size,
+                cs * self.interval_size as usize
+            );
+            cs
+        };
 
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")
@@ -557,47 +581,65 @@ impl ModBamPileup {
                             .unwrap_or(true)
                     })
                     .collect::<Vec<(u32, u32)>>();
+
                     let n_intervals = intervals.len();
                     let interval_progress = master_progress
                         .add(get_subroutine_progress_bar(n_intervals));
                     interval_progress
                         .set_message(format!("processing {}", &target.name));
-                    let mut result: Vec<Result<ModBasePileup, String>> = vec![];
-                    let (res, _) = rayon::join(
-                        || {
-                            intervals
-                                .into_par_iter()
-                                .progress_with(interval_progress)
-                                .map(|(start, end)| {
-                                    process_region(
-                                        &in_bam_fp,
-                                        target.tid,
-                                        start,
-                                        end,
-                                        &threshold_caller,
-                                        &pileup_options,
-                                        force_allow,
-                                        combine_strands,
-                                        max_depth,
-                                        motif_locations.as_ref(),
-                                        edge_filter.as_ref(),
-                                        partition_tags.as_ref(),
-                                        position_filter.as_ref(),
-                                    )
-                                })
-                                .collect::<Vec<Result<ModBasePileup, String>>>()
-                        },
-                        || {
-                            result.into_iter().for_each(|mod_base_pileup| {
-                                snd.send(mod_base_pileup)
-                                    .expect("failed to send")
-                            });
-                        },
-                    );
-                    result = res;
-                    result.into_iter().for_each(|pileup| {
-                        snd.send(pileup).expect("failed to send")
-                    });
+                    for work_chunk in intervals.chunks(chunk_size) {
+                        let mut result: Vec<Result<ModBasePileup, String>> = vec![];
+                        let chunk_progress = master_progress.add(get_subroutine_progress_bar(work_chunk.len()));
+                        chunk_progress.set_message("chunk progress");
+                        let (res, _) = rayon::join(
+                            || {
+                                work_chunk
+                                    .into_par_iter()
+                                    .progress_with(chunk_progress)
+                                    .map(|(start, end)| {
+                                        process_region(
+                                            &in_bam_fp,
+                                            target.tid,
+                                            *start,
+                                            *end,
+                                            &threshold_caller,
+                                            &pileup_options,
+                                            force_allow,
+                                            combine_strands,
+                                            max_depth,
+                                            motif_locations.as_ref(),
+                                            edge_filter.as_ref(),
+                                            partition_tags.as_ref(),
+                                            position_filter.as_ref(),
+                                        )
+                                    })
+                                    .collect::<Vec<Result<ModBasePileup, String>>>()
+                            },
+                            || {
+                                result.into_iter().for_each(|mod_base_pileup| {
+                                    match snd.send(mod_base_pileup) {
+                                        Ok(_) => {
+                                            interval_progress.inc(1)
+                                        }
+                                        Err(e) => {
+                                            error!("failed to send results, {}", e.to_string())
+                                        },
+                                    }
+                                });
+                            },
+                        );
+                        result = res;
+                        result.into_iter().for_each(|pileup| {
+                            match snd.send(pileup) {
+                                Ok(_) => {
+                                    interval_progress.inc(1)
+                                }
+                                Err(e) => {
+                                    error!("failed to send results, {}", e.to_string())
+                                },
+                            }
+                        });
+                    }
                     tid_progress.inc(1);
                 }
                 tid_progress.finish_and_clear();
