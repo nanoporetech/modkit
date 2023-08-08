@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use log::{debug, error};
 use rust_htslib::bam;
@@ -193,7 +193,7 @@ impl<'a> ReadCache<'a> {
                                 },
                             )
                         })
-                        .collect::<HashSet<ModCode>>();
+                        .collect::<FxHashSet<ModCode>>();
 
                     let mod_codes_for_read =
                         match (mod_strand, record.is_reverse()) {

@@ -17,7 +17,7 @@ use rayon::prelude::*;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::{self, Read};
 use rustc_hash::FxHashMap;
-use std::collections::HashMap;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

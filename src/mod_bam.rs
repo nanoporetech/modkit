@@ -2,7 +2,7 @@ use crate::errs::{InputError, RunError};
 use crate::mod_base_code::{DnaBase, ModCode};
 use crate::util;
 use crate::util::{get_tag, record_is_secondary, Strand};
-use indexmap::{indexset, IndexSet};
+
 use std::cmp::Ordering;
 
 use crate::position_filter::StrandedPositionFilter;

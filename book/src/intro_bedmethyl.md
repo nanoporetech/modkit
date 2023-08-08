@@ -145,3 +145,8 @@ CG->CH substitution such that no modification call was produced by the basecalle
 | 17     | N<sub>diff</sub>      | See definitions above.                                                         | int   |
 | 18     | N<sub>nocall</sub>    | See definitions above.                                                         | int   |
 
+## Performance considerations
+
+The `--interval-size`, `--threads`, `--chunk-size`, and `--max-depth` parameters can be used to tweak the parallelism and 
+memory consumption of `modkit pileup`. The defaults should be suitable for most use cases, for more detauls see the
+[advanced usage](./advanced_usage.md) and [performance considerations](./perf_considerations.md) sections.

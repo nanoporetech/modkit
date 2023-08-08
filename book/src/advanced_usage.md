@@ -86,6 +86,13 @@ Options:
           
           [default: 100000]
 
+      --chunk-size <CHUNK_SIZE>
+          Break contigs into chunks containing this many intervals (see `interval_size`). This
+          option can be used to help prevent excessive memory usage, usually with no performance
+          penalty. By default, modkit will use 1.5x the number of threads specified, so if 4 threads
+          are specified the chunk_size will be 6. A warning will be shown if this option is less
+          than the number of threads specified.
+
       --suppress-progress
           Hide the progress bar.
 

@@ -1,6 +1,6 @@
 # Summary
 
-- [Basic Usage](./quick_start.md)
+- [Use cases](./quick_start.md)
     - [Constructing bedMethyl tables](./intro_bedmethyl.md)
     - [Updating and adjusting MM tags](./intro_adjust.md)
     - [Summarizing a modBAM](./intro_summary.md)

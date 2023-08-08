@@ -20,7 +20,7 @@ use anyhow::{anyhow, bail, Context};
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
-use indicatif::MultiProgress;
+use indicatif::{MultiProgress, ParallelProgressIterator};
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
@@ -65,6 +65,11 @@ pub struct ModBamPileup {
     )]
     interval_size: u32,
 
+    /// Break contigs into chunks containing this many intervals (see `interval_size`).
+    /// This option can be used to help prevent excessive memory usage, usually with
+    /// no performance penalty. By default, modkit will use 1.5x the number of threads
+    /// specified, so if 4 threads are specified the chunk_size will be 6. A warning will
+    /// be shown if this option is less than the number of threads specified.
     #[arg(long, hide_short_help = true)]
     chunk_size: Option<usize>,
     /// Hide the progress bar.
@@ -349,6 +354,22 @@ impl ModBamPileup {
             did not find any mapped reads, perform alignment first or use \
             modkit extract and/or modkit summary to inspect unaligned modBAMs",
         )?;
+        let chunk_size = if let Some(chunk_size) = self.chunk_size {
+            if chunk_size < self.threads {
+                warn!("chunk size {chunk_size} is less than number of threads ({}), \
+                this will limit parallelism", self.threads);
+            }
+            chunk_size
+        } else {
+            let cs = (self.threads as f32 * 1.5).floor() as usize;
+            info!(
+                "calculated chunk size: {cs}, interval size {}, \
+            processing {} positions concurrently",
+                self.interval_size,
+                cs * self.interval_size as usize
+            );
+            cs
+        };
 
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")
@@ -537,11 +558,6 @@ impl ModBamPileup {
         let force_allow = self.force_allow_implicit;
         let max_depth = self.max_depth;
 
-        let chunk_size = self.chunk_size.unwrap_or_else(|| {
-            let cs = (self.threads as f32 * 1.5).floor() as usize;
-            debug!("using chunk size {cs}");
-            cs
-        });
         std::thread::spawn(move || {
             pool.install(|| {
                 for target in tids {
@@ -573,10 +589,13 @@ impl ModBamPileup {
                         .set_message(format!("processing {}", &target.name));
                     for work_chunk in intervals.chunks(chunk_size) {
                         let mut result: Vec<Result<ModBasePileup, String>> = vec![];
+                        let chunk_progress = master_progress.add(get_subroutine_progress_bar(work_chunk.len()));
+                        chunk_progress.set_message("chunk progress");
                         let (res, _) = rayon::join(
                             || {
                                 work_chunk
                                     .into_par_iter()
+                                    .progress_with(chunk_progress)
                                     .map(|(start, end)| {
                                         process_region(
                                             &in_bam_fp,

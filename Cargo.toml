@@ -39,6 +39,6 @@ similar-asserts = "1.4.2"
 criterion = "0.5.1"
 rv = "0.15.1"
 
-[[bench]]
-name = "bench_mm_parse"
-harness = false
+#[[bench]]
+#name = "bench_mm_parse"
+#harness = false
