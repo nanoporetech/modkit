@@ -36,8 +36,10 @@ nom = "7.1.3"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"
-criterion = "0.5.1"
-rv = "0.15.1"
+
+# Used in benchmarking, but the slower code gets removed, usually.
+#criterion = "0.5.1"
+#rv = "0.15.1"
 
 #[[bench]]
 #name = "bench_mm_parse"
