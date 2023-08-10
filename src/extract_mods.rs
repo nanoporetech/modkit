@@ -157,13 +157,13 @@ impl ExtractMods {
                     let reference_and_intervals = reference_records
                         .into_iter()
                         .map(|reference_record| {
-                            let interval_chunks = IntervalChunks::new(
-                                reference_record.start,
-                                reference_record.length,
-                                self.interval_size,
-                                reference_record.tid,
-                                None,
-                            );
+                            let interval_chunks =
+                                IntervalChunks::new_without_motifs(
+                                    reference_record.start,
+                                    reference_record.length,
+                                    self.interval_size,
+                                    reference_record.tid,
+                                );
                             (reference_record, interval_chunks)
                         })
                         .collect::<ReferenceAndIntervals>();

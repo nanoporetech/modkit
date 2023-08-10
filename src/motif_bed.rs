@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::position_filter::StrandedPositionFilter;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
@@ -9,8 +8,9 @@ use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
 use log::debug;
 use rayon::prelude::*;
 use regex::{Match, Regex};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::position_filter::StrandedPositionFilter;
 use crate::util::{
     get_master_progress_bar, get_spinner, get_ticker, ReferenceRecord, Strand,
 };
@@ -132,8 +132,30 @@ impl RegexMotif {
         Ok(Self::new(re, rc_re, offset, rc_offset, length))
     }
 
-    fn is_palendrome(&self) -> bool {
+    pub(crate) fn is_palendrome(&self) -> bool {
         self.forward_pattern.as_str() == self.reverse_pattern.as_str()
+    }
+
+    pub(crate) fn offset(&self) -> i32 {
+        self.reverse_offset as i32 - self.forward_offset as i32
+    }
+
+    pub(crate) fn negative_strand_position(
+        &self,
+        positive_position: u32,
+    ) -> Option<u32> {
+        if !self.is_palendrome() {
+            None
+        } else {
+            let pos = positive_position as i64;
+            let offset = self.offset() as i64;
+            let adj = pos + offset;
+            if adj < 0 {
+                None
+            } else {
+                Some(adj as u32)
+            }
+        }
     }
 }
 
@@ -268,8 +290,62 @@ pub fn motif_bed(
     Ok(())
 }
 
+pub struct MultipleMotifLocations {
+    pub(crate) motif_locations: Vec<MotifLocations>,
+    /// mapping of target to mapping of position to vector of which motif locations
+    /// (in `self.motif_locations`) have a hit at that position
+    position_lookup: FxHashMap<u32, FxHashMap<u32, Vec<usize>>>,
+}
+
+impl MultipleMotifLocations {
+    pub fn new(motif_locations: Vec<MotifLocations>) -> Self {
+        let position_lookup = motif_locations.iter().enumerate().fold(
+            FxHashMap::<u32, FxHashMap<u32, Vec<usize>>>::default(),
+            |mut acc, (idx, mls)| {
+                mls.tid_to_motif_positions.iter().for_each(
+                    |(target_id, positions)| {
+                        let positions_for_target = acc
+                            .entry(*target_id)
+                            .or_insert(FxHashMap::default());
+                        positions.keys().for_each(|position| {
+                            positions_for_target
+                                .entry(*position)
+                                .or_insert(Vec::new())
+                                .push(idx);
+                        });
+                    },
+                );
+                acc
+            },
+        );
+
+        Self {
+            motif_locations,
+            position_lookup,
+        }
+    }
+
+    pub fn motifs_for_position(
+        &self,
+        target_id: u32,
+        position: u32,
+    ) -> Option<Vec<(usize, &MotifLocations)>> {
+        self.position_lookup
+            .get(&target_id)
+            .and_then(|positions| positions.get(&position))
+            .map(|idxs| {
+                idxs.iter()
+                    .filter_map(|&i| {
+                        self.motif_locations.get(i).map(|ml| (i, ml))
+                    })
+                    .collect()
+            })
+    }
+}
+
+#[derive(Debug)]
 pub struct MotifLocations {
-    tid_to_motif_positions: HashMap<u32, FxHashMap<u32, Strand>>,
+    tid_to_motif_positions: FxHashMap<u32, FxHashMap<u32, Strand>>,
     motif: RegexMotif,
 }
 
@@ -280,10 +356,17 @@ impl MotifLocations {
         name_to_tid: &HashMap<&str, u32>,
         mask: bool,
         position_filter: Option<&StrandedPositionFilter>, // todo(arand) should have a suppress progress here?
+        suppress_progress: bool,
     ) -> AnyhowResult<Self> {
         let reader = FastaReader::from_file(fasta_fp)?;
+
         let records_progress = get_spinner();
+        if suppress_progress {
+            records_progress
+                .set_draw_target(indicatif::ProgressDrawTarget::hidden())
+        }
         records_progress.set_message("Reading reference sequences");
+
         let seqs_and_target_ids = reader
             .records()
             .progress_with(records_progress)
@@ -334,6 +417,10 @@ impl MotifLocations {
         })
     }
 
+    pub(crate) fn references_with_hits(&self) -> FxHashSet<u32> {
+        self.tid_to_motif_positions.keys().copied().collect()
+    }
+
     pub fn filter_reference_records(
         &self,
         reference_records: Vec<ReferenceRecord>,
@@ -361,6 +448,12 @@ impl MotifLocations {
     pub fn motif(&self) -> &RegexMotif {
         &self.motif
     }
+
+    pub fn targets_to_positions(
+        &self,
+    ) -> &FxHashMap<u32, FxHashMap<u32, Strand>> {
+        &self.tid_to_motif_positions
+    }
 }
 
 #[cfg(test)]
@@ -374,6 +467,40 @@ mod motif_bed_tests {
         assert_eq!(regex_motif.reverse_offset, 3);
         let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
         assert_eq!(regex_motif.reverse_offset, 1);
+
+        let motif = RegexMotif::parse_string("CGCG", 2).unwrap();
+        assert_eq!(motif.offset(), -1);
+    }
+
+    #[test]
+    fn test_motif_hits() {
+        let seq = "AACGCGAACGCGA";
+        let motif = RegexMotif::parse_string("CGCG", 2).unwrap();
+        assert_eq!(motif.offset(), -1);
+        let hits = find_motif_hits(seq, &motif);
+        let expected = vec![
+            (3, Strand::Negative),
+            (4, Strand::Positive),
+            (9, Strand::Negative),
+            (10, Strand::Positive),
+        ];
+        for pos in hits
+            .iter()
+            .filter(|(_, strand)| *strand == Strand::Positive)
+            .map(|(p, _)| *p as u32)
+        {
+            let negative_strand_pos = motif
+                .negative_strand_position(pos)
+                .expect("should find position");
+            let found = hits
+                .iter()
+                .find(|(p, strand)| {
+                    *p as u32 == negative_strand_pos
+                        && *strand == Strand::Negative
+                })
+                .expect("should find negative strand position");
+        }
+        assert!(motif.negative_strand_position(0).is_none())
     }
 
     #[test]
@@ -404,4 +531,7 @@ mod motif_bed_tests {
             ]
         );
     }
+
+    #[test]
+    fn test_motif_palendrome() {}
 }
