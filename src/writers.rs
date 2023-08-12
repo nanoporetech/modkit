@@ -1,23 +1,28 @@
-use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
-use crate::summarize::ModSummary;
-use anyhow::{anyhow, Context, Result as AnyhowResult};
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{BufWriter, Stdout, Write};
+use std::path::{Path, PathBuf};
 
-use crate::read_ids_to_base_mod_probs::ReadsBaseModProfile;
-use crate::thresholds::Percentiles;
+use anyhow::{anyhow, Context, Result as AnyhowResult};
 use derive_new::new;
 use histo_fp::Histogram;
 use log::{debug, info, warn};
 use prettytable::format::FormatBuilder;
 use prettytable::{cell, row, Table};
 use rustc_hash::FxHashMap;
-use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufWriter, Stdout, Write};
-use std::path::{Path, PathBuf};
+
+use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
+use crate::read_ids_to_base_mod_probs::ReadsBaseModProfile;
+use crate::summarize::ModSummary;
+use crate::thresholds::Percentiles;
 
 pub trait OutwriterWithMemory<T> {
     fn write(&mut self, item: T) -> AnyhowResult<u64>;
     fn num_reads(&self) -> usize;
+}
+
+pub trait PileupWriter<T> {
+    fn write(&mut self, item: T, motif_labels: &[String]) -> AnyhowResult<u64>;
 }
 
 pub trait OutWriter<T> {
@@ -44,11 +49,24 @@ impl<T: Write + Sized> BedMethylWriter<T> {
         feature_counts: &[PileupFeatureCounts],
         writer: &mut BufWriter<T>,
         tabs_and_spaces: bool,
+        motif_labels: &[String],
     ) -> AnyhowResult<u64> {
         let tab = '\t';
         let space = if tabs_and_spaces { ' ' } else { tab };
         let mut rows_written = 0u64;
+        let raw_code_only = motif_labels.len() < 2;
         for feature_count in feature_counts {
+            let name = if raw_code_only {
+                format!("{}", feature_count.raw_mod_code)
+            } else {
+                feature_count
+                    .motif_idx
+                    .and_then(|i| motif_labels.get(i))
+                    .map(|label| {
+                        format!("{},{}", feature_count.raw_mod_code, label)
+                    })
+                    .unwrap_or(format!("{}", feature_count.raw_mod_code))
+            };
             let row = format!(
                 "{}{tab}\
                  {}{tab}\
@@ -71,7 +89,7 @@ impl<T: Write + Sized> BedMethylWriter<T> {
                 chrom_name,
                 pos,
                 pos + 1,
-                feature_count.raw_mod_code,
+                name,
                 feature_count.filtered_coverage,
                 feature_count.raw_strand,
                 pos,
@@ -97,8 +115,12 @@ impl<T: Write + Sized> BedMethylWriter<T> {
     }
 }
 
-impl<T: Write> OutWriter<ModBasePileup> for BedMethylWriter<T> {
-    fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
+impl<T: Write> PileupWriter<ModBasePileup> for BedMethylWriter<T> {
+    fn write(
+        &mut self,
+        item: ModBasePileup,
+        motif_labels: &[String],
+    ) -> AnyhowResult<u64> {
         let mut rows_written = 0;
         // let tab = '\t';
         // let space = if self.tabs_and_spaces { tab } else { ' ' };
@@ -111,6 +133,7 @@ impl<T: Write> OutWriter<ModBasePileup> for BedMethylWriter<T> {
                         &feature_counts,
                         &mut self.buf_writer,
                         self.tabs_and_spaces,
+                        motif_labels,
                     )?;
                 }
                 None => {}
@@ -187,8 +210,12 @@ impl BedGraphWriter {
     }
 }
 
-impl OutWriter<ModBasePileup> for BedGraphWriter {
-    fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
+impl PileupWriter<ModBasePileup> for BedGraphWriter {
+    fn write(
+        &mut self,
+        item: ModBasePileup,
+        motif_labels: &[String],
+    ) -> AnyhowResult<u64> {
         let mut rows_written = 0;
         let tab = '\t';
         for (pos, feature_counts) in item.iter_counts_sorted() {
@@ -681,8 +708,12 @@ impl PartitioningBedMethylWriter {
 const NOT_FOUND: &str = "not_found";
 const UNGROUPED: &str = "ungrouped";
 
-impl OutWriter<ModBasePileup> for PartitioningBedMethylWriter {
-    fn write(&mut self, item: ModBasePileup) -> AnyhowResult<u64> {
+impl PileupWriter<ModBasePileup> for PartitioningBedMethylWriter {
+    fn write(
+        &mut self,
+        item: ModBasePileup,
+        motif_labels: &[String],
+    ) -> AnyhowResult<u64> {
         let tabs_and_spaces = self.tabs_and_spaces;
         let mut rows_written = 0u64;
         for (&pos, partitioned_feature_counts) in item.iter_counts_sorted() {
@@ -705,6 +736,7 @@ impl OutWriter<ModBasePileup> for PartitioningBedMethylWriter {
                     &pileup_feature_counts,
                     writer,
                     tabs_and_spaces,
+                    motif_labels,
                 )?;
             }
         }

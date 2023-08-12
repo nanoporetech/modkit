@@ -57,13 +57,19 @@ pub struct PileupFeatureCounts {
     pub n_filtered: u32,
     pub n_diff: u32,
     pub n_nocall: u32,
+    pub motif_idx: Option<usize>,
 }
 
 impl PileupFeatureCounts {
-    fn new_empty(raw_strand: char, raw_mod_code: char) -> Self {
+    fn new_empty(
+        raw_strand: char,
+        raw_mod_code: char,
+        motif_index: Option<usize>,
+    ) -> Self {
         Self {
             raw_strand,
             raw_mod_code,
+            motif_idx: motif_index,
             ..Default::default()
         }
     }
@@ -75,6 +81,15 @@ impl PileupFeatureCounts {
                 "shouldn't be combining counts with different mod codes!\
             {} vs {}",
                 self.raw_mod_code, other.raw_mod_code
+            );
+        }
+        if (self.motif_idx.is_some() && other.motif_idx.is_some())
+            && self.motif_idx != other.motif_idx
+        {
+            error!(
+                "shouldn't be combining counts with different motif indices \
+            {:?} vs {:?}",
+                self.motif_idx, other.motif_idx
             );
         }
         let n_modified = self.n_modified + other.n_modified;
@@ -89,6 +104,7 @@ impl PileupFeatureCounts {
 
         let fraction_modified = n_modified as f32 / filtered_coverage as f32;
 
+        let motif_idx = self.motif_idx;
         Self::new(
             self.raw_strand,
             filtered_coverage,
@@ -101,6 +117,7 @@ impl PileupFeatureCounts {
             n_filtered,
             n_diff,
             n_nocall,
+            motif_idx,
         )
     }
 
@@ -244,6 +261,7 @@ impl FeatureVector {
                             n_filtered,
                             n_diff,
                             n_nocall,
+                            motif_idx: None,
                         })
                     }
                 }
@@ -265,6 +283,7 @@ impl FeatureVector {
                     n_filtered,
                     n_diff,
                     n_nocall,
+                    motif_idx: None,
                 })
             }
         }
@@ -303,6 +322,7 @@ impl FeatureVector {
                 n_filtered: tally.n_filtered,
                 n_diff,
                 n_nocall,
+                motif_idx: None,
             });
         }
 
@@ -392,9 +412,6 @@ fn combine_strand_features(
         let positive_feature_mappings =
             position_feature_counts.get(&positive_strand_pos);
 
-        if positive_strand_pos == 38 {
-            dbg!(&motifs_at_position.iter().map(|(_, r)| r.motif()).collect::<Vec<_>>());
-        }
         'motif: for (idx, motif) in motifs_at_position {
             let negative_strand_pos =
                 motif.motif().negative_strand_position(positive_strand_pos);
@@ -455,7 +472,11 @@ fn combine_strand_features(
                     .map(|(mod_code, feature_counts)| {
                         feature_counts.into_iter().fold(
                             // use unknown/ambiguous strand because we're combining
-                            PileupFeatureCounts::new_empty('.', mod_code),
+                            PileupFeatureCounts::new_empty(
+                                '.',
+                                mod_code,
+                                Some(idx),
+                            ),
                             |acc, next| {
                                 acc.combine_counts_ignore_strand(next) // use moniod
                             },

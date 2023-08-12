@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{write, Display, Formatter};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result as AnyhowResult};
@@ -156,6 +157,17 @@ impl RegexMotif {
                 Some(adj as u32)
             }
         }
+    }
+}
+
+impl Display for RegexMotif {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{},{}",
+            self.forward_pattern.as_str(),
+            self.forward_offset
+        )
     }
 }
 
@@ -383,6 +395,10 @@ impl MotifLocations {
             .collect::<Vec<(String, u32)>>();
 
         let motif_progress = get_master_progress_bar(seqs_and_target_ids.len());
+        if suppress_progress {
+            motif_progress
+                .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
         motif_progress.set_message(format!(
             "finding {} motifs",
             regex_motif.forward_pattern.as_str()

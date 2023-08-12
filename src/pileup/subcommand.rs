@@ -29,6 +29,7 @@ use crate::util::{
 };
 use crate::writers::{
     BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
+    PileupWriter,
 };
 
 #[derive(Args)]
@@ -424,34 +425,6 @@ impl ModBamPileup {
                 }
             };
 
-        // setup the writer here so we fail before doing any work (if there are problems).
-        let out_fp_str = self.out_bed.clone();
-        let mut writer: Box<dyn OutWriter<ModBasePileup>> =
-            match (self.bedgraph, partition_tags.is_some()) {
-                (true, _) => Box::new(BedGraphWriter::new(
-                    &out_fp_str,
-                    self.prefix.as_ref(),
-                    partition_tags.is_some(),
-                )?),
-                (false, true) => Box::new(PartitioningBedMethylWriter::new(
-                    &self.out_bed,
-                    self.only_tabs,
-                    self.prefix.as_ref(),
-                )?),
-                (false, false) => match out_fp_str.as_str() {
-                    "stdout" | "-" => {
-                        let writer = BufWriter::new(std::io::stdout());
-                        Box::new(BedMethylWriter::new(writer, !self.only_tabs))
-                    }
-                    _ => {
-                        let fh = std::fs::File::create(out_fp_str)
-                            .context("failed to make output file")?;
-                        let writer = BufWriter::new(fh);
-                        Box::new(BedMethylWriter::new(writer, !self.only_tabs))
-                    }
-                },
-            };
-
         // motif handling
         let regex_motifs = if let Some(raw_motif_parts) = &self.motif {
             if self.preset.is_some() {
@@ -509,6 +482,43 @@ impl ModBamPileup {
         } else {
             None
         };
+
+        // setup the writer here so we fail before doing any work (if there are problems).
+        let out_fp_str = self.out_bed.clone();
+        let motif_labels = regex_motifs
+            .as_ref()
+            .map(|regex_motifs| {
+                regex_motifs
+                    .iter()
+                    .map(|mot| format!("{}", mot))
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or(Vec::new());
+        let mut writer: Box<dyn PileupWriter<ModBasePileup>> =
+            match (self.bedgraph, partition_tags.is_some()) {
+                (true, _) => Box::new(BedGraphWriter::new(
+                    &out_fp_str,
+                    self.prefix.as_ref(),
+                    partition_tags.is_some(),
+                )?),
+                (false, true) => Box::new(PartitioningBedMethylWriter::new(
+                    &self.out_bed,
+                    self.only_tabs,
+                    self.prefix.as_ref(),
+                )?),
+                (false, false) => match out_fp_str.as_str() {
+                    "stdout" | "-" => {
+                        let writer = BufWriter::new(std::io::stdout());
+                        Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+                    }
+                    _ => {
+                        let fh = std::fs::File::create(out_fp_str)
+                            .context("failed to make output file")?;
+                        let writer = BufWriter::new(fh);
+                        Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+                    }
+                },
+            };
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -732,7 +742,8 @@ impl ModBamPileup {
                     processed_reads
                         .inc(mod_base_pileup.processed_records as u64);
                     skipped_reads.inc(mod_base_pileup.skipped_records as u64);
-                    let rows_written = writer.write(mod_base_pileup)?;
+                    let rows_written =
+                        writer.write(mod_base_pileup, &motif_labels)?;
                     write_progress.inc(rows_written);
                 }
                 Err(message) => {
