@@ -45,76 +45,85 @@ impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
     type Item = (bam::Record, String, ModBaseInfo);
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.records.next() {
-            Some(Ok(record)) => {
-                let record_name = String::from_utf8(record.qname().to_vec())
-                    .unwrap_or("utf-decode-failed".to_string());
-                if record_is_secondary(&record)
-                    || (record.is_unmapped() && self.skip_unmapped)
-                {
-                    self.num_skipped += 1;
-                    self.next()
-                } else {
-                    if record.seq_len() == 0 {
-                        debug!("record {record_name} has zero length sequence");
-                        self.num_failed += 1;
-                        self.next()
+        let mut ret: Option<Self::Item> = None;
+        while let Some(result) = self.records.next() {
+            match result {
+                Ok(record) => {
+                    let record_name =
+                        String::from_utf8(record.qname().to_vec())
+                            .unwrap_or("utf-decode-failed".to_string());
+                    if record_is_secondary(&record)
+                        || (record.is_unmapped() && self.skip_unmapped)
+                    {
+                        self.num_skipped += 1;
+                        continue;
                     } else {
-                        match ModBaseInfo::new_from_record(&record) {
-                            Ok(modbase_info) => {
-                                if modbase_info.is_empty() {
-                                    self.num_skipped += 1;
-                                    debug!(
-                                        "record {record_name} has no base \
+                        if record.seq_len() == 0 {
+                            debug!(
+                                "record {record_name} has zero length sequence"
+                            );
+                            self.num_failed += 1;
+                            continue;
+                        } else {
+                            match ModBaseInfo::new_from_record(&record) {
+                                Ok(modbase_info) => {
+                                    if modbase_info.is_empty() {
+                                        self.num_skipped += 1;
+                                        debug!(
+                                            "record {record_name} has no base \
                                         modification information, skipping"
-                                    );
-                                    self.next()
-                                } else {
-                                    self.num_used += 1;
-                                    Some((record, record_name, modbase_info))
+                                        );
+                                        continue;
+                                    } else {
+                                        self.num_used += 1;
+                                        ret = Some((
+                                            record,
+                                            record_name,
+                                            modbase_info,
+                                        ));
+                                        break;
+                                    }
                                 }
-                            }
-                            Err(e) => match e {
-                                RunError::BadInput(e) => {
-                                    debug!(
+                                Err(e) => match e {
+                                    RunError::BadInput(e) => {
+                                        debug!(
                                     "record {record_name} has improper data, {}",
                                     e.to_string()
                                 );
-                                    self.num_failed += 1;
-                                    self.next()
-                                }
-                                RunError::Failed(e) => {
-                                    debug!(
+                                        self.num_failed += 1;
+                                        continue;
+                                    }
+                                    RunError::Failed(e) => {
+                                        debug!(
                                     "record {record_name} failed to extract \
                                     mod base info, {}",
                                     e.to_string()
                                 );
-                                    self.num_failed += 1;
-                                    self.next()
-                                }
-                                RunError::Skipped(reason) => {
-                                    debug!(
-                                        "record {record_name} skipped, {}",
-                                        reason.to_string()
-                                    );
-                                    self.num_skipped += 1;
-                                    self.next()
-                                }
-                            },
+                                        self.num_failed += 1;
+                                        continue;
+                                    }
+                                    RunError::Skipped(reason) => {
+                                        debug!(
+                                            "record {record_name} skipped, {}",
+                                            reason.to_string()
+                                        );
+                                        self.num_skipped += 1;
+                                        continue;
+                                    }
+                                },
+                            }
                         }
                     }
                 }
+                Err(e) => {
+                    debug!(
+                        "failed to read record from bam information, {}",
+                        e.to_string()
+                    );
+                }
             }
-            Some(Err(e)) => {
-                debug!(
-                    "failed to read record from bam information, {}",
-                    e.to_string()
-                );
-                self.num_failed += 1;
-                self.next()
-            }
-            None => None,
         }
+        ret
     }
 }
 
