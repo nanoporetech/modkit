@@ -28,8 +28,7 @@ use crate::util::{
     get_ticker, parse_partition_tags, reader_is_bam, ReferenceRecord, Region,
 };
 use crate::writers::{
-    BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
-    PileupWriter,
+    BedGraphWriter, BedMethylWriter, PartitioningBedMethylWriter, PileupWriter,
 };
 
 #[derive(Args)]
@@ -528,10 +527,10 @@ impl ModBamPileup {
             let fasta_fp = self
                 .reference_fasta
                 .as_ref()
-                .ok_or(anyhow!("reference fasta is required for using --motig or --cpg options"))?;
+                .ok_or(anyhow!("reference fasta is required for using --motif or --cpg options"))?;
             if combine_strands {
                 if regex_motifs.iter().any(|rm| !rm.is_palendrome()) {
-                    bail!("cannot combine strands with a motif that is not a palendrome")
+                    bail!("cannot combine strands with a motif that is not a palindrome")
                 }
                 debug!("combining + and - strand counts");
             }

@@ -7,6 +7,7 @@ use itertools::Itertools;
 use log::{debug, error};
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
+use rustc_hash::FxHashMap;
 
 use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCode};
@@ -16,7 +17,7 @@ use crate::read_cache::ReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
     get_query_name_string, get_stringable_aux, record_is_secondary, SamTag,
-    Strand,
+    Strand, StrandRule,
 };
 
 pub mod subcommand;
@@ -239,6 +240,7 @@ impl FeatureVector {
         n_filtered: u32,
         n_diff: u32,
         n_nocall: u32,
+        motif_idxs: Option<&Vec<usize>>,
     ) {
         match pileup_options {
             PileupNumericOptions::Passthrough
@@ -249,20 +251,39 @@ impl FeatureVector {
                     if observed_mods.contains(&mod_code) {
                         let percent_modified =
                             n_modified as f32 / filtered_coverage as f32;
-                        counts.push(PileupFeatureCounts {
-                            raw_strand: strand.to_char(),
-                            filtered_coverage,
-                            raw_mod_code: mod_code.char(),
-                            fraction_modified: percent_modified,
-                            n_canonical,
-                            n_modified,
-                            n_other_modified,
-                            n_delete,
-                            n_filtered,
-                            n_diff,
-                            n_nocall,
-                            motif_idx: None,
-                        })
+                        if let Some(idxs) = motif_idxs.as_ref() {
+                            for &idx in idxs.iter() {
+                                counts.push(PileupFeatureCounts {
+                                    raw_strand: strand.to_char(),
+                                    filtered_coverage,
+                                    raw_mod_code: mod_code.char(),
+                                    fraction_modified: percent_modified,
+                                    n_canonical,
+                                    n_modified,
+                                    n_other_modified,
+                                    n_delete,
+                                    n_filtered,
+                                    n_diff,
+                                    n_nocall,
+                                    motif_idx: Some(idx),
+                                })
+                            }
+                        } else {
+                            counts.push(PileupFeatureCounts {
+                                raw_strand: strand.to_char(),
+                                filtered_coverage,
+                                raw_mod_code: mod_code.char(),
+                                fraction_modified: percent_modified,
+                                n_canonical,
+                                n_modified,
+                                n_other_modified,
+                                n_delete,
+                                n_filtered,
+                                n_diff,
+                                n_nocall,
+                                motif_idx: None,
+                            })
+                        }
                     }
                 }
             }
@@ -271,20 +292,39 @@ impl FeatureVector {
                 let n_modified = n_h + n_m;
                 let percent_modified =
                     n_modified as f32 / filtered_coverage as f32;
-                counts.push(PileupFeatureCounts {
-                    raw_strand: strand.to_char(),
-                    filtered_coverage,
-                    raw_mod_code: ModCode::C.char(),
-                    fraction_modified: percent_modified,
-                    n_canonical,
-                    n_modified,
-                    n_other_modified: 0,
-                    n_delete,
-                    n_filtered,
-                    n_diff,
-                    n_nocall,
-                    motif_idx: None,
-                })
+                if let Some(idxs) = motif_idxs.as_ref() {
+                    for &idx in idxs.iter() {
+                        counts.push(PileupFeatureCounts {
+                            raw_strand: strand.to_char(),
+                            filtered_coverage,
+                            raw_mod_code: ModCode::C.char(),
+                            fraction_modified: percent_modified,
+                            n_canonical,
+                            n_modified,
+                            n_other_modified: 0,
+                            n_delete,
+                            n_filtered,
+                            n_diff,
+                            n_nocall,
+                            motif_idx: Some(idx),
+                        })
+                    }
+                } else {
+                    counts.push(PileupFeatureCounts {
+                        raw_strand: strand.to_char(),
+                        filtered_coverage,
+                        raw_mod_code: ModCode::C.char(),
+                        fraction_modified: percent_modified,
+                        n_canonical,
+                        n_modified,
+                        n_other_modified: 0,
+                        n_delete,
+                        n_filtered,
+                        n_diff,
+                        n_nocall,
+                        motif_idx: None,
+                    })
+                }
             }
         }
     }
@@ -295,6 +335,7 @@ impl FeatureVector {
         strand: Strand,
         observed_mods: &HashSet<ModCode>,
         pileup_options: &PileupNumericOptions,
+        motif_idxs: Option<&Vec<usize>>,
     ) {
         if (tally.n_modcall_A + tally.n_modcall_a) > 0 {
             let n_canonical = tally.n_modcall_A;
@@ -310,20 +351,39 @@ impl FeatureVector {
                 + tally.n_modcall_C
                 + tally.n_modcall_m
                 + tally.n_modcall_h;
-            counts.push(PileupFeatureCounts {
-                raw_strand: strand.to_char(),
-                filtered_coverage,
-                raw_mod_code,
-                fraction_modified: percent_modified,
-                n_canonical,
-                n_modified: n_mod,
-                n_other_modified: 0,
-                n_delete: tally.n_delete,
-                n_filtered: tally.n_filtered,
-                n_diff,
-                n_nocall,
-                motif_idx: None,
-            });
+            if let Some(idxs) = motif_idxs {
+                for &idx in idxs.iter() {
+                    counts.push(PileupFeatureCounts {
+                        raw_strand: strand.to_char(),
+                        filtered_coverage,
+                        raw_mod_code,
+                        fraction_modified: percent_modified,
+                        n_canonical,
+                        n_modified: n_mod,
+                        n_other_modified: 0,
+                        n_delete: tally.n_delete,
+                        n_filtered: tally.n_filtered,
+                        n_diff,
+                        n_nocall,
+                        motif_idx: Some(idx),
+                    });
+                }
+            } else {
+                counts.push(PileupFeatureCounts {
+                    raw_strand: strand.to_char(),
+                    filtered_coverage,
+                    raw_mod_code,
+                    fraction_modified: percent_modified,
+                    n_canonical,
+                    n_modified: n_mod,
+                    n_other_modified: 0,
+                    n_delete: tally.n_delete,
+                    n_filtered: tally.n_filtered,
+                    n_diff,
+                    n_nocall,
+                    motif_idx: None,
+                });
+            }
         }
 
         // + and - strand C-mods
@@ -353,6 +413,7 @@ impl FeatureVector {
                 tally.n_filtered,
                 n_diff,
                 n_nocall,
+                motif_idxs,
             );
         }
     }
@@ -362,14 +423,18 @@ impl FeatureVector {
         pos_observed_mods: &HashSet<ModCode>,
         neg_observed_mods: &HashSet<ModCode>,
         pileup_options: &PileupNumericOptions,
+        positive_motif_idxs: Option<&Vec<usize>>,
+        negative_motif_idxs: Option<&Vec<usize>>,
     ) -> Vec<PileupFeatureCounts> {
         let mut counts = Vec::new();
+
         Self::add_tally_to_counts(
             &mut counts,
             &self.pos_tally,
             Strand::Positive,
             pos_observed_mods,
             pileup_options,
+            positive_motif_idxs,
         );
         Self::add_tally_to_counts(
             &mut counts,
@@ -377,14 +442,36 @@ impl FeatureVector {
             Strand::Negative,
             neg_observed_mods,
             pileup_options,
+            negative_motif_idxs,
         );
 
         counts
     }
 }
 
+#[inline]
+fn select_pileup_feature_counts(
+    mappings: Option<&HashMap<PartitionKey, Vec<PileupFeatureCounts>>>,
+    partition_key: PartitionKey,
+    strand: Strand,
+    motif_idx: usize,
+) -> Vec<PileupFeatureCounts> {
+    mappings
+        .and_then(|hm| hm.get(&partition_key))
+        .unwrap_or(&Vec::new())
+        .iter()
+        .filter(|pileup_feature_counts| {
+            let strand_match = pileup_feature_counts.strand() == Some(strand);
+            let motif_match =
+                pileup_feature_counts.motif_idx == Some(motif_idx);
+            strand_match && motif_match
+        })
+        .copied()
+        .collect()
+}
+
 fn combine_strand_features(
-    motif_positions: &HashMap<u32, StrandRule>,
+    motif_positions: &FxHashMap<u32, StrandRule>,
     motif_locations: &MultipleMotifLocations,
     position_feature_counts: HashMap<
         u32,
@@ -393,6 +480,8 @@ fn combine_strand_features(
     target_id: u32,
 ) -> HashMap<u32, HashMap<PartitionKey, Vec<PileupFeatureCounts>>> {
     let mut result = HashMap::new();
+    // these are the positive stand positions that will contain the sum of the positive
+    // and negative counts
     let positions_to_combine = motif_positions
         .iter()
         .filter_map(|(position, strand_rule)| match strand_rule {
@@ -402,9 +491,15 @@ fn combine_strand_features(
         .collect::<BTreeSet<u32>>();
 
     for positive_strand_pos in positions_to_combine {
-        let motifs_at_position =
-            motif_locations.motifs_for_position(target_id, positive_strand_pos);
+        // get the motifs that hit at the positive position
+        let motifs_at_position = motif_locations.motifs_for_position(
+            target_id,
+            positive_strand_pos,
+            Strand::Positive,
+        );
         if motifs_at_position.is_none() {
+            // this is an error because we should have already because we should
+            // only be looking at positions with positive hits
             error!("no motifs at position {positive_strand_pos}?");
             continue;
         }
@@ -412,7 +507,15 @@ fn combine_strand_features(
         let positive_feature_mappings =
             position_feature_counts.get(&positive_strand_pos);
 
+        // start summing up the motif counts
         'motif: for (idx, motif) in motifs_at_position {
+            // this is the position on the negative strand corresponding to this
+            // positive strand motif,
+            // e.g. for CCGG, 0
+            //   v
+            // + CCGG
+            // - GGCC
+            //      ^ <- this position
             let negative_strand_pos =
                 motif.motif().negative_strand_position(positive_strand_pos);
             if negative_strand_pos.is_none() {
@@ -432,29 +535,18 @@ fn combine_strand_features(
             for partition_key in partition_keys {
                 // gather the positive and negative strands PileupFeatureCounts that will be
                 // combined together
-                let positive_strand_features = positive_feature_mappings
-                    .and_then(|feature_mappings| {
-                        feature_mappings.get(&partition_key)
-                    })
-                    .unwrap_or(&Vec::new())
-                    .iter()
-                    .filter(|pileup_feature_counts| {
-                        pileup_feature_counts.strand() == Some(Strand::Positive)
-                    })
-                    .copied()
-                    .collect::<Vec<PileupFeatureCounts>>();
-                let negative_strand_features = negative_feature_mappings
-                    .and_then(|feature_mappings| {
-                        feature_mappings.get(&partition_key)
-                    })
-                    .unwrap_or(&Vec::new())
-                    .iter()
-                    .filter(|pileup_feature_counts| {
-                        pileup_feature_counts.strand() == Some(Strand::Negative)
-                    })
-                    .copied()
-                    .collect::<Vec<PileupFeatureCounts>>();
-
+                let positive_strand_features = select_pileup_feature_counts(
+                    positive_feature_mappings,
+                    partition_key,
+                    Strand::Positive,
+                    idx,
+                );
+                let negative_strand_features = select_pileup_feature_counts(
+                    negative_feature_mappings,
+                    partition_key,
+                    Strand::Negative,
+                    idx,
+                );
                 // group them by mod code, use BTreeMap here so that the mod codes are in
                 // a consistent order
                 let grouped_by_mod_code = positive_strand_features
@@ -501,9 +593,9 @@ fn get_motif_locations_for_region(
     reference_id: u32,
     start_pos: u32,
     end_pos: u32,
-) -> HashMap<u32, StrandRule> {
+) -> FxHashMap<u32, StrandRule> {
     motif_locations.motif_locations.iter().fold(
-        HashMap::<u32, StrandRule>::new(),
+        FxHashMap::<u32, StrandRule>::default(),
         |mut acc, locs| {
             locs.get_locations_unchecked(reference_id)
                 .iter()
@@ -516,46 +608,15 @@ fn get_motif_locations_for_region(
                 })
                 .for_each(|(pos, strand)| {
                     if let Some(strand_rule) = acc.get_mut(&pos) {
-                        *strand_rule = strand_rule.absorb(strand)
+                        *strand_rule = strand_rule.combine(strand)
                     } else {
-                        let strand_rule = match strand {
-                            Strand::Positive => StrandRule::Positive,
-                            Strand::Negative => StrandRule::Negative,
-                        };
-                        acc.insert(pos, strand_rule);
+                        acc.insert(pos, strand);
                     }
                 });
 
             acc
         },
     )
-}
-
-#[derive(Copy, Clone)]
-enum StrandRule {
-    Positive,
-    Negative,
-    Both,
-}
-
-impl StrandRule {
-    fn same_as(&self, strand: Strand) -> bool {
-        match &self {
-            StrandRule::Positive => strand == Strand::Positive,
-            StrandRule::Negative => strand == Strand::Negative,
-            StrandRule::Both => false,
-        }
-    }
-
-    fn absorb(self, strand: Strand) -> Self {
-        if self.same_as(strand) {
-            self
-        } else {
-            // self is either both or they are opposite strands
-            // so that means to "absorb" the rule is now both
-            StrandRule::Both
-        }
-    }
 }
 
 #[derive(new)]
@@ -569,7 +630,7 @@ struct PileupIter<'a> {
     chrom_id: u32,
     start_pos: u32,
     end_pos: u32,
-    motif_locations: Option<&'a HashMap<u32, StrandRule>>,
+    motif_locations: Option<&'a FxHashMap<u32, StrandRule>>,
     position_filter: Option<&'a StrandedPositionFilter>,
 }
 
@@ -579,7 +640,7 @@ impl<'a> PileupIter<'a> {
         chrom_id: u32,
         start_pos: u32,
         end_pos: u32,
-        motif_locations: Option<&'a HashMap<u32, StrandRule>>,
+        motif_locations: Option<&'a FxHashMap<u32, StrandRule>>,
         position_filter: Option<&'a StrandedPositionFilter>,
     ) -> Self {
         Self {
@@ -969,6 +1030,22 @@ pub fn process_region<T: AsRef<Path>>(
                     pos_strand_observed_mod_codes.get(&partition_key);
                 let neg_strand_observed_mod_codes_for_key =
                     neg_strand_observed_mod_codes.get(&partition_key);
+
+                let positive_motif_idxs = motif_locations.and_then(|mls| {
+                    mls.motif_idxs_for_position(
+                        chrom_tid,
+                        pos,
+                        Strand::Positive,
+                    )
+                });
+                let negative_motif_idxs = motif_locations.and_then(|mls| {
+                    mls.motif_idxs_for_position(
+                        chrom_tid,
+                        pos,
+                        Strand::Negative,
+                    )
+                });
+
                 (
                     partition_key,
                     fv.decode(
@@ -977,6 +1054,8 @@ pub fn process_region<T: AsRef<Path>>(
                         neg_strand_observed_mod_codes_for_key
                             .unwrap_or(&HashSet::new()),
                         &pileup_numeric_options,
+                        positive_motif_idxs,
+                        negative_motif_idxs,
                     ),
                 )
             })
@@ -1100,6 +1179,8 @@ mod mod_pileup_tests {
             &pos_observed_mods,
             &neg_observed_mods,
             &PileupNumericOptions::Passthrough,
+            None,
+            None,
         );
         assert_eq!(counts.len(), 2); // h and m, negative strand should not be there
         for pileup_counts in counts {
@@ -1138,6 +1219,8 @@ mod mod_pileup_tests {
             &pos_observed_mods,
             &neg_observed_mods,
             &PileupNumericOptions::Passthrough,
+            None,
+            None,
         );
         assert_eq!(counts.len(), 4);
         counts
@@ -1168,6 +1251,8 @@ mod mod_pileup_tests {
             &pos_observed_mods,
             &HashSet::new(),
             &PileupNumericOptions::Passthrough,
+            None,
+            None,
         );
         assert_eq!(counts.len(), 1);
         let count = &counts[0];

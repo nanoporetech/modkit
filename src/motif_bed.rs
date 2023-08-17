@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fmt::{write, Display, Formatter};
+use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result as AnyhowResult};
@@ -14,6 +14,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::position_filter::StrandedPositionFilter;
 use crate::util::{
     get_master_progress_bar, get_spinner, get_ticker, ReferenceRecord, Strand,
+    StrandRule,
 };
 
 fn iupac_to_regex(pattern: &str) -> String {
@@ -117,6 +118,7 @@ pub struct RegexMotif {
     pub forward_offset: usize,
     pub reverse_offset: usize,
     pub length: usize,
+    pub raw_motif: String,
 }
 
 impl RegexMotif {
@@ -130,7 +132,14 @@ impl RegexMotif {
             .len()
             .checked_sub(offset + 1)
             .ok_or(anyhow!("motif not long enough for offset {}", offset))?;
-        Ok(Self::new(re, rc_re, offset, rc_offset, length))
+        Ok(Self::new(
+            re,
+            rc_re,
+            offset,
+            rc_offset,
+            length,
+            raw_motif.to_owned(),
+        ))
     }
 
     pub(crate) fn is_palendrome(&self) -> bool {
@@ -162,12 +171,7 @@ impl RegexMotif {
 
 impl Display for RegexMotif {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{},{}",
-            self.forward_pattern.as_str(),
-            self.forward_offset
-        )
+        write!(f, "{},{}", self.raw_motif, self.forward_offset)
     }
 }
 
@@ -251,8 +255,14 @@ pub fn motif_bed(
         .checked_sub(offset + 1)
         .ok_or(anyhow!("invalid offset for motif"))?;
 
-    let regex_motif =
-        RegexMotif::new(re, rc_re, offset, rc_offset, motif_raw.len());
+    let regex_motif = RegexMotif::new(
+        re,
+        rc_re,
+        offset,
+        rc_offset,
+        motif_raw.len(),
+        motif_raw.to_owned(),
+    );
 
     let reader =
         FastaReader::from_file(path).context("failed to open FASTA")?;
@@ -306,24 +316,47 @@ pub struct MultipleMotifLocations {
     pub(crate) motif_locations: Vec<MotifLocations>,
     /// mapping of target to mapping of position to vector of which motif locations
     /// (in `self.motif_locations`) have a hit at that position
-    position_lookup: FxHashMap<u32, FxHashMap<u32, Vec<usize>>>,
+    position_lookup: FxHashMap<u32, FxHashMap<(u32, Strand), Vec<usize>>>,
 }
 
 impl MultipleMotifLocations {
     pub fn new(motif_locations: Vec<MotifLocations>) -> Self {
         let position_lookup = motif_locations.iter().enumerate().fold(
-            FxHashMap::<u32, FxHashMap<u32, Vec<usize>>>::default(),
+            FxHashMap::<u32, FxHashMap<(u32, Strand), Vec<usize>>>::default(),
             |mut acc, (idx, mls)| {
                 mls.tid_to_motif_positions.iter().for_each(
                     |(target_id, positions)| {
                         let positions_for_target = acc
                             .entry(*target_id)
                             .or_insert(FxHashMap::default());
-                        positions.keys().for_each(|position| {
-                            positions_for_target
-                                .entry(*position)
-                                .or_insert(Vec::new())
-                                .push(idx);
+                        positions.iter().for_each(|(position, strand_rule)| {
+                            match strand_rule {
+                                StrandRule::Positive => {
+                                    let k = (*position, Strand::Positive);
+                                    positions_for_target
+                                        .entry(k)
+                                        .or_insert(Vec::new())
+                                        .push(idx)
+                                }
+                                StrandRule::Negative => {
+                                    let k = (*position, Strand::Negative);
+                                    positions_for_target
+                                        .entry(k)
+                                        .or_insert(Vec::new())
+                                        .push(idx)
+                                }
+                                StrandRule::Both => {
+                                    for k in [
+                                        (*position, Strand::Positive),
+                                        (*position, Strand::Negative),
+                                    ] {
+                                        positions_for_target
+                                            .entry(k)
+                                            .or_insert(Vec::new())
+                                            .push(idx)
+                                    }
+                                }
+                            }
                         });
                     },
                 );
@@ -341,10 +374,11 @@ impl MultipleMotifLocations {
         &self,
         target_id: u32,
         position: u32,
+        strand: Strand,
     ) -> Option<Vec<(usize, &MotifLocations)>> {
         self.position_lookup
             .get(&target_id)
-            .and_then(|positions| positions.get(&position))
+            .and_then(|positions| positions.get(&(position, strand)))
             .map(|idxs| {
                 idxs.iter()
                     .filter_map(|&i| {
@@ -353,11 +387,22 @@ impl MultipleMotifLocations {
                     .collect()
             })
     }
+
+    pub fn motif_idxs_for_position(
+        &self,
+        target_id: u32,
+        position: u32,
+        strand: Strand,
+    ) -> Option<&Vec<usize>> {
+        self.position_lookup
+            .get(&target_id)
+            .and_then(|positions| positions.get(&(position, strand)))
+    }
 }
 
 #[derive(Debug)]
 pub struct MotifLocations {
-    tid_to_motif_positions: FxHashMap<u32, FxHashMap<u32, Strand>>,
+    tid_to_motif_positions: FxHashMap<u32, FxHashMap<u32, StrandRule>>,
     motif: RegexMotif,
 }
 
@@ -367,7 +412,7 @@ impl MotifLocations {
         regex_motif: RegexMotif,
         name_to_tid: &HashMap<&str, u32>,
         mask: bool,
-        position_filter: Option<&StrandedPositionFilter>, // todo(arand) should have a suppress progress here?
+        position_filter: Option<&StrandedPositionFilter>,
         suppress_progress: bool,
     ) -> AnyhowResult<Self> {
         let reader = FastaReader::from_file(fasta_fp)?;
@@ -422,7 +467,17 @@ impl MotifLocations {
                             Some((pos as u32, strand))
                         }
                     })
-                    .collect::<FxHashMap<u32, Strand>>();
+                    .fold(
+                        FxHashMap::<u32, StrandRule>::default(),
+                        |mut acc, (pos, strand)| {
+                            if let Some(strand_rule) = acc.get_mut(&pos) {
+                                *strand_rule = strand_rule.absorb(strand);
+                            } else {
+                                acc.insert(pos, strand.into());
+                            }
+                            acc
+                        },
+                    );
                 (tid, positions)
             })
             .collect();
@@ -453,7 +508,7 @@ impl MotifLocations {
     pub fn get_locations_unchecked(
         &self,
         target_id: u32,
-    ) -> &FxHashMap<u32, Strand> {
+    ) -> &FxHashMap<u32, StrandRule> {
         self.tid_to_motif_positions.get(&target_id).unwrap()
     }
 
@@ -467,7 +522,7 @@ impl MotifLocations {
 
     pub fn targets_to_positions(
         &self,
-    ) -> &FxHashMap<u32, FxHashMap<u32, Strand>> {
+    ) -> &FxHashMap<u32, FxHashMap<u32, StrandRule>> {
         &self.tid_to_motif_positions
     }
 }
@@ -549,5 +604,7 @@ mod motif_bed_tests {
     }
 
     #[test]
-    fn test_motif_palendrome() {}
+    fn test_motif_palendrome() {
+        // todo
+    }
 }
