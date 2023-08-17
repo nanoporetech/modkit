@@ -624,3 +624,83 @@ fn test_pileup_partition_tags_combine_strands() {
     }
     assert_eq!(count, 6);
 }
+
+#[test]
+fn test_pileup_motifs_cg0_cgcg2() {
+    let temp_file =
+        std::env::temp_dir().join("test_pileup_motifs_cg0_cgcg2.bed");
+    run_modkit(&[
+        "pileup",
+        "tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads.bam",
+        temp_file.to_str().unwrap(),
+        "--motif", "CG", "0",
+        "--motif", "CGCG", "2",
+        "--no-filtering",
+        "--ref", "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region", "oligo_741_adapters:22-62",
+    ])
+        .unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/cgcg2_cg0_test1.bed",
+    );
+
+    run_modkit(&[
+        "pileup",
+        "tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads-2.bam",
+        temp_file.to_str().unwrap(),
+        "--motif", "CG", "0",
+        "--motif", "CGCG", "2",
+        "--no-filtering",
+        "--ref", "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region", "oligo_741_adapters:22-62",
+    ])
+        .unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/cgcg2_cg0_test2.bed",
+    );
+}
+
+#[test]
+fn test_pileup_motifs_cg0_cgcg2_combined() {
+    let temp_file =
+        std::env::temp_dir().join("test_pileup_motifs_cg0_cgcg2_combined.bed");
+    run_modkit(&[
+        "pileup",
+        "tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads.bam",
+        temp_file.to_str().unwrap(),
+        "--motif", "CG", "0",
+        "--motif", "CGCG", "2",
+        "--no-filtering",
+        "--combine-strands",
+        "--ref", "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region", "oligo_741_adapters:22-62",
+    ])
+        .unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/cgcg2_cg0_test1_combine_strands.bed",
+    );
+
+    run_modkit(&[
+        "pileup",
+        "tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads-2.bam",
+        temp_file.to_str().unwrap(),
+        "--motif", "CG", "0",
+        "--motif", "CGCG", "2",
+        "--no-filtering",
+        "--combine-strands",
+        "--ref", "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region", "oligo_741_adapters:22-62",
+    ])
+        .unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/cgcg2_cg0_test2_combine_strands.bed",
+    );
+}
