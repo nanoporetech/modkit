@@ -538,6 +538,11 @@ impl ModBamPileup {
                 .iter()
                 .map(|target| (target.name.as_str(), target.tid))
                 .collect::<HashMap<&str, u32>>();
+            let master_progress = MultiProgress::new();
+            if self.suppress_progress {
+                master_progress
+                    .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+            }
             let motif_locations = pool.install(|| {
                 regex_motifs
                     .into_par_iter()
@@ -548,7 +553,7 @@ impl ModBamPileup {
                             &names_to_tid,
                             self.mask,
                             position_filter.as_ref(),
-                            self.suppress_progress,
+                            &master_progress,
                         )
                     })
                     .collect::<anyhow::Result<Vec<MotifLocations>>>()

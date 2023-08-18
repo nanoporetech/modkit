@@ -413,15 +413,11 @@ impl MotifLocations {
         name_to_tid: &HashMap<&str, u32>,
         mask: bool,
         position_filter: Option<&StrandedPositionFilter>,
-        suppress_progress: bool,
+        master_progress_bar: &MultiProgress,
     ) -> AnyhowResult<Self> {
         let reader = FastaReader::from_file(fasta_fp)?;
 
-        let records_progress = get_spinner();
-        if suppress_progress {
-            records_progress
-                .set_draw_target(indicatif::ProgressDrawTarget::hidden())
-        }
+        let records_progress = master_progress_bar.add(get_spinner());
         records_progress.set_message("Reading reference sequences");
 
         let seqs_and_target_ids = reader
@@ -439,11 +435,8 @@ impl MotifLocations {
             })
             .collect::<Vec<(String, u32)>>();
 
-        let motif_progress = get_master_progress_bar(seqs_and_target_ids.len());
-        if suppress_progress {
-            motif_progress
-                .set_draw_target(indicatif::ProgressDrawTarget::hidden());
-        }
+        let motif_progress = master_progress_bar
+            .add(get_master_progress_bar(seqs_and_target_ids.len()));
         motif_progress.set_message(format!("finding {} motifs", regex_motif));
         let tid_to_motif_positions = seqs_and_target_ids
             .into_par_iter()
