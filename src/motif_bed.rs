@@ -400,6 +400,33 @@ impl MultipleMotifLocations {
     }
 }
 
+pub fn get_masked_sequences(
+    fasta_fp: &PathBuf,
+    name_to_tid: &HashMap<&str, u32>,
+    mask: bool,
+    master_progress_bar: &MultiProgress,
+) -> anyhow::Result<Vec<(String, u32)>> {
+    let reader = FastaReader::from_file(fasta_fp)?;
+
+    let records_progress = master_progress_bar.add(get_spinner());
+    records_progress.set_message("Reading reference sequences");
+
+    Ok(reader
+        .records()
+        .progress_with(records_progress)
+        .filter_map(|res| res.ok())
+        .filter_map(|record| {
+            name_to_tid.get(record.id()).map(|tid| (record, *tid))
+        })
+        .filter_map(|(record, tid)| {
+            String::from_utf8(record.seq().to_vec())
+                .map(|s| if mask { s } else { s.to_ascii_uppercase() })
+                .ok()
+                .map(|s| (s, tid))
+        })
+        .collect::<Vec<(String, u32)>>())
+}
+
 #[derive(Debug)]
 pub struct MotifLocations {
     tid_to_motif_positions: FxHashMap<u32, FxHashMap<u32, StrandRule>>,
@@ -407,38 +434,16 @@ pub struct MotifLocations {
 }
 
 impl MotifLocations {
-    pub fn from_fasta(
-        fasta_fp: &PathBuf,
+    pub fn from_sequences(
         regex_motif: RegexMotif,
-        name_to_tid: &HashMap<&str, u32>,
-        mask: bool,
         position_filter: Option<&StrandedPositionFilter>,
+        sequences_and_ids: &[(String, u32)],
         master_progress_bar: &MultiProgress,
     ) -> AnyhowResult<Self> {
-        let reader = FastaReader::from_file(fasta_fp)?;
-
-        let records_progress = master_progress_bar.add(get_spinner());
-        records_progress.set_message("Reading reference sequences");
-
-        let seqs_and_target_ids = reader
-            .records()
-            .progress_with(records_progress)
-            .filter_map(|res| res.ok())
-            .filter_map(|record| {
-                name_to_tid.get(record.id()).map(|tid| (record, *tid))
-            })
-            .filter_map(|(record, tid)| {
-                String::from_utf8(record.seq().to_vec())
-                    .map(|s| if mask { s } else { s.to_ascii_uppercase() })
-                    .ok()
-                    .map(|s| (s, tid))
-            })
-            .collect::<Vec<(String, u32)>>();
-
         let motif_progress = master_progress_bar
-            .add(get_master_progress_bar(seqs_and_target_ids.len()));
+            .add(get_master_progress_bar(sequences_and_ids.len()));
         motif_progress.set_message(format!("finding {} motifs", regex_motif));
-        let tid_to_motif_positions = seqs_and_target_ids
+        let tid_to_motif_positions = sequences_and_ids
             .into_par_iter()
             .progress_with(motif_progress)
             .map(|(seq, tid)| {
@@ -446,9 +451,11 @@ impl MotifLocations {
                     .into_iter() // todo into_par_iter?
                     .filter_map(|(pos, strand)| {
                         if let Some(position_filter) = position_filter {
-                            if position_filter
-                                .contains(tid as i32, pos as u64, strand)
-                            {
+                            if position_filter.contains(
+                                *tid as i32,
+                                pos as u64,
+                                strand,
+                            ) {
                                 Some((pos as u32, strand))
                             } else {
                                 None
@@ -468,7 +475,7 @@ impl MotifLocations {
                             acc
                         },
                     );
-                (tid, positions)
+                (*tid, positions)
             })
             .collect();
 
@@ -476,6 +483,28 @@ impl MotifLocations {
             tid_to_motif_positions,
             motif: regex_motif,
         })
+    }
+
+    pub fn from_fasta(
+        fasta_fp: &PathBuf,
+        regex_motif: RegexMotif,
+        name_to_tid: &HashMap<&str, u32>,
+        mask: bool,
+        position_filter: Option<&StrandedPositionFilter>,
+        master_progress_bar: &MultiProgress,
+    ) -> AnyhowResult<Self> {
+        let seqs_and_target_ids = get_masked_sequences(
+            &fasta_fp,
+            &name_to_tid,
+            mask,
+            master_progress_bar,
+        )?;
+        Self::from_sequences(
+            regex_motif,
+            position_filter,
+            &seqs_and_target_ids,
+            master_progress_bar,
+        )
     }
 
     pub(crate) fn references_with_hits(&self) -> FxHashSet<u32> {
@@ -595,7 +624,7 @@ mod motif_bed_tests {
     }
 
     #[test]
-    fn test_motif_palendrome() {
+    fn test_motif_palindrome() {
         let chh = RegexMotif::parse_string("CHH", 0).unwrap();
         assert!(!chh.is_palendrome());
         let cg = RegexMotif::parse_string("CG", 0).unwrap();

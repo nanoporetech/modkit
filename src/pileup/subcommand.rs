@@ -19,7 +19,9 @@ use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::ModCode;
-use crate::motif_bed::{MotifLocations, MultipleMotifLocations, RegexMotif};
+use crate::motif_bed::{
+    get_masked_sequences, MotifLocations, MultipleMotifLocations, RegexMotif,
+};
 use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::sampling_schedule::IdxStats;
@@ -169,7 +171,7 @@ pub struct ModBamPileup {
     /// positions overlapping intervals in the file. (alias: include-positions)
     #[arg(long, hide_short_help = true, alias = "include-positions")]
     include_bed: Option<PathBuf>,
-    /// Include unmapped base modifications when estimating the pass threshold
+    /// Include unmapped base modifications when estimating the pass threshold.
     #[arg(
         long,
         hide_short_help = true,
@@ -199,7 +201,19 @@ pub struct ModBamPileup {
     )]
     force_allow_implicit: bool,
 
-    /// Use this motif only
+    /// Output pileup counts for only motifs provided. The first argument should be the motif
+    /// sequence and the second argument is the 0-based offset to the base for which pileup
+    /// base modification counts should be tabulated. For example: --motif CGCG 0 indicates to
+    /// pileup counts for the firs C on the top strand and the  last C (complement to G) on
+    /// the bottom strand.
+    ///
+    /// The --cpg argument is short hand for --motif CG 0. This argument can be passed multiple
+    /// times. When more than 1 motif is used, the resulting output BED file will have indicate
+    /// the motif in the "name" field as <mod_code>,<motif>,<offset>. For example, given
+    /// --motif CGCG 2 --motif CG 0
+    /// there will be output lines with name fields such as "m,CG,0" and "m,CGCG,2". To
+    /// use this option with `--combine-strands` all motifs must be reverse-complement
+    /// palindromic or an error will be raised.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
     motif: Option<Vec<String>>,
     /// Only output counts at CpG motifs. Requires a reference sequence to be
@@ -543,16 +557,20 @@ impl ModBamPileup {
                 master_progress
                     .set_draw_target(indicatif::ProgressDrawTarget::hidden());
             }
+            let masked_seqs_to_tids = get_masked_sequences(
+                fasta_fp,
+                &names_to_tid,
+                self.mask,
+                &master_progress,
+            )?;
             let motif_locations = pool.install(|| {
                 regex_motifs
                     .into_par_iter()
                     .map(|regex_motif| {
-                        MotifLocations::from_fasta(
-                            fasta_fp,
+                        MotifLocations::from_sequences(
                             regex_motif,
-                            &names_to_tid,
-                            self.mask,
                             position_filter.as_ref(),
+                            &masked_seqs_to_tids,
                             &master_progress,
                         )
                     })
