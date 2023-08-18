@@ -153,7 +153,7 @@ struct BedGraphFileKey {
 pub struct BedGraphWriter {
     prefix: Option<String>,
     out_dir: PathBuf,
-    router: HashMap<BedGraphFileKey, BufWriter<File>>,
+    router: HashMap<(BedGraphFileKey, String), BufWriter<File>>,
     use_groupings: bool,
 }
 
@@ -180,33 +180,27 @@ impl BedGraphWriter {
         &mut self,
         key: BedGraphFileKey,
         key_name: &str,
+        label: String,
     ) -> &mut BufWriter<File> {
-        self.router
-            .entry(key)
-            .or_insert_with(|| {
-                let strand = key.strand;
-                let raw_mod_code = key.raw_mode_code;
-                let delim = if key_name == "" {
-                    ""
-                } else {
-                    "_"
-                };
-                let strand_label = match strand {
-                    '+' => "positive",
-                    '-' => "negative",
-                    '.' => "combined",
-                    _ => "_unknown",
-                };
-                let filename = if let Some(p) = &self.prefix {
-                    format!("{p}{delim}{key_name}{delim}{raw_mod_code}_{strand_label}.bedgraph")
-                } else {
-                    format!("{key_name}{delim}{raw_mod_code}_{strand_label}.bedgraph")
-                };
-                let fp = self.out_dir.join(filename);
-                // todo(arand) danger, should remove this unwrap
-                let fh = File::create(fp).unwrap();
-                BufWriter::new(fh)
-            })
+        self.router.entry((key, label.clone())).or_insert_with(|| {
+            let strand = key.strand;
+            let delim = if key_name == "" { "" } else { "_" };
+            let strand_label = match strand {
+                '+' => "positive",
+                '-' => "negative",
+                '.' => "combined",
+                _ => "_unknown",
+            };
+            let filename = if let Some(p) = &self.prefix {
+                format!("{p}_{key_name}{delim}{label}_{strand_label}.bedgraph")
+            } else {
+                format!("{key_name}{delim}{label}_{strand_label}.bedgraph")
+            };
+            let fp = self.out_dir.join(filename);
+            // todo(arand) danger, should remove this unwrap
+            let fh = File::create(fp).unwrap();
+            BufWriter::new(fh)
+        })
     }
 }
 
@@ -218,6 +212,7 @@ impl PileupWriter<ModBasePileup> for BedGraphWriter {
     ) -> AnyhowResult<u64> {
         let mut rows_written = 0;
         let tab = '\t';
+        // let raw_code_only = motif_labels.len() < 2;
         for (pos, feature_counts) in item.iter_counts_sorted() {
             for (partition_key, pileup_feature_counts) in feature_counts {
                 let key_name = match partition_key {
@@ -240,7 +235,22 @@ impl PileupWriter<ModBasePileup> for BedGraphWriter {
                         feature_count.raw_strand,
                         feature_count.raw_mod_code,
                     );
-                    let fh = self.get_writer_for_modstrand(key, key_name);
+                    let label = if let Some(idx) = feature_count.motif_idx {
+                        motif_labels
+                            .get(idx)
+                            .map(|l| {
+                                format!(
+                                    "{}_{}",
+                                    key.raw_mode_code,
+                                    l.replace(",", "")
+                                )
+                            })
+                            .unwrap_or(format!("{}", key.raw_mode_code))
+                    } else {
+                        format!("{}", key.raw_mode_code)
+                    };
+                    let fh =
+                        self.get_writer_for_modstrand(key, key_name, label);
                     let row = format!(
                         "{}{tab}\
                              {}{tab}\

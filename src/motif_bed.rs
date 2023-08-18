@@ -444,10 +444,7 @@ impl MotifLocations {
             motif_progress
                 .set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
-        motif_progress.set_message(format!(
-            "finding {} motifs",
-            regex_motif.forward_pattern.as_str()
-        ));
+        motif_progress.set_message(format!("finding {} motifs", regex_motif));
         let tid_to_motif_positions = seqs_and_target_ids
             .into_par_iter()
             .progress_with(motif_progress)
@@ -555,6 +552,7 @@ mod motif_bed_tests {
             (9, Strand::Negative),
             (10, Strand::Positive),
         ];
+        assert_eq!(&hits, &expected);
         for pos in hits
             .iter()
             .filter(|(_, strand)| *strand == Strand::Positive)
@@ -563,7 +561,7 @@ mod motif_bed_tests {
             let negative_strand_pos = motif
                 .negative_strand_position(pos)
                 .expect("should find position");
-            let found = hits
+            let _found = hits
                 .iter()
                 .find(|(p, strand)| {
                     *p as u32 == negative_strand_pos
@@ -605,6 +603,13 @@ mod motif_bed_tests {
 
     #[test]
     fn test_motif_palendrome() {
-        // todo
+        let chh = RegexMotif::parse_string("CHH", 0).unwrap();
+        assert!(!chh.is_palendrome());
+        let cg = RegexMotif::parse_string("CG", 0).unwrap();
+        assert!(cg.is_palendrome());
+        let c = RegexMotif::parse_string("C", 0).unwrap();
+        assert!(!c.is_palendrome());
+        let gatc = RegexMotif::parse_string("GATC", 1).unwrap();
+        assert!(gatc.is_palendrome());
     }
 }

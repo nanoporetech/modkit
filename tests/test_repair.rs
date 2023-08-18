@@ -1,7 +1,9 @@
-use crate::common::{check_against_expected_text_file, run_modkit};
+use std::collections::HashMap;
+
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
-use std::collections::HashMap;
+
+use crate::common::run_modkit;
 
 mod common;
 
