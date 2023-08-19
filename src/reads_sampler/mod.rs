@@ -177,12 +177,11 @@ where
 
     let mut aggregator = <P::Output as Moniod>::zero();
     for reference_record in contigs {
-        let intervals = IntervalChunks::new(
+        let intervals = IntervalChunks::new_without_motifs(
             reference_record.start,
             reference_record.length,
             interval_size,
             reference_record.tid,
-            None,
         )
         .filter(|(start, end)| {
             position_filter

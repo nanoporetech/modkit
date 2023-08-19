@@ -1,7 +1,9 @@
-use crate::common::{check_against_expected_text_file, run_modkit};
+use std::collections::HashMap;
+
 use rust_htslib::bam;
 use rust_htslib::bam::Read;
-use std::collections::HashMap;
+
+use crate::common::run_modkit;
 
 mod common;
 
@@ -12,7 +14,7 @@ fn test_repair_help() {
 
 #[test]
 fn test_repair_regression() {
-    let out_bam = std::env::temp_dir().join("test_repair_correct_output.bam");
+    let out_bam = std::env::temp_dir().join("test_repair_regression.bam");
     let donor_fp = "tests/resources/donor_read_sort.bam";
     let acceptor_fp = "tests/resources/trimmed_read_sort.mapped.bam";
     run_modkit(&[
@@ -26,7 +28,7 @@ fn test_repair_regression() {
     ])
     .unwrap();
 
-    dbg!(out_bam.to_str().unwrap());
+    // dbg!(out_bam.to_str().unwrap());
     let mut test_bam = bam::Reader::from_path(out_bam).unwrap();
     // this BAM was hand-checked
     let mut ref_bam = bam::Reader::from_path(

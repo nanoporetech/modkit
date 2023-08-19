@@ -169,6 +169,50 @@ impl Strand {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum StrandRule {
+    Positive,
+    Negative,
+    Both,
+}
+
+impl StrandRule {
+    pub fn same_as(&self, strand: Strand) -> bool {
+        match &self {
+            StrandRule::Positive => strand == Strand::Positive,
+            StrandRule::Negative => strand == Strand::Negative,
+            StrandRule::Both => false,
+        }
+    }
+
+    pub fn absorb(self, strand: Strand) -> Self {
+        if self.same_as(strand) {
+            self
+        } else {
+            // self is either both or they are opposite strands
+            // so that means to "absorb" the rule is now both
+            StrandRule::Both
+        }
+    }
+
+    pub fn combine(self, other: Self) -> Self {
+        if self == other {
+            self
+        } else {
+            Self::Both
+        }
+    }
+}
+
+impl From<Strand> for StrandRule {
+    fn from(value: Strand) -> Self {
+        match value {
+            Strand::Positive => Self::Positive,
+            Strand::Negative => Self::Negative,
+        }
+    }
+}
+
 pub fn record_is_secondary(record: &bam::Record) -> bool {
     record.is_supplementary() || record.is_secondary() || record.is_duplicate()
 }
@@ -242,7 +286,9 @@ impl Region {
             let splitted = start_end
                 .split('-')
                 .map(|x| {
-                    x.parse::<u32>()
+                    let cleaned = x.replace(",", "");
+                    cleaned
+                        .parse::<u32>()
                         .map_err(|e| InputError::new(&e.to_string()))
                 })
                 .collect::<Result<Vec<u32>, _>>()?;

@@ -1,42 +1,74 @@
-use crate::motif_bed::MotifLocations;
+use rustc_hash::FxHashMap;
 
-use std::collections::HashSet;
+use crate::motif_bed::MultipleMotifLocations;
 
 pub struct IntervalChunks {
     seq_len: u32,
     chunk_size: u32,
     curr: u32,
-    motif_positions: HashSet<u32>,
-    motif_length: u32,
+    motif_positions: FxHashMap<u32, u32>,
 }
 
 impl IntervalChunks {
-    pub fn new(
+    pub fn new_without_motifs(
         start: u32,
         seq_len: u32,
         chunk_size: u32,
         reference_id: u32,
-        motif_locations: Option<&MotifLocations>,
     ) -> Self {
-        let (motif_positions, motif_length) = motif_locations
+        Self::new(start, seq_len, chunk_size, reference_id, None)
+    }
+
+    pub fn new_with_multiple_motifs(
+        start: u32,
+        seq_len: u32,
+        chunk_size: u32,
+        reference_id: u32,
+        motif_locations: Option<&MultipleMotifLocations>,
+    ) -> Self {
+        Self::new(start, seq_len, chunk_size, reference_id, motif_locations)
+    }
+
+    fn new(
+        start: u32,
+        seq_len: u32,
+        chunk_size: u32,
+        reference_id: u32,
+        motif_locations: Option<&MultipleMotifLocations>,
+    ) -> Self {
+        let motif_positions = motif_locations
             .map(|locations| {
-                (
-                    locations
-                        .get_locations_unchecked(reference_id)
-                        .keys()
-                        .copied()
-                        .collect(),
-                    locations.motif_length() as u32,
-                )
+                locations
+                    .motif_locations
+                    .iter()
+                    .map(|loc| {
+                        loc.get_locations_unchecked(reference_id)
+                            .keys()
+                            .copied()
+                            .map(|pos| (pos, loc.motif_length() as u32))
+                            .collect::<Vec<(u32, u32)>>()
+                    })
+                    .fold(
+                        FxHashMap::<u32, u32>::default(),
+                        |mut acc, motif_positions| {
+                            for (position, length) in motif_positions {
+                                if let Some(l) = acc.get_mut(&position) {
+                                    *l = std::cmp::max(*l, length);
+                                } else {
+                                    acc.insert(position, length);
+                                }
+                            }
+                            acc
+                        },
+                    )
             })
-            .unwrap_or((HashSet::new(), 0u32));
+            .unwrap_or_else(|| FxHashMap::default());
 
         Self {
             seq_len: start + seq_len,
             chunk_size,
             curr: start,
             motif_positions,
-            motif_length,
         }
     }
 }
@@ -50,8 +82,8 @@ impl Iterator for IntervalChunks {
         } else {
             let start = self.curr;
             let mut end = std::cmp::min(start + self.chunk_size, self.seq_len);
-            while self.motif_positions.contains(&(end - 1)) {
-                end += self.motif_length;
+            while let Some(&len) = self.motif_positions.get(&(end - 1)) {
+                end += len;
             }
             self.curr = end;
             Some((start, end))
@@ -74,9 +106,10 @@ pub fn slice_dna_sequence(str_seq: &str, start: usize, end: usize) -> String {
 
 #[cfg(test)]
 mod interval_chunks_tests {
+    use rust_htslib::faidx;
+
     use crate::interval_chunks::slice_dna_sequence;
     use crate::test_utils::load_test_sequence;
-    use rust_htslib::faidx;
 
     #[test]
     fn test_check_sequence_slicing_is_same_as_fetch() {

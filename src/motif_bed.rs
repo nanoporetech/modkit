@@ -1,7 +1,7 @@
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
-use crate::position_filter::StrandedPositionFilter;
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
@@ -9,10 +9,12 @@ use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
 use log::debug;
 use rayon::prelude::*;
 use regex::{Match, Regex};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::position_filter::StrandedPositionFilter;
 use crate::util::{
     get_master_progress_bar, get_spinner, get_ticker, ReferenceRecord, Strand,
+    StrandRule,
 };
 
 fn iupac_to_regex(pattern: &str) -> String {
@@ -116,6 +118,7 @@ pub struct RegexMotif {
     pub forward_offset: usize,
     pub reverse_offset: usize,
     pub length: usize,
+    pub raw_motif: String,
 }
 
 impl RegexMotif {
@@ -129,11 +132,46 @@ impl RegexMotif {
             .len()
             .checked_sub(offset + 1)
             .ok_or(anyhow!("motif not long enough for offset {}", offset))?;
-        Ok(Self::new(re, rc_re, offset, rc_offset, length))
+        Ok(Self::new(
+            re,
+            rc_re,
+            offset,
+            rc_offset,
+            length,
+            raw_motif.to_owned(),
+        ))
     }
 
-    fn is_palendrome(&self) -> bool {
+    pub(crate) fn is_palendrome(&self) -> bool {
         self.forward_pattern.as_str() == self.reverse_pattern.as_str()
+    }
+
+    pub(crate) fn offset(&self) -> i32 {
+        self.reverse_offset as i32 - self.forward_offset as i32
+    }
+
+    pub(crate) fn negative_strand_position(
+        &self,
+        positive_position: u32,
+    ) -> Option<u32> {
+        if !self.is_palendrome() {
+            None
+        } else {
+            let pos = positive_position as i64;
+            let offset = self.offset() as i64;
+            let adj = pos + offset;
+            if adj < 0 {
+                None
+            } else {
+                Some(adj as u32)
+            }
+        }
+    }
+}
+
+impl Display for RegexMotif {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{},{}", self.raw_motif, self.forward_offset)
     }
 }
 
@@ -217,8 +255,14 @@ pub fn motif_bed(
         .checked_sub(offset + 1)
         .ok_or(anyhow!("invalid offset for motif"))?;
 
-    let regex_motif =
-        RegexMotif::new(re, rc_re, offset, rc_offset, motif_raw.len());
+    let regex_motif = RegexMotif::new(
+        re,
+        rc_re,
+        offset,
+        rc_offset,
+        motif_raw.len(),
+        motif_raw.to_owned(),
+    );
 
     let reader =
         FastaReader::from_file(path).context("failed to open FASTA")?;
@@ -268,43 +312,141 @@ pub fn motif_bed(
     Ok(())
 }
 
+pub struct MultipleMotifLocations {
+    pub(crate) motif_locations: Vec<MotifLocations>,
+    /// mapping of target_id to mapping of sequence position to vector indices into
+    /// `self.motif_locations` that have a hit at that position and strand
+    position_lookup: FxHashMap<u32, FxHashMap<(u32, Strand), Vec<usize>>>,
+}
+
+impl MultipleMotifLocations {
+    pub fn new(motif_locations: Vec<MotifLocations>) -> Self {
+        // see docs above for what position_lookup is
+        let position_lookup = motif_locations.iter().enumerate().fold(
+            FxHashMap::<u32, FxHashMap<(u32, Strand), Vec<usize>>>::default(),
+            |mut acc, (idx, mls)| {
+                mls.tid_to_motif_positions.iter().for_each(
+                    |(target_id, positions)| {
+                        // get or initialize sequence position to indices
+                        let positions_for_target = acc
+                            .entry(*target_id)
+                            .or_insert(FxHashMap::default());
+                        positions.iter().for_each(|(position, strand_rule)| {
+                            // add the idx (index into motif_locations) to the mapping
+                            match strand_rule {
+                                StrandRule::Positive => {
+                                    let k = (*position, Strand::Positive);
+                                    positions_for_target
+                                        .entry(k)
+                                        .or_insert(Vec::new())
+                                        .push(idx)
+                                }
+                                StrandRule::Negative => {
+                                    let k = (*position, Strand::Negative);
+                                    positions_for_target
+                                        .entry(k)
+                                        .or_insert(Vec::new())
+                                        .push(idx)
+                                }
+                                StrandRule::Both => {
+                                    for k in [
+                                        (*position, Strand::Positive),
+                                        (*position, Strand::Negative),
+                                    ] {
+                                        positions_for_target
+                                            .entry(k)
+                                            .or_insert(Vec::new())
+                                            .push(idx)
+                                    }
+                                }
+                            }
+                        });
+                    },
+                );
+                acc
+            },
+        );
+
+        Self {
+            motif_locations,
+            position_lookup,
+        }
+    }
+
+    pub fn motifs_for_position(
+        &self,
+        target_id: u32,
+        position: u32,
+        strand: Strand,
+    ) -> Option<Vec<(usize, &MotifLocations)>> {
+        self.position_lookup
+            .get(&target_id)
+            .and_then(|positions| positions.get(&(position, strand)))
+            .map(|idxs| {
+                idxs.iter()
+                    .filter_map(|&i| {
+                        self.motif_locations.get(i).map(|ml| (i, ml))
+                    })
+                    .collect()
+            })
+    }
+
+    pub fn motif_idxs_for_position(
+        &self,
+        target_id: u32,
+        position: u32,
+        strand: Strand,
+    ) -> Option<&Vec<usize>> {
+        self.position_lookup
+            .get(&target_id)
+            .and_then(|positions| positions.get(&(position, strand)))
+    }
+}
+
+pub fn get_masked_sequences(
+    fasta_fp: &PathBuf,
+    name_to_tid: &HashMap<&str, u32>,
+    mask: bool,
+    master_progress_bar: &MultiProgress,
+) -> anyhow::Result<Vec<(String, u32)>> {
+    let reader = FastaReader::from_file(fasta_fp)?;
+
+    let records_progress = master_progress_bar.add(get_spinner());
+    records_progress.set_message("Reading reference sequences");
+
+    Ok(reader
+        .records()
+        .progress_with(records_progress)
+        .filter_map(|res| res.ok())
+        .filter_map(|record| {
+            name_to_tid.get(record.id()).map(|tid| (record, *tid))
+        })
+        .filter_map(|(record, tid)| {
+            String::from_utf8(record.seq().to_vec())
+                .map(|s| if mask { s } else { s.to_ascii_uppercase() })
+                .ok()
+                .map(|s| (s, tid))
+        })
+        .collect::<Vec<(String, u32)>>())
+}
+
+#[derive(Debug)]
 pub struct MotifLocations {
-    tid_to_motif_positions: HashMap<u32, FxHashMap<u32, Strand>>,
+    tid_to_motif_positions: FxHashMap<u32, FxHashMap<u32, StrandRule>>,
     motif: RegexMotif,
 }
 
 impl MotifLocations {
-    pub fn from_fasta(
-        fasta_fp: &PathBuf,
+    pub fn from_sequences(
         regex_motif: RegexMotif,
-        name_to_tid: &HashMap<&str, u32>,
-        mask: bool,
-        position_filter: Option<&StrandedPositionFilter>, // todo(arand) should have a suppress progress here?
+        position_filter: Option<&StrandedPositionFilter>,
+        sequences_and_ids: &[(String, u32)],
+        master_progress_bar: &MultiProgress,
     ) -> AnyhowResult<Self> {
-        let reader = FastaReader::from_file(fasta_fp)?;
-        let records_progress = get_spinner();
-        records_progress.set_message("Reading reference sequences");
-        let seqs_and_target_ids = reader
-            .records()
-            .progress_with(records_progress)
-            .filter_map(|res| res.ok())
-            .filter_map(|record| {
-                name_to_tid.get(record.id()).map(|tid| (record, *tid))
-            })
-            .filter_map(|(record, tid)| {
-                String::from_utf8(record.seq().to_vec())
-                    .map(|s| if mask { s } else { s.to_ascii_uppercase() })
-                    .ok()
-                    .map(|s| (s, tid))
-            })
-            .collect::<Vec<(String, u32)>>();
-
-        let motif_progress = get_master_progress_bar(seqs_and_target_ids.len());
-        motif_progress.set_message(format!(
-            "finding {} motifs",
-            regex_motif.forward_pattern.as_str()
-        ));
-        let tid_to_motif_positions = seqs_and_target_ids
+        let motif_progress = master_progress_bar
+            .add(get_master_progress_bar(sequences_and_ids.len()));
+        motif_progress.set_message(format!("finding {} motifs", regex_motif));
+        let tid_to_motif_positions = sequences_and_ids
             .into_par_iter()
             .progress_with(motif_progress)
             .map(|(seq, tid)| {
@@ -312,9 +454,11 @@ impl MotifLocations {
                     .into_iter() // todo into_par_iter?
                     .filter_map(|(pos, strand)| {
                         if let Some(position_filter) = position_filter {
-                            if position_filter
-                                .contains(tid as i32, pos as u64, strand)
-                            {
+                            if position_filter.contains(
+                                *tid as i32,
+                                pos as u64,
+                                strand,
+                            ) {
                                 Some((pos as u32, strand))
                             } else {
                                 None
@@ -323,8 +467,18 @@ impl MotifLocations {
                             Some((pos as u32, strand))
                         }
                     })
-                    .collect::<FxHashMap<u32, Strand>>();
-                (tid, positions)
+                    .fold(
+                        FxHashMap::<u32, StrandRule>::default(),
+                        |mut acc, (pos, strand)| {
+                            if let Some(strand_rule) = acc.get_mut(&pos) {
+                                *strand_rule = strand_rule.absorb(strand);
+                            } else {
+                                acc.insert(pos, strand.into());
+                            }
+                            acc
+                        },
+                    );
+                (*tid, positions)
             })
             .collect();
 
@@ -332,6 +486,32 @@ impl MotifLocations {
             tid_to_motif_positions,
             motif: regex_motif,
         })
+    }
+
+    pub fn from_fasta(
+        fasta_fp: &PathBuf,
+        regex_motif: RegexMotif,
+        name_to_tid: &HashMap<&str, u32>,
+        mask: bool,
+        position_filter: Option<&StrandedPositionFilter>,
+        master_progress_bar: &MultiProgress,
+    ) -> AnyhowResult<Self> {
+        let seqs_and_target_ids = get_masked_sequences(
+            &fasta_fp,
+            &name_to_tid,
+            mask,
+            master_progress_bar,
+        )?;
+        Self::from_sequences(
+            regex_motif,
+            position_filter,
+            &seqs_and_target_ids,
+            master_progress_bar,
+        )
+    }
+
+    pub(crate) fn references_with_hits(&self) -> FxHashSet<u32> {
+        self.tid_to_motif_positions.keys().copied().collect()
     }
 
     pub fn filter_reference_records(
@@ -350,7 +530,7 @@ impl MotifLocations {
     pub fn get_locations_unchecked(
         &self,
         target_id: u32,
-    ) -> &FxHashMap<u32, Strand> {
+    ) -> &FxHashMap<u32, StrandRule> {
         self.tid_to_motif_positions.get(&target_id).unwrap()
     }
 
@@ -360,6 +540,12 @@ impl MotifLocations {
 
     pub fn motif(&self) -> &RegexMotif {
         &self.motif
+    }
+
+    pub fn targets_to_positions(
+        &self,
+    ) -> &FxHashMap<u32, FxHashMap<u32, StrandRule>> {
+        &self.tid_to_motif_positions
     }
 }
 
@@ -374,6 +560,41 @@ mod motif_bed_tests {
         assert_eq!(regex_motif.reverse_offset, 3);
         let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
         assert_eq!(regex_motif.reverse_offset, 1);
+
+        let motif = RegexMotif::parse_string("CGCG", 2).unwrap();
+        assert_eq!(motif.offset(), -1);
+    }
+
+    #[test]
+    fn test_motif_hits() {
+        let seq = "AACGCGAACGCGA";
+        let motif = RegexMotif::parse_string("CGCG", 2).unwrap();
+        assert_eq!(motif.offset(), -1);
+        let hits = find_motif_hits(seq, &motif);
+        let expected = vec![
+            (3, Strand::Negative),
+            (4, Strand::Positive),
+            (9, Strand::Negative),
+            (10, Strand::Positive),
+        ];
+        assert_eq!(&hits, &expected);
+        for pos in hits
+            .iter()
+            .filter(|(_, strand)| *strand == Strand::Positive)
+            .map(|(p, _)| *p as u32)
+        {
+            let negative_strand_pos = motif
+                .negative_strand_position(pos)
+                .expect("should find position");
+            let _found = hits
+                .iter()
+                .find(|(p, strand)| {
+                    *p as u32 == negative_strand_pos
+                        && *strand == Strand::Negative
+                })
+                .expect("should find negative strand position");
+        }
+        assert!(motif.negative_strand_position(0).is_none())
     }
 
     #[test]
@@ -403,5 +624,17 @@ mod motif_bed_tests {
                 (5, Strand::Negative),
             ]
         );
+    }
+
+    #[test]
+    fn test_motif_palindrome() {
+        let chh = RegexMotif::parse_string("CHH", 0).unwrap();
+        assert!(!chh.is_palendrome());
+        let cg = RegexMotif::parse_string("CG", 0).unwrap();
+        assert!(cg.is_palendrome());
+        let c = RegexMotif::parse_string("C", 0).unwrap();
+        assert!(!c.is_palendrome());
+        let gatc = RegexMotif::parse_string("GATC", 1).unwrap();
+        assert!(gatc.is_palendrome());
     }
 }

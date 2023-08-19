@@ -1,3 +1,17 @@
+use std::collections::HashMap;
+use std::io::BufWriter;
+use std::path::PathBuf;
+
+use anyhow::{anyhow, bail, Context};
+use clap::{Args, ValueEnum};
+use crossbeam_channel::bounded;
+use indicatif::{MultiProgress, ParallelProgressIterator};
+use itertools::Itertools;
+use log::{debug, error, info, warn};
+use rayon::prelude::*;
+use rust_htslib::bam::{self, Read};
+use rustc_hash::FxHashSet;
+
 use crate::command_utils::{
     get_threshold_from_options, parse_per_mod_thresholds, parse_thresholds,
 };
@@ -5,28 +19,19 @@ use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::ModCode;
-use crate::motif_bed::{MotifLocations, RegexMotif};
+use crate::motif_bed::{
+    get_masked_sequences, MotifLocations, MultipleMotifLocations, RegexMotif,
+};
 use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
+use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::util::{
     get_master_progress_bar, get_subroutine_progress_bar, get_targets,
-    get_ticker, parse_partition_tags, reader_is_bam, Region,
+    get_ticker, parse_partition_tags, reader_is_bam, ReferenceRecord, Region,
 };
 use crate::writers::{
-    BedGraphWriter, BedMethylWriter, OutWriter, PartitioningBedMethylWriter,
+    BedGraphWriter, BedMethylWriter, PartitioningBedMethylWriter, PileupWriter,
 };
-use anyhow::{anyhow, bail, Context};
-
-use crate::reads_sampler::sampling_schedule::IdxStats;
-use clap::{Args, ValueEnum};
-use crossbeam_channel::bounded;
-use indicatif::{MultiProgress, ParallelProgressIterator};
-use log::{debug, error, info, warn};
-use rayon::prelude::*;
-use rust_htslib::bam::{self, Read};
-use std::collections::HashMap;
-use std::io::BufWriter;
-use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct ModBamPileup {
@@ -166,7 +171,7 @@ pub struct ModBamPileup {
     /// positions overlapping intervals in the file. (alias: include-positions)
     #[arg(long, hide_short_help = true, alias = "include-positions")]
     include_bed: Option<PathBuf>,
-    /// Include unmapped base modifications when estimating the pass threshold
+    /// Include unmapped base modifications when estimating the pass threshold.
     #[arg(
         long,
         hide_short_help = true,
@@ -195,6 +200,21 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     force_allow_implicit: bool,
+
+    /// Output pileup counts for only sequence motifs provided. The first argument should be the
+    /// sequence motif and the second argument is the 0-based offset to the base to pileup
+    /// base modification counts for. For example: --motif CGCG 0 indicates to pileup counts
+    /// for the first C on the top strand and the last C (complement to G) on
+    /// the bottom strand. The --cpg argument is short hand for --motif CG 0.
+    ///
+    /// This argument can be passed multiple times. When more than 1 motif is used,
+    /// the resulting output BED file will have indicate the motif in the "name"
+    /// field as <mod_code>,<motif>,<offset>. For example, given `--motif CGCG 2 --motif CG 0`
+    /// there will be output lines with name fields such as "m,CG,0" and "m,CGCG,2". To
+    /// use this option with `--combine-strands` all motifs must be reverse-complement
+    /// palindromic or an error will be raised.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
+    motif: Option<Vec<String>>,
     /// Only output counts at CpG motifs. Requires a reference sequence to be
     /// provided.
     #[arg(long, requires = "reference_fasta", default_value_t = false)]
@@ -218,7 +238,7 @@ pub struct ModBamPileup {
     #[arg(
     long,
     requires = "reference_fasta",
-    conflicts_with_all = ["combine_mods", "cpg", "combine_strands", "ignore"],
+    conflicts_with_all = ["combine_mods", "cpg", "combine_strands", "ignore", "motif"],
     )]
     preset: Option<Presets>,
     /// Combine base modification calls, all counts of modified bases are summed together. See
@@ -232,7 +252,7 @@ pub struct ModBamPileup {
     combine_mods: bool,
     /// When performing CpG analysis, sum the counts from the positive and
     /// negative strands into the counts for the positive strand.
-    #[arg(long, requires = "cpg", default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     combine_strands: bool,
     /// Discard base modification calls that are this many bases from the start or the end
     /// of the read. For example, a value of 10 will require that the base modification is
@@ -374,9 +394,13 @@ impl ModBamPileup {
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")
         }
+        if self.combine_strands && !(self.cpg || self.motif.is_some()) {
+            bail!("need to specify either --motif or --cpg to combine strands")
+        }
         let (pileup_options, combine_strands, threshold_collapse_method) =
             match self.preset {
                 Some(Presets::traditional) => {
+                    // TODO need to update this for next release
                     info!("ignoring mod code {}", ModCode::h.char());
                     info!(
                         "NOTICE, in the next version of modkit the 'traditional' preset \
@@ -413,9 +437,76 @@ impl ModBamPileup {
                 }
             };
 
+        // motif handling
+        let regex_motifs = if let Some(raw_motif_parts) = &self.motif {
+            if self.preset.is_some() {
+                bail!("cannot use presets and motifs together")
+            }
+            if raw_motif_parts.len() % 2 != 0 {
+                bail!("illegal number of parts for motif")
+            }
+            if raw_motif_parts
+                .chunks(2)
+                .map(|chunk| (&chunk[0], &chunk[1]))
+                .counts()
+                .values()
+                .max()
+                .unwrap_or(&1)
+                > &1
+            {
+                bail!("cannot have the same motif more than once")
+            }
+            let mut raw_motif_parts = raw_motif_parts.clone();
+            if self.cpg {
+                if raw_motif_parts.chunks(2).any(|motif| motif == ["CG", "0"]) {
+                    info!("CG 0 motif already, don't need --cpg and --motif CG 0, ignoring --cpg");
+                } else {
+                    info!("--cpg flag received, adding CG, 0 to motifs");
+                    raw_motif_parts.extend_from_slice(&[
+                        "CG".to_string(),
+                        "0".to_string(),
+                    ]);
+                }
+            }
+
+            let motifs = raw_motif_parts
+                .chunks(2)
+                .map(|c| {
+                    let motif = &c[0];
+                    let focus_base = &c[1];
+                    focus_base
+                        .parse::<usize>()
+                        .map_err(|e| {
+                            anyhow!(
+                                "couldn't parse focus base, {}",
+                                e.to_string()
+                            )
+                        })
+                        .and_then(|focus_base| {
+                            RegexMotif::parse_string(motif.as_str(), focus_base)
+                        })
+                })
+                .collect::<Result<Vec<RegexMotif>, anyhow::Error>>()?;
+            Some(motifs)
+        } else if self.preset == Some(Presets::traditional) || self.cpg {
+            info!("filtering to only CpG motifs");
+            Some(vec![RegexMotif::parse_string("CG", 0).unwrap()])
+        } else {
+            None
+        };
+
         // setup the writer here so we fail before doing any work (if there are problems).
         let out_fp_str = self.out_bed.clone();
-        let mut writer: Box<dyn OutWriter<ModBasePileup>> =
+        let motif_labels = regex_motifs
+            .as_ref()
+            .map(|regex_motifs| {
+                regex_motifs
+                    .iter()
+                    .map(|mot| format!("{}", mot))
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or(Vec::new());
+        let mut writer: Box<dyn PileupWriter<ModBasePileup>> =
             match (self.bedgraph, partition_tags.is_some()) {
                 (true, _) => Box::new(BedGraphWriter::new(
                     &out_fp_str,
@@ -441,11 +532,67 @@ impl ModBamPileup {
                 },
             };
 
-        // start the actual work here
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()
             .with_context(|| "failed to make threadpool")?;
+        let (motif_locations, tids) = if let Some(regex_motifs) = regex_motifs {
+            let fasta_fp = self
+                .reference_fasta
+                .as_ref()
+                .ok_or(anyhow!("reference fasta is required for using --motif or --cpg options"))?;
+            if combine_strands {
+                if regex_motifs.iter().any(|rm| !rm.is_palendrome()) {
+                    bail!("cannot combine strands with a motif that is not a palindrome")
+                }
+                debug!("combining + and - strand counts");
+            }
+            let names_to_tid = tids
+                .iter()
+                .map(|target| (target.name.as_str(), target.tid))
+                .collect::<HashMap<&str, u32>>();
+            let master_progress = MultiProgress::new();
+            if self.suppress_progress {
+                master_progress
+                    .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+            }
+            let masked_seqs_to_tids = get_masked_sequences(
+                fasta_fp,
+                &names_to_tid,
+                self.mask,
+                &master_progress,
+            )?;
+            let motif_locations = pool.install(|| {
+                regex_motifs
+                    .into_par_iter()
+                    .map(|regex_motif| {
+                        MotifLocations::from_sequences(
+                            regex_motif,
+                            position_filter.as_ref(),
+                            &masked_seqs_to_tids,
+                            &master_progress,
+                        )
+                    })
+                    .collect::<anyhow::Result<Vec<MotifLocations>>>()
+            })?;
+            let targets_with_hits = motif_locations
+                .iter()
+                .flat_map(|ml| ml.references_with_hits())
+                .collect::<FxHashSet<u32>>();
+            let filtered_tids = tids
+                .into_iter()
+                .filter(|ref_record| {
+                    targets_with_hits.contains(&ref_record.tid)
+                })
+                .collect::<Vec<ReferenceRecord>>();
+            // wrap in struct to make lookups easier later
+            let motif_locations = MultipleMotifLocations::new(motif_locations);
+            (Some(motif_locations), filtered_tids)
+        } else {
+            (None, tids)
+        };
+
+        // start the actual work here
         let threshold_caller =
             if let Some(raw_threshold) = &self.filter_threshold {
                 parse_thresholds(raw_threshold, per_mod_thresholds)?
@@ -500,42 +647,6 @@ impl ModBamPileup {
             }
         }
 
-        let use_cpg_motifs = self.cpg
-            || self
-                .preset
-                .map(|preset| match preset {
-                    Presets::traditional => true,
-                })
-                .unwrap_or(false);
-        let (motif_locations, tids) = if use_cpg_motifs {
-            let fasta_fp = self
-                .reference_fasta
-                .as_ref()
-                .ok_or(anyhow!("reference fasta is required for CpG"))?;
-            let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
-            debug!("filtering output to only CpG motifs");
-            if combine_strands {
-                debug!("combining + and - strand counts");
-            }
-            let names_to_tid = tids
-                .iter()
-                .map(|target| (target.name.as_str(), target.tid))
-                .collect::<HashMap<&str, u32>>();
-            let motif_locations = pool.install(|| {
-                MotifLocations::from_fasta(
-                    fasta_fp,
-                    regex_motif,
-                    &names_to_tid,
-                    self.mask,
-                    position_filter.as_ref(),
-                )
-            })?;
-            let filtered_tids = motif_locations.filter_reference_records(tids);
-            (Some(motif_locations), filtered_tids)
-        } else {
-            (None, tids)
-        };
-
         let (snd, rx) = bounded(1_000); // todo figure out sane default for this?
         let in_bam_fp = self.in_bam.clone();
         let interval_size = self.interval_size;
@@ -561,7 +672,7 @@ impl ModBamPileup {
         std::thread::spawn(move || {
             pool.install(|| {
                 for target in tids {
-                    let intervals = IntervalChunks::new(
+                    let intervals = IntervalChunks::new_with_multiple_motifs(
                         target.start,
                         target.length,
                         interval_size,
@@ -652,7 +763,8 @@ impl ModBamPileup {
                     processed_reads
                         .inc(mod_base_pileup.processed_records as u64);
                     skipped_reads.inc(mod_base_pileup.skipped_records as u64);
-                    let rows_written = writer.write(mod_base_pileup)?;
+                    let rows_written =
+                        writer.write(mod_base_pileup, &motif_labels)?;
                     write_progress.inc(rows_written);
                 }
                 Err(message) => {
