@@ -314,22 +314,25 @@ pub fn motif_bed(
 
 pub struct MultipleMotifLocations {
     pub(crate) motif_locations: Vec<MotifLocations>,
-    /// mapping of target to mapping of position to vector of which motif locations
-    /// (in `self.motif_locations`) have a hit at that position
+    /// mapping of target_id to mapping of sequence position to vector indices into
+    /// `self.motif_locations` that have a hit at that position and strand
     position_lookup: FxHashMap<u32, FxHashMap<(u32, Strand), Vec<usize>>>,
 }
 
 impl MultipleMotifLocations {
     pub fn new(motif_locations: Vec<MotifLocations>) -> Self {
+        // see docs above for what position_lookup is
         let position_lookup = motif_locations.iter().enumerate().fold(
             FxHashMap::<u32, FxHashMap<(u32, Strand), Vec<usize>>>::default(),
             |mut acc, (idx, mls)| {
                 mls.tid_to_motif_positions.iter().for_each(
                     |(target_id, positions)| {
+                        // get or initialize sequence position to indices
                         let positions_for_target = acc
                             .entry(*target_id)
                             .or_insert(FxHashMap::default());
                         positions.iter().for_each(|(position, strand_rule)| {
+                            // add the idx (index into motif_locations) to the mapping
                             match strand_rule {
                                 StrandRule::Positive => {
                                     let k = (*position, Strand::Positive);

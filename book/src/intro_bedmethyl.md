@@ -74,11 +74,12 @@ By default, `modkit` will output a BED row for all genomic positions where
 there is at least one base modification in the input modBAM. We define a motif
 as a short DNA sequence potentially containing [degenerate
 codes](https://en.wikipedia.org/wiki/Nucleic_acid_notation). To ease downstream
-the `--motif <Motif> <offset, 0-based>` option can be used to pre-filter and
-annotate the bedMethyl rows. The `--cpg` flag is a alias for `--motif CG 0`
-where the motif is `CG` and the offset is `0`, meaning the first `C` in the
-motif on the top strand and the `C` (complement to `G`) on the bottom strand.
-Another example may be `--motif GATC 1`, denoting the `A` in the second
+analysis, the `--motif <Motif> <offset, 0-based>` option can be used to
+pre-filter and annotate the bedMethyl rows. The `--cpg` flag is a alias for
+`--motif CG 0` where the sequence motif is `CG` and the offset is `0`, meaning
+pileup base modification counts for the first `C` in the motif on the top
+strand the second `C` (complement to `G`) on the bottom strand. Another example
+may be `--motif GATC 1`, signaling to pileup counts for the `A` in the second
 position on the top strand and the `A` in the third position on the bottom
 strand.
 
@@ -89,7 +90,7 @@ see lines such as:
 
 ```text
 oligo_741_adapters  39 40 m,CG,0   4	-	39	40	255,0,0	4 100.00 4 0 0 0 0 0 0
-oligo_741_adapters	39 40 m,CGCG,2 4	-	39	40	255,0,0	4 100.00 4 0 0 0 0 0 0
+oligo_741_adapters  39 40 m,CGCG,2 4	-	39	40	255,0,0	4 100.00 4 0 0 0 0 0 0
 
 ```
 
@@ -156,26 +157,26 @@ CG->CH substitution such that no modification call was produced by the basecalle
 
 ### bedMethyl column descriptions.
 
-| column | name                         | description                                                                    | type  |
-|--------|------------------------------|--------------------------------------------------------------------------------|-------|
-| 1      | chrom                        | name of reference sequence from BAM header                                     | str   |
-| 2      | start position               | 0-based start position                                                         | int   |
-| 3      | end position                 | 0-based exclusive end position                                                 | int   |
-| 4      | modified base code, or motif | single letter code for modified base (when <2 motifs used)                     | str   |
-| 5      | score                        | Equal to N<sub>valid_cov</sub>.                                                | int   |
-| 6      | strand                       | '+' for positive strand '-' for negative strand, '.' when strands are combined | str   |
-| 7      | start position               | included for compatibility                                                     | int   |
-| 8      | end position                 | included for compatibility                                                     | int   |
-| 9      | color                        | included for compatibility, always 255,0,0                                     | str   |
-| 10     | N<sub>valid_cov</sub>        | See definitions above.                                                         | int   |
-| 11     | fraction modified            | N<sub>mod</sub> / N<sub>valid_cov</sub>                                        | float |
-| 12     | N<sub>mod</sub>              | See definitions above.                                                         | int   |
-| 13     | N<sub>canonical</sub>        | See definitions above.                                                         | int   |
-| 14     | N<sub>other_mod</sub>        | See definitions above.                                                         | int   |
-| 15     | N<sub>delete</sub>           | See definitions above.                                                         | int   |
-| 16     | N<sub>fail</sub>             | See definitions above.                                                         | int   |
-| 17     | N<sub>diff</sub>             | See definitions above.                                                         | int   |
-| 18     | N<sub>nocall</sub>           | See definitions above.                                                         | int   |
+| column | name                         | description                                                                       | type  |
+|--------|------------------------------|-----------------------------------------------------------------------------------|-------|
+| 1      | chrom                        | name of reference sequence from BAM header                                        | str   |
+| 2      | start position               | 0-based start position                                                            | int   |
+| 3      | end position                 | 0-based exclusive end position                                                    | int   |
+| 4      | modified base code and motif | single letter code for modified base and motif when more than one motifs are used | str   |
+| 5      | score                        | Equal to N<sub>valid_cov</sub>.                                                   | int   |
+| 6      | strand                       | '+' for positive strand '-' for negative strand, '.' when strands are combined    | str   |
+| 7      | start position               | included for compatibility                                                        | int   |
+| 8      | end position                 | included for compatibility                                                        | int   |
+| 9      | color                        | included for compatibility, always 255,0,0                                        | str   |
+| 10     | N<sub>valid_cov</sub>        | See definitions above.                                                            | int   |
+| 11     | fraction modified            | N<sub>mod</sub> / N<sub>valid_cov</sub>                                           | float |
+| 12     | N<sub>mod</sub>              | See definitions above.                                                            | int   |
+| 13     | N<sub>canonical</sub>        | See definitions above.                                                            | int   |
+| 14     | N<sub>other_mod</sub>        | See definitions above.                                                            | int   |
+| 15     | N<sub>delete</sub>           | See definitions above.                                                            | int   |
+| 16     | N<sub>fail</sub>             | See definitions above.                                                            | int   |
+| 17     | N<sub>diff</sub>             | See definitions above.                                                            | int   |
+| 18     | N<sub>nocall</sub>           | See definitions above.                                                            | int   |
 
 ## Performance considerations
 

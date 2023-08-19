@@ -64,25 +64,11 @@ impl IntervalChunks {
             })
             .unwrap_or_else(|| FxHashMap::default());
 
-        // let (motif_positions, motif_length) = motif_locations
-        //     .map(|locations| {
-        //         (
-        //             locations
-        //                 .get_locations_unchecked(reference_id)
-        //                 .keys()
-        //                 .copied()
-        //                 .collect(),
-        //             locations.motif_length() as u32,
-        //         )
-        //     })
-        //     .unwrap_or((HashSet::new(), 0u32));
-
         Self {
             seq_len: start + seq_len,
             chunk_size,
             curr: start,
             motif_positions,
-            // motif_length,
         }
     }
 }
@@ -99,9 +85,6 @@ impl Iterator for IntervalChunks {
             while let Some(&len) = self.motif_positions.get(&(end - 1)) {
                 end += len;
             }
-            // while self.motif_positions.contains(&(end - 1)) {
-            //     end += self.motif_length;
-            // }
             self.curr = end;
             Some((start, end))
         }

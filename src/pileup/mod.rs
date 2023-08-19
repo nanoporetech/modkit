@@ -498,8 +498,8 @@ fn combine_strand_features(
             Strand::Positive,
         );
         if motifs_at_position.is_none() {
-            // this is an error because we should have already because we should
-            // only be looking at positions with positive hits
+            // this is an error because we should only be looking at positions
+            // with positive hits
             error!("no motifs at position {positive_strand_pos}?");
             continue;
         }
@@ -847,7 +847,7 @@ pub fn process_region<T: AsRef<Path>>(
         motif_positions.as_ref(),
         position_filter,
     );
-    let mut dupe_reads = HashMap::new();
+    let mut dupe_reads = HashMap::new(); // optimize
     for pileup in pileup_iter {
         let pos = pileup.bam_pileup.pos();
 
@@ -859,7 +859,7 @@ pub fn process_region<T: AsRef<Path>>(
         let mut neg_strand_observed_mod_codes = HashMap::new();
 
         // used for warning about dupes, could make this a bloom filter for better perf?
-        let mut observed_read_ids_to_pos = HashMap::new();
+        let mut observed_read_ids_to_pos = HashMap::new(); // optimize
 
         let alignment_iter =
             pileup.bam_pileup.alignments().filter(|alignment| {
@@ -915,6 +915,7 @@ pub fn process_region<T: AsRef<Path>>(
                 &mut neg_strand_mod_codes_for_key,
             );
 
+            // optimize, could use a smarter string implementation here
             if let Ok(read_name) = get_query_name_string(&record) {
                 (*observed_read_ids_to_pos
                     .entry(read_name)

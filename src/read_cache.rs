@@ -349,6 +349,8 @@ impl<'a> ReadCache<'a> {
         pos_strand_mod_codes: &mut HashSet<ModCode>,
         neg_strand_mod_codes: &mut HashSet<ModCode>,
     ) {
+        // optimize, could use a better implementation here - pass the read_id
+        // from the calling function perhaps
         let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
         if self.skip_set.contains(&read_id) {
             return;
