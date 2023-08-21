@@ -552,32 +552,10 @@ impl ReadBaseModProfile {
         seq_pos_base_mod_probs: &SeqPosBaseModProbs,
         collapse_method: Option<&CollapseMethod>,
     ) -> Vec<ModProfile> {
-        let mod_codes = seq_pos_base_mod_probs
-            .pos_to_base_mod_probs
-            .values()
-            .flat_map(|base_mod_probs| {
-                base_mod_probs
-                    .iter_probs()
-                    .map(|(raw_mod_code, _)| *raw_mod_code)
-                    .collect::<HashSet<char>>()
-            })
-            .collect::<HashSet<char>>()
-            .into_iter()
-            .filter(|raw_mod_code| {
-                collapse_method
-                    .map(|method| match method {
-                        CollapseMethod::ReDistribute(code_to_remove)
-                        | CollapseMethod::ReNormalize(code_to_remove) => {
-                            !(raw_mod_code == code_to_remove)
-                        }
-                        CollapseMethod::Convert { from, to: _ } => {
-                            !from.contains(raw_mod_code)
-                        }
-                    })
-                    .unwrap_or(true)
-            })
-            .sorted()
-            .collect::<Vec<char>>();
+        let codes_to_remove = collapse_method
+            .map(|method| method.get_codes_to_remove())
+            .unwrap_or_else(|| HashSet::<char>::new());
+        let mod_codes = seq_pos_base_mod_probs.get_mod_codes(&codes_to_remove);
         mod_codes
             .into_iter()
             .map(|raw_mod_code| {

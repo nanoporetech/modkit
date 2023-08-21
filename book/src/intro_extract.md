@@ -32,7 +32,16 @@ or `stdout` and filter the columns before writing to disk.
 | 14     | ref_kmer              | reference 5-mer sequence context (center base is aligned base), '.' if unmapped | str  |
 | 15     | query_kmer            | read 5-mer sequence context (center base is aligned base)                       | str  |
 | 16     | canonical_base        | canonical base from the query sequence, from the MM tag                         | str  |
-| 16     | modified_primary_base | primary sequence base with the modification                                     | str  |
+| 17     | modified_primary_base | primary sequence base with the modification                                     | str  |
+| 17     | inferred              | whether the base modification call is implicit canonical                        | str  |
+
+
+## Note on implicit base modification calls.
+The `.` MM flag indicates that primary sequence bases without an associated base modification probability 
+should be inferred to be canonical. When this flag is encountered in a modBAM, by default, `modkit extract` will 
+output rows with the `inferred` column set to `true` and a `mod_qual` value of `0.0` for the base modifications
+called on that read. For example, if you have a `A+a.` MM tag, and there are skipped `A` bases in the read there
+will be rows where the `a` `mod_qual` is 0.0.
 
 ## Example usages:
 

@@ -56,7 +56,8 @@ fn check_mod_profiles_same(
             if let Some(obs) = output_profile.get(read) {
                 if obs != profile {
                     return Err(anyhow!(
-                        "read {read}'s profile is different expected"
+                        "read {read}'s profile is different expected, test fp: {:?}, expected fp {:?}",
+                        &output_fp, &expected_fp
                     ));
                 }
             } else {

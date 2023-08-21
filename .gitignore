@@ -18,3 +18,4 @@ book/book
 book/book/*
 scripts
 scripts/*
+*.bak
