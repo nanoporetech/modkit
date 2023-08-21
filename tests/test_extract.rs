@@ -317,3 +317,23 @@ fn test_extract_collapse_correct_output() {
         .context("test_extract_collapse_correct_output, output didn't match")
         .unwrap();
 }
+
+#[test]
+fn test_extract_implicit_mod_calls() {
+    let out_fp =
+        std::env::temp_dir().join("test_extract_implicit_mod_calls.tsv");
+    run_modkit(&[
+        "extract",
+        "tests/resources/implicit_mod_tags.bam",
+        out_fp.to_str().unwrap(),
+        "--force",
+    ])
+    .unwrap();
+
+    check_mod_profiles_same(
+        &out_fp,
+        &Path::new("tests/resources/extract_with_implicit.tsv").to_path_buf(),
+    )
+    .context("test_extract_implicit_mod_calls, output didn't match")
+    .unwrap();
+}

@@ -1206,8 +1206,11 @@ pub fn base_mod_probs_from_record(
 
 #[derive(new, Debug)]
 pub struct EdgeFilter {
-    edge_filter_start: usize,
-    edge_filter_end: usize,
+    // TODO(arand) in the CLIs only one option is allowed, i.e.
+    // both `edge_filter_start` and `edge_filter_end` will be the
+    // same. If this changes make sure there are suitable tests.
+    pub(crate) edge_filter_start: usize,
+    pub(crate) edge_filter_end: usize,
 }
 
 #[cfg(test)]
@@ -1968,6 +1971,7 @@ mod mod_bam_tests {
 
         // todo edge_filter_start larger than read length
         //  edge_filter_end larger than read length
+        //  asymmetric edge filter with reverse record
     }
 
     #[test]
