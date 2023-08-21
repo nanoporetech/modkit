@@ -103,6 +103,14 @@ pub struct ExtractMods {
         hide_short_help = true
     )]
     interval_size: u32,
+
+    /// Ignore implicitly canonical base modification calls. When the `.`
+    /// flag is used in the MM tag, this implies that bases missing a base
+    /// modification probability are to be assumed canonical. Set this flag
+    /// to omit those base modifications from the output. For additional
+    /// details see the SAM spec: https://samtools.github.io/hts-specs/SAMtags.pdf.
+    #[arg(long, hide_short_help = true)]
+    ignore_implicit: bool,
 }
 
 type ReferenceAndIntervals = Vec<(ReferenceRecord, IntervalChunks)>;
@@ -470,9 +478,15 @@ impl ExtractMods {
                 }
             };
 
+        let remove_inferred = self.ignore_implicit;
         for result in rcv {
             match result {
                 Ok(mod_profile) => {
+                    let mod_profile = if remove_inferred {
+                        mod_profile.remove_inferred()
+                    } else {
+                        mod_profile
+                    };
                     n_used.inc(mod_profile.num_reads() as u64);
                     n_failed.inc(mod_profile.num_fails as u64);
                     n_skipped.inc(mod_profile.num_skips as u64);

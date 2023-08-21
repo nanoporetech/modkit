@@ -773,6 +773,12 @@ impl ReadBaseModProfile {
             profile: mod_profiles,
         })
     }
+
+    pub(crate) fn remove_inferred(self) -> Self {
+        let profile =
+            self.profile.into_iter().filter(|p| !p.inferred).collect();
+        Self::new(self.record_name, self.chrom_id, profile)
+    }
 }
 
 #[derive(new, Debug)]
@@ -817,6 +823,15 @@ impl ReadsBaseModProfile {
             }
         }
         Ok((sc_start.unwrap_or(0), sc_end.unwrap_or(0)))
+    }
+
+    pub(crate) fn remove_inferred(self) -> Self {
+        let profiles = self
+            .profiles
+            .into_iter()
+            .map(|p| p.remove_inferred())
+            .collect();
+        Self::new(profiles, self.num_skips, self.num_fails)
     }
 }
 
