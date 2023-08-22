@@ -216,6 +216,18 @@ impl CollapseMethod {
             _ => Err(InputError::new(&format!("bad collapse method: {}", raw))),
         }
     }
+
+    pub(crate) fn get_codes_to_remove(&self) -> HashSet<char> {
+        match self {
+            CollapseMethod::ReNormalize(raw_code)
+            | CollapseMethod::ReDistribute(raw_code) => {
+                [*raw_code].into_iter().collect()
+            }
+            CollapseMethod::Convert { from, to: _ } => {
+                from.iter().copied().collect()
+            }
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -788,6 +800,62 @@ impl SeqPosBaseModProbs {
             Some(Self::new(probs, self.skip_mode))
         }
     }
+
+    pub(crate) fn get_mod_codes(
+        &self,
+        codes_to_remove: &HashSet<char>,
+    ) -> Vec<char> {
+        self.pos_to_base_mod_probs
+            .values()
+            .flat_map(|base_mod_probs| {
+                base_mod_probs
+                    .iter_probs()
+                    .map(|(raw_mod_code, _)| *raw_mod_code)
+                    .collect::<HashSet<char>>()
+            })
+            .filter(|raw_base| !codes_to_remove.contains(raw_base))
+            .collect::<HashSet<char>>()
+            .into_iter()
+            .sorted()
+            .collect::<Vec<char>>()
+    }
+
+    pub(crate) fn add_implicit_mod_calls(
+        self,
+        forward_sequence: &str,
+        primary_base: char,
+        codes_to_remove: &HashSet<char>,
+        edge_filter: &EdgeFilter,
+    ) -> Self {
+        if self.skip_mode == SkipMode::ProbModified
+            || self.skip_mode == SkipMode::ImplicitProbModified
+        {
+            let all_mod_codes = self.get_mod_codes(codes_to_remove);
+            let probs = forward_sequence
+                .chars()
+                .enumerate()
+                .filter(|(pos, base)| {
+                    let base_matches = *base == primary_base;
+                    let after_trim_start =
+                        *pos >= edge_filter.edge_filter_start;
+                    let before_trim_end = *pos < edge_filter.edge_filter_end;
+                    base_matches && after_trim_start && before_trim_end
+                })
+                .fold(self.pos_to_base_mod_probs, |mut acc, (pos, _)| {
+                    acc.entry(pos).or_insert_with(|| {
+                        let probs = all_mod_codes
+                            .iter()
+                            .map(|&code| (code, 0f32))
+                            .collect();
+                        BaseModProbs { probs }
+                    });
+                    acc
+                });
+            Self::new(probs, SkipMode::Ambiguous)
+        } else {
+            self
+        }
+    }
 }
 
 // todo(arand) remove, or put behind cfg(test)
@@ -1206,8 +1274,11 @@ pub fn base_mod_probs_from_record(
 
 #[derive(new, Debug)]
 pub struct EdgeFilter {
-    edge_filter_start: usize,
-    edge_filter_end: usize,
+    // TODO(arand) in the CLIs only one option is allowed, i.e.
+    // both `edge_filter_start` and `edge_filter_end` will be the
+    // same. If this changes make sure there are suitable tests.
+    pub(crate) edge_filter_start: usize,
+    pub(crate) edge_filter_end: usize,
 }
 
 #[cfg(test)]
@@ -1968,6 +2039,7 @@ mod mod_bam_tests {
 
         // todo edge_filter_start larger than read length
         //  edge_filter_end larger than read length
+        //  asymmetric edge filter with reverse record
     }
 
     #[test]

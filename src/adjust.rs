@@ -1,3 +1,10 @@
+use std::collections::HashSet;
+
+use anyhow::anyhow;
+use log::{debug, info};
+use rust_htslib::bam::record::{Aux, AuxArray};
+use rust_htslib::bam::{self, Read};
+
 use crate::errs::{InputError, RunError};
 use crate::mod_bam::{
     collapse_mod_probs, format_mm_ml_tag, CollapseMethod, EdgeFilter,
@@ -5,11 +12,10 @@ use crate::mod_bam::{
 };
 use crate::mod_base_code::DnaBase;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{get_query_name_string, get_spinner, record_is_secondary};
-use anyhow::anyhow;
-use log::{debug, info};
-use rust_htslib::bam::record::{Aux, AuxArray};
-use rust_htslib::bam::{self, Read};
+use crate::util::{
+    get_forward_sequence, get_query_name_string, get_spinner,
+    record_is_secondary,
+};
 
 pub fn record_is_valid(record: &bam::Record) -> Result<(), RunError> {
     if record_is_secondary(&record) {
@@ -43,9 +49,21 @@ pub fn adjust_mod_probs(
         let converter = converters.get(&base).unwrap();
         let filtered_seq_pos_mod_probs = if let Some(edge_filter) = edge_filter
         {
+            let forward_sequence = get_forward_sequence(&record)?;
             match seq_pos_mod_probs
                 .edge_filter_positions(edge_filter, record.seq_len())
-            {
+                .map(|mod_probs| {
+                    let codes_to_remove = methods
+                        .iter()
+                        .flat_map(|method| method.get_codes_to_remove())
+                        .collect::<HashSet<char>>();
+                    mod_probs.add_implicit_mod_calls(
+                        &forward_sequence,
+                        base,
+                        &codes_to_remove,
+                        edge_filter,
+                    )
+                }) {
                 Some(x) => Some(x),
                 None => {
                     debug!("all base mod positions for record {record_name} and canonical \

@@ -1,6 +1,6 @@
 use crate::mod_bam::{
     filter_records_iter, BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
-    ModBaseInfo, TrackingModRecordIter,
+    ModBaseInfo, SeqPosBaseModProbs, SkipMode, TrackingModRecordIter,
 };
 use crate::mod_base_code::DnaBase;
 use crate::monoid::Moniod;
@@ -17,6 +17,7 @@ use crate::errs::RunError;
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
 use crate::record_processor::{RecordProcessor, WithRecords};
+use crate::util;
 use crate::util::{
     get_aligned_pairs_forward, get_master_progress_bar, get_query_name_string,
     get_reference_mod_strand, get_spinner, Strand,
@@ -343,6 +344,7 @@ pub(crate) struct ModProfile {
     pub(crate) mod_strand: Strand,
     pub(crate) alignment_strand: Option<Strand>,
     canonical_base: char,
+    inferred: bool,
 }
 
 impl ModProfile {
@@ -366,7 +368,8 @@ impl ModProfile {
             ref_kmer{tab}\
             query_kmer{tab}\
             canonical_base{tab}\
-            modified_primary_base"
+            modified_primary_base{tab}\
+            inferred"
         )
     }
 
@@ -423,6 +426,7 @@ impl ModProfile {
             {}{sep}\
             {}{sep}\
             {}{sep}\
+            {}{sep}\
             {}\n",
             self.query_position,
             self.ref_position.unwrap_or(-1),
@@ -441,6 +445,7 @@ impl ModProfile {
             query_kmer,
             self.canonical_base,
             modified_primary_base,
+            self.inferred,
         )
     }
 }
@@ -453,6 +458,126 @@ pub(crate) struct ReadBaseModProfile {
 }
 
 impl ReadBaseModProfile {
+    fn get_fivemer_from_seq(
+        record: &bam::Record,
+        forward_position: usize,
+        mod_strand: Strand,
+    ) -> [u8; 5] {
+        let seq = if record.is_reverse() {
+            revcomp(record.seq().as_bytes())
+        } else {
+            record.seq().as_bytes()
+        };
+        let missing = 45;
+        let get_back_base_safe = |i| -> Option<u8> {
+            forward_position
+                .checked_sub(i)
+                .and_then(|idx| seq.get(idx).map(|b| *b))
+        };
+        let fivemer = [
+            get_back_base_safe(2),
+            get_back_base_safe(1),
+            seq.get(forward_position).map(|b| *b),
+            seq.get(forward_position + 1).map(|b| *b),
+            seq.get(forward_position + 2).map(|b| *b),
+        ];
+
+        let fivemer = match mod_strand {
+            Strand::Positive => fivemer,
+            Strand::Negative => {
+                let mut comp = fivemer.map(|b| b.map(complement));
+                comp.reverse();
+                comp
+            }
+        };
+
+        fivemer.map(|b| b.unwrap_or(missing))
+    }
+
+    #[inline]
+    fn base_mod_probs_to_mod_profile(
+        query_pos_forward: usize,
+        primary_base: char,
+        mod_strand: Strand,
+        base_mod_probs: BaseModProbs,
+        collapse_method: Option<&CollapseMethod>,
+        base_qual: u8,
+        fivemer: [u8; 5],
+        read_length: usize,
+        ref_pos: Option<i64>,
+        alignment_strand: Option<Strand>,
+        num_clip_start: usize,
+        num_clip_end: usize,
+    ) -> Vec<ModProfile> {
+        let probs = if let Some(method) = collapse_method {
+            base_mod_probs.into_collapsed(method)
+        } else {
+            base_mod_probs
+        };
+
+        probs
+            .iter_probs()
+            .map(|(raw_mod_code, prob)| {
+                ModProfile::new(
+                    query_pos_forward,
+                    ref_pos,
+                    num_clip_start,
+                    num_clip_end,
+                    read_length,
+                    *prob,
+                    *raw_mod_code,
+                    base_qual,
+                    fivemer,
+                    mod_strand,
+                    alignment_strand,
+                    primary_base,
+                    false,
+                )
+            })
+            .collect::<Vec<ModProfile>>()
+    }
+
+    #[inline]
+    fn add_implicit_mod_profile(
+        query_pos_forward: usize,
+        ref_pos: Option<i64>,
+        num_clip_start: usize,
+        num_clip_end: usize,
+        read_length: usize,
+        base_qual: u8,
+        fivemer: [u8; 5],
+        mod_strand: Strand,
+        alignment_strand: Option<Strand>,
+        primary_base: char,
+        seq_pos_base_mod_probs: &SeqPosBaseModProbs,
+        collapse_method: Option<&CollapseMethod>,
+    ) -> Vec<ModProfile> {
+        let codes_to_remove = collapse_method
+            .map(|method| method.get_codes_to_remove())
+            .unwrap_or_else(|| HashSet::<char>::new());
+        let mod_codes = seq_pos_base_mod_probs.get_mod_codes(&codes_to_remove);
+        mod_codes
+            .into_iter()
+            .map(|raw_mod_code| {
+                ModProfile::new(
+                    query_pos_forward,
+                    ref_pos,
+                    num_clip_start,
+                    num_clip_end,
+                    read_length,
+                    0f32,
+                    raw_mod_code,
+                    base_qual,
+                    fivemer,
+                    mod_strand,
+                    alignment_strand,
+                    primary_base,
+                    true,
+                )
+            })
+            .collect()
+    }
+
     pub(crate) fn process_record(
         record: &bam::Record,
         record_name: &str,
@@ -516,7 +641,7 @@ impl ReadBaseModProfile {
                                             (qpos_adj, (qpos, r_pos))
                                         })
                                 } else {
-                                    Some((qpos as usize, (qpos, r_pos)))
+                                    Some((qpos, (qpos, r_pos)))
                                 }
                             }
                         }
@@ -532,6 +657,13 @@ impl ReadBaseModProfile {
         } else {
             record.qual().to_vec()
         };
+        let forward_sequence = util::get_forward_sequence(&record)?
+            .char_indices()
+            .collect::<Vec<(usize, char)>>();
+        let (trim_start, trim_end) = edge_filter
+            .map(|ef| (ef.edge_filter_start, read_length - ef.edge_filter_end))
+            .unwrap_or((0, read_length));
+
         let mut mod_profiles = mod_probs_iter
             .filter_map(|(primary_base, mod_strand, seq_pos_base_mod_probs)| {
                 let filtered = if let Some(edge_filter) = edge_filter {
@@ -548,76 +680,61 @@ impl ReadBaseModProfile {
                 }
                 filtered.map(|seq_pos_base_mod_probs| (primary_base, mod_strand, seq_pos_base_mod_probs))
             })
-            .flat_map(|(primary_base, mod_strand, seq_pos_base_mod_probs)| {
-                seq_pos_base_mod_probs
-                    .pos_to_base_mod_probs
-                    .into_par_iter()
-                    .filter_map(|(q_pos_forward, probs)| {
-                        let probs = if let Some(method) = collapse_method {
-                            probs.into_collapsed(method)
-                        } else {
-                            probs
-                        };
-                        let base_qual = match quals.get(q_pos_forward) {
-                            Some(q) => *q,
-                            None => {
-                                error!("didn't find qual!");
-                                0u8
-                            }
-                        };
-                        let fivemer = ReadsBaseModProfile::get_fivemer_from_seq(
-                            &record,
-                            q_pos_forward,
-                            mod_strand,
-                        );
-                        if let Some((_q_pos_aln, ref_pos)) =
-                            forward_query_pos_to_ref_pos.get(&q_pos_forward)
-                        {
-                            let profiles = probs
-                                .iter_probs()
-                                .map(|(raw_mod_code, prob)| {
-                                    ModProfile::new(
-                                        q_pos_forward,
-                                        *ref_pos,
-                                        num_clip_start,
-                                        num_clip_end,
-                                        read_length,
-                                        *prob,
-                                        *raw_mod_code,
-                                        base_qual,
-                                        fivemer,
-                                        mod_strand,
-                                        alignment_strand,
-                                        primary_base,
-                                    )
-                                })
-                                .collect::<Vec<ModProfile>>();
-                            Some(profiles)
-                        } else {
-                            let profiles = probs
-                                .iter_probs()
-                                .map(|(raw_mod_code, prob)| {
-                                    ModProfile::new(
-                                        q_pos_forward,
-                                        None,
-                                        num_clip_start,
-                                        num_clip_end,
-                                        read_length,
-                                        *prob,
-                                        *raw_mod_code,
-                                        base_qual,
-                                        fivemer,
-                                        mod_strand,
-                                        alignment_strand,
-                                        primary_base,
-                                    )
-                                })
-                                .collect::<Vec<ModProfile>>();
-                            Some(profiles)
-                        }
+            .flat_map(|(primary_base, mod_strand, mut seq_pos_base_mod_probs)| {
+                forward_sequence.iter()
+                    .filter(|(pos, b)| {
+                        let base_matches = *b == primary_base;
+                        let after_trim_start = *pos >= trim_start;
+                        let before_trim_end = *pos < trim_end;
+                        base_matches && after_trim_start && before_trim_end
                     })
-                    .flatten()
-                    .collect::<Vec<ModProfile>>()
+                    .filter_map(|(forward_pos, base)| {
+                        let ref_pos = forward_query_pos_to_ref_pos
+                            .get(forward_pos)
+                            .and_then(|(_query_aligned_pos, ref_pos)| *ref_pos);
+                        let fivemer =
+                            Self::get_fivemer_from_seq(&record, *forward_pos, mod_strand);
+                        let base_qual =
+                            quals.get(*forward_pos).map(|q| *q).unwrap_or_else(|| {
+                                error!( "didn't find base quality for position {forward_pos}" );
+                                0u8
+                            });
+
+                        if let Some(base_mod_probs) = seq_pos_base_mod_probs.pos_to_base_mod_probs.remove(forward_pos) {
+                            Some(Self::base_mod_probs_to_mod_profile(
+                                *forward_pos,
+                                *base,
+                                mod_strand,
+                                base_mod_probs,
+                                collapse_method,
+                                base_qual,
+                                fivemer,
+                                read_length,
+                                ref_pos,
+                                alignment_strand,
+                                num_clip_start,
+                                num_clip_end,
+                            ))
+                        } else if
+                        (seq_pos_base_mod_probs.skip_mode == SkipMode::ImplicitProbModified)
+                            || (seq_pos_base_mod_probs.skip_mode == SkipMode::ProbModified) {
+                            Some(Self::add_implicit_mod_profile(
+                                *forward_pos,
+                                ref_pos,
+                                num_clip_start,
+                                num_clip_end,
+                                read_length,
+                                base_qual,
+                                fivemer,
+                                mod_strand,
+                                alignment_strand,
+                                primary_base,
+                                &seq_pos_base_mod_probs,
+                                collapse_method))
+                        } else {
+                            None
+                        }
+                    }).flatten().collect::<Vec<ModProfile>>()
             })
             .collect::<Vec<ModProfile>>();
         mod_profiles.par_sort_by(|a, b| {
@@ -633,6 +750,12 @@ impl ReadBaseModProfile {
             chrom_id: chrom_tid,
             profile: mod_profiles,
         })
+    }
+
+    pub(crate) fn remove_inferred(self) -> Self {
+        let profile =
+            self.profile.into_iter().filter(|p| !p.inferred).collect();
+        Self::new(self.record_name, self.chrom_id, profile)
     }
 }
 
@@ -657,42 +780,6 @@ impl ReadsBaseModProfile {
         fivemer.map(|b| b.unwrap_or(missing))
     }
 
-    fn get_fivemer_from_seq(
-        record: &bam::Record,
-        forward_position: usize,
-        mod_strand: Strand,
-    ) -> [u8; 5] {
-        let seq = if record.is_reverse() {
-            revcomp(record.seq().as_bytes())
-        } else {
-            record.seq().as_bytes()
-        };
-        let missing = 45;
-        let get_back_base_safe = |i| -> Option<u8> {
-            forward_position
-                .checked_sub(i)
-                .and_then(|idx| seq.get(idx).map(|b| *b))
-        };
-        let fivemer = [
-            get_back_base_safe(2),
-            get_back_base_safe(1),
-            seq.get(forward_position).map(|b| *b),
-            seq.get(forward_position + 1).map(|b| *b),
-            seq.get(forward_position + 2).map(|b| *b),
-        ];
-
-        let fivemer = match mod_strand {
-            Strand::Positive => fivemer,
-            Strand::Negative => {
-                let mut comp = fivemer.map(|b| b.map(complement));
-                comp.reverse();
-                comp
-            }
-        };
-
-        fivemer.map(|b| b.unwrap_or(missing))
-    }
-
     fn get_soft_clipped(cigar: &[Cigar]) -> anyhow::Result<(usize, usize)> {
         let mut sc_start = None;
         let mut sc_end = None;
@@ -714,6 +801,15 @@ impl ReadsBaseModProfile {
             }
         }
         Ok((sc_start.unwrap_or(0), sc_end.unwrap_or(0)))
+    }
+
+    pub(crate) fn remove_inferred(self) -> Self {
+        let profiles = self
+            .profiles
+            .into_iter()
+            .map(|p| p.remove_inferred())
+            .collect();
+        Self::new(profiles, self.num_skips, self.num_fails)
     }
 }
 
