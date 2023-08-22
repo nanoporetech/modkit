@@ -217,6 +217,7 @@ impl CollapseMethod {
         }
     }
 
+    // todo(arand) consider making this return an iterator
     pub(crate) fn get_codes_to_remove(&self) -> HashSet<char> {
         match self {
             CollapseMethod::ReNormalize(raw_code)
