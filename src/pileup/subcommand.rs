@@ -207,11 +207,11 @@ pub struct ModBamPileup {
     /// for the first C on the top strand and the last C (complement to G) on
     /// the bottom strand. The --cpg argument is short hand for --motif CG 0.
     ///
-    /// This argument can be passed multiple times. When more than 1 motif is used,
-    /// the resulting output BED file will have indicate the motif in the "name"
+    /// This argument can be passed multiple times. When more than one motif is used,
+    /// the resulting output BED file will indicate the motif in the "name"
     /// field as <mod_code>,<motif>,<offset>. For example, given `--motif CGCG 2 --motif CG 0`
     /// there will be output lines with name fields such as "m,CG,0" and "m,CGCG,2". To
-    /// use this option with `--combine-strands` all motifs must be reverse-complement
+    /// use this option with `--combine-strands`, all motifs must be reverse-complement
     /// palindromic or an error will be raised.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
     motif: Option<Vec<String>>,

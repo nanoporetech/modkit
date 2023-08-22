@@ -173,18 +173,17 @@ Options:
 
       --motif <MOTIF> <MOTIF>
           Output pileup counts for only sequence motifs provided. The first argument should be the
-          sequence motif and the second argument is the 0-based offset to the base to pileup
-          base modification counts for. For example: --motif CGCG 0 indicates to pileup counts 
-          for the first C on the top strand and the last C (complement to G) on
-          the bottom strand. The --cpg argument is short hand for --motif CG 0. 
+          sequence motif and the second argument is the 0-based offset to the base to pileup base
+          modification counts for. For example: --motif CGCG 0 indicates to pileup counts for the
+          first C on the top strand and the last C (complement to G) on the bottom strand. The --cpg
+          argument is short hand for --motif CG 0.
           
-          This argument can be passed multiple times. When more than 1 motif is used, 
-          the resulting output BED file will have indicate the motif in the "name" 
-          field as <mod_code>,<motif>,<offset>. For example, given `--motif CGCG 2 --motif CG 0`
-          there will be output lines with name fields such as "m,CG,0" and "m,CGCG,2". To
-          use this option with `--combine-strands` all motifs must be reverse-complement
-          palindromic or an error will be raised.
-
+          This argument can be passed multiple times. When more than one motif is used, the
+          resulting output BED file will indicate the motif in the "name" field as
+          <mod_code>,<motif>,<offset>. For example, given `--motif CGCG 2 --motif CG 0` there will
+          be output lines with name fields such as "m,CG,0" and "m,CGCG,2". To use this option with
+          `--combine-strands`, all motifs must be reverse-complement palindromic or an error will be
+          raised.
 
       --cpg
           Only output counts at CpG motifs. Requires a reference sequence to be provided.
@@ -703,6 +702,12 @@ Options:
           will use less memory but incur more overhead. Only used when an indexed modBam is provided.
           
           [default: 100000]
+
+      --ignore-implicit
+          Ignore implicitly canonical base modification calls. When the `.` flag is used in the MM
+          tag, this implies that bases missing a base modification probability are to be assumed
+          canonical. Set this flag to omit those base modifications from the output. For additional
+          details see the SAM spec: https://samtools.github.io/hts-specs/SAMtags.pdf.
 
   -h, --help
           Print help information (use `-h` for a summary).

@@ -38,10 +38,11 @@ or `stdout` and filter the columns before writing to disk.
 
 ## Note on implicit base modification calls.
 The `.` MM flag indicates that primary sequence bases without an associated base modification probability 
-should be inferred to be canonical. When this flag is encountered in a modBAM, by default, `modkit extract` will 
+should be inferred to be canonical. By default, when this flag is encountered in a modBAM, `modkit extract` will 
 output rows with the `inferred` column set to `true` and a `mod_qual` value of `0.0` for the base modifications
-called on that read. For example, if you have a `A+a.` MM tag, and there are skipped `A` bases in the read there
-will be rows where the `a` `mod_qual` is 0.0.
+called on that read. For example, if you have a `A+a.` MM tag, and there are `A` bases in the read for which 
+there aren't base modification calls (identifiable as non-0s in the MM tag) will be rows where the `mod_code` 
+is `a` and the `mod_qual` is 0.0.
 
 ## Example usages:
 
