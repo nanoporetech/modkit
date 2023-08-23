@@ -3,6 +3,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [v0.1.13]
+### Fixes
+- [extract, mod_bam] Potential stack overflow when many reads are skipped.
+- [extract] Output inferred canonical calls when the `.` MM tag is used.
+- [adjust-mods] change MM flag to `?` and add inferred canonical calls when `--edge-filter` is applied.
+
+### Adds
+- [pileup] performs pileup in batches to decrease peak memory usage, configurable with `--chunk_size`.
+- [pileup] Allow users to narrow output to any number of specified motifs (instead of only CpG dinucleotides) with `--motif` option
+
+### Changes
+- [extract] adds `inferred` column
+
+
 ## [v0.1.13-rc1]
 ## Fixes
 - [extract, mod_bam] Potential stack overflow when many reads are skipped.
