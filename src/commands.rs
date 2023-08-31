@@ -162,6 +162,9 @@ pub struct Adjust {
     /// Output SAM format instead of BAM.
     #[arg(long, default_value_t = false)]
     output_sam: bool,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
 }
 
 impl Adjust {
@@ -251,6 +254,7 @@ impl Adjust {
             edge_filter.as_ref(),
             self.fail_fast,
             "Adjusting modBAM",
+            self.suppress_progress,
         )?;
         Ok(())
     }
@@ -1149,6 +1153,7 @@ impl CallMods {
             edge_filter.as_ref(),
             self.fail_fast,
             "Calling Mods",
+            self.suppress_progress,
         )?;
 
         Ok(())
