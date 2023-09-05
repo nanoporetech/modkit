@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-type Iv = lapper::Interval<u64, ()>;
+pub(crate) type Iv = lapper::Interval<u64, ()>;
 type GenomeLapper = lapper::Lapper<u64, ()>;
 
 #[derive(Debug)]

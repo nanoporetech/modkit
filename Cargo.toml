@@ -33,6 +33,10 @@ prettytable-rs = "0.10.0"
 rust-lapper = "1.1.0"
 linear-map = "1.2.0"
 nom = "7.1.3"
+noodles = { version = "0.50.0", features = ["tabix", "core", "bgzf", "csi"] }
+#bgzip = "0.3.1"
+rv = "0.16.0"
+ndarray = "0.15.6"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"

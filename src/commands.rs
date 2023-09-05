@@ -2,24 +2,22 @@ use std::collections::{HashMap, HashSet};
 use std::num::ParseFloatError;
 use std::path::{Path, PathBuf};
 
-use crate::adjust::{adjust_modbam, record_is_valid};
-use crate::command_utils::{
-    get_bam_writer, get_serial_reader, get_threshold_from_options,
-    parse_per_mod_thresholds, parse_thresholds, using_stream,
-};
 use anyhow::{bail, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
-
 use histo_fp::Histogram;
-
 use log::{debug, info};
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
+use crate::adjust::{adjust_modbam, record_is_valid};
+use crate::command_utils::{
+    get_bam_writer, get_serial_reader, get_threshold_from_options,
+    parse_per_mod_thresholds, parse_thresholds, using_stream,
+};
+use crate::dmr::subcommand::BedMethylDmr;
 use crate::errs::{InputError, RunError};
 use crate::extract_mods::ExtractMods;
-
 use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, EdgeFilter, ModBaseInfo, RawModCode,
@@ -80,6 +78,8 @@ pub enum Commands {
     /// rejected. Reads where there is an ambiguous alignment of the acceptor to the
     /// donor will be rejected (and logged). See the full documentation for details.
     Repair(RepairTags),
+    /// Does DMR
+    Dmr(BedMethylDmr),
     /// With a hemi
     PileupHemi(DuplexModBamPileup),
 }
@@ -96,6 +96,7 @@ impl Commands {
             Self::CallMods(x) => x.run(),
             Self::Extract(x) => x.run(),
             Self::Repair(x) => x.run(),
+            Self::Dmr(x) => x.run(),
             Self::PileupHemi(x) => x.run(),
         }
     }
