@@ -78,7 +78,18 @@ pub enum Commands {
     /// rejected. Reads where there is an ambiguous alignment of the acceptor to the
     /// donor will be rejected (and logged). See the full documentation for details.
     Repair(RepairTags),
-    /// Does DMR
+    /// Perform pairwise DMR test on a set of regions. Output a BED file of regions
+    /// ranked by difference (the score column). Output columns are:
+    /// 1. chrom
+    /// 2. start
+    /// 3. end
+    /// 4. name
+    /// 5. score
+    /// 6. control mod counts (mod:count), comma-separated
+    /// 7. control total (sum all mod counts + canonical counts)
+    /// 8. experimental mod counts (mod:count), comma-separated
+    /// 9. experiment total (sum all mod counts + canonical counts)
+    /// Columns 10 and 11 are used for testing and development and will be removed.
     Dmr(BedMethylDmr),
     /// With a hemi
     PileupHemi(DuplexModBamPileup),

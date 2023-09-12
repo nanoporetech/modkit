@@ -21,7 +21,7 @@ use crate::position_filter::Iv;
 mod model;
 pub mod subcommand;
 
-#[derive(new, Debug, Eq, PartialEq)]
+#[derive(new, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DmrInterval {
     interval: Iv,
     chrom: String,

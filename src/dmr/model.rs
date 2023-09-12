@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, bail, Context};
 use derive_new::new;
@@ -401,10 +401,11 @@ pub(crate) fn mle_llk_ratio(
 
 #[cfg(test)]
 mod dmr_model_tests {
+    use std::collections::HashMap;
+
     use crate::dmr::model::{chi_squared_test, ModificationCounts};
     use crate::dmr::DmrInterval;
     use crate::position_filter::Iv;
-    use std::collections::HashMap;
 
     #[test]
     fn test_chi2_stat() {
