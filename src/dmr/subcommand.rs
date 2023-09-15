@@ -7,13 +7,13 @@ use anyhow::{anyhow, bail, Context};
 use bio::io::fasta::Reader as FastaReader;
 use clap::Args;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
-use log::{debug, error, info};
+use log::{debug, error};
 use noodles::bgzf;
 use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::dmr::model::{llk_ratio, AggregatedCounts, ModificationCounts};
+use crate::dmr::model::{AggregatedCounts, ModificationCounts};
 use crate::dmr::{BedMethylLine, DmrInterval};
 use crate::logging::init_logging;
 use crate::motif_bed::{find_motif_hits, RegexMotif};
@@ -49,15 +49,29 @@ fn aggregate_counts(
 ) -> anyhow::Result<AggregatedCounts> {
     let grouped_by_position: FxHashMap<u64, Vec<&BedMethylLine>> = bm_lines
         .iter()
-        .filter(|bm_line| {
-            position_filter.contains(
+        .filter(|bm_line| match bm_line.strand {
+            '+' => position_filter.contains(
                 chrom_id as i32,
                 bm_line.start(),
-                Strand::parse_char(bm_line.strand).expect(&format!(
-                    "encountered illegal strand {}",
+                Strand::Positive,
+            ),
+            '-' => position_filter.contains(
+                chrom_id as i32,
+                bm_line.start(),
+                Strand::Negative,
+            ),
+            '.' => position_filter.overlaps_not_stranded(
+                chrom_id,
+                bm_line.start(),
+                bm_line.stop(),
+            ),
+            _ => {
+                debug!(
+                    "encountered illegal strand in bedmethyl {}",
                     bm_line.strand
-                )),
-            )
+                );
+                false
+            }
         })
         .fold(FxHashMap::default(), |mut acc, bm_line| {
             acc.entry(bm_line.start())
@@ -180,6 +194,8 @@ pub struct BedMethylDmr {
     /// Bgzipped bedMethyl file for the second (usually experimental) sample. There should be
     /// a tabix index with the same name and .tbi next to this file.
     exp_bed_methyl: PathBuf,
+    /// Path to file to direct output, '-' will direct to stdout.
+    out_path: String,
     /// Regions over which to compare methylation levels. Should be tab-separated (spaces
     /// allowed in the "name" column). Requires chrom, chromStart, chromEnd, and Name columns.
     /// Strand is currently ignored.
@@ -193,7 +209,7 @@ pub struct BedMethylDmr {
     #[arg(short = 'b', long = "base")]
     modified_bases: Vec<char>,
     /// File to write logs to, it's recommended to use this option.
-    #[arg(long)]
+    #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Number of threads to use, WARNING: currently this will open a file per thread.
     #[arg(short = 't', long, default_value_t = 4)]
@@ -204,12 +220,14 @@ pub struct BedMethylDmr {
     /// Don't show progress bars
     #[arg(long, default_value_t = false)]
     suppress_progress: bool,
+    #[arg(short = 'f', long, default_value_t = false)]
+    force: bool,
 }
 
 impl BedMethylDmr {
-    fn get_stranded_position_filter(
+    fn get_stranded_position_filter<'a>(
         &self,
-        name_to_id: &HashMap<String, usize>,
+        name_to_id: HashMap<String, usize>,
         multi_pb: &MultiProgress,
         modified_bases: &[RegexMotif],
     ) -> anyhow::Result<StrandedPositionFilter> {
@@ -218,26 +236,32 @@ impl BedMethylDmr {
         reader_pb.set_message("sequences read");
 
         let (snd, rcv) = crossbeam_channel::unbounded();
-        fasta_reader
-            .records()
-            .progress_with(reader_pb)
-            .filter_map(|res| res.ok())
-            .filter_map(|record| {
-                name_to_id.get(record.id()).map(|tid| (record, *tid))
-            })
-            .filter_map(|(record, tid)| {
-                String::from_utf8(record.seq().to_vec())
-                    .map(|s| if self.mask { s } else { s.to_ascii_uppercase() })
-                    .ok()
-                    .map(|s| (s, tid))
-            })
-            .for_each(|(sequence, tid)| match snd.send((sequence, tid)) {
-                Ok(_) => {}
-                Err(e) => {
-                    error!("failed to send sequence on channel");
-                }
-            });
-        drop(snd);
+        let mask = self.mask;
+
+        std::thread::spawn(move || {
+            fasta_reader
+                .records()
+                .progress_with(reader_pb)
+                .filter_map(|res| res.ok())
+                .filter_map(|record| {
+                    name_to_id.get(record.id()).map(|tid| (record, *tid))
+                })
+                .filter_map(|(record, tid)| {
+                    String::from_utf8(record.seq().to_vec())
+                        .map(|s| if mask { s } else { s.to_ascii_uppercase() })
+                        .ok()
+                        .map(|s| (s, tid))
+                })
+                .for_each(|(sequence, tid)| match snd.send((sequence, tid)) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!(
+                            "failed to send sequence on channel, {}",
+                            e.to_string()
+                        );
+                    }
+                });
+        });
         let (pos_positions, neg_positions) = rcv
             .iter()
             .par_bridge()
@@ -312,7 +336,7 @@ impl BedMethylDmr {
         let _pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build_global()?;
-        let mut mpb = MultiProgress::new();
+        let mpb = MultiProgress::new();
         if self.suppress_progress {
             mpb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
@@ -328,6 +352,24 @@ impl BedMethylDmr {
             self.exp_bed_methyl.to_str().unwrap()
         ))
         .context("failed to load control index")?;
+
+        let mut writer: Box<dyn Write> = {
+            match self.out_path.as_str() {
+                "-" => Box::new(BufWriter::new(std::io::stdout())),
+                _ => {
+                    let fp = Path::new(&self.out_path);
+                    if fp.exists() && !self.force {
+                        bail!(
+                            "refusing to overwrite existing file {}",
+                            &self.out_path
+                        )
+                    } else {
+                        let fh = File::create(fp)?;
+                        Box::new(BufWriter::new(fh))
+                    }
+                }
+            }
+        };
 
         let regions_of_interest = parse_roi_bed(&self.regions_bed)?;
 
@@ -356,7 +398,7 @@ impl BedMethylDmr {
             .collect::<anyhow::Result<Vec<RegexMotif>>>()?;
 
         let position_filter = self.get_stranded_position_filter(
-            &control_contig_lookup,
+            control_contig_lookup.clone(),
             &mpb,
             &motifs,
         )?;
@@ -419,7 +461,7 @@ impl BedMethylDmr {
 
         modification_counts_agg
             .sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        let mut writer = BufWriter::new(std::io::stdout());
+        // let mut writer = BufWriter::new(std::io::stdout());
         for modification_counts in modification_counts_agg {
             writer
                 .write(modification_counts.to_row()?.as_bytes())
@@ -427,5 +469,50 @@ impl BedMethylDmr {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dmr_unit_tests {
+    use crate::dmr::subcommand::parse_roi_bed;
+    use crate::dmr::DmrInterval;
+    use crate::position_filter::Iv;
+    use std::path::Path;
+
+    #[test]
+    fn test_roi_parsing() {
+        let fp = "tests/resources/sim_cpg_regions.bed";
+        let rois = parse_roi_bed(fp).unwrap();
+        let expected = [
+            DmrInterval {
+                interval: Iv {
+                    start: 10172120,
+                    stop: 10172545,
+                    val: (),
+                },
+                chrom: "chr20".to_string(),
+                name: "r1".to_string(),
+            },
+            DmrInterval {
+                interval: Iv {
+                    start: 10217487,
+                    stop: 10218336,
+                    val: (),
+                },
+                chrom: "chr20".to_string(),
+                name: "r2".to_string(),
+            },
+            DmrInterval {
+                interval: Iv {
+                    start: 10034963,
+                    stop: 10035266,
+                    val: (),
+                },
+                chrom: "chr20".to_string(),
+                name: "r3".to_string(),
+            },
+        ]
+        .to_vec();
+        assert_eq!(rois, expected);
     }
 }

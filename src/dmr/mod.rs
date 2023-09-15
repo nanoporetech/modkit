@@ -162,36 +162,40 @@ mod dmr_mod_tests {
     use crate::position_filter::Iv;
 
     #[test]
-    fn test_dev_parse_bedmethyl() {
-        let line = "chr20	10034963	10034964	m,CG,0	19	-	10034963	10034964	255,0,0	19 94.74 18 1 0 0 1 0 2";
-        let bm_line = BedMethylLine::parse(line).unwrap();
-        let start = 10034963;
-        let stop = 10034964;
-        let iv = Iv {
-            start,
-            stop,
-            val: (),
-        };
-        let expected = BedMethylLine::new("chr20".to_string(), iv, 'm', 18, 19);
-        assert_eq!(bm_line, expected);
-        let line = "chr20	10034963	10034964	m	19	-	10034963	10034964	255,0,0	19 94.74 18 1 0 0 1 0 2";
-        let bm_line = BedMethylLine::parse(line).unwrap();
-        assert_eq!(bm_line, expected);
-
-        let line = "oligo_1512_adapters	9	10	h	4	+	9	10	255,0,0	4	50.00	2	1	1	0	0	2	0 ";
-        let bm_line = BedMethylLine::parse(line).unwrap();
-        let expected = BedMethylLine::new(
-            "oligo_1512_adapters".to_string(),
-            Iv {
-                start: 9,
-                stop: 10,
+    fn test_parse_bedmethyl_line() {
+        for sep in ['\t', ' '] {
+            let line = format!("chr20\t10034963\t10034964\tm,CG,0\t19\t-\t10034963\t10034964\t255,0,0\t19{sep}94.74{sep}18{sep}1{sep}0{sep}0{sep}1{sep}0{sep}2");
+            let bm_line = BedMethylLine::parse(&line).unwrap();
+            let start = 10034963;
+            let stop = 10034964;
+            let iv = Iv {
+                start,
+                stop,
                 val: (),
-            },
-            'h',
-            2,
-            4,
-        );
-        assert_eq!(bm_line, expected);
+            };
+            let expected =
+                BedMethylLine::new("chr20".to_string(), iv, 'm', '-', 18, 19);
+            assert_eq!(bm_line, expected);
+            let line = format!("chr20\t10034963\t10034964\tm\t19\t-\t10034963\t10034964\t255,0,0\t19{sep}94.74{sep}18{sep}1{sep}0{sep}0{sep}1{sep}0{sep}2");
+            let bm_line = BedMethylLine::parse(&line).unwrap();
+            assert_eq!(bm_line, expected);
+
+            let line = format!("oligo_1512_adapters\t9\t10\th\t4\t+\t9\t10\t255,0,0\t4{sep}50.00{sep}2{sep}1{sep}1{sep}0{sep}0{sep}2{sep}0 ");
+            let bm_line = BedMethylLine::parse(&line).unwrap();
+            let expected = BedMethylLine::new(
+                "oligo_1512_adapters".to_string(),
+                Iv {
+                    start: 9,
+                    stop: 10,
+                    val: (),
+                },
+                'h',
+                '+',
+                2,
+                4,
+            );
+            assert_eq!(bm_line, expected);
+        }
     }
 
     #[test]

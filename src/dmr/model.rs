@@ -1,11 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
-use anyhow::{anyhow, bail, Context};
-use derive_new::new;
+use anyhow::{anyhow, bail};
 use itertools::Itertools;
-use log::{debug, info};
-use ndarray::{Array2, Axis};
 use rv::prelude::*;
 
 use crate::dmr::DmrInterval;
@@ -65,35 +62,43 @@ impl AggregatedCounts {
                 acc.append(&mut trials);
                 Some(acc)
             })
-            .ok_or(anyhow!("failed to make categotical trials"))?;
+            .ok_or(anyhow!("failed to make categorical trials"))?;
         let canonical_count = self.get_canonical_counts();
         trials.append(&mut vec![0usize; canonical_count]);
         Ok(trials)
     }
 
     fn string_counts(&self) -> String {
-        let csv = self
-            .mod_code_counts
-            .iter()
-            .sorted_by(|(a, _), (b, _)| a.cmp(b))
-            .fold(String::new(), |mut acc, (code, count)| {
-                acc.push_str(&format!("{}:{},", code, count));
-                acc
-            });
-        csv.chars().into_iter().take(csv.len() - 1).collect()
+        if self.mod_code_counts.is_empty() {
+            ".".to_string()
+        } else {
+            let csv = self
+                .mod_code_counts
+                .iter()
+                .sorted_by(|(a, _), (b, _)| a.cmp(b))
+                .fold(String::new(), |mut acc, (code, count)| {
+                    acc.push_str(&format!("{}:{},", code, count));
+                    acc
+                });
+            csv.chars().into_iter().take(csv.len() - 1).collect()
+        }
     }
 
     fn string_percentages(&self) -> String {
-        let csv = self
-            .mod_code_counts
-            .iter()
-            .sorted_by(|(a, _), (b, _)| a.cmp(b))
-            .fold(String::new(), |mut acc, (code, count)| {
-                let frac = *count as f32 / self.total as f32;
-                acc.push_str(&format!("{}:{:.2},", code, frac * 100f32));
-                acc
-            });
-        csv.chars().into_iter().take(csv.len() - 1).collect()
+        if self.mod_code_counts.is_empty() {
+            ".".to_string()
+        } else {
+            let csv = self
+                .mod_code_counts
+                .iter()
+                .sorted_by(|(a, _), (b, _)| a.cmp(b))
+                .fold(String::new(), |mut acc, (code, count)| {
+                    let frac = *count as f32 / self.total as f32;
+                    acc.push_str(&format!("{}:{:.2},", code, frac * 100f32));
+                    acc
+                });
+            csv.chars().into_iter().take(csv.len() - 1).collect()
+        }
     }
 }
 
@@ -108,11 +113,7 @@ pub(crate) struct ModificationCounts {
     start: u64,
     stop: u64,
     control_counts: AggregatedCounts,
-    // control_counts: HashMap<char, usize>,
-    // control_total: usize,
     exp_counts: AggregatedCounts,
-    // exp_counts: HashMap<char, usize>,
-    // exp_total: usize,
     interval: DmrInterval,
     pub(crate) score: f64,
 }
@@ -152,6 +153,8 @@ impl ModificationCounts {
         {}{sep}\
         {}{sep}\
         {}{sep}\
+        {}{sep}\
+        {}{sep}\
         {}\n\
         ",
             self.interval.chrom,
@@ -163,33 +166,12 @@ impl ModificationCounts {
             self.control_counts.total,
             self.exp_counts.string_counts(),
             self.exp_counts.total,
+            self.control_counts.string_percentages(),
+            self.exp_counts.string_percentages(),
         );
         Ok(line)
     }
 }
-
-// fn multi_counts_to_trials(
-//     counts: &AggregatedCounts,
-//     // counts: &HashMap<char, usize>,
-//     code_to_index: &HashMap<char, usize>,
-//     // total: usize,
-// ) -> anyhow::Result<Vec<usize>> {
-//     let mut trials = counts.mod_code_counts.iter().fold(
-//         Vec::new(),
-//         |mut acc, (code, count)| {
-//             let index = *code_to_index.get(code).unwrap();
-//             let mut trials = vec![index; *count];
-//             acc.append(&mut trials);
-//             acc
-//         },
-//     );
-//     let canonical_count = counts.canonical_counts();
-//     // let remaining = total
-//     //     .checked_sub(trials.len())
-//     //     .ok_or_else(|| anyhow!("total less that total methyl counts"))?;
-//     trials.append(&mut vec![0; canonical_count]);
-//     Ok(trials)
-// }
 
 fn dirichlet_llk(
     counts: &AggregatedCounts,
@@ -292,34 +274,12 @@ fn llk_beta(
         .get(&raw_mod_code)
         .unwrap_or(&0);
     let control_canonicals = control_counts.get_canonical_counts();
-    // let control_canonicals =
-    //     modification_counts.control_total - control_methyls;
 
     let llk_control = beta_llk(control_methyls, control_canonicals);
-    // let control_trials = counts_to_trials(control_methyls, control_canonicals);
-    // let control_data = BernoulliData::Data(&control_trials);
-    // let prior = Beta::jeffreys();
-    // let control_posterior = prior.posterior(&control_data);
-    // let llk_control = control_posterior.ln_m(&control_data);
-
     let exp_methyls =
         *exp_counts.mod_code_counts.get(&raw_mod_code).unwrap_or(&0);
-    // assert!(exp_methyls <= modification_counts.exp_total);
     let exp_canonicals = exp_counts.get_canonical_counts();
-    // let exp_canonicals = modification_counts.exp_total - exp_methyls;
     let llk_exp = beta_llk(exp_methyls, exp_canonicals);
-    // let exp_trials = counts_to_trials(exp_methyls, exp_canonicals);
-    // let exp_data = DataOrSuffStat::Data(&exp_trials);
-    // let exp_posterior = prior.posterior(&exp_data);
-    // let llk_exp = exp_posterior.ln_m(&exp_data);
-
-    // let all_trials = counts_to_trials(
-    //     exp_methyls + control_methyls,
-    //     exp_canonicals + control_canonicals,
-    // );
-    // let all_data = DataOrSuffStat::Data(&all_trials);
-    // let combined_posterior = prior.posterior(&all_data);
-    // let llk_same = combined_posterior.ln_m(&all_data);
     let llk_same = beta_llk(
         exp_methyls + control_methyls,
         exp_canonicals + control_canonicals,
@@ -346,234 +306,71 @@ pub(crate) fn llk_ratio(
     }
 }
 
-fn get_counts_each(
-    obs: &HashMap<char, usize>,
-    mods_to_index: &HashMap<char, usize>,
-    total: usize,
-) -> Vec<u32> {
-    let mut counts = vec![0u32; mods_to_index.len() + 1];
-    for (code, count) in obs.iter() {
-        let idx = *mods_to_index.get(code).unwrap();
-        counts[idx] = *count as u32;
-    }
-    let count_modified = obs.values().sum::<usize>();
-    assert!(count_modified <= total);
-    let count_unmodified = (total - count_modified) as u32;
-    counts[0] = count_unmodified;
-    counts
-}
-
-// pub(crate) fn chi_squared_test(
-//     modification_counts: &ModificationCounts,
-// ) -> anyhow::Result<f64> {
-//     if modification_counts.control_counts.total == 0
-//         || modification_counts.exp_counts.total == 0
-//     {
-//         info!("site has zero total");
-//         return Ok(1f64);
-//     }
-//     let n_conditions = 2;
-//     let mods_to_index = modification_counts
-//         .control_counts
-//         .mod_code_counts
-//         .keys()
-//         .chain(modification_counts.exp_counts.mod_code_counts.keys())
-//         .copied()
-//         .collect::<HashSet<char>>()
-//         .into_iter()
-//         .sorted_by(|a, b| a.cmp(b))
-//         .enumerate()
-//         .map(|(i, c)| (c, i + 1))
-//         .collect::<HashMap<char, usize>>();
-//     let n_cats = mods_to_index.len() + 1;
-//     let obs = vec![
-//         get_counts_each(
-//             &modification_counts.control_counts.mod_code_counts,
-//             &mods_to_index,
-//             modification_counts.control_counts.total,
-//         ),
-//         get_counts_each(
-//             &modification_counts.exp_counts.mod_code_counts,
-//             &mods_to_index,
-//             modification_counts.exp_counts.total,
-//         ),
-//     ];
-//
-//     let data = obs.iter().flatten().copied().collect::<Vec<u32>>();
-//     let contingency = Array2::from_shape_vec((n_conditions, n_cats), data)
-//         .map(|a| a.t().to_owned().mapv(|x| f64::from(x + 1)))?;
-//
-//     // let condition_totals = contingency.sum_axis(Axis(0)).mapv(|x| f64::from(x));
-//     let category_totals = contingency.sum_axis(Axis(1)).mapv(|x| f64::from(x));
-//     let total: f64 = category_totals.sum();
-//     let category_proportions = &category_totals / total;
-//     let stat =
-//         contingency
-//             .columns()
-//             .into_iter()
-//             .fold(0f64, |acc, cond_counts| {
-//                 let cond_total = cond_counts.sum();
-//                 let expected = cond_total * &category_proportions;
-//                 let stat =
-//                     (&cond_counts - &expected).mapv(|x| x.powi(2)) / expected;
-//                 let stat = stat.sum();
-//                 acc + stat
-//             });
-//     let df = (n_conditions - 1) * (n_cats - 1);
-//     let chi_dist = ChiSquared::new(df as f64)?;
-//     let p_val = chi_dist.sf(&stat);
-//
-//     Ok(p_val)
-// }
-
-// assumed that mod_counts does not contain the canonical counts
-fn modified_counts_to_frequencies(
-    modified_counts: &HashMap<char, usize>,
-    mod_code_to_index: &HashMap<char, usize>,
-    total: usize,
-) -> Vec<f64> {
-    let mut frequencies = vec![0f64; mod_code_to_index.len() + 1];
-    for (code, count) in modified_counts.iter() {
-        let freq = *count as f64 / total as f64;
-        let idx = *mod_code_to_index.get(code).unwrap();
-        frequencies[idx] = freq;
-    }
-
-    let remaining = modified_counts.values().sum::<usize>();
-    assert!(remaining <= total);
-    let count_unmodified = total - remaining;
-    let unmodified_freq = count_unmodified as f64 / total as f64;
-    frequencies[0] = unmodified_freq;
-
-    frequencies.into_iter().map(|x| x + 0.001).collect()
-}
-
-// pub(crate) fn mle_llk_ratio(
-//     modification_counts: &ModificationCounts,
-// ) -> anyhow::Result<f64> {
-//     if modification_counts.control_total == 0
-//         || modification_counts.exp_total == 0
-//     {
-//         info!("site has zero total");
-//         return Ok(0f64);
-//     }
-//     let mods_to_index = modification_counts
-//         .control_counts
-//         .keys()
-//         .chain(modification_counts.exp_counts.keys())
-//         .copied()
-//         .collect::<HashSet<char>>()
-//         .into_iter()
-//         .sorted_by(|a, b| a.cmp(b))
-//         .enumerate()
-//         .map(|(i, c)| (c, i + 1))
-//         .collect::<HashMap<char, usize>>();
-//
-//     let alphas_control = modified_counts_to_frequencies(
-//         &modification_counts.control_counts.mod_code_counts,
-//         &mods_to_index,
-//         modification_counts.control_counts.total,
-//     );
-//     let alphas_exp = modified_counts_to_frequencies(
-//         &modification_counts.exp_counts.mod_code_counts,
-//         &mods_to_index,
-//         modification_counts.exp_counts.total,
-//     );
-//     let combined_counts = modification_counts
-//         .control_counts
-//         .iter()
-//         .chain(modification_counts.exp_counts.iter())
-//         .fold(HashMap::new(), |mut acc, (mod_code, count)| {
-//             *acc.entry(*mod_code).or_insert(0) += *count;
-//             acc
-//         });
-//     let alphas_combined = modified_counts_to_frequencies(
-//         &combined_counts,
-//         &mods_to_index,
-//         modification_counts.exp_total + modification_counts.control_total,
-//     );
-//
-//     // let control_trials = multi_counts_to_trials(
-//     //     &modification_counts.control_counts,
-//     //     &mods_to_index,
-//     //     modification_counts.control_total,
-//     // )?;
-//     let control_trials = modification_counts
-//         .control_counts
-//         .categorical_trials(&mods_to_index);
-//     let control_data = CategoricalData::Data(&control_trials);
-//     let lk_control = Dirichlet::new(alphas_control.clone())
-//         .with_context(|| {
-//             format!(
-//                 "invalid control Dir params {:?}, counts: {:?} {:?}",
-//                 &alphas_control,
-//                 &modification_counts.control_counts,
-//                 &modification_counts.control_total
-//             )
-//         })?
-//         .ln_m(&control_data);
-//
-//     let exp_trials = multi_counts_to_trials(
-//         &modification_counts.exp_counts,
-//         &mods_to_index,
-//         modification_counts.exp_total,
-//     )?;
-//     let exp_data = CategoricalData::Data(&exp_trials);
-//     let lk_exp = Dirichlet::new(alphas_exp.clone())
-//         .with_context(|| format!("invalid exp Dir params {:?}", &alphas_exp))?
-//         .ln_m(&exp_data);
-//
-//     let combined_trials = multi_counts_to_trials(
-//         &combined_counts,
-//         &mods_to_index,
-//         modification_counts.exp_total + modification_counts.control_total,
-//     )?;
-//     let combined_data = CategoricalData::Data(&combined_trials);
-//     let lk_combined = Dirichlet::new(alphas_combined.clone())
-//         .with_context(|| {
-//             format!("invalid combined Dir params {:?}", &alphas_combined)
-//         })?
-//         .ln_m(&combined_data);
-//
-//     Ok(lk_control + lk_exp - lk_combined)
-// }
-
 #[cfg(test)]
 mod dmr_model_tests {
+    use crate::dmr::model::{llk_beta, llk_dirichlet, AggregatedCounts};
+    use itertools::Itertools;
+    use rand::prelude::*;
+    use rand::rngs::StdRng;
+    use rv::dist::Categorical;
+    use rv::prelude::{Bernoulli, Rv};
     use std::collections::HashMap;
 
-    use crate::dmr::model::{chi_squared_test, ModificationCounts};
-    use crate::dmr::DmrInterval;
-    use crate::position_filter::Iv;
+    fn methyl_sample(p: f64, n: usize, rng: &mut StdRng) -> AggregatedCounts {
+        let mod_count = Bernoulli::new(p)
+            .unwrap()
+            .sample(n, rng)
+            .into_iter()
+            .filter(|b: &bool| *b)
+            .count();
+        let mod_code_counts = HashMap::from([('m', mod_count)]);
+        AggregatedCounts::try_new(mod_code_counts, n).unwrap()
+    }
+
+    fn hydroxy_sample(
+        alphas: &[f64],
+        n: usize,
+        rng: &mut StdRng,
+    ) -> AggregatedCounts {
+        let mods = ['h', 'm'];
+        let counts = Categorical::new(alphas)
+            .unwrap()
+            .sample(n, rng)
+            .into_iter()
+            .filter_map(|x: usize| match x {
+                0 => None,
+                _ => Some(mods[x - 1]),
+            })
+            .collect::<Vec<char>>();
+        let counts = counts.into_iter().counts();
+        AggregatedCounts::try_new(counts, n).unwrap()
+    }
 
     #[test]
-    fn test_chi2_stat() {
-        let interval = DmrInterval::new(
-            Iv {
-                start: 1,
-                stop: 10,
-                val: (),
-            },
-            "xxx".to_string(),
-            "name".to_string(),
-        );
+    fn test_beta_llk() {
+        let mut rng: StdRng = StdRng::seed_from_u64(42);
+        let control = methyl_sample(0.9, 1000, &mut rng);
+        let exp = methyl_sample(0.1, 1000, &mut rng);
+        let llk_a = llk_beta(&control, &exp).unwrap();
+        let control = methyl_sample(0.9, 1000, &mut rng);
+        let exp = methyl_sample(0.92, 1000, &mut rng);
+        let llk_b = llk_beta(&control, &exp).unwrap();
+        assert!(llk_a > llk_b);
+        let control = methyl_sample(0.1, 1000, &mut rng);
+        let exp = methyl_sample(0.12, 1000, &mut rng);
+        let llk_c = llk_beta(&control, &exp).unwrap();
+        assert!(llk_a > llk_c);
+    }
 
-        let control_counts =
-            HashMap::<char, usize>::from([('h', 18usize), ('m', 0)]);
-        let control_total = 1507;
-        let exp_counts =
-            HashMap::<char, usize>::from([('h', 3usize), ('m', 0)]);
-        let exp_total = 1079;
-        let mod_counts = ModificationCounts::new(
-            1,
-            10,
-            control_counts,
-            control_total,
-            exp_counts,
-            exp_total,
-            interval,
-        );
-
-        let stat = chi_squared_test(&mod_counts).unwrap();
+    #[test]
+    fn test_dir_llk() {
+        let mut rng: StdRng = StdRng::seed_from_u64(42);
+        let control = hydroxy_sample(&[0.1, 0.3, 0.6], 1000, &mut rng);
+        let exp = hydroxy_sample(&[0.1, 0.6, 0.3], 1000, &mut rng);
+        let llk_a = llk_dirichlet(&control, &exp).unwrap();
+        let control = hydroxy_sample(&[0.1, 0.3, 0.6], 1000, &mut rng);
+        let exp = hydroxy_sample(&[0.1, 0.4, 0.5], 1000, &mut rng);
+        let llk_b = llk_dirichlet(&control, &exp).unwrap();
+        assert!(llk_a > llk_b);
     }
 }
