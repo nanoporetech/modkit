@@ -9,12 +9,12 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 pub(crate) type Iv = lapper::Interval<u64, ()>;
-type GenomeLapper = lapper::Lapper<u64, ()>;
+pub(crate) type GenomeLapper = lapper::Lapper<u64, ()>;
 
 #[derive(Debug)]
 pub struct StrandedPositionFilter {
-    pos_positions: FxHashMap<u32, GenomeLapper>,
-    neg_positions: FxHashMap<u32, GenomeLapper>,
+    pub(crate) pos_positions: FxHashMap<u32, GenomeLapper>,
+    pub(crate) neg_positions: FxHashMap<u32, GenomeLapper>,
 }
 
 impl StrandedPositionFilter {

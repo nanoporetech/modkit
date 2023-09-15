@@ -2,9 +2,7 @@ use std::cmp::Ordering;
 use std::fmt::Debug;
 
 use anyhow::anyhow;
-
 use derive_new::new;
-
 use nom::character::complete::{multispace1, none_of, one_of};
 use nom::multi::{many0, many1};
 use nom::IResult;
@@ -99,6 +97,8 @@ struct BedMethylLine {
     chrom: String,
     interval: Iv,
     raw_mod_code: char,
+    // need to make this the object
+    strand: char,
     count_methylated: u64,
     valid_coverage: u64,
 }
@@ -110,7 +110,7 @@ fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
     let (rest, _) = multispace1(rest)?;
     let (rest, raw_mod_code) = consume_char_from_list(rest, ",")?;
     let (rest, valid_coverage) = consume_digit(rest)?;
-    let (rest, _strand) = consume_char(rest)?;
+    let (rest, strand) = consume_char(rest)?;
     let (rest, _discard) = many1(consume_digit)(rest)?;
     let (rest, _discard_too) = many1(none_of(" \t"))(rest)?;
     let (rest, _score_again) = consume_digit(rest)?;
@@ -128,6 +128,7 @@ fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
             chrom.to_string(),
             interval,
             raw_mod_code,
+            strand,
             count_methylated,
             valid_coverage,
         ),
