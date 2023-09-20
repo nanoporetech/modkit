@@ -5,16 +5,16 @@ use anyhow::{anyhow, bail};
 use itertools::Itertools;
 use rv::prelude::*;
 
-use crate::dmr::DmrInterval;
+use crate::dmr::util::DmrInterval;
 
 #[derive(Debug)]
-pub(crate) struct AggregatedCounts {
+pub(super) struct AggregatedCounts {
     mod_code_counts: HashMap<char, usize>,
     total: usize,
 }
 
 impl AggregatedCounts {
-    pub(crate) fn try_new(
+    pub(super) fn try_new(
         mod_code_counts: HashMap<char, usize>,
         total: usize,
     ) -> anyhow::Result<Self> {
@@ -109,7 +109,7 @@ impl Display for AggregatedCounts {
 }
 
 #[derive(Debug)]
-pub(crate) struct ModificationCounts {
+pub(super) struct ModificationCounts {
     start: u64,
     stop: u64,
     control_counts: AggregatedCounts,
@@ -119,7 +119,7 @@ pub(crate) struct ModificationCounts {
 }
 
 impl ModificationCounts {
-    pub(crate) fn new(
+    pub(super) fn new(
         start: u64,
         stop: u64,
         control_counts: AggregatedCounts,
@@ -288,7 +288,7 @@ fn llk_beta(
     Ok(llk_control + llk_exp - llk_same)
 }
 
-pub(crate) fn llk_ratio(
+pub(super) fn llk_ratio(
     control_counts: &AggregatedCounts,
     exp_counts: &AggregatedCounts,
 ) -> anyhow::Result<f64> {

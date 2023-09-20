@@ -15,7 +15,7 @@ use crate::command_utils::{
     get_bam_writer, get_serial_reader, get_threshold_from_options,
     parse_per_mod_thresholds, parse_thresholds, using_stream,
 };
-use crate::dmr::subcommand::BedMethylDmr;
+use crate::dmr::subcommands::BedMethylDmr;
 use crate::errs::{InputError, RunError};
 use crate::extract_mods::ExtractMods;
 use crate::logging::init_logging;
@@ -78,7 +78,7 @@ pub enum Commands {
     /// rejected. Reads where there is an ambiguous alignment of the acceptor to the
     /// donor will be rejected (and logged). See the full documentation for details.
     Repair(RepairTags),
-    /// Perform pairwise DMR test on a set of regions. Output a BED file of regions
+    /// Perform DMR test on a set of regions. Output a BED file of regions
     /// ranked by difference (the score column). Output columns are:
     /// 1. chrom
     /// 2. start
@@ -89,7 +89,10 @@ pub enum Commands {
     /// 7. control total (sum all mod counts + canonical counts)
     /// 8. experimental mod counts (mod:count), comma-separated
     /// 9. experiment total (sum all mod counts + canonical counts)
-    /// Columns 10 and 11 are used for testing and development and will be removed.
+    /// 10. control base modification fraction
+    /// 11. experiment base modification fraction
+    /// See subcommand help for additional details.
+    #[clap(subcommand)]
     Dmr(BedMethylDmr),
     /// With a hemi
     PileupHemi(DuplexModBamPileup),
