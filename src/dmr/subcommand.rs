@@ -157,10 +157,10 @@ fn get_modification_counts(
     let mut exp_bed_reader =
         File::open(exp_bedmethyl).map(bgzf::Reader::new)?;
     if control_chunks.len() != 1 {
-        debug!("more than 1 control chunk?");
+        debug!("more than 1 control chunk?, got {}", control_chunks.len());
     }
     if exp_chunks.len() != 1 {
-        debug!("more than 1 control chunk?");
+        debug!("more than 1 exp chunk?, got {}", exp_chunks.len());
     }
     let control_counts = get_mod_counts_for_condition(
         &mut control_reader,
@@ -333,6 +333,17 @@ impl BedMethylDmr {
                 _ => bail!("modified base needs to be A, C, G, or T."),
             }
         }
+        for fp in [&self.control_bed_methyl, &self.exp_bed_methyl] {
+            if !fp.exists() {
+                bail!(
+                    "input file {} not found",
+                    &self
+                        .control_bed_methyl
+                        .to_str()
+                        .unwrap_or("UTF-8-decode failure")
+                )
+            }
+        }
         let _pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build_global()?;
@@ -404,6 +415,10 @@ impl BedMethylDmr {
         )?;
 
         let pb = mpb.add(get_master_progress_bar(regions_of_interest.len()));
+        let successes = mpb.add(get_ticker());
+        successes.set_message("regions processed successfully");
+        let failures = mpb.add(get_ticker());
+        failures.set_message("regions failed");
         let mut modification_counts_agg = regions_of_interest
                 .into_par_iter()
                 .progress_with(pb)
@@ -413,10 +428,12 @@ impl BedMethylDmr {
                             Some((*control_chr_id, *exp_chr_id, dmr_interval))
                         },
                         (None, _) => {
+                            failures.inc(1);
                             debug!("didn't find chrom id for {} in control tabix header", &dmr_interval.chrom);
                             None
                         },
                         (_, None) => {
+                            failures.inc(1);
                             debug!("didn't find chrom id for {} in experimental tabix header", &dmr_interval.chrom);
                             None
                         }
@@ -432,10 +449,12 @@ impl BedMethylDmr {
                             Some((control_chr_id, control_chunks, exp_chunks, dmr_interval))
                         },
                         (Err(e), _) => {
+                            failures.inc(1);
                             debug!("failed to index into control bedMethyl for chrom id {}, {}", control_chr_id, e.to_string());
                             None
                         },
                         (_, Err(e)) => {
+                            failures.inc(1);
                             debug!("failed to index into experiment bedMethyl for chrom id {}, {}",exp_chr_id, e.to_string());
                             None
                         }
@@ -451,8 +470,12 @@ impl BedMethylDmr {
                             &position_filter,
                         control_chrom_id as u32,
                     ) {
-                        Ok(modification_counts) => Some(modification_counts),
+                        Ok(modification_counts) => {
+                            successes.inc(1);
+                            Some(modification_counts)
+                        },
                         Err(e) => {
+                            failures.inc(1);
                             debug!("failed to get modification counts for interval {:?}, {}", dmr_interval, e.to_string());
                             None
                         }
@@ -461,7 +484,6 @@ impl BedMethylDmr {
 
         modification_counts_agg
             .sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        // let mut writer = BufWriter::new(std::io::stdout());
         for modification_counts in modification_counts_agg {
             writer
                 .write(modification_counts.to_row()?.as_bytes())
@@ -477,7 +499,6 @@ mod dmr_unit_tests {
     use crate::dmr::subcommand::parse_roi_bed;
     use crate::dmr::DmrInterval;
     use crate::position_filter::Iv;
-    use std::path::Path;
 
     #[test]
     fn test_roi_parsing() {
@@ -510,6 +531,43 @@ mod dmr_unit_tests {
                 },
                 chrom: "chr20".to_string(),
                 name: "r3".to_string(),
+            },
+        ]
+        .to_vec();
+        assert_eq!(rois, expected);
+    }
+
+    #[test]
+    fn test_roi_parsing_noname() {
+        let fp = "tests/resources/sim_cpg_regions_noname.bed";
+        let rois = parse_roi_bed(fp).unwrap();
+        let expected = [
+            DmrInterval {
+                interval: Iv {
+                    start: 10172120,
+                    stop: 10172545,
+                    val: (),
+                },
+                chrom: "chr20".to_string(),
+                name: "chr20:10172120-10172545".to_string(),
+            },
+            DmrInterval {
+                interval: Iv {
+                    start: 10217487,
+                    stop: 10218336,
+                    val: (),
+                },
+                chrom: "chr20".to_string(),
+                name: "chr20:10217487-10218336".to_string(),
+            },
+            DmrInterval {
+                interval: Iv {
+                    start: 10034963,
+                    stop: 10035266,
+                    val: (),
+                },
+                chrom: "chr20".to_string(),
+                name: "chr20:10034963-10035266".to_string(),
             },
         ]
         .to_vec();

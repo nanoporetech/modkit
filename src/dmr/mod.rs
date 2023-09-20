@@ -31,13 +31,26 @@ impl DmrInterval {
         let (rest, chrom) = consume_string(line)?;
         let (rest, start) = consume_digit(rest)?;
         let (rest, stop) = consume_digit(rest)?;
-        let (rest, _) = many0(one_of(" \t\r\n"))(rest)?;
-        let (rest, name) = consume_string_spaces(rest)?;
-        let interval = Iv {
-            start,
-            stop,
-            val: (),
-        };
+
+        let (rest, interval, name) = many0(one_of(" \t\r\n"))(rest)
+            .and_then(|(rest, _)| consume_string_spaces(rest))
+            .map(|(rest, name)| {
+                let interval = Iv {
+                    start,
+                    stop,
+                    val: (),
+                };
+                (rest, interval, name)
+            })
+            .unwrap_or_else(|_| {
+                let interval = Iv {
+                    start,
+                    stop,
+                    val: (),
+                };
+                let name = format!("{}:{}-{}", chrom, start, stop);
+                (rest, interval, name)
+            });
 
         Ok((
             rest,
@@ -224,6 +237,19 @@ mod dmr_mod_tests {
             "chr20".to_string(),
             "CpGby_any_other_name".to_string(),
         );
+        assert_eq!(obs, expected);
+        let obs = DmrInterval::parse_str("chr20\t279148\t279507\t").unwrap();
+        let expected = DmrInterval::new(
+            Iv {
+                start: 279148,
+                stop: 279507,
+                val: (),
+            },
+            "chr20".to_string(),
+            "chr20:279148-279507".to_string(),
+        );
+        assert_eq!(obs, expected);
+        let obs = DmrInterval::parse_str("chr20\t279148\t279507 ").unwrap();
         assert_eq!(obs, expected);
     }
 }
