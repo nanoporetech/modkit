@@ -2,18 +2,19 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context};
 use bio::io::fasta::Reader as FastaReader;
 use clap::{Args, Subcommand};
-use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
-use log::{debug, error};
+use indicatif::{MultiProgress, ProgressIterator};
+use log::{debug, error, info};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use crate::dmr::model::ModificationCounts;
 use crate::dmr::pairwise::get_modification_counts;
-use crate::dmr::util::parse_roi_bed;
+use crate::dmr::util::{parse_roi_bed, DmrIntervalIter};
 use crate::logging::init_logging;
 use crate::motif_bed::{find_motif_hits, RegexMotif};
 use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
@@ -76,9 +77,9 @@ pub struct PairwiseDmr {
 }
 
 impl PairwiseDmr {
-    fn get_stranded_position_filter<'a>(
+    fn get_stranded_position_filter(
         &self,
-        name_to_id: HashMap<String, usize>,
+        name_to_id: Arc<HashMap<String, usize>>,
         multi_pb: &MultiProgress,
         modified_bases: &[RegexMotif],
     ) -> anyhow::Result<StrandedPositionFilter> {
@@ -240,6 +241,7 @@ impl PairwiseDmr {
             .enumerate()
             .map(|(idx, r)| (r.to_owned(), idx))
             .collect::<HashMap<String, usize>>();
+        let control_contig_lookup = Arc::new(control_contig_lookup);
 
         let exp_contig_lookup = exp_index
             .header()
@@ -262,81 +264,107 @@ impl PairwiseDmr {
             &motifs,
         )?;
 
+        let chunk_size = (self.threads as f32 * 1.5f32).floor() as usize;
+        info!("processing {chunk_size} DMR intervals concurrently");
+        let control_fn = self
+            .control_bed_methyl
+            .to_str()
+            .map(|s| s.to_owned())
+            .unwrap_or_else(|| format!("'a' failed path decode"));
+        let exp_fn = self
+            .exp_bed_methyl
+            .to_str()
+            .map(|s| s.to_owned())
+            .unwrap_or_else(|| format!("'a' failed path decode"));
+
         let pb = mpb.add(get_master_progress_bar(regions_of_interest.len()));
+        pb.set_message("regions processed");
+        let failures = mpb.add(get_ticker());
+        failures.set_message("regions failed to process");
         let successes = mpb.add(get_ticker());
         successes.set_message("regions processed successfully");
-        let failures = mpb.add(get_ticker());
-        failures.set_message("regions failed");
-        let mut modification_counts_agg = regions_of_interest
-            .into_par_iter()
-            .progress_with(pb)
-            .filter_map(|dmr_interval| {
-                match (control_contig_lookup.get(&dmr_interval.chrom), exp_contig_lookup.get(&dmr_interval.chrom)) {
-                    (Some(control_chr_id), Some(exp_chr_id)) => {
-                        Some((*control_chr_id, *exp_chr_id, dmr_interval))
-                    },
-                    (None, _) => {
-                        failures.inc(1);
-                        debug!("didn't find chrom id for {} in control tabix header", &dmr_interval.chrom);
-                        None
-                    },
-                    (_, None) => {
-                        failures.inc(1);
-                        debug!("didn't find chrom id for {} in experimental tabix header", &dmr_interval.chrom);
-                        None
-                    }
-                }
-            })
-            .filter_map(|(control_chr_id, exp_chr_id, dmr_interval)| {
-                let control_chunks = dmr_interval
-                    .get_index_chunks(&control_index, control_chr_id);
-                let exp_chunks =
-                    dmr_interval.get_index_chunks(&exp_index, exp_chr_id);
-                match (control_chunks, exp_chunks) {
-                    (Ok(control_chunks), Ok(exp_chunks)) => {
-                        Some((control_chr_id, control_chunks, exp_chunks, dmr_interval))
-                    },
-                    (Err(e), _) => {
-                        failures.inc(1);
-                        debug!("failed to index into control bedMethyl for chrom id {}, {}", control_chr_id, e.to_string());
-                        None
-                    },
-                    (_, Err(e)) => {
-                        failures.inc(1);
-                        debug!("failed to index into experiment bedMethyl for chrom id {}, {}",exp_chr_id, e.to_string());
-                        None
-                    }
-                }
-            })
-            .filter_map(|(control_chrom_id, control_chunks,exp_chunks, dmr_interval)| {
-                match get_modification_counts(
-                    &self.control_bed_methyl,
-                    &self.exp_bed_methyl,
-                    &control_chunks,
-                    &exp_chunks,
-                    dmr_interval.clone(),
-                    &position_filter,
-                    control_chrom_id as u32,
-                ) {
-                    Ok(modification_counts) => {
-                        successes.inc(1);
-                        Some(modification_counts)
-                    },
-                    Err(e) => {
-                        failures.inc(1);
-                        debug!("failed to get modification counts for interval {:?}, {}", dmr_interval, e.to_string());
-                        None
-                    }
-                }
-            }).collect::<Vec<ModificationCounts>>();
 
-        modification_counts_agg
-            .sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        for modification_counts in modification_counts_agg {
-            writer
-                .write(modification_counts.to_row()?.as_bytes())
-                .unwrap();
+        let dmr_interval_iter = DmrIntervalIter::new(
+            control_fn,
+            exp_fn,
+            control_contig_lookup.clone(),
+            exp_contig_lookup,
+            control_index,
+            exp_index,
+            regions_of_interest.into_iter().collect(),
+            chunk_size,
+            failures.clone(),
+        );
+
+        let (snd, rcv) = crossbeam_channel::bounded(1000);
+
+        let control_bedmethyl_fp = self.control_bed_methyl.clone();
+        let exp_bedmethyl_fp = self.exp_bed_methyl.clone();
+        std::thread::spawn(move || {
+            for chunks in dmr_interval_iter {
+                let mut result: Vec<anyhow::Result<ModificationCounts>> =
+                    vec![];
+                let (res, _) = rayon::join(
+                    || {
+                        chunks
+                            .into_par_iter()
+                            .map(|dmr_chunk| {
+                                get_modification_counts(
+                                    &control_bedmethyl_fp,
+                                    &exp_bedmethyl_fp,
+                                    &dmr_chunk.control_chunks,
+                                    &dmr_chunk.exp_chunks,
+                                    dmr_chunk.dmr_interval,
+                                    &position_filter,
+                                    dmr_chunk.chrom_id,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                    || {
+                        result.into_iter().for_each(|counts| {
+                            pb.inc(1);
+                            match snd.send(counts) {
+                                Ok(_) => {}
+                                Err(e) => error!(
+                                    "failed to send results, {}",
+                                    e.to_string()
+                                ),
+                            }
+                        })
+                    },
+                );
+                result = res;
+                result.into_iter().for_each(|counts| {
+                    pb.inc(1);
+                    match snd.send(counts) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("failed to send results, {}", e.to_string())
+                        }
+                    }
+                });
+            }
+            pb.finish_and_clear();
+        });
+
+        for result in rcv {
+            match result {
+                Ok(counts) => {
+                    writer.write(counts.to_row()?.as_bytes())?;
+                    successes.inc(1);
+                }
+                Err(e) => {
+                    debug!("unexpected error, {}", e.to_string());
+                }
+            }
         }
+
+        info!(
+            "{} regions processed successfully and {} regions failed",
+            successes.position(),
+            failures.position()
+        );
 
         Ok(())
     }

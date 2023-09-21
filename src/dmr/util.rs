@@ -1,12 +1,15 @@
 use std::cmp::Ordering;
-use std::fmt::Debug;
+use std::collections::{HashMap, VecDeque};
+use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use derive_new::new;
-use log::error;
+use indicatif::ProgressBar;
+use log::{debug, error};
 use nom::character::complete::{multispace1, none_of, one_of};
 use nom::multi::{many0, many1};
 use nom::IResult;
@@ -102,6 +105,146 @@ impl Ord for DmrInterval {
         match self.chrom.cmp(&other.chrom) {
             Ordering::Equal => self.interval.cmp(&other.interval),
             o @ _ => o,
+        }
+    }
+}
+
+impl Display for DmrInterval {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}-{}", self.chrom, self.start(), self.stop())
+    }
+}
+
+#[derive(new)]
+pub(super) struct DmrChunk {
+    pub(super) chrom_id: u32,
+    pub(super) control_chunks: Vec<IndexChunk>,
+    pub(super) exp_chunks: Vec<IndexChunk>,
+    pub(super) dmr_interval: DmrInterval,
+}
+
+pub(super) struct DmrIntervalIter {
+    control_fn: String,
+    exp_fn: String,
+    control_contig_lookup: Arc<HashMap<String, usize>>,
+    exp_contig_lookup: HashMap<String, usize>,
+    control_index: CsiIndex,
+    exp_index: CsiIndex,
+    regions_of_interest: VecDeque<DmrInterval>,
+    chunk_size: usize,
+    failures: ProgressBar,
+}
+
+impl DmrIntervalIter {
+    pub(super) fn new(
+        control_fn: String,
+        exp_fn: String,
+        control_contig_lookup: Arc<HashMap<String, usize>>,
+        exp_contig_lookup: HashMap<String, usize>,
+        control_index: CsiIndex,
+        exp_index: CsiIndex,
+        rois: VecDeque<DmrInterval>,
+        chunk_size: usize,
+        failure_counter: ProgressBar,
+    ) -> Self {
+        Self {
+            control_fn,
+            exp_fn,
+            control_contig_lookup,
+            exp_contig_lookup,
+            control_index,
+            exp_index,
+            regions_of_interest: rois,
+            chunk_size,
+            failures: failure_counter,
+        }
+    }
+}
+
+impl Iterator for DmrIntervalIter {
+    type Item = Vec<DmrChunk>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut chunks = Self::Item::with_capacity(self.chunk_size);
+        loop {
+            if let Some(dmr_interval) = self.regions_of_interest.pop_front() {
+                let (control_chr_id, exp_chr_id) = match (
+                    self.control_contig_lookup.get(&dmr_interval.chrom),
+                    self.exp_contig_lookup.get(&dmr_interval.chrom),
+                ) {
+                    (Some(control_chr_id), Some(exp_chr_id)) => {
+                        (*control_chr_id, *exp_chr_id)
+                    }
+                    (None, _) => {
+                        self.failures.inc(1);
+                        // todo change "control" and "experimental" to the filepaths
+                        debug!(
+                            "didn't find chrom id for {} in {} tabix header",
+                            &self.control_fn, &dmr_interval.chrom
+                        );
+                        continue;
+                    }
+                    (_, None) => {
+                        self.failures.inc(1);
+                        debug!(
+                            "didn't find chrom id for {} in {} tabix header",
+                            &self.exp_fn, &dmr_interval.chrom
+                        );
+                        continue;
+                    }
+                };
+                let control_chunks = dmr_interval
+                    .get_index_chunks(&self.control_index, control_chr_id);
+                let exp_chunks =
+                    dmr_interval.get_index_chunks(&self.exp_index, exp_chr_id);
+                let (control_chunks, exp_chunks) =
+                    match (control_chunks, exp_chunks) {
+                        (Ok(control_chunks), Ok(exp_chunks)) => {
+                            (control_chunks, exp_chunks)
+                        }
+                        (Err(e), _) => {
+                            self.failures.inc(1);
+                            debug!(
+                                "failed to index into {} bedMethyl \
+                            for region {}, {}",
+                                &self.control_fn,
+                                dmr_interval,
+                                e.to_string()
+                            );
+                            continue;
+                        }
+                        (_, Err(e)) => {
+                            self.failures.inc(1);
+                            debug!(
+                                "failed to index into {} bedMethyl \
+                            for chrom id {}, {}",
+                                &self.exp_fn,
+                                exp_chr_id,
+                                e.to_string()
+                            );
+                            continue;
+                        }
+                    };
+                let chunk = DmrChunk::new(
+                    control_chr_id as u32,
+                    control_chunks,
+                    exp_chunks,
+                    dmr_interval,
+                );
+                chunks.push(chunk);
+                if chunks.len() >= self.chunk_size {
+                    break;
+                } else {
+                    continue;
+                }
+            } else {
+                break;
+            }
+        }
+        if chunks.is_empty() {
+            None
+        } else {
+            Some(chunks)
         }
     }
 }
