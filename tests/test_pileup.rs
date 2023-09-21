@@ -357,7 +357,7 @@ fn test_pileup_edge_filter_regression() {
         edge_filter_bed.to_str().unwrap(),
         "--no-filtering",
         "--edge-filter",
-        "50",
+        "50,50",
     ])
     .context("test_pileup_edge_filter_regression failed to make bedMethyl")
     .unwrap();
@@ -385,7 +385,7 @@ fn test_pileup_edge_filter_regression() {
         edge_filter_bed_2.to_str().unwrap(),
         "--no-filtering",
         "--edge-filter",
-        "50",
+        "50,50"
     ])
         .context("test_pileup_edge_filter_regression failed to make bedMethyl on adjusted bam")
         .unwrap();

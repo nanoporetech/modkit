@@ -13,15 +13,16 @@ use rust_htslib::bam::Read;
 use crate::adjust::{adjust_modbam, record_is_valid};
 use crate::command_utils::{
     get_bam_writer, get_serial_reader, get_threshold_from_options,
-    parse_per_mod_thresholds, parse_thresholds, using_stream,
+    parse_edge_filter_input, parse_per_mod_thresholds, parse_thresholds,
+    using_stream,
 };
 use crate::dmr::subcommands::BedMethylDmr;
 use crate::errs::{InputError, RunError};
 use crate::extract_mods::ExtractMods;
 use crate::logging::init_logging;
 use crate::mod_bam::{
-    format_mm_ml_tag, CollapseMethod, EdgeFilter, ModBaseInfo, RawModCode,
-    SkipMode, ML_TAGS, MM_TAGS,
+    format_mm_ml_tag, CollapseMethod, ModBaseInfo, RawModCode, SkipMode,
+    ML_TAGS, MM_TAGS,
 };
 use crate::mod_base_code::ModCode;
 use crate::monoid::Moniod;
@@ -162,10 +163,14 @@ pub struct Adjust {
     #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
     convert: Option<Vec<char>>,
     /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. For example, a value of 10 will require that the base modification is
-    /// at least the 11th base or 11 bases from the end.
+    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
+    /// base modification calls from the start and end of the reads. For example, 4,8 will
+    /// filter out base modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
-    edge_filter: Option<usize>,
+    edge_filter: Option<String>,
+    /// Invert the edge filter
+    #[arg(long, requires = "edge_filter", default_value_t = false)]
+    invert_edge_filter: bool,
     /// Output SAM format instead of BAM.
     #[arg(long, default_value_t = false)]
     output_sam: bool,
@@ -241,10 +246,8 @@ impl Adjust {
         let edge_filter = self
             .edge_filter
             .as_ref()
-            .map(|trim| {
-                info!("removing base modification calls from {trim} bases from the ends");
-                EdgeFilter::new(*trim, *trim)
-            });
+            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .transpose()?;
 
         let methods = if edge_filter.is_none() && methods.is_empty() {
             bail!("no edge-filter, ignore, or convert was provided, no work to do. Provide \
@@ -321,10 +324,14 @@ pub struct SampleModBaseProbs {
     #[arg(long, hide_short_help = true)]
     ignore: Option<char>,
     /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. For example, a value of 10 will require that the base modification is
-    /// at least the 11th base or 11 bases from the end.
-    #[arg(long, hide_short_help = true)]
-    edge_filter: Option<usize>,
+    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
+    /// base modification calls from the start and end of the reads. For example, 4,8 will
+    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    #[arg(long)]
+    edge_filter: Option<String>,
+    /// Invert the edge filter
+    #[arg(long, requires = "edge_filter", default_value_t = false)]
+    invert_edge_filter: bool,
 
     // probability histogram options
     /// Output histogram of base modification prediction probabilities.
@@ -396,7 +403,8 @@ impl SampleModBaseProbs {
         let edge_filter = self
             .edge_filter
             .as_ref()
-            .map(|trim| EdgeFilter::new(*trim, *trim));
+            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .transpose()?;
 
         let (sample_frac, num_reads) = get_sampling_options(
             self.no_sampling,
@@ -618,10 +626,14 @@ pub struct ModSummarize {
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<char>,
     /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. For example, a value of 10 will require that the base modification is
-    /// at least the 11th base or 11 bases from the end.
-    #[arg(long, hide_short_help = true)]
-    edge_filter: Option<usize>,
+    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
+    /// base modification calls from the start and end of the reads. For example, 4,8 will
+    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    #[arg(long)]
+    edge_filter: Option<String>,
+    /// Invert the edge filter
+    #[arg(long, requires = "edge_filter", default_value_t = false)]
+    invert_edge_filter: bool,
     /// Only summarize base modification probabilities that are aligned
     /// to the positions in this BED file. (alias: include-positions)
     #[arg(long, alias = "include-positions")]
@@ -659,7 +671,8 @@ impl ModSummarize {
         let edge_filter = self
             .edge_filter
             .as_ref()
-            .map(|trim| EdgeFilter::new(*trim, *trim));
+            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .transpose()?;
 
         let (sample_frac, num_reads) = get_sampling_options(
             self.no_sampling,
@@ -1080,10 +1093,14 @@ pub struct CallMods {
     #[arg(long, default_value_t = false)]
     no_filtering: bool,
     /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. For example, a value of 10 will require that the base modification is
-    /// at least the 11th base or 11 bases from the end.
-    #[arg(long, hide_short_help = true)]
-    edge_filter: Option<usize>,
+    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
+    /// base modification calls from the start and end of the reads. For example, 4,8 will
+    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    #[arg(long)]
+    edge_filter: Option<String>,
+    /// Invert the edge filter
+    #[arg(long, requires = "edge_filter", default_value_t = false)]
+    invert_edge_filter: bool,
     /// Output SAM format instead of BAM.
     #[arg(long, default_value_t = false)]
     output_sam: bool,
@@ -1104,7 +1121,8 @@ impl CallMods {
         let edge_filter = self
             .edge_filter
             .as_ref()
-            .map(|trim| EdgeFilter::new(*trim, *trim));
+            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .transpose()?;
 
         let per_mod_thresholds =
             if let Some(raw_per_mod_thresholds) = &self.mod_thresholds {

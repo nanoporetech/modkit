@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::thread;
 
-use crate::command_utils::{get_serial_reader, using_stream};
+use crate::command_utils::{
+    get_serial_reader, parse_edge_filter_input, using_stream,
+};
 use bio::io::fasta::Reader as FastaReader;
 use clap::Args;
 use crossbeam_channel::{bounded, Sender};
@@ -80,10 +82,14 @@ pub struct ExtractMods {
     #[arg(long, alias = "exclude", short = 'v')]
     exclude_bed: Option<PathBuf>,
     /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. For example, a value of 10 will require that the base modification is
-    /// at least the 11th base or 11 bases from the end.
+    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
+    /// base modification calls from the start and end of the reads. For example, 4,8 will
+    /// filter out base modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
-    edge_filter: Option<usize>,
+    edge_filter: Option<String>,
+    /// Invert the edge filter
+    #[arg(long, requires = "edge_filter", default_value_t = false)]
+    invert_edge_filter: bool,
 
     /// Ignore a modified base class  _in_situ_ by redistributing base modification
     /// probability equally across other options. For example, if collapsing 'h',
@@ -213,7 +219,8 @@ impl ExtractMods {
         let edge_filter = self
             .edge_filter
             .as_ref()
-            .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
+            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .transpose()?;
 
         let mut reader = get_serial_reader(&self.in_bam)?;
         let header = reader.header().to_owned();

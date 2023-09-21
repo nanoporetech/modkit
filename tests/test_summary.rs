@@ -78,7 +78,7 @@ fn test_summary_edge_filter() {
             .unwrap();
 
     let trim = 50;
-    let edge_filter = EdgeFilter::new(trim, trim);
+    let edge_filter = EdgeFilter::new(trim, trim, false);
     let summary_w_edge_filter = run_simple_summary_with_edge_filter(
         bam_fp.to_str().unwrap(),
         25,

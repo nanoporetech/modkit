@@ -1,11 +1,7 @@
-use crate::errs::{InputError, RunError};
-use crate::mod_base_code::{DnaBase, ModCode};
-use crate::util;
-use crate::util::{get_tag, record_is_secondary, Strand};
-
 use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 
-use crate::position_filter::StrandedPositionFilter;
+use anyhow::bail;
 use derive_new::new;
 use itertools::Itertools;
 use log::debug;
@@ -16,7 +12,14 @@ use nom::IResult;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Aux;
 use rustc_hash::FxHashMap;
-use std::collections::{HashMap, HashSet};
+
+use crate::errs::{InputError, RunError};
+use crate::mod_base_code::{DnaBase, ModCode};
+use crate::position_filter::StrandedPositionFilter;
+use crate::util;
+use crate::util::{
+    get_query_name_string, get_tag, record_is_secondary, Strand,
+};
 
 pub(crate) struct TrackingModRecordIter<'a, T: bam::Read> {
     records: bam::Records<'a, T>,
@@ -704,28 +707,51 @@ impl SeqPosBaseModProbs {
         edge_filter: &EdgeFilter,
         read_length: usize,
     ) -> Option<Self> {
-        if read_length <= edge_filter.edge_filter_start {
-            None
-        } else {
-            read_length
-                .checked_sub(edge_filter.edge_filter_end)
-                .and_then(|edge_filter_end| {
-                    let pos_to_base_mod_probs = self
-                        .pos_to_base_mod_probs
-                        .into_iter()
-                        .filter(|(pos, _)| {
-                            *pos >= edge_filter.edge_filter_start
-                                && *pos < edge_filter_end
-                        })
-                        .collect::<FxHashMap<usize, BaseModProbs>>();
-                    if pos_to_base_mod_probs.is_empty() {
-                        // all positions filtered out
-                        None
-                    } else {
-                        Some(Self::new(pos_to_base_mod_probs, self.skip_mode))
+        if edge_filter.read_can_be_trimmed(read_length) {
+            let pos_to_base_mod_probs = self
+                .pos_to_base_mod_probs
+                .into_iter()
+                .filter(|(pos, _)| {
+                    match edge_filter.keep_position(*pos, read_length) {
+                        Ok(b) => b,
+                        Err(_) => {
+                            // shouldn't really happen,
+                            false
+                        }
                     }
                 })
+                .collect::<FxHashMap<usize, BaseModProbs>>();
+            if pos_to_base_mod_probs.is_empty() {
+                // all positions filtered out
+                None
+            } else {
+                Some(Self::new(pos_to_base_mod_probs, self.skip_mode))
+            }
+        } else {
+            None
         }
+        // if read_length <= edge_filter.edge_filter_start {
+        //     None
+        // } else {
+        //     read_length
+        //         .checked_sub(edge_filter.edge_filter_end)
+        //         .and_then(|edge_filter_end| {
+        //             let pos_to_base_mod_probs = self
+        //                 .pos_to_base_mod_probs
+        //                 .into_iter()
+        //                 .filter(|(pos, _)| {
+        //                     *pos >= edge_filter.edge_filter_start
+        //                         && *pos < edge_filter_end
+        //                 })
+        //                 .collect::<FxHashMap<usize, BaseModProbs>>();
+        //             if pos_to_base_mod_probs.is_empty() {
+        //                 // all positions filtered out
+        //                 None
+        //             } else {
+        //                 Some(Self::new(pos_to_base_mod_probs, self.skip_mode))
+        //             }
+        //         })
+        // }
     }
 
     pub(crate) fn filter_positions(
@@ -738,30 +764,45 @@ impl SeqPosBaseModProbs {
         record: &bam::Record,
     ) -> Option<Self> {
         let read_length = record.seq_len();
-        let (edge_filter_start, edge_filter_end) =
-            if let Some(edge_filter) = edge_filter {
-                if read_length <= edge_filter.edge_filter_start {
-                    return None;
-                }
-                match read_length.checked_sub(edge_filter.edge_filter_end) {
-                    None => return None,
-                    Some(l) => (edge_filter.edge_filter_start, l),
-                }
-            } else {
-                (0, record.seq_len())
-            };
+        let read_can_be_trimmed = edge_filter
+            .map(|ef| ef.read_can_be_trimmed(read_length))
+            .unwrap_or(true);
+        if !read_can_be_trimmed {
+            return None;
+        }
+
+        // let (edge_filter_start, edge_filter_end) =
+        //     if let Some(edge_filter) = edge_filter {
+        //         if read_length <= edge_filter.edge_filter_start {
+        //             return None;
+        //         }
+        //         match read_length.checked_sub(edge_filter.edge_filter_end) {
+        //             None => return None,
+        //             Some(l) => (edge_filter.edge_filter_start, l),
+        //         }
+        //     } else {
+        //         (0, record.seq_len())
+        //     };
 
         let probs = self
             .pos_to_base_mod_probs
             .into_iter()
             .filter(|(q_pos, _)| {
-                let edge_keep =
-                    *q_pos >= edge_filter_start && *q_pos < edge_filter_end;
+                let edge_keep = edge_filter.map(|ef| match ef.keep_position(*q_pos, read_length) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let read_name = get_query_name_string(record)
+                            .unwrap_or_else(|e| format!("UTF-8 DECODE ERROR, {}", e.to_string()));
+                        debug!("{read_name}, error when trying to filter edge positions, {}", e.to_string());
+                        false
+                    }
+                }).unwrap_or(true);
                 let only_mapped_keep = if only_mapped {
                     aligned_pairs.contains_key(q_pos)
                 } else {
                     true
                 };
+
                 let position_keep = match position_filter {
                     Some(position_filter) => aligned_pairs
                         .get(q_pos)
@@ -837,10 +878,14 @@ impl SeqPosBaseModProbs {
                 .enumerate()
                 .filter(|(pos, base)| {
                     let base_matches = *base == primary_base;
-                    let after_trim_start =
-                        *pos >= edge_filter.edge_filter_start;
-                    let before_trim_end = *pos < edge_filter.edge_filter_end;
-                    base_matches && after_trim_start && before_trim_end
+                    let keep_position = edge_filter
+                        .keep_position(*pos, forward_sequence.len())
+                        .unwrap_or(false);
+                    // let after_trim_start =
+                    //     *pos >= edge_filter.edge_filter_start;
+                    // let before_trim_end = *pos < edge_filter.edge_filter_end;
+                    // base_matches && after_trim_start && before_trim_end
+                    base_matches && keep_position
                 })
                 .fold(self.pos_to_base_mod_probs, |mut acc, (pos, _)| {
                     acc.entry(pos).or_insert_with(|| {
@@ -1277,11 +1322,40 @@ pub fn base_mod_probs_from_record(
 
 #[derive(new, Debug)]
 pub struct EdgeFilter {
-    // TODO(arand) in the CLIs only one option is allowed, i.e.
-    // both `edge_filter_start` and `edge_filter_end` will be the
-    // same. If this changes make sure there are suitable tests.
-    pub(crate) edge_filter_start: usize,
-    pub(crate) edge_filter_end: usize,
+    edge_filter_start: usize,
+    edge_filter_end: usize,
+    inverted: bool,
+}
+
+impl EdgeFilter {
+    pub(crate) fn keep_position(
+        &self,
+        position: usize,
+        read_length: usize,
+    ) -> anyhow::Result<bool> {
+        if !self.read_can_be_trimmed(read_length) {
+            bail!(
+                "read length not suitable for edge filter with start trim {}, \
+            end trim {} and read length {}",
+                self.edge_filter_start,
+                self.edge_filter_end,
+                read_length
+            );
+        } else if self.inverted {
+            let before_start = position < self.edge_filter_start;
+            let after_end = position >= (read_length - self.edge_filter_end);
+            Ok(before_start || after_end)
+        } else {
+            let after_start = position >= self.edge_filter_start;
+            let before_end = position < (read_length - self.edge_filter_end);
+            Ok(after_start && before_end)
+        }
+    }
+
+    pub(crate) fn read_can_be_trimmed(&self, read_length: usize) -> bool {
+        !(read_length <= self.edge_filter_start
+            || read_length.checked_sub(self.edge_filter_end).is_none())
+    }
 }
 
 #[derive(Hash, Eq, PartialEq, Debug)]
@@ -1420,14 +1494,17 @@ impl DuplexModCall {
 
 #[cfg(test)]
 mod mod_bam_tests {
-    use super::*;
-    use crate::util::get_aligned_pairs_forward;
-    use rust_htslib::bam::Read;
-    use rustc_hash::FxHashSet;
     use std::collections::BTreeSet;
     use std::fs::File;
     use std::io::{BufRead, BufReader};
     use std::path::Path;
+
+    use rust_htslib::bam::Read;
+    use rustc_hash::FxHashSet;
+
+    use crate::util::get_aligned_pairs_forward;
+
+    use super::*;
 
     fn qual_to_prob(qual: u16) -> f32 {
         let q = qual as f32;
@@ -2122,7 +2199,7 @@ mod mod_bam_tests {
             .into_iter()
             .collect::<Vec<_>>();
         assert_eq!(expected_pos, obs_pos);
-        let edge_filter = EdgeFilter::new(4, 4);
+        let edge_filter = EdgeFilter::new(4, 4, false);
         let c_seq_base_mod_probs = c_seq_base_mod_probs
             .edge_filter_positions(&edge_filter, dna.len())
             .unwrap();
@@ -2136,7 +2213,7 @@ mod mod_bam_tests {
         assert_eq!(vec![9], obs_pos);
 
         // trim larger than read
-        let edge_filter = EdgeFilter::new(50, 50);
+        let edge_filter = EdgeFilter::new(50, 50, false);
         let mut obs_mod_base_info =
             ModBaseInfo::new(&raw_mod_tags, dna, &bam::Record::new()).unwrap();
         let c_seq_base_mod_probs = obs_mod_base_info
@@ -2163,7 +2240,7 @@ mod mod_bam_tests {
             .into_iter()
             .collect::<Vec<_>>();
         assert_eq!(expected_pos, obs_pos);
-        let edge_filter = EdgeFilter::new(3, 3);
+        let edge_filter = EdgeFilter::new(3, 3, false);
         let c_seq_base_mod_probs = c_seq_base_mod_probs
             .edge_filter_positions(&edge_filter, dna.len())
             .unwrap();
