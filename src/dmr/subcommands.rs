@@ -9,6 +9,7 @@ use bio::io::fasta::Reader as FastaReader;
 use clap::{Args, Subcommand};
 use indicatif::{MultiProgress, ProgressIterator};
 use log::{debug, error, info};
+use noodles::csi::Index as CsiIndex;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
@@ -22,7 +23,14 @@ use crate::util::{get_master_progress_bar, get_ticker, Strand};
 
 #[derive(Subcommand)]
 pub enum BedMethylDmr {
+    /// Compare regions in a pair of samples (for example, tumor and normal or
+    /// control and experiment). A sample is input as a bgzip pileup bedMethyl
+    /// (produced by pileup, for example) that has an associated tabix index.
+    /// Output is a BED file with the score column indicating the magnitude of
+    /// the difference in methylation between the two samples. See the online
+    /// documentation for additional details.
     Pair(PairwiseDmr),
+    /// TODO
     Multi(MultiSampleDmr),
 }
 
@@ -38,19 +46,21 @@ impl BedMethylDmr {
 #[derive(Args)]
 pub struct PairwiseDmr {
     /// Bgzipped bedMethyl file for the first (usually control) sample. There should be
-    /// a tabix index with the same name and .tbi next to this file.
+    /// a tabix index with the same name and .tbi next to this file or the --index-a option
+    /// must be provided.
     #[arg(short = 'a')]
     control_bed_methyl: PathBuf,
     /// Bgzipped bedMethyl file for the second (usually experimental) sample. There should be
-    /// a tabix index with the same name and .tbi next to this file.
+    /// a tabix index with the same name and .tbi next to this file or the --index-b option
+    /// must be provided.
     #[arg(short = 'b')]
     exp_bed_methyl: PathBuf,
     /// Path to file to direct output, optional, no argument will direct output to stdout.
     #[arg(short = 'o', long)]
     out_path: Option<String>,
-    /// Regions over which to compare methylation levels. Should be tab-separated (spaces
-    /// allowed in the "name" column). Requires chrom, chromStart, chromEnd, and Name columns.
-    /// Strand is currently ignored.
+    /// Regions BED file over which to compare methylation levels. Should be tab-separated (spaces
+    /// allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name column is
+    /// optional. Strand is currently ignored.
     #[arg(long, short = 'r')]
     regions_bed: PathBuf,
     /// Path to reference fasta for the pileup.
@@ -63,7 +73,7 @@ pub struct PairwiseDmr {
     /// File to write logs to, it's recommended to use this option.
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
-    /// Number of threads to use, WARNING: currently this will open a file per thread.
+    /// Number of threads to use.
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
     /// Respect soft masking in the reference FASTA.
@@ -72,8 +82,15 @@ pub struct PairwiseDmr {
     /// Don't show progress bars
     #[arg(long, default_value_t = false)]
     suppress_progress: bool,
+    /// Force overwrite of output file, if it already exists.
     #[arg(short = 'f', long, default_value_t = false)]
     force: bool,
+    /// Path to tabix index associated with -a (--control-bed-methyl) bedMethyl file.
+    #[arg(long)]
+    index_a: Option<PathBuf>,
+    /// Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl file.
+    #[arg(long)]
+    index_b: Option<PathBuf>,
 }
 
 impl PairwiseDmr {
@@ -174,6 +191,27 @@ impl PairwiseDmr {
         })
     }
 
+    fn load_index(
+        bedmethyl_path: &PathBuf,
+        specified_index: Option<&PathBuf>,
+    ) -> anyhow::Result<CsiIndex> {
+        if let Some(index_fp) = specified_index {
+            noodles::tabix::read(index_fp).with_context(|| {
+                format!("failed to read index at {:?}", index_fp)
+            })
+        } else {
+            let bedmethyl_fp = bedmethyl_path.to_str().ok_or_else(|| {
+                anyhow!("could not format control (a) bedmethyl filepath")
+            })?;
+            let index_fp = format!("{}.tbi", bedmethyl_fp);
+            info!(
+                "looking for index associated with {} at {}",
+                bedmethyl_fp, &index_fp
+            );
+            noodles::tabix::read(index_fp).context("failed to load 'a' index")
+        }
+    }
+
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         if self.modified_bases.is_empty() {
@@ -205,16 +243,10 @@ impl PairwiseDmr {
         }
 
         // initial checks
-        let control_index = noodles::tabix::read(format!(
-            "{}.tbi",
-            self.control_bed_methyl.to_str().unwrap()
-        ))
-        .context("failed to load 'a' index")?;
-        let exp_index = noodles::tabix::read(format!(
-            "{}.tbi",
-            self.exp_bed_methyl.to_str().unwrap()
-        ))
-        .context("failed to load 'b' index")?;
+        let control_index =
+            Self::load_index(&self.control_bed_methyl, self.index_a.as_ref())?;
+        let exp_index =
+            Self::load_index(&self.exp_bed_methyl, self.index_b.as_ref())?;
 
         let mut writer: Box<dyn Write> = {
             match self.out_path.as_ref() {
@@ -232,6 +264,7 @@ impl PairwiseDmr {
         };
 
         let regions_of_interest = parse_roi_bed(&self.regions_bed)?;
+        info!("loaded {} regions", regions_of_interest.len());
 
         let control_contig_lookup = control_index
             .header()

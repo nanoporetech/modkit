@@ -79,18 +79,8 @@ pub enum Commands {
     /// donor will be rejected (and logged). See the full documentation for details.
     Repair(RepairTags),
     /// Perform DMR test on a set of regions. Output a BED file of regions
-    /// ranked by difference (the score column). Output columns are:
-    /// 1. chrom
-    /// 2. start
-    /// 3. end
-    /// 4. name
-    /// 5. score
-    /// 6. control mod counts (mod:count), comma-separated
-    /// 7. control total (sum all mod counts + canonical counts)
-    /// 8. experimental mod counts (mod:count), comma-separated
-    /// 9. experiment total (sum all mod counts + canonical counts)
-    /// 10. control base modification fraction
-    /// 11. experiment base modification fraction
+    /// with the score column indicating the magnitude of the difference. Find the schema and
+    /// description of fields can in the README as well as a description of the model and method.
     /// See subcommand help for additional details.
     #[clap(subcommand)]
     Dmr(BedMethylDmr),
