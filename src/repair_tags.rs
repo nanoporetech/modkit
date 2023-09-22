@@ -241,46 +241,53 @@ impl<'a, T: Read> Iterator for ZipRecordsIter<'a, T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         // advance a to next record
-        self.advance_donor_record();
-        self.advance_acceptor_record();
+        loop {
+            self.advance_donor_record();
+            self.advance_acceptor_record();
 
-        match (
-            self.cur_donor_record.as_ref(),
-            self.cur_acceptor_record.as_ref(),
-        ) {
-            (Some(donor), Some(acceptor)) => {
-                return match donor.qname().eq(acceptor.qname()) {
-                    true => {
-                        // unwrap are safe because of the above match, advances acceptor on next
-                        // call to .next
-                        let acceptor_record = std::mem::replace(
-                            &mut self.cur_acceptor_record,
-                            None,
-                        )
-                        .unwrap();
-                        self.acceptor_ticker.inc(1);
-                        Some(RecordPair::new(donor.clone(), acceptor_record))
+            return match (
+                self.cur_donor_record.as_ref(),
+                self.cur_acceptor_record.as_ref(),
+            ) {
+                (Some(donor), Some(acceptor)) => {
+                    match donor.qname().eq(acceptor.qname()) {
+                        true => {
+                            // unwrap are safe because of the above match, advances acceptor on next
+                            // call to .next
+                            let acceptor_record = std::mem::replace(
+                                &mut self.cur_acceptor_record,
+                                None,
+                            )
+                            .unwrap();
+                            self.acceptor_ticker.inc(1);
+                            return Some(RecordPair::new(
+                                donor.clone(),
+                                acceptor_record,
+                            ));
+                        }
+                        false => {
+                            // advance donor record in attempt to find this acceptor
+                            // todo consider logging?
+                            let _ = std::mem::replace(
+                                &mut self.cur_donor_record,
+                                None,
+                            );
+                            self.donor_ticker.inc(1);
+                            continue;
+                        }
                     }
-                    false => {
-                        // advance donor record in attempt to find this acceptor
-                        // todo consider logging?
-                        let _ =
-                            std::mem::replace(&mut self.cur_donor_record, None);
-                        self.donor_ticker.inc(1);
-                        self.next()
-                    }
-                };
-            }
-            (None, Some(_)) => {
-                // no more donors, but still some acceptors.. error case
-                error!("ran out of donor records");
-                None
-            }
-            (Some(_), None) => {
-                debug!("exhausted acceptor BAM reader, finished.");
-                return None;
-            }
-            (None, None) => return None,
+                }
+                (None, Some(_)) => {
+                    // no more donors, but still some acceptors.. error case
+                    error!("ran out of donor records");
+                    None
+                }
+                (Some(_), None) => {
+                    debug!("exhausted acceptor BAM reader, finished.");
+                    None
+                }
+                (None, None) => None,
+            };
         }
     }
 }
