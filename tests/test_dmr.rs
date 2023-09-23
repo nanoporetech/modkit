@@ -27,3 +27,7 @@ fn test_dmr_regression() {
         "tests/resources/test_output_chr20-2.bed",
     )
 }
+
+// todo
+//  test pair with explicit index
+//  test multi

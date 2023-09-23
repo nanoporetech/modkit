@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
@@ -137,8 +137,8 @@ pub(super) struct DmrIntervalIter {
 
 impl DmrIntervalIter {
     pub(super) fn new(
-        control_fn: String,
-        exp_fn: String,
+        control_path: &PathBuf,
+        exp_path: &PathBuf,
         control_contig_lookup: Arc<HashMap<String, usize>>,
         exp_contig_lookup: HashMap<String, usize>,
         control_index: CsiIndex,
@@ -147,6 +147,15 @@ impl DmrIntervalIter {
         chunk_size: usize,
         failure_counter: ProgressBar,
     ) -> Self {
+        let control_fn = control_path
+            .to_str()
+            .map(|s| s.to_owned())
+            .unwrap_or_else(|| format!("'a' failed path decode"));
+        let exp_fn = exp_path
+            .to_str()
+            .map(|s| s.to_owned())
+            .unwrap_or_else(|| format!("'a' failed path decode"));
+
         Self {
             control_fn,
             exp_fn,

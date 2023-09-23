@@ -8,18 +8,23 @@ use anyhow::{anyhow, bail, Context};
 use bio::io::fasta::Reader as FastaReader;
 use clap::{Args, Subcommand};
 use indicatif::{MultiProgress, ProgressIterator};
+use itertools::Itertools;
 use log::{debug, error, info};
 use noodles::csi::Index as CsiIndex;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
-use crate::dmr::model::ModificationCounts;
-use crate::dmr::pairwise::get_modification_counts;
+use crate::dmr::multi_sample::{
+    get_reference_modified_base_positions, n_choose_2, DmrSample,
+};
+use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::util::{parse_roi_bed, DmrIntervalIter};
 use crate::logging::init_logging;
 use crate::motif_bed::{find_motif_hits, RegexMotif};
 use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
-use crate::util::{get_master_progress_bar, get_ticker, Strand};
+use crate::util::{
+    get_master_progress_bar, get_subroutine_progress_bar, get_ticker, Strand,
+};
 
 #[derive(Subcommand)]
 pub enum BedMethylDmr {
@@ -194,11 +199,13 @@ impl PairwiseDmr {
     fn load_index(
         bedmethyl_path: &PathBuf,
         specified_index: Option<&PathBuf>,
-    ) -> anyhow::Result<CsiIndex> {
+    ) -> anyhow::Result<(CsiIndex, PathBuf)> {
         if let Some(index_fp) = specified_index {
-            noodles::tabix::read(index_fp).with_context(|| {
-                format!("failed to read index at {:?}", index_fp)
-            })
+            noodles::tabix::read(index_fp)
+                .with_context(|| {
+                    format!("failed to read index at {:?}", index_fp)
+                })
+                .map(|idx| (idx, index_fp.clone()))
         } else {
             let bedmethyl_fp = bedmethyl_path.to_str().ok_or_else(|| {
                 anyhow!("could not format control (a) bedmethyl filepath")
@@ -208,21 +215,34 @@ impl PairwiseDmr {
                 "looking for index associated with {} at {}",
                 bedmethyl_fp, &index_fp
             );
-            noodles::tabix::read(index_fp).context("failed to load 'a' index")
+            let index_path = Path::new(&index_fp).to_path_buf();
+
+            noodles::tabix::read(&index_fp)
+                .context("foo")
+                .map(|idx| (idx, index_path))
         }
     }
+    fn check_modified_bases(&self) -> anyhow::Result<()> {
+        Self::validate_modified_bases(&self.modified_bases)
+    }
 
-    pub fn run(&self) -> anyhow::Result<()> {
-        let _handle = init_logging(self.log_filepath.as_ref());
-        if self.modified_bases.is_empty() {
+    fn validate_modified_bases(bases: &[char]) -> anyhow::Result<()> {
+        if bases.is_empty() {
             bail!("need to specify at least 1 modified base")
         }
-        for b in self.modified_bases.iter() {
+        for b in bases.iter() {
             match *b {
                 'A' | 'C' | 'G' | 'T' => {}
                 _ => bail!("modified base needs to be A, C, G, or T."),
             }
         }
+
+        Ok(())
+    }
+
+    pub fn run(&self) -> anyhow::Result<()> {
+        let _handle = init_logging(self.log_filepath.as_ref());
+        self.check_modified_bases()?;
         for fp in [&self.control_bed_methyl, &self.exp_bed_methyl] {
             if !fp.exists() {
                 bail!(
@@ -243,12 +263,12 @@ impl PairwiseDmr {
         }
 
         // initial checks
-        let control_index =
+        let (control_index, _) =
             Self::load_index(&self.control_bed_methyl, self.index_a.as_ref())?;
-        let exp_index =
+        let (exp_index, _) =
             Self::load_index(&self.exp_bed_methyl, self.index_b.as_ref())?;
 
-        let mut writer: Box<dyn Write> = {
+        let writer: Box<dyn Write> = {
             match self.out_path.as_ref() {
                 None => Box::new(BufWriter::new(std::io::stdout())),
                 Some(fp) => {
@@ -299,16 +319,6 @@ impl PairwiseDmr {
 
         let chunk_size = (self.threads as f32 * 1.5f32).floor() as usize;
         info!("processing {chunk_size} DMR intervals concurrently");
-        let control_fn = self
-            .control_bed_methyl
-            .to_str()
-            .map(|s| s.to_owned())
-            .unwrap_or_else(|| format!("'a' failed path decode"));
-        let exp_fn = self
-            .exp_bed_methyl
-            .to_str()
-            .map(|s| s.to_owned())
-            .unwrap_or_else(|| format!("'a' failed path decode"));
 
         let pb = mpb.add(get_master_progress_bar(regions_of_interest.len()));
         pb.set_message("regions processed");
@@ -318,8 +328,8 @@ impl PairwiseDmr {
         successes.set_message("regions processed successfully");
 
         let dmr_interval_iter = DmrIntervalIter::new(
-            control_fn,
-            exp_fn,
+            &self.control_bed_methyl,
+            &self.exp_bed_methyl,
             control_contig_lookup.clone(),
             exp_contig_lookup,
             control_index,
@@ -329,69 +339,15 @@ impl PairwiseDmr {
             failures.clone(),
         );
 
-        let (snd, rcv) = crossbeam_channel::bounded(1000);
-
-        let control_bedmethyl_fp = self.control_bed_methyl.clone();
-        let exp_bedmethyl_fp = self.exp_bed_methyl.clone();
-        std::thread::spawn(move || {
-            for chunks in dmr_interval_iter {
-                let mut result: Vec<anyhow::Result<ModificationCounts>> =
-                    vec![];
-                let (res, _) = rayon::join(
-                    || {
-                        chunks
-                            .into_par_iter()
-                            .map(|dmr_chunk| {
-                                get_modification_counts(
-                                    &control_bedmethyl_fp,
-                                    &exp_bedmethyl_fp,
-                                    &dmr_chunk.control_chunks,
-                                    &dmr_chunk.exp_chunks,
-                                    dmr_chunk.dmr_interval,
-                                    &position_filter,
-                                    dmr_chunk.chrom_id,
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                    },
-                    || {
-                        result.into_iter().for_each(|counts| {
-                            pb.inc(1);
-                            match snd.send(counts) {
-                                Ok(_) => {}
-                                Err(e) => error!(
-                                    "failed to send results, {}",
-                                    e.to_string()
-                                ),
-                            }
-                        })
-                    },
-                );
-                result = res;
-                result.into_iter().for_each(|counts| {
-                    pb.inc(1);
-                    match snd.send(counts) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            error!("failed to send results, {}", e.to_string())
-                        }
-                    }
-                });
-            }
-            pb.finish_and_clear();
-        });
-
-        for result in rcv {
-            match result {
-                Ok(counts) => {
-                    writer.write(counts.to_row()?.as_bytes())?;
-                    successes.inc(1);
-                }
-                Err(e) => {
-                    debug!("unexpected error, {}", e.to_string());
-                }
-            }
-        }
+        run_pairwise_dmr(
+            &self.control_bed_methyl,
+            &self.exp_bed_methyl,
+            dmr_interval_iter,
+            position_filter,
+            writer,
+            pb,
+            successes.clone(),
+        )?;
 
         info!(
             "{} regions processed successfully and {} regions failed",
@@ -404,10 +360,274 @@ impl PairwiseDmr {
 }
 
 #[derive(Args)]
-pub struct MultiSampleDmr {}
+pub struct MultiSampleDmr {
+    /// Two or more named samples to compare
+    #[arg(short = 's', long = "sample", num_args = 2)]
+    samples: Vec<String>,
+    /// Optional, paths to tabix indices associated with named samples.
+    #[arg(short = 'i', long = "index", num_args = 2)]
+    indices: Vec<String>,
+    /// Regions BED file over which to compare methylation levels. Should be tab-separated (spaces
+    /// allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name column is
+    /// optional. Strand is currently ignored.
+    #[arg(long, short = 'r')]
+    regions_bed: PathBuf,
+    /// Directory to place output DMR results in BED format.
+    #[arg(short = 'o', long)]
+    out_dir: PathBuf,
+    /// Prefix files in directory with this label
+    #[arg(short = 'p', long)]
+    prefix: Option<String>,
+    /// Path to reference fasta for the pileup.
+    #[arg(long = "ref")]
+    reference_fasta: PathBuf,
+    /// Bases to use to calculate DMR, may be multiple. For example, to calculate
+    /// differentially methylated regions using only cytosine modifications use --base C.
+    #[arg(short, alias = "base")]
+    modified_bases: Vec<char>,
+    /// File to write logs to, it's recommended to use this option.
+    #[arg(long, alias = "log")]
+    log_filepath: Option<PathBuf>,
+    /// Number of threads to use.
+    #[arg(short = 't', long, default_value_t = 4)]
+    threads: usize,
+    /// Respect soft masking in the reference FASTA.
+    #[arg(long, short = 'k', default_value_t = false)]
+    mask: bool,
+    /// Don't show progress bars
+    #[arg(long, default_value_t = false)]
+    suppress_progress: bool,
+    /// Force overwrite of output file, if it already exists.
+    #[arg(short = 'f', long, default_value_t = false)]
+    force: bool,
+}
 
 impl MultiSampleDmr {
+    fn get_writer(
+        &self,
+        a_name: &str,
+        b_name: &str,
+    ) -> anyhow::Result<Box<BufWriter<File>>> {
+        let fp = if let Some(p) = self.prefix.as_ref() {
+            self.out_dir
+                .join(format!("{}_{}_{}.bed", p, a_name, b_name))
+        } else {
+            self.out_dir.join(format!("{}_{}.bed", a_name, b_name))
+        };
+        if fp.exists() && !self.force {
+            bail!(
+                "refusing to overwrite {:?}",
+                fp.to_str().unwrap_or("failed decode")
+            )
+        } else {
+            let fh = File::create(fp)?;
+            Ok(Box::new(BufWriter::new(fh)))
+        }
+    }
+
+    fn get_stranded_position_filter(
+        &self,
+        pos_positions: &HashMap<String, Vec<u64>>,
+        neg_positions: &HashMap<String, Vec<u64>>,
+        name_to_tid: Arc<HashMap<String, usize>>,
+    ) -> anyhow::Result<StrandedPositionFilter> {
+        let pos_lps = pos_positions
+            .iter()
+            .filter_map(|(name, positions)| {
+                name_to_tid.get(name).map(|tid| {
+                    let ivs = positions
+                        .iter()
+                        .map(|p| Iv {
+                            start: *p,
+                            stop: *p + 1,
+                            val: (),
+                        })
+                        .collect::<Vec<Iv>>();
+                    let lp = GenomeLapper::new(ivs);
+                    (*tid as u32, lp)
+                })
+            })
+            .collect::<FxHashMap<u32, GenomeLapper>>();
+
+        let neg_lps = neg_positions
+            .iter()
+            .filter_map(|(name, positions)| {
+                name_to_tid.get(name).map(|&tid| {
+                    let ivs = positions
+                        .iter()
+                        .map(|p| Iv {
+                            start: *p,
+                            stop: *p + 1,
+                            val: (),
+                        })
+                        .collect::<Vec<Iv>>();
+                    let lp = GenomeLapper::new(ivs);
+                    (tid as u32, lp)
+                })
+            })
+            .collect::<FxHashMap<u32, GenomeLapper>>();
+
+        Ok(StrandedPositionFilter {
+            pos_positions: pos_lps,
+            neg_positions: neg_lps,
+        })
+    }
+
     pub fn run(&self) -> anyhow::Result<()> {
-        unimplemented!()
+        let _handle = init_logging(self.log_filepath.as_ref());
+        let _pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.threads)
+            .build_global()?;
+
+        PairwiseDmr::validate_modified_bases(&self.modified_bases)?;
+        let indices = self.indices
+            .chunks(2)
+            .filter_map(|raw| {
+                if raw.len() != 2 {
+                    error!("illegal index pair {:?}, should be length 2 of the form <path> <name>", raw);
+                    None
+                } else {
+                    let fp = Path::new(raw[0].as_str()).to_path_buf();
+                    let name = raw[1].to_string();
+                    if fp.exists() {
+                        Some((name, fp))
+                    } else {
+                        error!("index for {name} at {} not found", &raw[0]);
+                        None
+                    }
+                }
+            })
+            .collect::<HashMap<String, PathBuf>>();
+
+        let samples = self.samples
+            .chunks(2)
+            .filter_map(|raw| {
+                if raw.len() != 2 {
+                    error!("illegal sample pair {:?}, should be length 2 of the form <path> <name>", raw);
+                    None
+                } else {
+                    let fp = Path::new(raw[0].as_str()).to_path_buf();
+                    let name = raw[1].to_string();
+                    if fp.exists() {
+                        let specified_index = indices.get(&name);
+                        if let Ok((_, index_fp)) = PairwiseDmr::load_index(&fp, specified_index) {
+                            Some(DmrSample::new(fp, index_fp, name))
+                        } else {
+                            error!("failed to load tabix index for {name}");
+                            None
+                        }
+                    } else {
+                        error!("bedMethyl for {name} at {} not found", &raw[0]);
+                        None
+                    }
+                }
+            }).collect::<Vec<DmrSample>>();
+
+        if samples.len() < 2 {
+            bail!("failed to collect at least 2 samples");
+        }
+        let motifs = self
+            .modified_bases
+            .iter()
+            .map(|c| RegexMotif::parse_string(&format!("{c}"), 0))
+            .collect::<anyhow::Result<Vec<RegexMotif>>>()?;
+
+        let regions_of_interest = parse_roi_bed(&self.regions_bed)?;
+        info!("loaded {} regions", regions_of_interest.len());
+
+        let chunk_size = (self.threads as f32 * 1.5f32).floor() as usize;
+        info!("processing {chunk_size} DMR intervals concurrently");
+
+        let mpb = MultiProgress::new();
+        let sample_pb =
+            mpb.add(get_master_progress_bar(n_choose_2(samples.len())?));
+        let n_regions = regions_of_interest.len();
+        let (positive_positions, negative_positions) =
+            get_reference_modified_base_positions(
+                &self.reference_fasta,
+                &motifs,
+                self.mask,
+                mpb.clone(),
+            )?;
+
+        for pair in samples
+            .iter()
+            .combinations(2)
+            .progress_with(sample_pb.clone())
+        {
+            let a = pair[0];
+            let b = pair[1];
+            sample_pb
+                .set_message(format!("comparing {} and {}", a.name, b.name));
+            let pb = mpb.add(get_subroutine_progress_bar(n_regions));
+            pb.set_message("regions processed");
+            let failures = mpb.add(get_ticker());
+            failures.set_message("regions failed to process");
+            let successes = mpb.add(get_ticker());
+            successes.set_message("regions processed successfully");
+            let (a_index, _) =
+                PairwiseDmr::load_index(&a.bedmethyl_fp, Some(&a.index))?;
+            let (b_index, _) =
+                PairwiseDmr::load_index(&b.bedmethyl_fp, Some(&b.index))?;
+            let control_contig_lookup = a_index
+                .header()
+                .ok_or_else(|| {
+                    anyhow!("failed to get {} tabix header", &a.name)
+                })?
+                .reference_sequence_names()
+                .iter()
+                .enumerate()
+                .map(|(idx, r)| (r.to_owned(), idx))
+                .collect::<HashMap<String, usize>>();
+            let control_contig_lookup = Arc::new(control_contig_lookup);
+
+            let exp_contig_lookup = b_index
+                .header()
+                .ok_or_else(|| {
+                    anyhow!("failed to get {} tabix header", b.name)
+                })?
+                .reference_sequence_names()
+                .iter()
+                .enumerate()
+                .map(|(idx, r)| (r.to_owned(), idx))
+                .collect::<HashMap<String, usize>>();
+
+            let position_filter = self.get_stranded_position_filter(
+                &positive_positions,
+                &negative_positions,
+                control_contig_lookup.clone(),
+            )?;
+
+            let dmr_interval_iter = DmrIntervalIter::new(
+                &a.bedmethyl_fp,
+                &b.bedmethyl_fp,
+                control_contig_lookup.clone(),
+                exp_contig_lookup,
+                a_index,
+                b_index,
+                regions_of_interest.clone().into_iter().collect(),
+                chunk_size,
+                failures.clone(),
+            );
+
+            let writer = self.get_writer(&a.name, &b.name)?;
+            run_pairwise_dmr(
+                &a.bedmethyl_fp,
+                &b.bedmethyl_fp,
+                dmr_interval_iter,
+                position_filter,
+                writer,
+                pb,
+                successes.clone(),
+            )?;
+            debug!(
+                "{} regions processed successfully and {} regions failed for pair {} {}",
+                successes.position(),
+                failures.position(),
+                &a.name, &b.name,
+            );
+        }
+
+        Ok(())
     }
 }

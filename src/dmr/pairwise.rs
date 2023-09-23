@@ -3,13 +3,15 @@ use std::fs::File;
 use std::io::BufRead;
 use std::path::PathBuf;
 
-use log::debug;
+use indicatif::ProgressBar;
+use log::{debug, error};
 use noodles::bgzf;
 use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
+use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dmr::model::{AggregatedCounts, ModificationCounts};
-use crate::dmr::util::{BedMethylLine, DmrInterval};
+use crate::dmr::util::{BedMethylLine, DmrInterval, DmrIntervalIter};
 use crate::position_filter::{Iv, StrandedPositionFilter};
 use crate::util::Strand;
 
@@ -155,4 +157,79 @@ pub(super) fn get_modification_counts(
         experimental_counts,
         dmr_interval,
     )
+}
+
+pub(super) fn run_pairwise_dmr(
+    control_bed_fp: &PathBuf,
+    exp_bed_fp: &PathBuf,
+    dmr_interval_iter: DmrIntervalIter,
+    position_filter: StrandedPositionFilter,
+    mut writer: Box<dyn std::io::Write>,
+    pb: ProgressBar,
+    successes: ProgressBar,
+) -> anyhow::Result<()> {
+    let (snd, rcv) = crossbeam_channel::bounded(1000);
+    let control_bedmethyl_fp = control_bed_fp.clone();
+    let exp_bedmethyl_fp = exp_bed_fp.clone();
+
+    std::thread::spawn(move || {
+        for chunks in dmr_interval_iter {
+            let mut result: Vec<anyhow::Result<ModificationCounts>> = vec![];
+            let (res, _) = rayon::join(
+                || {
+                    chunks
+                        .into_par_iter()
+                        .map(|dmr_chunk| {
+                            get_modification_counts(
+                                &control_bedmethyl_fp,
+                                &exp_bedmethyl_fp,
+                                &dmr_chunk.control_chunks,
+                                &dmr_chunk.exp_chunks,
+                                dmr_chunk.dmr_interval,
+                                &position_filter,
+                                dmr_chunk.chrom_id,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                },
+                || {
+                    result.into_iter().for_each(|counts| {
+                        pb.inc(1);
+                        match snd.send(counts) {
+                            Ok(_) => {}
+                            Err(e) => error!(
+                                "failed to send results, {}",
+                                e.to_string()
+                            ),
+                        }
+                    })
+                },
+            );
+            result = res;
+            result.into_iter().for_each(|counts| {
+                pb.inc(1);
+                match snd.send(counts) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("failed to send results, {}", e.to_string())
+                    }
+                }
+            });
+        }
+        pb.finish_and_clear();
+    });
+
+    for result in rcv {
+        match result {
+            Ok(counts) => {
+                writer.write(counts.to_row()?.as_bytes())?;
+                successes.inc(1);
+            }
+            Err(e) => {
+                debug!("unexpected error, {}", e.to_string());
+            }
+        }
+    }
+
+    Ok(())
 }
