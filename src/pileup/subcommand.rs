@@ -801,9 +801,9 @@ pub struct DuplexModBamPileup {
     // running args
     /// Input BAM, should be sorted and have associated index available.
     in_bam: PathBuf,
-    /// Output file (or directory with --bedgraph option) to write results into.
-    /// Specify "-" or "stdout" to direct output to stdout.
-    out_bed: String,
+    /// Output file to write results into. Default is to write to stdout.
+    #[arg(short = 'o', long)]
+    out_bed: Option<PathBuf>,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
     #[arg(long, alias = "log")]
@@ -1134,22 +1134,20 @@ impl DuplexModBamPileup {
             let regex_motif = RegexMotif::parse_string(motif_seq, focus_base)?;
             regex_motif
         };
+        if !regex_motif.is_palendrome() {
+            bail!("motif must be palindromic for pileup-hemi")
+        }
 
-        let out_fp_str = self.out_bed.clone();
-        let mut writer: Box<dyn PileupWriter<DuplexModBasePileup>> = {
-            match out_fp_str.as_str() {
-                "stdout" | "-" => {
-                    let writer = BufWriter::new(std::io::stdout());
-                    Box::new(BedMethylWriter::new(writer, !self.only_tabs))
-                }
-                _ => {
-                    let fh = std::fs::File::create(out_fp_str)
-                        .context("failed to make output file")?;
-                    let writer = BufWriter::new(fh);
-                    Box::new(BedMethylWriter::new(writer, !self.only_tabs))
-                }
-            }
-        };
+        let mut writer: Box<dyn PileupWriter<DuplexModBasePileup>> =
+            if let Some(out_fp) = self.out_bed.as_ref() {
+                let fh = std::fs::File::create(out_fp)
+                    .context("failed to make output file")?;
+                let writer = BufWriter::new(fh);
+                Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+            } else {
+                let writer = BufWriter::new(std::io::stdout());
+                Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+            };
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)

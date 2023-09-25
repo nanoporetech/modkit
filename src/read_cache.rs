@@ -10,7 +10,7 @@ use crate::mod_bam::{
     ModBaseInfo, SeqPosBaseModProbs, SkipMode,
 };
 use crate::mod_base_code::{DnaBase, ModCode};
-use crate::motif_bed::MultipleMotifLocations;
+use crate::motif_bed::{MotifLocations, MultipleMotifLocations};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{self, Strand};
 
@@ -411,7 +411,6 @@ impl<'a> ReadCache<'a> {
 
 pub(crate) struct DuplexReadCache<'a> {
     read_cache: ReadCache<'a>,
-    motif_locations: &'a MultipleMotifLocations,
 }
 
 impl<'a> DuplexReadCache<'a> {
@@ -419,16 +418,12 @@ impl<'a> DuplexReadCache<'a> {
         method: Option<&'a CollapseMethod>,
         caller: &'a MultipleThresholdModCaller,
         edge_filter: Option<&'a EdgeFilter>,
-        motif_locations: &'a MultipleMotifLocations,
         force_allow: bool,
     ) -> Self {
         let read_cache =
             ReadCache::new(method, caller, edge_filter, force_allow);
 
-        Self {
-            read_cache,
-            motif_locations,
-        }
+        Self { read_cache }
     }
 
     fn get_pos_strand_base_mod_call(
@@ -472,69 +467,52 @@ impl<'a> DuplexReadCache<'a> {
     pub(crate) fn get_duplex_mod_call(
         &mut self,
         record: &bam::Record,
-        chrom_id: u32,
         position: u32,
         read_base: DnaBase,
+        motif: &MotifLocations,
     ) -> Option<DuplexModCall> {
         let read_id = util::get_query_name_string(&record).ok()?;
         if self.read_cache.skip_set.contains(&read_id) {
-            debug!("skipping {read_id}");
             return None;
         }
-        if let Some(motifs) = self.motif_locations.motifs_for_position(
-            chrom_id,
-            position,
-            Strand::Positive,
-        ) {
-            if motifs.len() > 1 {
-                debug!("more than 1 motif not supported yet");
-            } else if motifs.is_empty() {
-                debug!("motifs empty");
-                return None;
-            }
-            let (_, motif) = motifs[0];
-            let (pos_base, neg_base) = if record.is_reverse() {
-                (read_base.complement(), read_base)
-            } else {
-                (read_base, read_base.complement())
-            };
-            debug!("pos {} neg {}", pos_base.char(), neg_base.char());
-
-            let pos_base_mod_call = self.get_pos_strand_base_mod_call(
-                record,
-                position,
-                pos_base.char(),
-            );
-            if pos_base_mod_call.is_none() {
-                debug!("no pos strand call");
-            };
-            let negative_position =
-                motif.motif().negative_strand_position(position);
-
-            if negative_position.is_none() {
-                debug!("no call");
-                return Some(DuplexModCall::NoCall {
-                    primary_base: read_base.char(),
-                });
-            }
-            let negative_position = negative_position.unwrap();
-            let neg_strand_base_mod_call = self.get_neg_strand_base_mod_call(
-                record,
-                negative_position,
-                neg_base.char(), // double check this should be complemented
-            );
-            if neg_strand_base_mod_call.is_none() {
-                debug!("negative stand mod call missing");
-            }
-            Some(DuplexModCall::from_base_mod_calls(
-                pos_base_mod_call?,
-                neg_strand_base_mod_call?,
-                read_base.char(),
-            ))
+        let (pos_base, neg_base) = if record.is_reverse() {
+            (read_base.complement(), read_base)
         } else {
-            debug!("no motif");
-            None
+            (read_base, read_base.complement())
+        };
+        debug!("pos {} neg {}", pos_base.char(), neg_base.char());
+
+        let pos_base_mod_call = self.get_pos_strand_base_mod_call(
+            record,
+            position,
+            pos_base.char(),
+        );
+        if pos_base_mod_call.is_none() {
+            debug!("no pos strand call");
+        };
+        let negative_position =
+            motif.motif().negative_strand_position(position);
+
+        if negative_position.is_none() {
+            debug!("no call");
+            return Some(DuplexModCall::NoCall {
+                primary_base: read_base.char(),
+            });
         }
+        let negative_position = negative_position.unwrap();
+        let neg_strand_base_mod_call = self.get_neg_strand_base_mod_call(
+            record,
+            negative_position,
+            neg_base.char(), // double check this should be complemented
+        );
+        if neg_strand_base_mod_call.is_none() {
+            debug!("negative stand mod call missing");
+        }
+        Some(DuplexModCall::from_base_mod_calls(
+            pos_base_mod_call?,
+            neg_strand_base_mod_call?,
+            read_base.char(),
+        ))
     }
 
     pub(crate) fn get_records_used_and_skipped(&self) -> (usize, usize) {

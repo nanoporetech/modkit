@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use derive_new::new;
-use log::{debug, info};
+use log::debug;
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
@@ -15,8 +15,10 @@ use crate::pileup::{
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_cache::DuplexReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{record_is_secondary, StrandRule};
+use crate::util::{record_is_secondary, Strand, StrandRule};
 
+/// Summarizes the duplex (hemi) methylation patterns for
+/// a genomic interval
 #[derive(Debug)]
 pub struct DuplexModBasePileup {
     /// name of the contig/chrom
@@ -105,7 +107,6 @@ impl DuplexFeatureVector {
             let mut agg = Vec::new();
             let pattern_counts = duplex_calls
                 .iter()
-                // .filter(|(x, _)| x.is_mod_call())
                 .filter_map(|(x, c)| x.pattern().map(|p| (p, *c)))
                 .collect::<HashMap<[char; 2], usize>>();
 
@@ -149,7 +150,6 @@ impl DuplexFeatureVector {
 
             for (pattern, count) in duplex_calls
                 .iter()
-                // .filter(|(x, _c)| x.is_mod_call())
                 .filter_map(|(x, count)| x.pattern().map(|p| (p, count)))
             {
                 let n_other_pattern = pattern_counts
@@ -168,21 +168,6 @@ impl DuplexFeatureVector {
                 );
                 agg.push(duplex_pattern_counts);
             }
-            // for (can_pattern, count) in duplex_calls
-            //     .iter()
-            //     .filter(|(p, _c)| p.is_canonical())
-            //     .filter_map(|(x, count)| x.pattern().map(|p| (p, count))) {
-            //     let canonical_pattern_counts = DuplexPatternCounts::new(
-            //         can_pattern,
-            //         *count,
-            //         0,
-            //         n_diff,
-            //         n_canonical,
-            //         n_filtered,
-            //         n_nocall
-            //     );
-            //     agg.push(canonical_pattern_counts)
-            // }
 
             agg_pattern_counts.insert(*primary_base, agg);
         }
@@ -217,7 +202,6 @@ pub fn process_region_duplex<T: AsRef<Path>>(
         pileup_numeric_options.get_collapse_method(),
         caller,
         edge_filter,
-        motif_locations,
         force_allow,
     );
 
@@ -228,6 +212,8 @@ pub fn process_region_duplex<T: AsRef<Path>>(
         tmp_pileup.set_max_depth(max_depth);
         tmp_pileup
     };
+    // filter motif positions to only positive strand. We get the negative strand
+    // calls in the read cache when getting a duplex mod call
     let motif_positions = get_motif_locations_for_region(
         motif_locations,
         chrom_tid,
@@ -247,10 +233,20 @@ pub fn process_region_duplex<T: AsRef<Path>>(
         position_filter,
     );
 
-    for pileup in pileup_iter {
+    for (pileup, motif) in pileup_iter.filter_map(|pileup| {
+        let motifs = motif_locations.motifs_for_position(
+            chrom_tid,
+            pileup.bam_pileup.pos(),
+            Strand::Positive,
+        )?;
+        if motifs.len() > 1 {
+            debug!("more than 1 motif not supported yet");
+        };
+        let (_, motif) = motifs[0];
+        Some((pileup, motif))
+    }) {
         let pos = pileup.bam_pileup.pos();
         let mut feature_vector = DuplexFeatureVector::default();
-        // let mut observed_mods = FxHashSet::default();
         let alignment_iter =
             pileup.bam_pileup.alignments().filter(|alignment| {
                 if alignment.is_refskip() {
@@ -261,38 +257,30 @@ pub fn process_region_duplex<T: AsRef<Path>>(
                 }
             });
 
-        for (i, alignment) in alignment_iter.enumerate() {
-            debug!("alignment {i}");
+        for alignment in alignment_iter {
             if alignment.is_del() {
-                debug!("is delete");
                 feature_vector.add_feature(DuplexFeature::Delete);
                 continue;
             }
             let record = alignment.record();
             let read_base = get_forward_read_base(&alignment, &record);
             if read_base.is_none() {
-                debug!("read base was none?");
                 continue;
             }
             let read_base = read_base.unwrap();
-            if let Some(duplex_mod_call) = read_cache
-                .get_duplex_mod_call(&record, chrom_tid, pos, read_base)
+            if let Some(duplex_mod_call) =
+                read_cache.get_duplex_mod_call(&record, pos, read_base, motif)
             {
-                debug!("got feature {:?}", &duplex_mod_call);
                 feature_vector
                     .add_feature(DuplexFeature::ModCall(duplex_mod_call));
-            } else {
-                debug!("no feature");
             }
         }
-        // dbg!(&feature_vector);
         let pileup_counts = feature_vector.decode();
         position_feature_counts.insert(pos, pileup_counts);
     }
 
     let (processed_records, skipped_records) =
         read_cache.get_records_used_and_skipped();
-    // debug!("got {} counts at {}:{}-{}", position_feature_counts.len(), chrom_name, start_pos, end_pos);
     Ok(DuplexModBasePileup {
         chrom_name,
         pileup_counts: position_feature_counts,
