@@ -10,7 +10,7 @@ use crate::mod_bam::{
     ModBaseInfo, SeqPosBaseModProbs, SkipMode,
 };
 use crate::mod_base_code::{DnaBase, ModCode};
-use crate::motif_bed::{MotifLocations, MultipleMotifLocations};
+use crate::motif_bed::MotifLocations;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{self, Strand};
 

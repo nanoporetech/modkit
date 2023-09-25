@@ -47,10 +47,10 @@ pub struct ModBamPileup {
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Process only the specified region of the BAM when performing pileup.
-    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas are allowed.
     #[arg(long)]
     region: Option<String>,
-    /// Maximum number of records to use when calculating puleup. This argument is
+    /// Maximum number of records to use when calculating pileup. This argument is
     /// passed to the pileup engine. If you have high depth data, consider
     /// increasing this value substantially. Must be less than 2147483647 or
     /// an error will be raised.
@@ -190,7 +190,7 @@ pub struct ModBamPileup {
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<char>,
     /// Force allow implicit-canonical mode. By default modkit does not allow
-    /// pileup with the implicit mode ('.', or silent). The `update-tags`
+    /// pileup with the implicit mode (e.g. C+m, no '.' or '?'). The `update-tags`
     /// subcommand is provided to update tags to the new mode. This option allows
     /// the interpretation of implicit mode tags: residues without modified
     /// base probability will be interpreted as being the non-modified base.
@@ -801,18 +801,35 @@ pub struct DuplexModBamPileup {
     // running args
     /// Input BAM, should be sorted and have associated index available.
     in_bam: PathBuf,
-    /// Output file to write results into. Default is to write to stdout.
+    /// Output file to write results into. Will write to stdout if not provided.
     #[arg(short = 'o', long)]
     out_bed: Option<PathBuf>,
+    /// Aggregate double-stranded base modifications for CpG dinucleotides. This flag is short-hand
+    /// for --motif CG 0.
+    #[arg(long, group = "motif_options", default_value_t = false)]
+    cpg: bool,
+
+    /// Specify the sequence motif to pileup double-stranded base modification pattern counts for.
+    /// The first argument should be the sequence motif and the second argument is the 0-based
+    /// offset to the base to pileup base modification counts for. For example:
+    /// --motif CG 0 indicates to generate pattern counts for the C on the top strand
+    /// and the following C (opposite to G) on the negative strand. The motif must be
+    /// reverse-complement palindromic or an error will be raised. See the documentation for
+    /// more examples and details.
+    #[arg(long, group = "motif_options", num_args = 2)]
+    motif: Option<Vec<String>>,
+    /// Reference sequence in FASTA format.
+    #[arg(long = "ref", alias = "reference", short = 'r')]
+    reference_fasta: Option<PathBuf>,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Process only the specified region of the BAM when performing pileup.
-    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas are allowed.
     #[arg(long)]
     region: Option<String>,
-    /// Maximum number of records to use when calculating puleup. This argument is
+    /// Maximum number of records to use when calculating pileup. This argument is
     /// passed to the pileup engine. If you have high depth data, consider
     /// increasing this value substantially. Must be less than 2147483647 or
     /// an error will be raised.
@@ -952,7 +969,7 @@ pub struct DuplexModBamPileup {
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<char>,
     /// Force allow implicit-canonical mode. By default modkit does not allow
-    /// pileup with the implicit mode ('.', or silent). The `update-tags`
+    /// pileup with the implicit mode (e.g. C+m, no '.' or '?'). The `update-tags`
     /// subcommand is provided to update tags to the new mode. This option allows
     /// the interpretation of implicit mode tags: residues without modified
     /// base probability will be interpreted as being the non-modified base.
@@ -964,24 +981,6 @@ pub struct DuplexModBamPileup {
     )]
     force_allow_implicit: bool,
 
-    /// TODO update
-    /// Output pileup counts for only sequence motifs provided. The first argument should be the
-    /// sequence motif and the second argument is the 0-based offset to the base to pileup
-    /// base modification counts for. For example: --motif CGCG 0 indicates to pileup counts
-    /// for the first C on the top strand and the last C (complement to G) on
-    /// the bottom strand. The --cpg argument is short hand for --motif CG 0.
-    ///
-    /// This argument can be passed multiple times. When more than one motif is used,
-    /// the resulting output BED file will indicate the motif in the "name"
-    /// field as <mod_code>,<motif>,<offset>. For example, given `--motif CGCG 2 --motif CG 0`
-    /// there will be output lines with name fields such as "m,CG,0" and "m,CGCG,2". To
-    /// use this option with `--combine-strands`, all motifs must be reverse-complement
-    /// palindromic or an error will be raised.
-    #[arg(long, num_args = 2)]
-    motif: Vec<String>,
-    /// Reference sequence in FASTA format. Required for CpG motif filtering.
-    #[arg(long = "ref", alias = "reference", short = 'r')]
-    reference_fasta: Option<PathBuf>,
     /// Respect soft masking in the reference FASTA.
     #[arg(
         long,
@@ -1007,7 +1006,7 @@ pub struct DuplexModBamPileup {
     edge_filter: Option<usize>,
 
     // output args
-    /// For bedMethyl output, separate columns with only tabs. The default is
+    /// Separate bedMethyl columns with only tabs. The default is
     /// to use tabs for the first 10 fields and spaces thereafter. The
     /// default behavior is more likely to be compatible with genome viewers.
     /// Enabling this option may make it easier to parse the output with
@@ -1124,15 +1123,28 @@ impl DuplexModBamPileup {
 
         // motif handling
         let regex_motif = {
-            if self.motif.len() != 2 {
-                bail!("motif arg should be length 2, eg. CG 0")
+            if self.cpg {
+                RegexMotif::parse_string("CG", 0)?
+            } else {
+                if self.motif.is_none() {
+                    bail!("either --cpg or a --motif must be provided for pileup-hemi")
+                }
+                let raw_motif = self.motif.as_ref().unwrap();
+                if raw_motif.len() != 2 {
+                    bail!("motif arg should be length 2, eg. CG 0")
+                }
+                let motif_seq = &raw_motif[0];
+                let focus_base =
+                    raw_motif[1].parse::<usize>().map_err(|e| {
+                        anyhow!(
+                            "couldn't parse focus position, {}",
+                            e.to_string()
+                        )
+                    })?;
+                let regex_motif =
+                    RegexMotif::parse_string(motif_seq, focus_base)?;
+                regex_motif
             }
-            let motif_seq = &self.motif[0];
-            let focus_base = self.motif[1].parse::<usize>().map_err(|e| {
-                anyhow!("couldn't parse focus position, {}", e.to_string())
-            })?;
-            let regex_motif = RegexMotif::parse_string(motif_seq, focus_base)?;
-            regex_motif
         };
         if !regex_motif.is_palendrome() {
             bail!("motif must be palindromic for pileup-hemi")
@@ -1153,6 +1165,8 @@ impl DuplexModBamPileup {
             .num_threads(self.threads)
             .build()
             .with_context(|| "failed to make threadpool")?;
+
+        // put this into it's own function
         let (motif_locations, tids) = {
             let fasta_fp = self
                 .reference_fasta
@@ -1247,6 +1261,7 @@ impl DuplexModBamPileup {
             }
         }
 
+        // from here down could also be it's own "Processor"
         let (snd, rx) = bounded(1_000); // todo figure out sane default for this?
         let in_bam_fp = self.in_bam.clone();
         let interval_size = self.interval_size;
@@ -1361,7 +1376,6 @@ impl DuplexModBamPileup {
                     processed_reads
                         .inc(mod_base_pileup.processed_records as u64);
                     skipped_reads.inc(mod_base_pileup.skipped_records as u64);
-                    // dbg!(&mod_base_pileup);
                     let rows_written = writer.write(mod_base_pileup, &[])?;
                     write_progress.inc(rows_written);
                 }

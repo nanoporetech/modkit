@@ -1388,6 +1388,32 @@ impl DuplexModCall {
             _ => false,
         }
     }
+
+    pub(crate) fn into_combined(self) -> Self {
+        if let Some(pattern) = self.pattern() {
+            if self.is_canonical() {
+                self
+            } else {
+                let x = if pattern[0] == '-' {
+                    '-'
+                } else {
+                    self.primary_base()
+                };
+                let y = if pattern[1] == '-' {
+                    '-'
+                } else {
+                    self.primary_base()
+                };
+                let pattern = [x, y];
+                Self::ModCall {
+                    pattern,
+                    primary_base: self.primary_base(),
+                }
+            }
+        } else {
+            self
+        }
+    }
 }
 
 #[cfg(test)]

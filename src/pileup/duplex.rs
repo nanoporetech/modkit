@@ -80,13 +80,28 @@ struct DuplexFeatureVector {
 }
 
 impl DuplexFeatureVector {
-    fn add_feature(&mut self, feature: DuplexFeature) {
+    fn add_feature(
+        &mut self,
+        feature: DuplexFeature,
+        pileup_options: &PileupNumericOptions,
+    ) {
         match feature {
             DuplexFeature::Delete => self.delete_counts += 1,
-            DuplexFeature::ModCall(duplex_mod_call) => {
-                *self.duplex_mod_counts.entry(duplex_mod_call).or_insert(0) +=
-                    1;
-            }
+            DuplexFeature::ModCall(duplex_mod_call) => match pileup_options {
+                PileupNumericOptions::Collapse(_)
+                | PileupNumericOptions::Passthrough => {
+                    *self
+                        .duplex_mod_counts
+                        .entry(duplex_mod_call)
+                        .or_insert(0) += 1;
+                }
+                PileupNumericOptions::Combine => {
+                    *self
+                        .duplex_mod_counts
+                        .entry(duplex_mod_call.into_combined())
+                        .or_insert(0) += 1;
+                }
+            },
         }
     }
 
@@ -259,7 +274,10 @@ pub fn process_region_duplex<T: AsRef<Path>>(
 
         for alignment in alignment_iter {
             if alignment.is_del() {
-                feature_vector.add_feature(DuplexFeature::Delete);
+                feature_vector.add_feature(
+                    DuplexFeature::Delete,
+                    &pileup_numeric_options,
+                );
                 continue;
             }
             let record = alignment.record();
@@ -271,8 +289,10 @@ pub fn process_region_duplex<T: AsRef<Path>>(
             if let Some(duplex_mod_call) =
                 read_cache.get_duplex_mod_call(&record, pos, read_base, motif)
             {
-                feature_vector
-                    .add_feature(DuplexFeature::ModCall(duplex_mod_call));
+                feature_vector.add_feature(
+                    DuplexFeature::ModCall(duplex_mod_call),
+                    &pileup_numeric_options,
+                );
             }
         }
         let pileup_counts = feature_vector.decode();
