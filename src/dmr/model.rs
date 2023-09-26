@@ -139,10 +139,6 @@ impl ModificationCounts {
 
     pub(super) fn to_row(&self) -> anyhow::Result<String> {
         let sep = '\t';
-        // let mle_llk_ratio = mle_llk_ratio(&self)?;
-        // dbg!(&self);
-        // let chi2_stat = chi_squared_test(&self)?;
-
         let line = format!(
             "\
         {}{sep}\

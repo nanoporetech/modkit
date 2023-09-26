@@ -1,7 +1,7 @@
 # Make hemi-methylation bedMethyl tables with `pileup-hemi`
 
 Base modifications in DNA are inherently single-stranded, they (usually [^1]) don't change the base
-pairing of the modified base. However, it may be of interest to know the correspondance
+pairing of the modified base. However, it may be of interest to know the correspondence
 between the methylation state of a single base and another nearby base on the opposite strand - 
 on the same molecule. In CpG dinucleotides, this is called "hemi-methylation", when one cytosine
 is methylated and the neighbor on the opposite strand is not:
@@ -29,7 +29,7 @@ These are all measured at the _single molecule_ level, meaning each molecule mus
 is the case with [duplex](https://www.youtube.com/watch?v=8DVMG7FEBys) reads). For CpGs in the example above the
 `MM` tags would be `C+m?` and `G-m?` for the top-strand and bottom-strand cytosines, respectively.
 
-The `modkit pileup-hemi` will perform an aggregation of the methylation "patterns" at genomic positions. An example
+The `modkit pileup-hemi` command will perform an aggregation of the methylation "patterns" at genomic positions. An example
 command to perform hemi-methylation analysis at CpGs would be
 
 ```bash
@@ -43,7 +43,8 @@ modkit pileup-hemi \
 
 Many of the `pileup` options are available in `pileup-hemi` with a couple differences: :
 
-1. A motif must be provided. The `--cpg` flag is a preset to aggregate CpG hemi-methylation patterns as shown above.
+1. A motif must be provided. The `--cpg` flag is a preset to aggregate CpG hemi-methylation patterns as shown above. 
+   If a motif is provided (as an argument to `--motif`) it must be reverse-complement palindromic.
 2. A reference must be provided.
 3. Both the positive strand base modification probability and the negative strand base modification probability must be above the pass threshold.
 
@@ -54,8 +55,8 @@ See [Advanced Usage](./advanced_usage.md) for details on all the options.
 The `modkit pileup-hemi` command aggregates a pair of base modification calls at each reference motif position
 for each double-stranded DNA molecule. The base modification "pattern" indicates the methylation state on each base 
 in 5-prime to 3-prime order, using the base modification code to indicate the identity of the base modification and 
-`-` to indicate canonical (unmodified). For example `m,-,C` would mean the first base (from the 5' direction) is 5mC 
-and the second base is unmodified and the primary base is cytosone. Similarly, `h,m,C` indicates the first base is 
+`-` to indicate canonical (unmodified). For example `m,-,C` would mean the first base (from the reference 5' direction) 
+is 5mC and the second base is unmodified and the primary base is cytosone. Similarly, `h,m,C` indicates the first base is 
 5hmC and the second base is 5mC. The primary base called by the read is included to help disambiguate the unmodified
 patterns (`-,-`). All patterns recognized at a location will be reported in the bedMethyl output.
 

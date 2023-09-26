@@ -84,7 +84,9 @@ pub enum Commands {
     /// See subcommand help for additional details.
     #[clap(subcommand)]
     Dmr(BedMethylDmr),
-    /// With a hemi
+    /// Tabulates double-stranded base modification patters (such as hemi-methylation) across
+    /// genomic motif positions. This command produces a bedMethyl file, the schema can be
+    /// found in the online documentation.
     PileupHemi(DuplexModBamPileup),
 }
 

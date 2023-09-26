@@ -166,8 +166,7 @@ pub(super) fn run_pairwise_dmr(
     position_filter: StrandedPositionFilter,
     mut writer: Box<dyn std::io::Write>,
     pb: ProgressBar,
-    successes: ProgressBar,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<usize> {
     let (snd, rcv) = crossbeam_channel::bounded(1000);
     let control_bedmethyl_fp = control_bed_fp.clone();
     let exp_bedmethyl_fp = exp_bed_fp.clone();
@@ -196,7 +195,7 @@ pub(super) fn run_pairwise_dmr(
                     result.into_iter().for_each(|counts| {
                         pb.inc(1);
                         match snd.send(counts) {
-                            Ok(_) => {}
+                            Ok(_) => pb.inc(1),
                             Err(e) => error!(
                                 "failed to send results, {}",
                                 e.to_string()
@@ -219,11 +218,12 @@ pub(super) fn run_pairwise_dmr(
         pb.finish_and_clear();
     });
 
+    let mut success_count = 0;
     for result in rcv {
         match result {
             Ok(counts) => {
                 writer.write(counts.to_row()?.as_bytes())?;
-                successes.inc(1);
+                success_count += 1;
             }
             Err(e) => {
                 debug!("unexpected error, {}", e.to_string());
@@ -231,5 +231,5 @@ pub(super) fn run_pairwise_dmr(
         }
     }
 
-    Ok(())
+    Ok(success_count)
 }

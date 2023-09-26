@@ -17,7 +17,7 @@ fn test_dmr_regression() {
         "-r",
         "tests/resources/cpg_chr20_with_orig_names_selection.bed",
         "--ref",
-        "tests/resources/grch38_chr20.fa",
+        "tests/resources/GRCh38_chr20.fa",
         "-f",
         "--base", "C",
         ]).expect("failed to run modkit dmr");

@@ -12,7 +12,7 @@ use itertools::Itertools;
 use log::{debug, error, info};
 use noodles::csi::Index as CsiIndex;
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dmr::multi_sample::{
     get_reference_modified_base_positions, n_choose_2, DmrSample,
@@ -21,10 +21,9 @@ use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::util::{parse_roi_bed, DmrIntervalIter};
 use crate::logging::init_logging;
 use crate::mod_base_code::DnaBase;
-use crate::motif_bed::{find_motif_hits, RegexMotif};
 use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
 use crate::util::{
-    get_master_progress_bar, get_subroutine_progress_bar, get_ticker, Strand,
+    get_master_progress_bar, get_subroutine_progress_bar, get_ticker,
 };
 
 #[derive(Subcommand)]
@@ -36,7 +35,13 @@ pub enum BedMethylDmr {
     /// the difference in methylation between the two samples. See the online
     /// documentation for additional details.
     Pair(PairwiseDmr),
-    /// TODO
+    /// Compare regions between all pairs of samples (for example a trio sample
+    /// set or haplotyped trio sample set). As with `pair` all inputs must be bgzip
+    /// compressed bedMethyl files with associated tabix indices. Each sample
+    /// must be assigned a name. Output is a directory of BED files with the score column
+    /// indicating the magnitude of the difference in methylation between the
+    /// two samples indicated in the file name. See the online documentation for
+    /// additional details.
     Multi(MultiSampleDmr),
 }
 
@@ -104,11 +109,13 @@ impl PairwiseDmr {
         &self,
         name_to_id: Arc<HashMap<String, usize>>,
         multi_pb: &MultiProgress,
-        modified_bases: &[RegexMotif],
+        modified_bases: &[DnaBase],
     ) -> anyhow::Result<StrandedPositionFilter> {
         let fasta_reader = FastaReader::from_file(&self.reference_fasta)?;
         let reader_pb = multi_pb.add(get_ticker());
         reader_pb.set_message("sequences read");
+        let positions_pb = multi_pb.add(get_ticker());
+        positions_pb.set_message("positions found");
 
         let (snd, rcv) = crossbeam_channel::unbounded();
         let mask = self.mask;
@@ -137,36 +144,65 @@ impl PairwiseDmr {
                     }
                 });
         });
+
+        let pos_bases = modified_bases
+            .iter()
+            .map(|b| b.char())
+            .collect::<FxHashSet<char>>();
+        let neg_bases = modified_bases
+            .iter()
+            .map(|b| b.complement().char())
+            .collect::<FxHashSet<char>>();
         let (pos_positions, neg_positions) = rcv
             .iter()
             .par_bridge()
             .fold(
                 || (FxHashMap::default(), FxHashMap::default()),
                 |(mut pos_agg, mut neg_agg), (sequence, tid)| {
-                    let (pos_strand_intervals, neg_strand_intervals) =
-                        modified_bases
-                            .iter()
-                            .flat_map(|base| {
-                                find_motif_hits(sequence.as_str(), base)
-                            })
-                            .fold(
-                                (Vec::<Iv>::new(), Vec::<Iv>::new()),
-                                |(mut pos, mut neg), (position, strand)| {
-                                    match strand {
-                                        Strand::Positive => pos.push(Iv {
-                                            start: position as u64,
-                                            stop: (position + 1) as u64,
-                                            val: (),
-                                        }),
-                                        Strand::Negative => neg.push(Iv {
-                                            start: position as u64,
-                                            stop: (position + 1) as u64,
-                                            val: (),
-                                        }),
-                                    }
-                                    (pos, neg)
-                                },
-                            );
+                    let (pos_strand_intervals, neg_strand_intervals) = sequence.chars().enumerate()
+                        .fold((Vec::new(), Vec::new()), |(mut pos_agg, mut neg_agg), (pos, base)| {
+                            if pos_bases.contains(&base) {
+                                pos_agg.push(Iv {
+                                    start: pos as u64,
+                                    stop: (pos + 1) as u64,
+                                    val: ()
+                                })
+                            } else if neg_bases.contains(&base) {
+                                neg_agg.push(Iv {
+                                    start: pos as u64,
+                                    stop: (pos + 1) as u64,
+                                    val: ()
+                                })
+                            };
+                            (pos_agg, neg_agg)
+                        });
+
+                    // let (pos_strand_intervals, neg_strand_intervals) =
+                    //     modified_bases
+                    //         .iter()
+                    //         .filter_map(|base| {
+                    //             let positions = find_motif_hits(sequence.as_str(), base);
+                    //             positions_pb.inc(positions.len() as u64);
+                    //             positions
+                    //         })
+                    //         .fold(
+                    //             (Vec::<Iv>::new(), Vec::<Iv>::new()),
+                    //             |(mut pos, mut neg), (position, strand)| {
+                    //                 match strand {
+                    //                     Strand::Positive => pos.push(Iv {
+                    //                         start: position as u64,
+                    //                         stop: (position + 1) as u64,
+                    //                         val: (),
+                    //                     }),
+                    //                     Strand::Negative => neg.push(Iv {
+                    //                         start: position as u64,
+                    //                         stop: (position + 1) as u64,
+                    //                         val: (),
+                    //                     }),
+                    //                 }
+                    //                 (pos, neg)
+                    //             },
+                    //         );
                     debug!("found {} positive-strand and {} negative-strand positions on \
                         {tid}", pos_strand_intervals.len(), neg_strand_intervals.len());
                     let pos_lp = GenomeLapper::new(pos_strand_intervals);
@@ -202,6 +238,10 @@ impl PairwiseDmr {
         specified_index: Option<&PathBuf>,
     ) -> anyhow::Result<(CsiIndex, PathBuf)> {
         if let Some(index_fp) = specified_index {
+            info!(
+                "loading user-specified index at {}",
+                index_fp.to_string_lossy()
+            );
             noodles::tabix::read(index_fp)
                 .with_context(|| {
                     format!("failed to read index at {:?}", index_fp)
@@ -309,8 +349,8 @@ impl PairwiseDmr {
         let motifs = self
             .modified_bases
             .iter()
-            .map(|c| RegexMotif::parse_string(&format!("{c}"), 0))
-            .collect::<anyhow::Result<Vec<RegexMotif>>>()?;
+            .map(|c| DnaBase::parse(*c))
+            .collect::<anyhow::Result<Vec<DnaBase>>>()?;
 
         let position_filter = self.get_stranded_position_filter(
             control_contig_lookup.clone(),
@@ -319,14 +359,12 @@ impl PairwiseDmr {
         )?;
 
         let chunk_size = (self.threads as f32 * 1.5f32).floor() as usize;
-        info!("processing {chunk_size} DMR intervals concurrently");
+        info!("processing {chunk_size} regions concurrently");
 
         let pb = mpb.add(get_master_progress_bar(regions_of_interest.len()));
         pb.set_message("regions processed");
         let failures = mpb.add(get_ticker());
         failures.set_message("regions failed to process");
-        let successes = mpb.add(get_ticker());
-        successes.set_message("regions processed successfully");
 
         let dmr_interval_iter = DmrIntervalIter::new(
             &self.control_bed_methyl,
@@ -340,19 +378,18 @@ impl PairwiseDmr {
             failures.clone(),
         );
 
-        run_pairwise_dmr(
+        let success_count = run_pairwise_dmr(
             &self.control_bed_methyl,
             &self.exp_bed_methyl,
             dmr_interval_iter,
             position_filter,
             writer,
             pb,
-            successes.clone(),
         )?;
 
         info!(
             "{} regions processed successfully and {} regions failed",
-            successes.position(),
+            success_count,
             failures.position()
         );
 
@@ -362,10 +399,12 @@ impl PairwiseDmr {
 
 #[derive(Args)]
 pub struct MultiSampleDmr {
-    /// Two or more named samples to compare
+    /// Two or more named samples to compare. Two arguments are required <path> <name>.
     #[arg(short = 's', long = "sample", num_args = 2)]
     samples: Vec<String>,
-    /// Optional, paths to tabix indices associated with named samples.
+    /// Optional, paths to tabix indices associated with named samples. Two arguments
+    /// are required <path> <name> where <name> corresponds to the name of the sample
+    /// given to the -s/--sample argument.
     #[arg(short = 'i', long = "index", num_args = 2)]
     indices: Vec<String>,
     /// Regions BED file over which to compare methylation levels. Should be tab-separated (spaces
@@ -538,7 +577,7 @@ impl MultiSampleDmr {
         info!("loaded {} regions", regions_of_interest.len());
 
         let chunk_size = (self.threads as f32 * 1.5f32).floor() as usize;
-        info!("processing {chunk_size} DMR intervals concurrently");
+        info!("processing {chunk_size} regions concurrently");
 
         let mpb = MultiProgress::new();
         let sample_pb =
@@ -565,8 +604,7 @@ impl MultiSampleDmr {
             pb.set_message("regions processed");
             let failures = mpb.add(get_ticker());
             failures.set_message("regions failed to process");
-            let successes = mpb.add(get_ticker());
-            successes.set_message("regions processed successfully");
+
             let (a_index, _) =
                 PairwiseDmr::load_index(&a.bedmethyl_fp, Some(&a.index))?;
             let (b_index, _) =
@@ -613,18 +651,17 @@ impl MultiSampleDmr {
             );
 
             let writer = self.get_writer(&a.name, &b.name)?;
-            run_pairwise_dmr(
+            let success_count = run_pairwise_dmr(
                 &a.bedmethyl_fp,
                 &b.bedmethyl_fp,
                 dmr_interval_iter,
                 position_filter,
                 writer,
                 pb,
-                successes.clone(),
             )?;
             debug!(
                 "{} regions processed successfully and {} regions failed for pair {} {}",
-                successes.position(),
+                success_count,
                 failures.position(),
                 &a.name, &b.name,
             );
