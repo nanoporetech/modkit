@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.0]
+### Adds
+- [dmr] Adds `modkit dmr` command suite for differential methylation exploratory data analysis.
+- [pileup-hemi] Adds `modkit pileup-hemi` for tabulating double-stranded methylation patterns.
+### Fixes
+- [repair] Fixes potential stack overflow when donor and/or acceptor BAMs aren't sorted correctly.
+
 ## [v0.1.13]
 ### Fixes
 - [extract, mod_bam] Potential stack overflow when many reads are skipped.
