@@ -480,21 +480,16 @@ impl<'a> DuplexReadCache<'a> {
         } else {
             (read_base, read_base.complement())
         };
-        debug!("pos {} neg {}", pos_base.char(), neg_base.char());
 
         let pos_base_mod_call = self.get_pos_strand_base_mod_call(
             record,
             position,
             pos_base.char(),
         );
-        if pos_base_mod_call.is_none() {
-            debug!("no pos strand call");
-        };
         let negative_position =
             motif.motif().negative_strand_position(position);
 
         if negative_position.is_none() {
-            debug!("no call");
             return Some(DuplexModCall::NoCall {
                 primary_base: read_base.char(),
             });
@@ -503,16 +498,18 @@ impl<'a> DuplexReadCache<'a> {
         let neg_strand_base_mod_call = self.get_neg_strand_base_mod_call(
             record,
             negative_position,
-            neg_base.char(), // double check this should be complemented
+            neg_base.char(),
         );
-        if neg_strand_base_mod_call.is_none() {
-            debug!("negative stand mod call missing");
+        match (pos_base_mod_call, neg_strand_base_mod_call) {
+            (Some(pos), Some(neg)) => Some(DuplexModCall::from_base_mod_calls(
+                pos,
+                neg,
+                read_base.char(),
+            )),
+            _ => Some(DuplexModCall::NoCall {
+                primary_base: read_base.char(),
+            }),
         }
-        Some(DuplexModCall::from_base_mod_calls(
-            pos_base_mod_call?,
-            neg_strand_base_mod_call?,
-            read_base.char(),
-        ))
     }
 
     pub(crate) fn get_records_used_and_skipped(&self) -> (usize, usize) {

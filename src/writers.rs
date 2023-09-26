@@ -159,13 +159,13 @@ impl<T: Write> PileupWriter<DuplexModBasePileup> for BedMethylWriter<T> {
             .sorted_by(|(a, _), (b, _)| a.cmp(b))
         {
             // sort by base
-            for (_base, patterns) in duplex_pileup_counts
+            for (base, patterns) in duplex_pileup_counts
                 .pattern_counts
                 .iter()
                 .sorted_by(|(a, _), (b, _)| a.cmp(b))
             {
-                for pattern in patterns {
-                    let name = pattern.pattern_string();
+                for pattern in patterns.iter().sorted() {
+                    let name = pattern.pattern_string(*base);
                     let row = format!(
                         "{}{tab}\
                          {}{tab}\

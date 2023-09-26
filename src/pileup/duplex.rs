@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -31,7 +32,7 @@ pub struct DuplexModBasePileup {
     pub skipped_records: usize,
 }
 
-#[derive(new, Debug)]
+#[derive(new, Debug, Eq, PartialEq, PartialOrd)]
 pub struct DuplexPatternCounts {
     pattern: [char; 2],
     pub count: usize,
@@ -53,8 +54,17 @@ impl DuplexPatternCounts {
 }
 
 impl DuplexPatternCounts {
-    pub fn pattern_string(&self) -> String {
-        format!("{},{}", self.pattern[0], self.pattern[1])
+    pub fn pattern_string(&self, primary_base: char) -> String {
+        format!("{},{},{}", self.pattern[0], self.pattern[1], primary_base)
+    }
+}
+
+impl Ord for DuplexPatternCounts {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.pattern[0].cmp(&other.pattern[0]) {
+            Ordering::Equal => self.pattern[1].cmp(&other.pattern[1]),
+            o @ _ => o,
+        }
     }
 }
 

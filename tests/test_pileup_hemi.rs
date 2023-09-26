@@ -13,7 +13,6 @@ fn test_pileup_hemi_hm() {
     let temp_file = std::env::temp_dir().join("test_pileup_hemi_hm.bed");
     let args = [
         "pileup-hemi",
-        "--no-filtering",
         "tests/resources/duplex_modcalls_sort.bam",
         "-o",
         temp_file.to_str().unwrap(),
@@ -24,6 +23,7 @@ fn test_pileup_hemi_hm() {
         "0",
         "--region",
         "chr20:22,613,835-22,640,468",
+        "--no-filtering",
     ];
 
     run_modkit(&args).unwrap();
@@ -32,7 +32,11 @@ fn test_pileup_hemi_hm() {
         temp_file.to_str().unwrap(),
         "tests/resources/duplex_hemi_nofilt.bed",
     );
+}
 
+#[test]
+fn test_pileup_hemi_preset() {
+    let temp_file = std::env::temp_dir().join("test_pileup_hemi_preset.bed");
     let args = [
         "pileup-hemi",
         "tests/resources/duplex_modcalls_sort.bam",
@@ -52,3 +56,5 @@ fn test_pileup_hemi_hm() {
         "tests/resources/duplex_hemi.bed",
     );
 }
+
+// todo test with combine mods
