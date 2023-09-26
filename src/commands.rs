@@ -28,7 +28,7 @@ use crate::mod_bam::{
 use crate::mod_base_code::ModCode;
 use crate::monoid::Moniod;
 use crate::motif_bed::motif_bed;
-use crate::pileup::subcommand::ModBamPileup;
+use crate::pileup::subcommand::{DuplexModBamPileup, ModBamPileup};
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
@@ -80,6 +80,8 @@ pub enum Commands {
     /// rejected. Reads where there is an ambiguous alignment of the acceptor to the
     /// donor will be rejected (and logged). See the full documentation for details.
     Repair(RepairTags),
+    /// With a hemi
+    PileupHemi(DuplexModBamPileup),
 }
 
 impl Commands {
@@ -94,6 +96,7 @@ impl Commands {
             Self::CallMods(x) => x.run(),
             Self::Extract(x) => x.run(),
             Self::Repair(x) => x.run(),
+            Self::PileupHemi(x) => x.run(),
         }
     }
 }

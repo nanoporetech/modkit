@@ -1282,6 +1282,140 @@ pub struct EdgeFilter {
     pub(crate) edge_filter_end: usize,
 }
 
+#[derive(Hash, Eq, PartialEq, Debug)]
+pub(crate) enum DuplexModCall {
+    ModCall {
+        pattern: [char; 2],
+        primary_base: char,
+    },
+    Filtered {
+        primary_base: char,
+    },
+    NoCall {
+        primary_base: char,
+    },
+}
+
+impl DuplexModCall {
+    pub(crate) fn from_base_mod_calls(
+        pos_base_mod_call: BaseModCall,
+        neg_base_mod_call: BaseModCall,
+        primary_base: char,
+    ) -> Self {
+        match (pos_base_mod_call, neg_base_mod_call) {
+            (BaseModCall::Canonical(_), BaseModCall::Canonical(_)) => {
+                Self::ModCall {
+                    pattern: ['-', '-'],
+                    primary_base,
+                }
+            }
+            (BaseModCall::Canonical(_), BaseModCall::Modified(_, mod_code)) => {
+                Self::ModCall {
+                    pattern: ['-', mod_code.char()],
+                    primary_base,
+                }
+            }
+            (BaseModCall::Modified(_, mod_code), BaseModCall::Canonical(_)) => {
+                Self::ModCall {
+                    pattern: [mod_code.char(), '-'],
+                    primary_base,
+                }
+            }
+            (
+                BaseModCall::Modified(_, mod_code_pos),
+                BaseModCall::Modified(_, mod_code_neg),
+            ) => Self::ModCall {
+                pattern: [mod_code_pos.char(), mod_code_neg.char()],
+                primary_base,
+            },
+            (_, BaseModCall::Filtered) | (BaseModCall::Filtered, _) => {
+                Self::Filtered { primary_base }
+            }
+        }
+    }
+
+    pub(crate) fn primary_base(&self) -> char {
+        match self {
+            Self::ModCall {
+                pattern: _,
+                primary_base,
+            } => *primary_base,
+            Self::NoCall { primary_base } => *primary_base,
+            Self::Filtered { primary_base } => *primary_base,
+        }
+    }
+
+    pub(crate) fn is_canonical(&self) -> bool {
+        match self {
+            Self::ModCall {
+                pattern,
+                primary_base: _,
+            } => pattern == &['-', '-'],
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_mod_call(&self) -> bool {
+        match self {
+            Self::ModCall {
+                pattern,
+                primary_base: _,
+            } => pattern != &['-', '-'],
+            _ => false,
+        }
+    }
+
+    pub(crate) fn pattern(&self) -> Option<[char; 2]> {
+        match self {
+            Self::ModCall {
+                pattern,
+                primary_base: _,
+            } => Some(*pattern),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_nocall(&self) -> bool {
+        match self {
+            Self::NoCall { primary_base: _ } => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_filtered(&self) -> bool {
+        match self {
+            Self::Filtered { primary_base: _ } => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn into_combined(self) -> Self {
+        if let Some(pattern) = self.pattern() {
+            if self.is_canonical() {
+                self
+            } else {
+                let x = if pattern[0] == '-' {
+                    '-'
+                } else {
+                    self.primary_base()
+                };
+                let y = if pattern[1] == '-' {
+                    '-'
+                } else {
+                    self.primary_base()
+                };
+                let pattern = [x, y];
+                Self::ModCall {
+                    pattern,
+                    primary_base: self.primary_base(),
+                }
+            }
+        } else {
+            self
+        }
+    }
+}
+
 #[cfg(test)]
 mod mod_bam_tests {
     use super::*;

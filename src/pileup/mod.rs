@@ -20,6 +20,7 @@ use crate::util::{
     Strand, StrandRule,
 };
 
+pub(crate) mod duplex;
 pub mod subcommand;
 
 #[derive(Debug, Copy, Clone)]
@@ -734,6 +735,20 @@ pub enum PartitionKey {
     Key(usize),
 }
 
+fn get_forward_read_base(
+    alignment: &bam::pileup::Alignment,
+    record: &bam::Record,
+) -> Option<DnaBase> {
+    alignment.qpos().and_then(|pos| {
+        if pos >= record.seq_len() {
+            debug!("Record position is not included in sequence?");
+            None
+        } else {
+            DnaBase::parse(record.seq()[pos] as char).ok()
+        }
+    })
+}
+
 fn parse_tags_from_record(
     record: &bam::Record,
     tags: &[SamTag],
@@ -940,14 +955,7 @@ pub fn process_region<T: AsRef<Path>>(
             }
 
             // not delete or skip, add base
-            let read_base = alignment.qpos().and_then(|pos| {
-                if pos >= record.seq_len() {
-                    debug!("Record position is not included in sequence?");
-                    None
-                } else {
-                    DnaBase::parse(record.seq()[pos] as char).ok()
-                }
-            });
+            let read_base = get_forward_read_base(&alignment, &record);
 
             let read_base = if let Some(base) = read_base {
                 if record.is_reverse() {

@@ -28,6 +28,7 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 7. [Removing base modification calls at the ends of reads](./intro_edge_filter.md)
 8. [Narrow analysis to only specific positions with a BED file](./intro_include_bed.md)
 9. [Repairing/adding MM/ML tags to reads with clipped sequences](./intro_repair.md)
+10. [Creating hemi-methylation pattern bedMethyl tables with `pileup-hemi`](./intro_pileup_hemi.md)
 
 ## Notes and troubleshooting
 1. [General troubleshooting](./troubleshooting.md)

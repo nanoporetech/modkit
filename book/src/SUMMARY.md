@@ -1,6 +1,6 @@
 # Summary
 
-- [Use cases](./quick_start.md)
+- [Quick Start guides](./quick_start.md)
     - [Constructing bedMethyl tables](./intro_bedmethyl.md)
     - [Updating and adjusting MM tags](./intro_adjust.md)
     - [Summarizing a modBAM](./intro_summary.md)
@@ -10,6 +10,7 @@
     - [Removing modification calls at the ends of reads](./intro_edge_filter.md)
     - [Narrow output to specific positions](./intro_include_bed.md)
     - [Repair MM/ML tags on trimmed reads](./intro_repair.md)
+    - [Make hemi-methylation bedMethyl tables](./intro_pileup_hemi.md)
 - [Extended subcommand help](./advanced_usage.md)
 - [Troubleshooting](./troubleshooting.md)
 - [Current limitations](./limitations.md)

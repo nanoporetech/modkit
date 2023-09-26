@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use derive_new::new;
 use histo_fp::Histogram;
+use itertools::Itertools;
 use log::{debug, info, warn};
 use prettytable::format::FormatBuilder;
 use prettytable::{cell, row, Table};
 use rustc_hash::FxHashMap;
 
+use crate::pileup::duplex::DuplexModBasePileup;
 use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
 use crate::read_ids_to_base_mod_probs::ReadsBaseModProfile;
 use crate::summarize::ModSummary;
@@ -122,8 +124,6 @@ impl<T: Write> PileupWriter<ModBasePileup> for BedMethylWriter<T> {
         motif_labels: &[String],
     ) -> AnyhowResult<u64> {
         let mut rows_written = 0;
-        // let tab = '\t';
-        // let space = if self.tabs_and_spaces { tab } else { ' ' };
         for (pos, feature_counts) in item.iter_counts_sorted() {
             match feature_counts.get(&PartitionKey::NoKey) {
                 Some(feature_counts) => {
@@ -137,6 +137,78 @@ impl<T: Write> PileupWriter<ModBasePileup> for BedMethylWriter<T> {
                     )?;
                 }
                 None => {}
+            }
+        }
+        Ok(rows_written)
+    }
+}
+
+impl<T: Write> PileupWriter<DuplexModBasePileup> for BedMethylWriter<T> {
+    fn write(
+        &mut self,
+        item: DuplexModBasePileup,
+        _motif_labels: &[String],
+    ) -> AnyhowResult<u64> {
+        let tab = '\t';
+        let space = if !self.tabs_and_spaces { tab } else { ' ' };
+        let mut rows_written = 0;
+        for (pos, duplex_pileup_counts) in item
+            .pileup_counts
+            .iter()
+            // sort by position
+            .sorted_by(|(a, _), (b, _)| a.cmp(b))
+        {
+            // sort by base
+            for (base, patterns) in duplex_pileup_counts
+                .pattern_counts
+                .iter()
+                .sorted_by(|(a, _), (b, _)| a.cmp(b))
+            {
+                for pattern in patterns.iter().sorted() {
+                    let name = pattern.pattern_string(*base);
+                    let row = format!(
+                        "{}{tab}\
+                         {}{tab}\
+                         {}{tab}\
+                         {}{tab}\
+                         {}{tab}\
+                         {}{tab}\
+                         {}{tab}\
+                         {}{tab}\
+                         {}{tab}\
+                         {}{space}\
+                         {}{space}\
+                         {}{space}\
+                         {}{space}\
+                         {}{space}\
+                         {}{space}\
+                         {}{space}\
+                         {}{space}\
+                         {}\n",
+                        item.chrom_name,
+                        pos,
+                        pos + 1,
+                        name,
+                        pattern.valid_coverage(),
+                        '.',
+                        pos,
+                        pos + 1,
+                        "255,0,0",
+                        pattern.valid_coverage(),
+                        format!("{:.2}", pattern.frac_pattern() * 100f32),
+                        pattern.count,
+                        pattern.n_canonical,
+                        pattern.n_other_pattern,
+                        duplex_pileup_counts.n_delete,
+                        pattern.n_fail,
+                        pattern.n_diff,
+                        pattern.n_nocall,
+                    );
+                    self.buf_writer
+                        .write(row.as_bytes())
+                        .with_context(|| "failed to write row")?;
+                    rows_written += 1;
+                }
             }
         }
         Ok(rows_written)
