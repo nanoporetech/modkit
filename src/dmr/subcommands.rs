@@ -20,6 +20,7 @@ use crate::dmr::multi_sample::{
 use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::util::{parse_roi_bed, DmrIntervalIter};
 use crate::logging::init_logging;
+use crate::mod_base_code::DnaBase;
 use crate::motif_bed::{find_motif_hits, RegexMotif};
 use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
 use crate::util::{
@@ -529,8 +530,9 @@ impl MultiSampleDmr {
         let motifs = self
             .modified_bases
             .iter()
-            .map(|c| RegexMotif::parse_string(&format!("{c}"), 0))
-            .collect::<anyhow::Result<Vec<RegexMotif>>>()?;
+            .map(|c| DnaBase::parse(*c))
+            .collect::<anyhow::Result<Vec<DnaBase>>>()
+            .context("failed to parse modified base")?;
 
         let regions_of_interest = parse_roi_bed(&self.regions_bed)?;
         info!("loaded {} regions", regions_of_interest.len());

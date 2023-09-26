@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::mod_base_code::DnaBase;
 use anyhow::bail;
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
 use indicatif::{MultiProgress, ProgressIterator};
 use log::debug;
 use rayon::prelude::*;
+use rustc_hash::FxHashSet;
 
-use crate::motif_bed::{find_motif_hits, RegexMotif};
 use crate::util::{get_ticker, Strand};
 
 fn factorial(n: usize) -> anyhow::Result<usize> {
@@ -40,7 +41,7 @@ pub(super) struct DmrSample {
 
 pub(super) fn get_reference_modified_base_positions(
     ref_fasta: &PathBuf,
-    modified_bases: &[RegexMotif],
+    modified_bases: &[DnaBase],
     mask: bool,
     mpb: MultiProgress,
 ) -> anyhow::Result<(HashMap<String, Vec<u64>>, HashMap<String, Vec<u64>>)> {
@@ -69,13 +70,30 @@ pub(super) fn get_reference_modified_base_positions(
                 }
             });
     });
+    let pos_bases = modified_bases
+        .iter()
+        .map(|b| b.char())
+        .collect::<FxHashSet<char>>();
+    let neg_bases = modified_bases
+        .iter()
+        .map(|b| b.complement().char())
+        .collect::<FxHashSet<char>>();
     let (positive_hits, negative_hits) = rcv
         .iter()
         .par_bridge()
         .map(|(seq, name)| {
-            let modified_positions = modified_bases
-                .iter()
-                .flat_map(|base| find_motif_hits(&seq, base))
+            let modified_positions = seq
+                .chars()
+                .enumerate()
+                .filter_map(|(i, c)| {
+                    if pos_bases.contains(&c) {
+                        Some((i, Strand::Positive))
+                    } else if neg_bases.contains(&c) {
+                        Some((i, Strand::Negative))
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Vec<(usize, Strand)>>();
             positions_pb.inc(modified_positions.len() as u64);
             (name, modified_positions)
