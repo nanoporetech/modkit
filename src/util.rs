@@ -177,15 +177,6 @@ pub enum StrandRule {
 }
 
 impl StrandRule {
-    // pub fn parse_char(raw: char) -> AnyhowResult<Self> {
-    //     match raw {
-    //         '+' => Ok(StrandRule::Positive),
-    //         '-' => Ok(StrandRule::Negative),
-    //         '.' => Ok(StrandRule::Both),
-    //         _ => anyhow!("did not recognize raw {raw} strand")
-    //     }
-    // }
-    //
     pub fn same_as(&self, strand: Strand) -> bool {
         match &self {
             StrandRule::Positive => strand == Strand::Positive,

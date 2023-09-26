@@ -176,33 +176,6 @@ impl PairwiseDmr {
                             };
                             (pos_agg, neg_agg)
                         });
-
-                    // let (pos_strand_intervals, neg_strand_intervals) =
-                    //     modified_bases
-                    //         .iter()
-                    //         .filter_map(|base| {
-                    //             let positions = find_motif_hits(sequence.as_str(), base);
-                    //             positions_pb.inc(positions.len() as u64);
-                    //             positions
-                    //         })
-                    //         .fold(
-                    //             (Vec::<Iv>::new(), Vec::<Iv>::new()),
-                    //             |(mut pos, mut neg), (position, strand)| {
-                    //                 match strand {
-                    //                     Strand::Positive => pos.push(Iv {
-                    //                         start: position as u64,
-                    //                         stop: (position + 1) as u64,
-                    //                         val: (),
-                    //                     }),
-                    //                     Strand::Negative => neg.push(Iv {
-                    //                         start: position as u64,
-                    //                         stop: (position + 1) as u64,
-                    //                         val: (),
-                    //                     }),
-                    //                 }
-                    //                 (pos, neg)
-                    //             },
-                    //         );
                     debug!("found {} positive-strand and {} negative-strand positions on \
                         {tid}", pos_strand_intervals.len(), neg_strand_intervals.len());
                     let pos_lp = GenomeLapper::new(pos_strand_intervals);

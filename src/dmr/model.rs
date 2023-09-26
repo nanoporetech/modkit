@@ -200,37 +200,10 @@ fn llk_dirichlet(
     let k = mods_to_index.len() + 1;
     let prior = Dirichlet::jeffreys(k)?;
     let llk_control = dirichlet_llk(&control_counts, &prior, &mods_to_index)?;
-    // let control_trials =
-    //     multi_counts_to_trials(&control_counts, &mods_to_index)?;
-    // let control_data = DataOrSuffStat::Data(&control_trials);
-    // let control_posterior = prior.posterior(&control_data);
-    // let llk_control = control_posterior.ln_m(&control_data);
-
-    // let exp_trials = multi_counts_to_trials(
-    //     &modification_counts.exp_counts,
-    //     &mods_to_index,
-    //     modification_counts.exp_total,
-    // )?;
-    // let exp_data = DataOrSuffStat::Data(&exp_trials);
-    // let exp_posterior = prior.posterior(&exp_data);
     let llk_exp = dirichlet_llk(&exp_counts, &prior, &mods_to_index)?;
-    // let llk_exp = exp_posterior.ln_m(&exp_data);
 
     let combined_counts = control_counts.combine(exp_counts);
     let llk_combined = dirichlet_llk(&combined_counts, &prior, &mods_to_index)?;
-    //
-    // let all_trials = control_trials
-    //     .into_iter()
-    //     .chain(exp_trials.into_iter())
-    //     .collect::<Vec<usize>>();
-    // let all_data = DataOrSuffStat::Data(&all_trials);
-    // let all_post = prior.posterior(&all_data);
-    // let llk_same = all_post.ln_m(&all_data);
-
-    // debug!("control dist:{} exp dist:{} combined dist:{}",
-    //     control_posterior.to_string(),
-    //     exp_posterior.to_string(),
-    //     all_post.to_string());
 
     Ok(llk_control + llk_exp - llk_combined)
 }
