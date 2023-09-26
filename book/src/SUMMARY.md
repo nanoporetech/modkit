@@ -11,6 +11,7 @@
     - [Narrow output to specific positions](./intro_include_bed.md)
     - [Repair MM/ML tags on trimmed reads](./intro_repair.md)
     - [Make hemi-methylation bedMethyl tables](./intro_pileup_hemi.md)
+    - [Perform differential methylation scoring](./intro_dmr.md)
 - [Extended subcommand help](./advanced_usage.md)
 - [Troubleshooting](./troubleshooting.md)
 - [Current limitations](./limitations.md)

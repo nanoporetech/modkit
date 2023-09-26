@@ -184,14 +184,14 @@ mod threshold_mod_caller_tests {
             per_mod_threshold,
             0f32,
         );
-        let base_modprobs = BaseModProbs::new('a', 0.8);
+        let base_modprobs = BaseModProbs::new_init('a', 0.8);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         // neither pass, Filtered call
         assert_eq!(call, BaseModCall::Filtered);
-        let base_modprobs = BaseModProbs::new('a', 0.2);
+        let base_modprobs = BaseModProbs::new_init('a', 0.2);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Canonical(0.8));
-        let base_modprobs = BaseModProbs::new('a', 0.9);
+        let base_modprobs = BaseModProbs::new_init('a', 0.9);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Modified(0.9, ModCode::a));
 
@@ -205,21 +205,21 @@ mod threshold_mod_caller_tests {
             0f32,
         );
         // have to make this 0.79 because of some FP wobble
-        let base_modprobs = BaseModProbs::new('a', 0.79);
+        let base_modprobs = BaseModProbs::new_init('a', 0.79);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         // call canonical, 'a' fails, but p_A is >= threshold
         assert_base_mod_call_canonical(call, 0.21).unwrap();
 
-        let base_modprobs = BaseModProbs::new('a', 0.6);
+        let base_modprobs = BaseModProbs::new_init('a', 0.6);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         // same logic as above
         assert_base_mod_call_canonical(call, 0.4).unwrap();
 
-        let base_modprobs = BaseModProbs::new('a', 0.2);
+        let base_modprobs = BaseModProbs::new_init('a', 0.2);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_base_mod_call_canonical(call, 0.8).unwrap();
 
-        let base_modprobs = BaseModProbs::new('a', 0.9);
+        let base_modprobs = BaseModProbs::new_init('a', 0.9);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_base_mod_call_modified(call, 0.9, ModCode::a).unwrap();
 
@@ -232,13 +232,13 @@ mod threshold_mod_caller_tests {
             per_mod_threshold,
             0f32,
         );
-        let base_modprobs = BaseModProbs::new('a', 0.8);
+        let base_modprobs = BaseModProbs::new_init('a', 0.8);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Modified(0.8, ModCode::a));
-        let base_modprobs = BaseModProbs::new('a', 0.2);
+        let base_modprobs = BaseModProbs::new_init('a', 0.2);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Canonical(0.8));
-        let base_modprobs = BaseModProbs::new('a', 0.9);
+        let base_modprobs = BaseModProbs::new_init('a', 0.9);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Modified(0.9, ModCode::a));
     }
@@ -246,10 +246,10 @@ mod threshold_mod_caller_tests {
     #[test]
     fn test_multi_threshold_passthrough() {
         let caller = MultipleThresholdModCaller::new_passthrough();
-        let base_modprobs = BaseModProbs::new('a', 0.8);
+        let base_modprobs = BaseModProbs::new_init('a', 0.8);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Modified(0.8, ModCode::a));
-        let base_modprobs = BaseModProbs::new('a', 0.2);
+        let base_modprobs = BaseModProbs::new_init('a', 0.2);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Canonical(0.8));
     }
@@ -267,19 +267,19 @@ mod threshold_mod_caller_tests {
             per_mod_threshold,
             0.75f32,
         );
-        let base_modprobs = BaseModProbs::new('a', 0.75);
+        let base_modprobs = BaseModProbs::new_init('a', 0.75);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Filtered);
-        let base_modprobs = BaseModProbs::new('a', 0.6);
+        let base_modprobs = BaseModProbs::new_init('a', 0.6);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Filtered);
-        let base_modprobs = BaseModProbs::new('a', 0.2);
+        let base_modprobs = BaseModProbs::new_init('a', 0.2);
         let call = caller.call(&DnaBase::A, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Canonical(0.8));
-        let base_modprobs = BaseModProbs::new('m', 0.8);
+        let base_modprobs = BaseModProbs::new_init('m', 0.8);
         let call = caller.call(&DnaBase::C, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Modified(0.8, ModCode::m));
-        let base_modprobs = BaseModProbs::new('m', 0.72);
+        let base_modprobs = BaseModProbs::new_init('m', 0.72);
         let call = caller.call(&DnaBase::C, &base_modprobs).unwrap();
         assert_eq!(call, BaseModCall::Filtered);
     }
@@ -295,25 +295,25 @@ mod threshold_mod_caller_tests {
             per_mod_threshold,
             0f32,
         );
-        let base_modprobs = BaseModProbs::new('a', 0.8);
+        let base_modprobs = BaseModProbs::new_init('a', 0.8);
         let call = caller.call_probs(&DnaBase::A, base_modprobs).unwrap();
         // neither pass, Filtered call
         assert!(call.is_none());
 
-        let base_modprobs = BaseModProbs::new('a', 0.2);
+        let base_modprobs = BaseModProbs::new_init('a', 0.2);
         let call = caller
             .call_probs(&DnaBase::A, base_modprobs)
             .unwrap()
             .unwrap();
         // canonical call
-        assert_eq!(call, BaseModProbs::new('a', 0f32));
-        let base_modprobs = BaseModProbs::new('a', 0.9);
+        assert_eq!(call, BaseModProbs::new_init('a', 0f32));
+        let base_modprobs = BaseModProbs::new_init('a', 0.9);
         let call = caller
             .call_probs(&DnaBase::A, base_modprobs)
             .unwrap()
             .unwrap();
         // modified call
-        assert_eq!(call, BaseModProbs::new('a', 1.0));
+        assert_eq!(call, BaseModProbs::new_init('a', 1.0));
 
         // CASE B
         let per_mod_threshold = vec![(ModCode::A, 0.2), (ModCode::a, 0.9)]
@@ -324,32 +324,32 @@ mod threshold_mod_caller_tests {
             per_mod_threshold,
             0f32,
         );
-        let base_modprobs = BaseModProbs::new('a', 0.79);
+        let base_modprobs = BaseModProbs::new_init('a', 0.79);
         let call = caller
             .call_probs(&DnaBase::A, base_modprobs)
             .unwrap()
             .unwrap();
         // canonical call
-        assert_eq!(call, BaseModProbs::new('a', 0f32));
-        let base_modprobs = BaseModProbs::new('a', 0.6);
+        assert_eq!(call, BaseModProbs::new_init('a', 0f32));
+        let base_modprobs = BaseModProbs::new_init('a', 0.6);
         let call = caller
             .call_probs(&DnaBase::A, base_modprobs)
             .unwrap()
             .unwrap();
         // same, canonical call
-        assert_eq!(call, BaseModProbs::new('a', 0f32));
-        let base_modprobs = BaseModProbs::new('a', 0.2);
+        assert_eq!(call, BaseModProbs::new_init('a', 0f32));
+        let base_modprobs = BaseModProbs::new_init('a', 0.2);
         let call = caller
             .call_probs(&DnaBase::A, base_modprobs)
             .unwrap()
             .unwrap();
-        assert_eq!(call, BaseModProbs::new('a', 0f32));
-        let base_modprobs = BaseModProbs::new('a', 0.9);
+        assert_eq!(call, BaseModProbs::new_init('a', 0f32));
+        let base_modprobs = BaseModProbs::new_init('a', 0.9);
         let call = caller
             .call_probs(&DnaBase::A, base_modprobs)
             .unwrap()
             .unwrap();
-        assert_eq!(call, BaseModProbs::new('a', 1.0));
+        assert_eq!(call, BaseModProbs::new_init('a', 1.0));
 
         // CASE C
         let per_mod_threshold = vec![(ModCode::A, 0.2), (ModCode::a, 0.8)]
@@ -360,24 +360,24 @@ mod threshold_mod_caller_tests {
             per_mod_threshold,
             0f32,
         );
-        let base_modprobs = BaseModProbs::new('a', 0.8);
+        let base_modprobs = BaseModProbs::new_init('a', 0.8);
         let call = caller
             .call_probs(&DnaBase::A, base_modprobs)
             .unwrap()
             .unwrap();
-        assert_eq!(call, BaseModProbs::new('a', 1.0));
-        let base_modprobs = BaseModProbs::new('a', 0.2);
+        assert_eq!(call, BaseModProbs::new_init('a', 1.0));
+        let base_modprobs = BaseModProbs::new_init('a', 0.2);
         let call = caller
             .call_probs(&DnaBase::A, base_modprobs)
             .unwrap()
             .unwrap();
-        assert_eq!(call, BaseModProbs::new('a', 0f32));
-        let base_modprobs = BaseModProbs::new('a', 0.9);
+        assert_eq!(call, BaseModProbs::new_init('a', 0f32));
+        let base_modprobs = BaseModProbs::new_init('a', 0.9);
         let call = caller
             .call_probs(&DnaBase::A, base_modprobs)
             .unwrap()
             .unwrap();
-        assert_eq!(call, BaseModProbs::new('a', 1.0));
+        assert_eq!(call, BaseModProbs::new_init('a', 1.0));
     }
 
     #[test]
@@ -392,12 +392,12 @@ mod threshold_mod_caller_tests {
             per_mod_thresholds,
             0f32,
         );
-        let mut base_mod_probs = BaseModProbs::new('m', 0.1);
+        let mut base_mod_probs = BaseModProbs::new_init('m', 0.1);
         base_mod_probs.insert_base_mod_prob('h', 0.8);
         let call = caller.call(&DnaBase::C, &base_mod_probs).unwrap();
         assert_eq!(call, BaseModCall::Modified(0.8, ModCode::h));
 
-        let mut base_mod_probs = BaseModProbs::new('m', 0.2);
+        let mut base_mod_probs = BaseModProbs::new_init('m', 0.2);
         base_mod_probs.insert_base_mod_prob('h', 0.7);
         let call = caller.call(&DnaBase::C, &base_mod_probs).unwrap();
         assert_eq!(call, BaseModCall::Filtered);
@@ -411,7 +411,7 @@ mod threshold_mod_caller_tests {
             per_mod_thresholds,
             0f32,
         );
-        let mut base_mod_probs = BaseModProbs::new('m', 0.2);
+        let mut base_mod_probs = BaseModProbs::new_init('m', 0.2);
         base_mod_probs.insert_base_mod_prob('h', 0.7);
         let call = caller.call(&DnaBase::C, &base_mod_probs).unwrap();
         assert_base_mod_call_canonical(call, 0.1).unwrap();
@@ -441,18 +441,18 @@ mod threshold_mod_caller_tests {
             per_mod_thresholds,
             0f32,
         );
-        let mut base_mod_probs = BaseModProbs::new('m', 0.1);
+        let mut base_mod_probs = BaseModProbs::new_init('m', 0.1);
         base_mod_probs.insert_base_mod_prob('h', 0.8);
         let call = caller
             .call_probs(&DnaBase::C, base_mod_probs)
             .unwrap()
             .unwrap();
 
-        let mut expected = BaseModProbs::new('h', 1.0);
+        let mut expected = BaseModProbs::new_init('h', 1.0);
         expected.insert_base_mod_prob('m', 0.0);
         assert!(base_mod_probs_eq(&call, &expected));
 
-        let mut base_mod_probs = BaseModProbs::new('m', 0.2);
+        let mut base_mod_probs = BaseModProbs::new_init('m', 0.2);
         base_mod_probs.insert_base_mod_prob('h', 0.7);
         let call = caller.call_probs(&DnaBase::C, base_mod_probs).unwrap();
         assert!(call.is_none());
@@ -466,13 +466,13 @@ mod threshold_mod_caller_tests {
             per_mod_thresholds,
             0f32,
         );
-        let mut base_mod_probs = BaseModProbs::new('m', 0.2);
+        let mut base_mod_probs = BaseModProbs::new_init('m', 0.2);
         base_mod_probs.insert_base_mod_prob('h', 0.7);
         let call = caller
             .call_probs(&DnaBase::C, base_mod_probs)
             .unwrap()
             .unwrap();
-        let mut expected_base_mod_probs = BaseModProbs::new('m', 0f32);
+        let mut expected_base_mod_probs = BaseModProbs::new_init('m', 0f32);
         expected_base_mod_probs.insert_base_mod_prob('h', 0f32);
         assert_eq!(call, expected_base_mod_probs);
     }

@@ -769,7 +769,7 @@ impl ModBamPileup {
                     write_progress.inc(rows_written);
                 }
                 Err(message) => {
-                    debug!("> unexpected error {message}");
+                    debug!("unexpected error {message}");
                 }
             }
         }

@@ -142,6 +142,7 @@ manual_build_modkit_linux_centos:
   when: manual
   script:
     - yum groupinstall 'Development Tools' -y
+    - yum install perl-IPC-Cmd -y
     - yum install wget -y
     - *install_rust_centos7
     - *build_with_cmake_around

@@ -2,24 +2,22 @@ use std::collections::{HashMap, HashSet};
 use std::num::ParseFloatError;
 use std::path::{Path, PathBuf};
 
-use crate::adjust::{adjust_modbam, record_is_valid};
-use crate::command_utils::{
-    get_bam_writer, get_serial_reader, get_threshold_from_options,
-    parse_per_mod_thresholds, parse_thresholds, using_stream,
-};
 use anyhow::{bail, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
-
 use histo_fp::Histogram;
-
 use log::{debug, info};
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
+use crate::adjust::{adjust_modbam, record_is_valid};
+use crate::command_utils::{
+    get_bam_writer, get_serial_reader, get_threshold_from_options,
+    parse_per_mod_thresholds, parse_thresholds, using_stream,
+};
+use crate::dmr::subcommands::BedMethylDmr;
 use crate::errs::{InputError, RunError};
 use crate::extract_mods::ExtractMods;
-
 use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, EdgeFilter, ModBaseInfo, RawModCode,
@@ -80,7 +78,15 @@ pub enum Commands {
     /// rejected. Reads where there is an ambiguous alignment of the acceptor to the
     /// donor will be rejected (and logged). See the full documentation for details.
     Repair(RepairTags),
-    /// With a hemi
+    /// Perform DMR test on a set of regions. Output a BED file of regions
+    /// with the score column indicating the magnitude of the difference. Find the schema and
+    /// description of fields can in the README as well as a description of the model and method.
+    /// See subcommand help for additional details.
+    #[clap(subcommand)]
+    Dmr(BedMethylDmr),
+    /// Tabulates double-stranded base modification patters (such as hemi-methylation) across
+    /// genomic motif positions. This command produces a bedMethyl file, the schema can be
+    /// found in the online documentation.
     PileupHemi(DuplexModBamPileup),
 }
 
@@ -96,6 +102,7 @@ impl Commands {
             Self::CallMods(x) => x.run(),
             Self::Extract(x) => x.run(),
             Self::Repair(x) => x.run(),
+            Self::Dmr(x) => x.run(),
             Self::PileupHemi(x) => x.run(),
         }
     }
@@ -162,6 +169,9 @@ pub struct Adjust {
     /// Output SAM format instead of BAM.
     #[arg(long, default_value_t = false)]
     output_sam: bool,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
 }
 
 impl Adjust {
@@ -251,6 +261,7 @@ impl Adjust {
             edge_filter.as_ref(),
             self.fail_fast,
             "Adjusting modBAM",
+            self.suppress_progress,
         )?;
         Ok(())
     }
@@ -1149,6 +1160,7 @@ impl CallMods {
             edge_filter.as_ref(),
             self.fail_fast,
             "Calling Mods",
+            self.suppress_progress,
         )?;
 
         Ok(())

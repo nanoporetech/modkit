@@ -175,7 +175,7 @@ impl Display for RegexMotif {
     }
 }
 
-fn find_motif_hits(
+pub(crate) fn find_motif_hits(
     seq: &str,
     regex_motif: &RegexMotif,
 ) -> Vec<(usize, Strand)> {

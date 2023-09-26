@@ -142,8 +142,12 @@ pub fn adjust_modbam(
     edge_filter: Option<&EdgeFilter>,
     fail_fast: bool,
     verb: &'static str,
+    suppress_progress: bool,
 ) -> anyhow::Result<()> {
     let spinner = get_spinner();
+    if suppress_progress {
+        spinner.set_draw_target(indicatif::ProgressDrawTarget::hidden())
+    }
     spinner.set_message(verb);
     let mut total = 0usize;
     let mut total_failed = 0usize;

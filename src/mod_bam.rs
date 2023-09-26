@@ -292,7 +292,7 @@ impl PartialOrd for BaseModCall {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(new, Debug, PartialEq, Clone)]
 pub struct BaseModProbs {
     probs: FxHashMap<char, f32>,
     // skip_mode: SkipMode,
@@ -300,7 +300,7 @@ pub struct BaseModProbs {
 }
 
 impl BaseModProbs {
-    pub fn new(mod_code: char, prob: f32) -> Self {
+    pub fn new_init(mod_code: char, prob: f32) -> Self {
         Self {
             probs: [(mod_code, prob)].into_iter().collect(),
         }
@@ -926,8 +926,10 @@ fn get_base_mod_probs(
             {
                 base_mod_probs.insert_base_mod_prob(*mod_base_code, prob);
             } else {
-                positions_to_probs
-                    .insert(position, BaseModProbs::new(*mod_base_code, prob));
+                positions_to_probs.insert(
+                    position,
+                    BaseModProbs::new_init(*mod_base_code, prob),
+                );
             }
         }
     }
@@ -1499,8 +1501,10 @@ mod mod_bam_tests {
                     {
                         base_mod_probs.insert_base_mod_prob(mod_base, prob);
                     } else {
-                        probs_for_positions
-                            .insert(*pos, BaseModProbs::new(mod_base, prob));
+                        probs_for_positions.insert(
+                            *pos,
+                            BaseModProbs::new_init(mod_base, prob),
+                        );
                     }
                     // consume from the ML array
                     prob_array_idx += 1;
@@ -1732,9 +1736,9 @@ mod mod_bam_tests {
         let converter = DeltaListConverter::new(read_sequence, canonical_base);
 
         let positions_and_probs = vec![
-            (5, BaseModProbs::new('m', 0.9)),
-            (2, BaseModProbs::new('m', 0.1)),
-            (8, BaseModProbs::new('m', 0.2)),
+            (5, BaseModProbs::new_init('m', 0.9)),
+            (2, BaseModProbs::new_init('m', 0.1)),
+            (8, BaseModProbs::new_init('m', 0.2)),
         ]
         .into_iter()
         .collect::<FxHashMap<usize, BaseModProbs>>();
@@ -1751,9 +1755,9 @@ mod mod_bam_tests {
 
         let skip_mode = SkipMode::ProbModified;
         let positions_and_probs = vec![
-            (5, BaseModProbs::new('m', 0.9)),
-            (2, BaseModProbs::new('m', 0.1)),
-            (8, BaseModProbs::new('m', 0.2)),
+            (5, BaseModProbs::new_init('m', 0.9)),
+            (2, BaseModProbs::new_init('m', 0.1)),
+            (8, BaseModProbs::new_init('m', 0.2)),
         ]
         .into_iter()
         .collect::<FxHashMap<usize, BaseModProbs>>();

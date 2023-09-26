@@ -1,4 +1,5 @@
-use crate::util::{get_spinner, Strand};
+use crate::util::{get_ticker, Strand};
+use anyhow::bail;
 use log::info;
 use rust_lapper as lapper;
 use rustc_hash::FxHashMap;
@@ -7,13 +8,13 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-type Iv = lapper::Interval<u64, ()>;
-type GenomeLapper = lapper::Lapper<u64, ()>;
+pub(crate) type Iv = lapper::Interval<u64, ()>;
+pub(crate) type GenomeLapper = lapper::Lapper<u64, ()>;
 
 #[derive(Debug)]
 pub struct StrandedPositionFilter {
-    pos_positions: FxHashMap<u32, GenomeLapper>,
-    neg_positions: FxHashMap<u32, GenomeLapper>,
+    pub(crate) pos_positions: FxHashMap<u32, GenomeLapper>,
+    pub(crate) neg_positions: FxHashMap<u32, GenomeLapper>,
 }
 
 impl StrandedPositionFilter {
@@ -30,7 +31,7 @@ impl StrandedPositionFilter {
         let fh = File::open(bed_fp)?;
         let mut pos_positions = FxHashMap::default();
         let mut neg_positions = FxHashMap::default();
-        let lines_processed = get_spinner();
+        let lines_processed = get_ticker();
         if suppress_pb {
             lines_processed
                 .set_draw_target(indicatif::ProgressDrawTarget::hidden());
@@ -39,7 +40,11 @@ impl StrandedPositionFilter {
         let mut warned = HashSet::new();
 
         let reader = BufReader::new(fh);
-        for line in reader.lines().filter_map(|l| l.ok()) {
+        for line in reader
+            .lines()
+            .filter_map(|l| l.ok())
+            .filter(|l| !l.is_empty())
+        {
             let parts = line.split_ascii_whitespace().collect::<Vec<&str>>();
             let chrom_name = parts[0];
             if warned.contains(chrom_name) {
@@ -93,6 +98,9 @@ impl StrandedPositionFilter {
                 continue;
             }
         }
+        if pos_positions.is_empty() && neg_positions.is_empty() {
+            bail!("zero valid positions parsed from BED file")
+        }
 
         let pos_lapper = pos_positions
             .into_iter()
@@ -114,6 +122,7 @@ impl StrandedPositionFilter {
 
         lines_processed.finish_and_clear();
         info!("processed {} BED lines", lines_processed.position());
+
         Ok(Self {
             pos_positions: pos_lapper,
             neg_positions: neg_lapper,

@@ -14,7 +14,9 @@ pub mod thresholds;
 pub mod writers;
 
 pub(crate) mod command_utils;
+mod dmr;
 mod extract_mods;
+pub(crate) mod parsing_utils;
 pub(crate) mod position_filter;
 mod read_cache;
 mod read_ids_to_base_mod_probs;
