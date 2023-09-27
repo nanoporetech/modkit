@@ -132,8 +132,8 @@ states (for example, 5hmC, 5mC, and unmodified C) we use a multinomial distribut
     \pi \sim \text{Dir}(\alpha)
 \\]
 
-Let \\(\theta\\) be the maximum a posteriori (MAP) parameters of the model ( \\( p \\) for the binary case and 
-\\(\pi\\) in the general case). The `score` reported is the result of a likelihood ratio test:
+Let \\(\theta\\) be the maximum a posteriori (MAP) parameters of the model ( \\( \alpha, \beta \\) for the binary case, 
+and \\(\alpha \\) in the general case). The `score` reported is the result of a likelihood ratio test:
 
 \\[
 \text{score} = \text{log}(\frac{l( \mathbf{X_a} | \theta_{a}) l(\mathbf{X_b} | \theta_{b})}{l(\mathbf{X_{a+b}} | \theta_{a+b})})
