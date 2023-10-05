@@ -19,8 +19,8 @@ use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util;
 use crate::util::{
-    get_aligned_pairs_forward, get_master_progress_bar, get_query_name_string,
-    get_reference_mod_strand, get_spinner, Strand,
+    get_aligned_pairs_forward, get_forward_sequence, get_master_progress_bar,
+    get_query_name_string, get_reference_mod_strand, get_spinner, Strand,
 };
 use rayon::prelude::*;
 use rust_htslib::bam::ext::BamRecordExtensions;
@@ -254,6 +254,34 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                                 dna_base.complement()
                             }
                         };
+                        let seq_pos_base_mod_probs = if &seq_pos_base_mod_probs
+                            .skip_mode
+                            == &SkipMode::ProbModified
+                        {
+                            get_forward_sequence(&record).map(|forward_seq| {
+                                let codes_to_remove = collapse_method
+                                    .map(|method| method.get_codes_to_remove())
+                                    .unwrap_or(HashSet::new());
+                                seq_pos_base_mod_probs.add_implicit_mod_calls(
+                                    &forward_seq,
+                                    raw_canonical_base,
+                                    &codes_to_remove,
+                                    edge_filter,
+                                )
+                            })
+                        } else {
+                            Ok(seq_pos_base_mod_probs)
+                        };
+                        let seq_pos_base_mod_probs =
+                            match seq_pos_base_mod_probs {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    debug!("record {record_name} failed to add implicit calls, failed to get \
+                                forward sequence, {}", e.to_string());
+                                    continue;
+                                }
+                            };
+
                         let seq_pos_base_mod_probs = seq_pos_base_mod_probs
                             .filter_positions(
                                 edge_filter,
