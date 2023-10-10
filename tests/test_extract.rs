@@ -243,6 +243,31 @@ fn test_extract_exclude_sites() {
 }
 
 #[test]
+fn test_pileup_extract_invert_edge_filter() {
+    let out_fp =
+        std::env::temp_dir().join("test_pileup_extract_invert_edge_filter.tsv");
+    run_modkit(&[
+        "extract",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        out_fp.to_str().unwrap(),
+        "--edge-filter",
+        "50,45",
+        "--invert-edge-filter",
+        "--force",
+    ])
+    .unwrap();
+
+    // let bed_positions =
+    //     parse_bed_file(&Path::new(exclude_bed_fp).to_path_buf());
+    let mod_profile = parse_mod_profile(&out_fp).unwrap();
+    for (_read_id, data) in mod_profile {
+        for item in data {
+            assert!(item.q_pos < 50 || item.q_pos >= 45);
+        }
+    }
+}
+
+#[test]
 fn test_extract_unmapped_bam_correct_output() {
     let out_fp = std::env::temp_dir()
         .join("test_extract_unmapped_bam_correct_output.tsv");
