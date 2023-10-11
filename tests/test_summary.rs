@@ -1,6 +1,6 @@
 use crate::common::{
     run_modkit, run_simple_summary, run_simple_summary_with_collapse_method,
-    run_simple_summary_with_edge_filter,
+    run_simple_summary_with_edge_filter, run_summary_with_include_positions,
 };
 use anyhow::Context;
 use mod_kit::mod_bam::{CollapseMethod, EdgeFilter};
@@ -133,4 +133,41 @@ fn test_summary_edge_filter() {
     .context("test_summary_edge_filter failed to make summary on adjusted bam")
     .unwrap();
     assert_eq!(summary_w_edge_filter, summary_on_adjusted);
+}
+
+#[test]
+fn test_summary_implicit_calls() {
+    let bam_fp = Path::new("tests/resources/single_read.bam").to_path_buf();
+    let bedpositions =
+        Path::new("tests/resources/include_bed_summary_test.bed").to_path_buf();
+
+    let summary =
+        run_summary_with_include_positions(&bam_fp, &bedpositions).unwrap();
+    assert_eq!(
+        summary
+            .mod_call_counts
+            .get(&DnaBase::A)
+            .unwrap()
+            .get(&ModCode::A)
+            .unwrap(),
+        &8
+    );
+    assert_eq!(summary.reads_with_mod_calls.get(&DnaBase::A).unwrap(), &1);
+    assert_eq!(summary.total_reads_used, 1);
+    // let expected = ModSummary {
+    //     reads_with_mod_calls: {
+    //         A: 1,
+    //     },
+    //     mod_call_counts: {
+    //         A: {
+    //             A: 8,
+    //         },
+    //     },
+    //     filtered_mod_call_counts: {
+    //         A: {},
+    //     },
+    //     total_reads_used: 1,
+    //     per_base_thresholds: {},
+    //     region: None,
+    // }
 }

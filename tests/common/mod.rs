@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result as AnyhowResult};
 use derive_new::new;
 use mod_kit::mod_bam::{CollapseMethod, EdgeFilter};
+use mod_kit::position_filter::StrandedPositionFilter;
 use mod_kit::summarize::{summarize_modbam, ModSummary};
 use mod_kit::threshold_mod_caller::MultipleThresholdModCaller;
 use std::cmp::Ordering;
@@ -61,6 +62,36 @@ pub fn run_simple_summary(
     interval_size: u32,
 ) -> AnyhowResult<ModSummary> {
     run_summary(bam_fp, interval_size, None, None)
+}
+
+pub fn run_summary_with_include_positions<'a>(
+    bam_fp: &PathBuf,
+    include_bed_fp: &PathBuf,
+) -> anyhow::Result<ModSummary<'a>> {
+    let threads = 1usize;
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(1).build()?;
+    let position_filter =
+        StrandedPositionFilter::from_bam_and_bed(bam_fp, include_bed_fp, true)?;
+    let caller = MultipleThresholdModCaller::new_passthrough();
+    pool.install(|| {
+        summarize_modbam(
+            &Path::new(bam_fp).to_path_buf(),
+            threads,
+            32,
+            None,
+            None,
+            None,
+            None,
+            0.1, // doesn't matter
+            Some(caller),
+            None,
+            None,
+            None,
+            Some(&position_filter),
+            true,
+            true,
+        )
+    })
 }
 
 pub fn run_simple_summary_with_collapse_method<'a>(
