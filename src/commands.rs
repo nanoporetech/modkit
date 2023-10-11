@@ -168,7 +168,11 @@ pub struct Adjust {
     /// filter out base modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter
+    /// Invert the edge filter, instead of filtering out base modification calls at the ends
+    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
+    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
+    /// bases of the read, using this flag will keep only base modification calls in the first
+    /// 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
     /// Output SAM format instead of BAM.
@@ -329,7 +333,11 @@ pub struct SampleModBaseProbs {
     /// filter out base modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter
+    /// Invert the edge filter, instead of filtering out base modification calls at the ends
+    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
+    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
+    /// bases of the read, using this flag will keep only base modification calls in the first
+    /// 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
 
@@ -631,7 +639,11 @@ pub struct ModSummarize {
     /// filter out base modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter
+    /// Invert the edge filter, instead of filtering out base modification calls at the ends
+    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
+    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
+    /// bases of the read, using this flag will keep only base modification calls in the first
+    /// 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
     /// Only summarize base modification probabilities that are aligned
@@ -1098,7 +1110,11 @@ pub struct CallMods {
     /// filter out base modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter
+    /// Invert the edge filter, instead of filtering out base modification calls at the ends
+    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
+    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
+    /// bases of the read, using this flag will keep only base modification calls in the first
+    /// 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
     /// Output SAM format instead of BAM.
