@@ -1,6 +1,7 @@
-use crate::util::{get_ticker, Strand};
+use crate::util::{get_targets, get_ticker, Strand};
 use anyhow::bail;
 use log::info;
+use rust_htslib::bam::{self, Read};
 use rust_lapper as lapper;
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
@@ -18,6 +19,22 @@ pub struct StrandedPositionFilter {
 }
 
 impl StrandedPositionFilter {
+    pub fn from_bam_and_bed(
+        bam_fp: &PathBuf,
+        bed_fp: &PathBuf,
+        suppress_pb: bool,
+    ) -> anyhow::Result<Self> {
+        let bam_reader = bam::Reader::from_path(bam_fp)?;
+        let targets = get_targets(bam_reader.header(), None);
+        let chrom_to_tid = targets
+            .iter()
+            .map(|reference_record| {
+                (reference_record.name.as_str(), reference_record.tid)
+            })
+            .collect::<HashMap<&str, u32>>();
+        Self::from_bed_file(bed_fp, &chrom_to_tid, suppress_pb)
+    }
+
     pub fn from_bed_file(
         bed_fp: &PathBuf,
         chrom_to_target_id: &HashMap<&str, u32>,

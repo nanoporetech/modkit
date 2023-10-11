@@ -61,7 +61,7 @@ pub fn adjust_mod_probs(
                         &forward_sequence,
                         base,
                         &codes_to_remove,
-                        edge_filter,
+                        Some(edge_filter),
                     )
                 }) {
                 Some(x) => Some(x),

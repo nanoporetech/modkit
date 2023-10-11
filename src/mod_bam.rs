@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::bail;
 use derive_new::new;
 use itertools::Itertools;
-use log::debug;
+use log::{debug, error};
 use nom::bytes::complete::tag;
 use nom::character::complete::{digit1, multispace0};
 use nom::multi::separated_list1;
@@ -134,22 +134,45 @@ pub(crate) fn filter_records_iter<T: bam::Read>(
     records: bam::Records<T>,
 ) -> impl Iterator<Item = (bam::Record, ModBaseInfo)> + '_ {
     records
-        // skip records that fail to parse htslib (todo this could be cleaned up)
-        .filter_map(|res| res.ok())
+        .filter_map(|res| match res {
+            Ok(rec) => Some(rec),
+            Err(e) => {
+                debug!("failed to read record from BAM, {}", e.to_string());
+                None
+            }
+        })
         // skip non-primary
         .filter(|record| !record_is_secondary(&record))
         // skip records with empty sequences
-        .filter(|record| record.seq_len() > 0)
-        .filter_map(|record| {
-            ModBaseInfo::new_from_record(&record).ok().and_then(
-                |mod_base_info| {
-                    if mod_base_info.is_empty() {
-                        None
-                    } else {
-                        Some((record, mod_base_info))
-                    }
-                },
-            )
+        .filter(|record| {
+            if record.seq_len() > 0 {
+                true
+            } else {
+                let query_name = get_query_name_string(&record)
+                    .unwrap_or("'UTF-8 decode failure'".to_string());
+                debug!("record {query_name} has empty seq");
+                false
+            }
+        })
+        .filter_map(|record| match ModBaseInfo::new_from_record(&record) {
+            Ok(modbase_info) => {
+                if modbase_info.is_empty() {
+                    // add record name here
+                    error!("modbase info empty!");
+                    None
+                } else {
+                    Some((record, modbase_info))
+                }
+            }
+            Err(e) => {
+                let query_name = get_query_name_string(&record)
+                    .unwrap_or("'UTF-8 decode failure'".to_string());
+                error!(
+                    "failed to get modbase info for record {query_name}, {}",
+                    e.to_string()
+                );
+                None
+            }
         })
 }
 
@@ -832,7 +855,7 @@ impl SeqPosBaseModProbs {
         forward_sequence: &str,
         primary_base: char,
         codes_to_remove: &HashSet<char>,
-        edge_filter: &EdgeFilter,
+        edge_filter: Option<&EdgeFilter>,
     ) -> Self {
         if self.skip_mode == SkipMode::ProbModified
             || self.skip_mode == SkipMode::ImplicitProbModified
@@ -843,9 +866,13 @@ impl SeqPosBaseModProbs {
                 .enumerate()
                 .filter(|(pos, base)| {
                     let base_matches = *base == primary_base;
-                    let keep_position = edge_filter
-                        .keep_position(*pos, forward_sequence.len())
-                        .unwrap_or(false);
+                    let keep_position = if let Some(ef) = edge_filter {
+                        ef.keep_position(*pos, forward_sequence.len())
+                            .unwrap_or(false)
+                    } else {
+                        true
+                    };
+
                     base_matches && keep_position
                 })
                 .fold(self.pos_to_base_mod_probs, |mut acc, (pos, _)| {
