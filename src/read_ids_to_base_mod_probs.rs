@@ -207,6 +207,10 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                 }
             });
         let mut read_ids_to_mod_base_probs = Self::zero();
+        let codes_to_remove = collapse_method
+            .map(|method| method.get_codes_to_remove())
+            .unwrap_or(HashSet::new());
+
         for (record, mod_base_info) in mod_base_info_iter {
             match record_sampler.ask() {
                 Indicator::Use(token) => {
@@ -259,9 +263,6 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                             == &SkipMode::ProbModified
                         {
                             get_forward_sequence(&record).map(|forward_seq| {
-                                let codes_to_remove = collapse_method
-                                    .map(|method| method.get_codes_to_remove())
-                                    .unwrap_or(HashSet::new());
                                 seq_pos_base_mod_probs.add_implicit_mod_calls(
                                     &forward_seq,
                                     raw_canonical_base,
