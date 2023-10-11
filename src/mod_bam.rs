@@ -730,28 +730,6 @@ impl SeqPosBaseModProbs {
         } else {
             None
         }
-        // if read_length <= edge_filter.edge_filter_start {
-        //     None
-        // } else {
-        //     read_length
-        //         .checked_sub(edge_filter.edge_filter_end)
-        //         .and_then(|edge_filter_end| {
-        //             let pos_to_base_mod_probs = self
-        //                 .pos_to_base_mod_probs
-        //                 .into_iter()
-        //                 .filter(|(pos, _)| {
-        //                     *pos >= edge_filter.edge_filter_start
-        //                         && *pos < edge_filter_end
-        //                 })
-        //                 .collect::<FxHashMap<usize, BaseModProbs>>();
-        //             if pos_to_base_mod_probs.is_empty() {
-        //                 // all positions filtered out
-        //                 None
-        //             } else {
-        //                 Some(Self::new(pos_to_base_mod_probs, self.skip_mode))
-        //             }
-        //         })
-        // }
     }
 
     pub(crate) fn filter_positions(
@@ -770,19 +748,6 @@ impl SeqPosBaseModProbs {
         if !read_can_be_trimmed {
             return None;
         }
-
-        // let (edge_filter_start, edge_filter_end) =
-        //     if let Some(edge_filter) = edge_filter {
-        //         if read_length <= edge_filter.edge_filter_start {
-        //             return None;
-        //         }
-        //         match read_length.checked_sub(edge_filter.edge_filter_end) {
-        //             None => return None,
-        //             Some(l) => (edge_filter.edge_filter_start, l),
-        //         }
-        //     } else {
-        //         (0, record.seq_len())
-        //     };
 
         let probs = self
             .pos_to_base_mod_probs
@@ -881,10 +846,6 @@ impl SeqPosBaseModProbs {
                     let keep_position = edge_filter
                         .keep_position(*pos, forward_sequence.len())
                         .unwrap_or(false);
-                    // let after_trim_start =
-                    //     *pos >= edge_filter.edge_filter_start;
-                    // let before_trim_end = *pos < edge_filter.edge_filter_end;
-                    // base_matches && after_trim_start && before_trim_end
                     base_matches && keep_position
                 })
                 .fold(self.pos_to_base_mod_probs, |mut acc, (pos, _)| {
@@ -1336,7 +1297,7 @@ impl EdgeFilter {
         if !self.read_can_be_trimmed(read_length) {
             bail!(
                 "read length not suitable for edge filter with start trim {}, \
-            end trim {} and read length {}",
+            end trim {} and read length {}, there should be a check before this call",
                 self.edge_filter_start,
                 self.edge_filter_end,
                 read_length
@@ -1352,9 +1313,10 @@ impl EdgeFilter {
         }
     }
 
+    #[inline]
     pub(crate) fn read_can_be_trimmed(&self, read_length: usize) -> bool {
         !(read_length <= self.edge_filter_start
-            || read_length.checked_sub(self.edge_filter_end).is_none())
+            || read_length <= self.edge_filter_end)
     }
 }
 

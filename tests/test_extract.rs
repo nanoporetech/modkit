@@ -257,8 +257,6 @@ fn test_pileup_extract_invert_edge_filter() {
     ])
     .unwrap();
 
-    // let bed_positions =
-    //     parse_bed_file(&Path::new(exclude_bed_fp).to_path_buf());
     let mod_profile = parse_mod_profile(&out_fp).unwrap();
     for (_read_id, data) in mod_profile {
         for item in data {
