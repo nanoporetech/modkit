@@ -385,7 +385,7 @@ fn test_pileup_edge_filter_regression() {
         edge_filter_bed_2.to_str().unwrap(),
         "--no-filtering",
         "--edge-filter",
-        "50",
+        "50"
     ])
         .context("test_pileup_edge_filter_regression failed to make bedMethyl on adjusted bam")
         .unwrap();
@@ -396,7 +396,72 @@ fn test_pileup_edge_filter_regression() {
 }
 
 #[test]
-fn test_pileup_partition_tags_just_this_one() {
+fn test_pileup_edge_filter_asymmetric_regression() {
+    let adjusted_bam = std::env::temp_dir()
+        .join("test_pileup_edge_filter_asymmetric_regression.bam");
+    let edge_filter_bed = std::env::temp_dir().join(
+        "test_pileup_edge_filter_asymmetric_regression_filter_50.pileup.bed",
+    );
+    let edge_filter_bed_2 = std::env::temp_dir()
+        .join("test_pileup_edge_filter_asymmetric_regression_50_2.pileup.bed");
+
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        edge_filter_bed.to_str().unwrap(),
+        "--no-filtering",
+        "--edge-filter",
+        "50,50",
+    ])
+        .context("test_pileup_edge_filter_asymmetric_regression failed to make bedMethyl with 50,50")
+        .unwrap();
+    check_against_expected_text_file(
+        edge_filter_bed.to_str().unwrap(),
+        "tests/resources/bc_anchored_10_reads_edge_filter50.bed",
+    );
+
+    run_modkit(&[
+        "pileup",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        edge_filter_bed.to_str().unwrap(),
+        "--no-filtering",
+        "--edge-filter",
+        "50,0",
+    ])
+        .context("test_pileup_edge_filter_asymmetric_regression failed to make bedMethyl with 50,0")
+        .unwrap();
+    check_against_expected_text_file(
+        edge_filter_bed.to_str().unwrap(),
+        "tests/resources/bc_anchored_10_reads_edge_filter50-0.bed",
+    );
+
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        adjusted_bam.to_str().unwrap(),
+        "--edge-filter",
+        "50,0",
+    ]).context("test_pileup_edge_filter_asymmetric_regression failed to make adjust mods BAM").unwrap();
+
+    bam::index::build(adjusted_bam.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    run_modkit(&[
+        "pileup",
+        adjusted_bam.to_str().unwrap(),
+        edge_filter_bed_2.to_str().unwrap(),
+        "--no-filtering",
+    ]).context("test_pileup_edge_filter_asymmetric_regression failed to make pileup on adjusted BAM")
+        .unwrap();
+
+    check_against_expected_text_file(
+        edge_filter_bed_2.to_str().unwrap(),
+        "tests/resources/bc_anchored_10_reads_edge_filter50-0.bed",
+    );
+}
+
+#[test]
+fn test_pileup_partition_tags_partitioned() {
     let tmp_dir =
         std::env::temp_dir().join("test_pileup_partition_tags_partitioned");
     let control_file =

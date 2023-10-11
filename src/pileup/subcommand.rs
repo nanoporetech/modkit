@@ -13,11 +13,12 @@ use rust_htslib::bam::{self, Read};
 use rustc_hash::FxHashSet;
 
 use crate::command_utils::{
-    get_threshold_from_options, parse_per_mod_thresholds, parse_thresholds,
+    get_threshold_from_options, parse_edge_filter_input,
+    parse_per_mod_thresholds, parse_thresholds,
 };
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
-use crate::mod_bam::{CollapseMethod, EdgeFilter};
+use crate::mod_bam::CollapseMethod;
 use crate::mod_base_code::ModCode;
 use crate::motif_bed::{
     get_masked_sequences, MotifLocations, MultipleMotifLocations, RegexMotif,
@@ -256,10 +257,18 @@ pub struct ModBamPileup {
     #[arg(long, default_value_t = false)]
     combine_strands: bool,
     /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. For example, a value of 10 will require that the base modification is
-    /// at least the 11th base or 11 bases from the end.
+    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
+    /// base modification calls from the start and end of the reads. For example, 4,8 will
+    /// filter out base modification calls in the first 4 and last 8 bases of the read.
     #[arg(long, hide_short_help = true)]
-    edge_filter: Option<usize>,
+    edge_filter: Option<String>,
+    /// Invert the edge filter, instead of filtering out base modification calls at the ends
+    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
+    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
+    /// bases of the read, using this flag will keep only base modification calls in the first
+    /// 4 and last 8 bases.
+    #[arg(long, requires = "edge_filter", default_value_t = false)]
+    invert_edge_filter: bool,
 
     // output args
     /// For bedMethyl output, separate columns with only tabs. The default is
@@ -332,7 +341,10 @@ impl ModBamPileup {
         let edge_filter = self
             .edge_filter
             .as_ref()
-            .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
+            .map(|trims| {
+                parse_edge_filter_input(trims, self.invert_edge_filter)
+            })
+            .transpose()?;
         let per_mod_thresholds = self
             .mod_thresholds
             .as_ref()
@@ -1000,10 +1012,23 @@ pub struct DuplexModBamPileup {
     )]
     combine_mods: bool,
     /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. For example, a value of 10 will require that the base modification is
-    /// at least the 11th base or 11 bases from the end.
+    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
+    /// base modification calls from the start and end of the reads. For example, 4,8 will
+    /// filter out base modification calls in the first 4 and last 8 bases of the read.
     #[arg(long, hide_short_help = true)]
-    edge_filter: Option<usize>,
+    edge_filter: Option<String>,
+    /// Invert the edge filter, instead of filtering out base modification calls at the ends
+    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
+    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
+    /// bases of the read, using this flag will keep only base modification calls in the first
+    /// 4 and last 8 bases.
+    #[arg(
+        long,
+        requires = "edge_filter",
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    invert_edge_filter: bool,
 
     // output args
     /// Separate bedMethyl columns with only tabs. The default is
@@ -1049,7 +1074,8 @@ impl DuplexModBamPileup {
         let edge_filter = self
             .edge_filter
             .as_ref()
-            .map(|trim_num| EdgeFilter::new(*trim_num, *trim_num));
+            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .transpose()?;
         let per_mod_thresholds = self
             .mod_thresholds
             .as_ref()

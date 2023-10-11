@@ -660,9 +660,6 @@ impl ReadBaseModProfile {
         let forward_sequence = util::get_forward_sequence(&record)?
             .char_indices()
             .collect::<Vec<(usize, char)>>();
-        let (trim_start, trim_end) = edge_filter
-            .map(|ef| (ef.edge_filter_start, read_length - ef.edge_filter_end))
-            .unwrap_or((0, read_length));
 
         let mut mod_profiles = mod_probs_iter
             .filter_map(|(primary_base, mod_strand, seq_pos_base_mod_probs)| {
@@ -684,9 +681,15 @@ impl ReadBaseModProfile {
                 forward_sequence.iter()
                     .filter(|(pos, b)| {
                         let base_matches = *b == primary_base;
-                        let after_trim_start = *pos >= trim_start;
-                        let before_trim_end = *pos < trim_end;
-                        base_matches && after_trim_start && before_trim_end
+                        let keep_position = edge_filter
+                            .map(|ef| match ef.keep_position(*pos, read_length) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    debug!("{}, error while edge trimming, {}", &record_name, e.to_string());
+                                    false
+                                }
+                            }).unwrap_or(true);
+                        base_matches && keep_position
                     })
                     .filter_map(|(forward_pos, base)| {
                         let ref_pos = forward_query_pos_to_ref_pos

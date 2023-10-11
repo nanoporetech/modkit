@@ -201,3 +201,34 @@ pub(crate) fn get_bam_writer(
         bam::Writer::from_path(&raw, &header, format)
     }
 }
+
+pub(crate) fn parse_edge_filter_input(
+    raw: &str,
+    inverted: bool,
+) -> anyhow::Result<EdgeFilter> {
+    if raw.contains(',') {
+        let parts = raw.split(',').collect::<Vec<&str>>();
+        if parts.len() != 2 {
+            bail!("illegal edge filter input {raw}, should be start_trim,end_trim (e.g. 4,5)")
+        }
+        let start_trim = parts[0].parse::<usize>().context(format!(
+            "failed to parse edge filter start trim {raw}, should be a number"
+        ))?;
+        let end_trim = parts[1].parse::<usize>().context(format!(
+            "failed to parse edge filter end trim {raw}, should be a number"
+        ))?;
+        info!(
+            "filtering out base modification calls {start_trim} bases from \
+        the start and {end_trim} bases from the end of each read"
+        );
+        Ok(EdgeFilter::new(start_trim, end_trim, inverted))
+    } else {
+        let trim = raw.parse::<usize>().context(format!(
+            "failed to parse edge filter input {raw}, should be a number"
+        ))?;
+
+        info!("filtering out base modification calls {trim} bases from the start and \
+        end of each read");
+        Ok(EdgeFilter::new(trim, trim, inverted))
+    }
+}
