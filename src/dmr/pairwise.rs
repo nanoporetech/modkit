@@ -3,8 +3,9 @@ use std::fs::File;
 use std::io::BufRead;
 use std::path::PathBuf;
 
+use anyhow::bail;
 use indicatif::ProgressBar;
-use log::{debug, error};
+use log::{debug, error, info};
 use noodles::bgzf;
 use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 use rayon::prelude::*;
@@ -90,8 +91,11 @@ fn get_mod_counts_for_condition(
     interval: &Iv,
     chrom_id: u32,
     position_filter: &StrandedPositionFilter,
+    filename: &PathBuf,
 ) -> anyhow::Result<AggregatedCounts> {
     let mut bedmethyl_lines = Vec::new();
+    let mut failed_to_parse = 0;
+    let mut successfully_parsed = 0usize;
     // todo could be a fold instead
     for chunk in chunks {
         reader.seek(chunk.start())?;
@@ -105,11 +109,35 @@ fn get_mod_counts_for_condition(
                 break 'readloop;
             }
         }
+        let (n_fail, lines) = lines.into_iter().fold(
+            (0usize, Vec::new()),
+            |(n_fail, mut acc), line| match BedMethylLine::parse(line.as_str())
+            {
+                Ok(bm_line) => {
+                    acc.push(bm_line);
+                    (n_fail, acc)
+                }
+                Err(_) => (n_fail + 1, acc),
+            },
+        );
+        failed_to_parse += n_fail;
+        successfully_parsed += lines.len();
+
         bedmethyl_lines.extend(
             lines
                 .into_iter()
-                .filter_map(|l| BedMethylLine::parse(l.as_str()).ok())
                 .filter(|bml| interval.overlap(bml.start(), bml.stop())),
+        );
+    }
+
+    if successfully_parsed == 0 {
+        bail!("failed to parse any bedMethyl lines from {:?}", filename);
+    }
+
+    if failed_to_parse > 0 {
+        debug!(
+            "failed to parse {} lines from {:?}",
+            failed_to_parse, filename
         );
     }
 
@@ -141,6 +169,7 @@ pub(super) fn get_modification_counts(
         &dmr_interval.interval,
         chrom_id,
         &position_filter,
+        &control_bedmethyl,
     )?;
     let experimental_counts = get_mod_counts_for_condition(
         &mut exp_bed_reader,
@@ -148,6 +177,7 @@ pub(super) fn get_modification_counts(
         &dmr_interval.interval,
         chrom_id,
         &position_filter,
+        &exp_bedmethyl,
     )?;
 
     ModificationCounts::new(
