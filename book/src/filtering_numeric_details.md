@@ -13,3 +13,12 @@ approximation gives the same value. Base modification calls with a confidence va
 not be counted.  Determination of the threshold value can be performed on the fly (by sampling) or the
 threshold value can be specified on the command line with the `--filter_threshold` flag. The `sample-probs`
 command can be used to quickly estimate the value of \\(\mathcal{q}\\) at various percentiles.
+
+# A note on the "probability of modification" (`.`) MM flag.
+The `.` flag (e.g. `C+m.`) indicates that primary sequence bases without base modification calls can be inferred to be
+canonical ([SAM tags](https://samtools.github.io/hts-specs/SAMtags.pdf)). Some base modification callers,
+for example [`dorado`](https://github.com/nanoporetech/dorado/) have a default threshold, below which a base modification
+probability will be omitted (meaning it will be inferred to be a canonical/unmodified base). In general, omitting
+the base modification probabilities when they are very confidently canonical will not change the results from `modkit`.
+However, since the base modification probabilities are effectively changed to 100% canonical, can affect the
+estimation of the pass threshold.

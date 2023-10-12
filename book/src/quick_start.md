@@ -29,6 +29,7 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 8. [Narrow analysis to only specific positions with a BED file](./intro_include_bed.md)
 9. [Repairing/adding MM/ML tags to reads with clipped sequences](./intro_repair.md)
 10. [Creating hemi-methylation pattern bedMethyl tables with `pileup-hemi`](./intro_pileup_hemi.md)
+11. [Performing differential methylation scoring with `dmr`](./intro_dmr.md)
 
 ## Notes and troubleshooting
 1. [General troubleshooting](./troubleshooting.md)

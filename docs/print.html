@@ -174,6 +174,7 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 <li><a href="./intro_include_bed.html">Narrow analysis to only specific positions with a BED file</a></li>
 <li><a href="./intro_repair.html">Repairing/adding MM/ML tags to reads with clipped sequences</a></li>
 <li><a href="./intro_pileup_hemi.html">Creating hemi-methylation pattern bedMethyl tables with <code>pileup-hemi</code></a></li>
+<li><a href="./intro_dmr.html">Performing differential methylation scoring with <code>dmr</code></a></li>
 </ol>
 <h2 id="notes-and-troubleshooting"><a class="header" href="#notes-and-troubleshooting">Notes and troubleshooting</a></h2>
 <ol>
@@ -1003,8 +1004,16 @@ Options:
 
       --edge-filter &lt;EDGE_FILTER&gt;
           Discard base modification calls that are this many bases from the start or the end of the
-          read. For example, a value of 10 will require that the base modification is at least the
-          11th base or 11 bases from the end.
+          read. Two comma-separated values may be provided to asymmetrically filter out base
+          modification calls from the start and end of the reads. For example, 4,8 will filter out
+          base modification calls in the first 4 and last 8 bases of the read.
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification calls at the ends of
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
+          the read, using this flag will keep only base modification calls in the first 4 and last 8
+          bases.
 
       --only-tabs
           For bedMethyl output, separate columns with only tabs. The default is to use tabs for the
@@ -1069,8 +1078,16 @@ Options:
 
       --edge-filter &lt;EDGE_FILTER&gt;
           Discard base modification calls that are this many bases from the start or the end of the
-          read. For example, a value of 10 will require that the base modification is at least the
-          11th base or 11 bases from the end.
+          read. Two comma-separated values may be provided to asymmetrically filter out base
+          modification calls from the start and end of the reads. For example, 4,8 will filter out
+          base modification calls in the first 4 and last 8 bases of the read.
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification calls at the ends of
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
+          the read, using this flag will keep only base modification calls in the first 4 and last 8
+          bases.
 
       --output-sam
           Output SAM format instead of BAM.
@@ -1157,8 +1174,16 @@ Options:
 
       --edge-filter &lt;EDGE_FILTER&gt;
           Discard base modification calls that are this many bases from the start or the end of the
-          read. For example, a value of 10 will require that the base modification is at least the
-          11th base or 11 bases from the end.
+          read. Two comma-separated values may be provided to asymmetrically filter out base
+          modification calls from the start and end of the reads. For example, 4,8 will filter out
+          base modification calls in the first 4 and last 8 bases of the read.
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification calls at the ends of
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
+          the read, using this flag will keep only base modification calls in the first 4 and last 8
+          bases.
 
       --hist
           Output histogram of base modification prediction probabilities.
@@ -1295,8 +1320,16 @@ Options:
 
       --edge-filter &lt;EDGE_FILTER&gt;
           Discard base modification calls that are this many bases from the start or the end of the
-          read. For example, a value of 10 will require that the base modification is at least the
-          11th base or 11 bases from the end.
+          read. Two comma-separated values may be provided to asymmetrically filter out base
+          modification calls from the start and end of the reads. For example, 4,8 will filter out
+          base modification calls in the first 4 and last 8 bases of the read.
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification calls at the ends of
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
+          the read, using this flag will keep only base modification calls in the first 4 and last 8
+          bases.
 
       --include-bed &lt;INCLUDE_BED&gt;
           Only summarize base modification probabilities that are aligned to the positions in this
@@ -1425,8 +1458,16 @@ Options:
 
       --edge-filter &lt;EDGE_FILTER&gt;
           Discard base modification calls that are this many bases from the start or the end of the
-          read. For example, a value of 10 will require that the base modification is at least the
-          11th base or 11 bases from the end.
+          read. Two comma-separated values may be provided to asymmetrically filter out base
+          modification calls from the start and end of the reads. For example, 4,8 will filter out
+          base modification calls in the first 4 and last 8 bases of the read.
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification calls at the ends of
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
+          the read, using this flag will keep only base modification calls in the first 4 and last 8
+          bases.
 
       --output-sam
           Output SAM format instead of BAM.
@@ -1486,8 +1527,16 @@ Options:
 
       --edge-filter &lt;EDGE_FILTER&gt;
           Discard base modification calls that are this many bases from the start or the end of the
-          read. For example, a value of 10 will require that the base modification is at least the
-          11th base or 11 bases from the end.
+          read. Two comma-separated values may be provided to asymmetrically filter out base
+          modification calls from the start and end of the reads. For example, 4,8 will filter out
+          base modification calls in the first 4 and last 8 bases of the read.
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification calls at the ends of
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
+          the read, using this flag will keep only base modification calls in the first 4 and last 8
+          bases.
 
       --ignore &lt;IGNORE&gt;
           Ignore a modified base class  _in_situ_ by redistributing base modification probability
@@ -1682,8 +1731,16 @@ Options:
 
       --edge-filter &lt;EDGE_FILTER&gt;
           Discard base modification calls that are this many bases from the start or the end of the
-          read. For example, a value of 10 will require that the base modification is at least the
-          11th base or 11 bases from the end.
+          read. Two comma-separated values may be provided to asymmetrically filter out base
+          modification calls from the start and end of the reads. For example, 4,8 will filter out
+          base modification calls in the first 4 and last 8 bases of the read.
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification calls at the ends of
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
+          the read, using this flag will keep only base modification calls in the first 4 and last 8
+          bases.
 
       --only-tabs
           Separate bedMethyl columns with only tabs. The default is to use tabs for the first 10
@@ -1918,6 +1975,14 @@ approximation gives the same value. Base modification calls with a confidence va
 not be counted.  Determination of the threshold value can be performed on the fly (by sampling) or the
 threshold value can be specified on the command line with the <code>--filter_threshold</code> flag. The <code>sample-probs</code>
 command can be used to quickly estimate the value of \(\mathcal{q}\) at various percentiles.</p>
+<h1 id="a-note-on-the-probability-of-modification--mm-flag"><a class="header" href="#a-note-on-the-probability-of-modification--mm-flag">A note on the &quot;probability of modification&quot; (<code>.</code>) MM flag.</a></h1>
+<p>The <code>.</code> flag (e.g. <code>C+m.</code>) indicates that primary sequence bases without base modification calls can be inferred to be
+canonical (<a href="https://samtools.github.io/hts-specs/SAMtags.pdf">SAM tags</a>). Some base modification callers,
+for example <a href="https://github.com/nanoporetech/dorado/"><code>dorado</code></a> have a default threshold, below which a base modification
+probability will be omitted (meaning it will be inferred to be a canonical/unmodified base). In general, omitting
+the base modification probabilities when they are very confidently canonical will not change the results from <code>modkit</code>.
+However, since the base modification probabilities are effectively changed to 100% canonical, can affect the
+estimation of the pass threshold.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="removing-modification-calls-from-bams"><a class="header" href="#removing-modification-calls-from-bams">Removing modification calls from BAMs.</a></h1>
 <p>There may be multiple possible base modifications to a specific canonical base. For
 example, cytosine has four known modified variants. As technologies are increasingly able

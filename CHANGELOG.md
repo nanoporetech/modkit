@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.2.1]
 ### Adds
+- [adjust-mods, summary, pileup, call-mods] Allows asymmetric edge filter (i.e. filter out base modification calls X bases from the start of the reads and Y bases from the ends). Previously, only one parameter was allowed and filtering was symmetric.
 ### Fixes
 - [summary, sample-probs] Fixes bug where inferred canonical bases were not being accounted.
 
