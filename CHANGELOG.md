@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [adjust-mods, summary, pileup, call-mods] Allows asymmetric edge filter (i.e. filter out base modification calls X bases from the start of the reads and Y bases from the ends). Previously, only one parameter was allowed and filtering was symmetric.
 ### Fixes
 - [summary, sample-probs] Fixes bug where inferred canonical bases were not being accounted.
+- [dmr] Fail when cannot parse _any_ bedMethyl lines from input, log when there are failures to parse lines, fixes #60
+- [dmr] Automatically make directory if it doesn't already exist, fixes #61
 
 ## [v0.2.0]
 ### Adds

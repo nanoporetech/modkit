@@ -287,6 +287,15 @@ impl PairwiseDmr {
                 None => Box::new(BufWriter::new(std::io::stdout())),
                 Some(fp) => {
                     let p = Path::new(fp);
+                    if let Some(parent) = p.parent() {
+                        if !parent.exists() {
+                            info!(
+                                "creating output directory {}",
+                                parent.to_str().unwrap_or("failed to parse")
+                            );
+                            std::fs::create_dir_all(parent)?;
+                        }
+                    }
                     if p.exists() && !self.force {
                         bail!("refusing to overwrite existing file {}", fp)
                     } else {
