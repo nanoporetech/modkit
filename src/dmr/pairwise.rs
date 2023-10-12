@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::bail;
 use indicatif::ProgressBar;
-use log::{debug, error, info};
+use log::{debug, error};
 use noodles::bgzf;
 use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 use rayon::prelude::*;
