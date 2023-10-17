@@ -8,7 +8,36 @@ Detailed documentation and quick-start can be found in the [online documentation
 
 ## Installation
 
+### Precompiled binaries
+
 Pre-compiled binaries are provided for Linux from the [release page](https://github.com/nanoporetech/modkit/releases). We recommend the use of these in most circumstances.
+
+### Installation from Bioconda
+
+Modkit [is also available from the Bioconda channel](https://bioconda.github.io/recipes/ont-modkit/README.html). Provided you have a conda-compatible package manager ([currently either micromamba, mamba, or conda](https://mamba.readthedocs.io/en/latest/)) handy and [the Bioconda channel already activated](https://bioconda.github.io/#usage), you can install it with:
+
+```bash
+mamba install ont-modkit
+```
+
+Automatically built container images for Docker and Apptainer (Singularity) are available as well. Choose [a valid tag](https://quay.io/repository/biocontainers/ont-modkit?tab=tags) (e.g. `0.2.1--hdcf5f25_0`) and run
+
+```bash
+#Download the container
+docker pull quay.io/biocontainers/ont-modkit:<tag>
+
+#Run modkit
+docker run -t -v $(pwd):$(pwd) -w $(pwd) quay.io/biocontainers/ont-modkit:<tag> modkit
+```
+
+Apptainer images can be downloaded from the [Galaxy Depot](https://depot.galaxyproject.org/singularity/). Replace `<tag>` with the tag of your choice:
+
+```bash
+#Download the image
+curl -o "ont-modkit:<tag>.img" https://depot.galaxyproject.org/singularity/ont-modkit%3A<tag>
+# Run modkit
+apptainer exec ont-modkit:<tag>.img modkit
+```
 
 ### Building from source
 
