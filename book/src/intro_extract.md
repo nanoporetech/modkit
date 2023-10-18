@@ -62,7 +62,7 @@ modkit extract <intput.bam> <output.tsv> --region chr20 --ref <ref.fasta>
 ### Extract only sites aligned to a CG motif
 ```
 modkit motif-bed <reference.fasta> CG 0 > CG_motifs.bed
-modkit extract <in.bam> <out.tsv> --ref <ref.fasta> --include-bed CG_motigs.bed
+modkit extract <in.bam> <out.tsv> --ref <ref.fasta> --include-bed CG_motifs.bed
 ```
 
 ### Extract only sites that are at least 50 bases from the ends of the reads
