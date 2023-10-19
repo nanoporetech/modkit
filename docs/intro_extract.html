@@ -199,7 +199,7 @@ in parallel.</p>
 </code></pre>
 <h3 id="extract-only-sites-aligned-to-a-cg-motif"><a class="header" href="#extract-only-sites-aligned-to-a-cg-motif">Extract only sites aligned to a CG motif</a></h3>
 <pre><code>modkit motif-bed &lt;reference.fasta&gt; CG 0 &gt; CG_motifs.bed
-modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-bed CG_motigs.bed
+modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-bed CG_motifs.bed
 </code></pre>
 <h3 id="extract-only-sites-that-are-at-least-50-bases-from-the-ends-of-the-reads"><a class="header" href="#extract-only-sites-that-are-at-least-50-bases-from-the-ends-of-the-reads">Extract only sites that are at least 50 bases from the ends of the reads</a></h3>
 <pre><code>modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --edge-filter 50
