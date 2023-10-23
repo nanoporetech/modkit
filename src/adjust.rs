@@ -10,7 +10,7 @@ use crate::mod_bam::{
     collapse_mod_probs, format_mm_ml_tag, CollapseMethod, EdgeFilter,
     ModBaseInfo,
 };
-use crate::mod_base_code::DnaBase;
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
     get_forward_sequence, get_query_name_string, get_spinner,
@@ -56,7 +56,7 @@ pub fn adjust_mod_probs(
                     let codes_to_remove = methods
                         .iter()
                         .flat_map(|method| method.get_codes_to_remove())
-                        .collect::<HashSet<char>>();
+                        .collect::<HashSet<ModCodeRepr>>();
                     mod_probs.add_implicit_mod_calls(
                         &forward_sequence,
                         base,

@@ -19,7 +19,7 @@ use crate::errs::RunError;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
-use crate::mod_base_code::ModCode;
+use crate::mod_base_code::ModCodeRepr;
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
@@ -101,7 +101,7 @@ pub struct ExtractMods {
     /// both 'm' and 'C'. A full description of the methods can be found in
     /// collapse.md.
     #[arg(long, hide_short_help = true)]
-    ignore: Option<char>,
+    ignore: Option<String>,
 
     /// Interval chunk size in base pairs to process concurrently. Smaller interval
     /// chunk sizes will use less memory but incur more overhead. Only used when an
@@ -215,8 +215,8 @@ impl ExtractMods {
 
         let collapse_method = match &self.ignore {
             Some(raw_mod_code) => {
-                let _ = ModCode::parse_raw_mod_code(*raw_mod_code)?;
-                Some(CollapseMethod::ReDistribute(*raw_mod_code))
+                let mod_code = ModCodeRepr::parse(raw_mod_code)?;
+                Some(CollapseMethod::ReDistribute(mod_code))
             }
             None => None,
         };

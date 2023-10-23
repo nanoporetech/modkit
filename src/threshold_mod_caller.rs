@@ -1,5 +1,5 @@
 use crate::mod_bam::{BaseModCall, BaseModProbs, SeqPosBaseModProbs};
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use derive_new::new;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -7,7 +7,8 @@ use std::collections::HashMap;
 #[derive(new)]
 pub struct MultipleThresholdModCaller {
     per_base_thresholds: HashMap<DnaBase, f32>,
-    per_mod_thresholds: HashMap<ModCode, f32>,
+    // todo maybe allow this per primary base?
+    per_mod_thresholds: HashMap<ModCodeRepr, f32>,
     default_threshold: f32,
 }
 
@@ -28,16 +29,14 @@ impl MultipleThresholdModCaller {
         canonical_base: &DnaBase,
         base_mod_probs: &BaseModProbs,
     ) -> anyhow::Result<BaseModCall> {
-        let mod_code_to_probs = base_mod_probs
-            .iter_probs()
-            .map(|(raw_mod_code, p)| {
-                ModCode::parse_raw_mod_code(*raw_mod_code).map(|mc| (mc, *p))
-            })
-            .collect::<Result<Vec<(ModCode, f32)>, _>>()?;
+        // let mod_code_to_probs = base_mod_probs
+        //     .iter_probs()
+        //     .copied()
+        //     .collect::<Vec<(ModCodeRepr, f32)>>()?;
 
-        let mut filtered_probs = mod_code_to_probs
-            .into_iter()
-            .filter_map(|(mod_code, p_mod)| {
+        let mut filtered_probs = base_mod_probs
+            .iter_probs()
+            .filter_map(|(&mod_code, &p_mod)| {
                 let threshold = self
                     .per_mod_thresholds
                     .get(&mod_code)
@@ -51,11 +50,12 @@ impl MultipleThresholdModCaller {
             })
             .collect::<Vec<BaseModCall>>();
 
+        // TODO make sure this doens't break the tests
         let canonical_threshold = self
-            .per_mod_thresholds
-            .get(&canonical_base.canonical_mod_code()?)
-            .or(self.per_base_thresholds.get(canonical_base))
+            .per_base_thresholds
+            .get(&canonical_base)
             .unwrap_or(&self.default_threshold);
+
         if base_mod_probs.canonical_prob() >= *canonical_threshold {
             filtered_probs
                 .push(BaseModCall::Canonical(base_mod_probs.canonical_prob()))
@@ -77,8 +77,7 @@ impl MultipleThresholdModCaller {
     ) -> anyhow::Result<Option<BaseModProbs>> {
         let base_mod_call = self.call(canonical_base, &base_mod_probs)?;
         match base_mod_call {
-            BaseModCall::Modified(_, mod_code) => {
-                let called_mod_code = mod_code.char();
+            BaseModCall::Modified(_, called_mod_code) => {
                 base_mod_probs.iter_mut().for_each(|(&mod_code, prob)| {
                     if mod_code == called_mod_code {
                         *prob = 1.0
@@ -125,7 +124,7 @@ impl MultipleThresholdModCaller {
 
     pub fn iter_mod_thresholds(
         &self,
-    ) -> impl Iterator<Item = (&ModCode, &f32)> {
+    ) -> impl Iterator<Item = (&ModCodeRepr, &f32)> {
         self.per_mod_thresholds.iter()
     }
 }

@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::fmt::{Debug, Display, Formatter};
 
 use anyhow::bail;
 use derive_new::new;
@@ -14,7 +15,7 @@ use rust_htslib::bam::record::Aux;
 use rustc_hash::FxHashMap;
 
 use crate::errs::{InputError, RunError};
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::util;
 use crate::util::{
@@ -180,7 +181,7 @@ pub(crate) fn filter_records_iter<T: bam::Read>(
 pub const MM_TAGS: [&str; 2] = ["MM", "Mm"];
 pub const ML_TAGS: [&str; 2] = ["ML", "Ml"];
 
-pub type RawModCode = char;
+// pub type RawModCode = char;
 
 pub struct RawModTags {
     raw_mm: String,
@@ -222,20 +223,20 @@ impl RawModTags {
 #[derive(Debug, Clone)]
 pub enum CollapseMethod {
     /// ModCode is the modified base to remove
-    ReNormalize(RawModCode),
+    ReNormalize(ModCodeRepr),
     /// ModCode is the modified base to remove
-    ReDistribute(RawModCode),
+    ReDistribute(ModCodeRepr),
     /// Convert one mod base to another
     Convert {
-        from: HashSet<RawModCode>,
-        to: RawModCode,
+        from: HashSet<ModCodeRepr>,
+        to: ModCodeRepr,
     },
 }
 
 impl CollapseMethod {
     pub fn parse_str(
         raw: &str,
-        mod_code: RawModCode,
+        mod_code: ModCodeRepr,
     ) -> Result<Self, InputError> {
         match raw {
             "norm" => Ok(Self::ReNormalize(mod_code)),
@@ -245,7 +246,7 @@ impl CollapseMethod {
     }
 
     // todo(arand) consider making this return an iterator
-    pub(crate) fn get_codes_to_remove(&self) -> HashSet<char> {
+    pub(crate) fn get_codes_to_remove(&self) -> HashSet<ModCodeRepr> {
         match self {
             CollapseMethod::ReNormalize(raw_code)
             | CollapseMethod::ReDistribute(raw_code) => {
@@ -292,7 +293,7 @@ impl SkipMode {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BaseModCall {
     Canonical(f32),
-    Modified(f32, ModCode),
+    Modified(f32, ModCodeRepr),
     Filtered,
 }
 
@@ -321,19 +322,19 @@ impl PartialOrd for BaseModCall {
 
 #[derive(new, Debug, PartialEq, Clone)]
 pub struct BaseModProbs {
-    probs: FxHashMap<char, f32>,
+    probs: FxHashMap<ModCodeRepr, f32>,
     // skip_mode: SkipMode,
     // strand: Strand,
 }
 
 impl BaseModProbs {
-    pub fn new_init(mod_code: char, prob: f32) -> Self {
+    pub fn new_init(mod_code: ModCodeRepr, prob: f32) -> Self {
         Self {
-            probs: [(mod_code, prob)].into_iter().collect(),
+            probs: FxHashMap::from_iter([(mod_code, prob)]),
         }
     }
 
-    pub fn insert_base_mod_prob(&mut self, mod_code: char, prob: f32) {
+    pub fn insert_base_mod_prob(&mut self, mod_code: ModCodeRepr, prob: f32) {
         (*self.probs.entry(mod_code).or_insert(0f32)) += prob;
     }
 
@@ -343,9 +344,9 @@ impl BaseModProbs {
             .iter_probs()
             .max_by(|(_, p), (_, q)| p.partial_cmp(q).unwrap());
         let base_mod_call = if let Some((mod_code, mod_prob)) = max_mod_prob {
-            let mod_code = ModCode::parse_raw_mod_code(*mod_code)?;
+            // let mod_code = ModCode::parse_raw_mod_code(*mod_code)?;
             if *mod_prob > canonical_prob {
-                BaseModCall::Modified(*mod_prob, mod_code)
+                BaseModCall::Modified(*mod_prob, *mod_code)
             } else {
                 BaseModCall::Canonical(canonical_prob)
             }
@@ -360,7 +361,7 @@ impl BaseModProbs {
     }
 
     // todo(arand): these methods should be removed/renamed to be more useful
-    pub fn iter_probs(&self) -> impl Iterator<Item = (&char, &f32)> {
+    pub fn iter_probs(&self) -> impl Iterator<Item = (&ModCodeRepr, &f32)> {
         self.probs.iter()
     }
 
@@ -368,7 +369,9 @@ impl BaseModProbs {
         self.probs.iter_mut().map(|(_, p)| p)
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&char, &mut f32)> {
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&ModCodeRepr, &mut f32)> {
         self.probs.iter_mut()
     }
 
@@ -382,7 +385,7 @@ impl BaseModProbs {
                 let marginal_collapsed_prob = self
                     .iter_probs()
                     .filter(|(mod_code, _prob)| *mod_code != mod_to_collapse)
-                    .collect::<Vec<(&char, &f32)>>();
+                    .collect::<Vec<(&ModCodeRepr, &f32)>>();
                 let total_marginal_collapsed_prob = marginal_collapsed_prob
                     .iter()
                     .map(|(_, p)| *p)
@@ -413,7 +416,7 @@ impl BaseModProbs {
                 let other_mods = self
                     .iter_probs()
                     .filter(|(mod_code, _prob)| *mod_code != mod_to_collapse)
-                    .collect::<Vec<(&char, &f32)>>();
+                    .collect::<Vec<(&ModCodeRepr, &f32)>>();
 
                 let n_other_mods = other_mods.len() as f32 + 1f32; // plus 1 for the canonical base
                 let prob_to_redistribute = marginal_prob / n_other_mods;
@@ -577,7 +580,7 @@ pub struct BaseModPositions {
     pub(crate) canonical_base: char,
     mode: SkipMode,
     strand: Strand,
-    mod_base_codes: Vec<char>,
+    mod_base_codes: Vec<ModCodeRepr>,
     delta_list: Vec<u32>,
 }
 
@@ -622,7 +625,8 @@ impl BaseModPositions {
                     offset += 1;
                 }
                 _ => {
-                    mod_base_codes.push(c);
+                    // todo this is where the ChEBI parsing needs to happen!
+                    mod_base_codes.push(ModCodeRepr::Code(c));
                     offset += 1;
                 }
             }
@@ -673,7 +677,7 @@ fn combine_positions_to_probs(
 ) -> Result<(), InputError> {
     if agg.skip_mode != to_add.skip_mode {
         let record_name =
-            util::get_query_name_string(record).unwrap_or("???".to_string());
+            get_query_name_string(record).unwrap_or("???".to_string());
         Err(InputError::new(&format!(
             "record: {record_name}, two skip modes ({} and {}) do not match",
             agg.skip_mode.char().unwrap_or('.'),
@@ -834,28 +838,28 @@ impl SeqPosBaseModProbs {
 
     pub(crate) fn get_mod_codes(
         &self,
-        codes_to_remove: &HashSet<char>,
-    ) -> Vec<char> {
+        codes_to_remove: &HashSet<ModCodeRepr>,
+    ) -> Vec<ModCodeRepr> {
         self.pos_to_base_mod_probs
             .values()
             .flat_map(|base_mod_probs| {
                 base_mod_probs
                     .iter_probs()
                     .map(|(raw_mod_code, _)| *raw_mod_code)
-                    .collect::<HashSet<char>>()
+                    .collect::<HashSet<ModCodeRepr>>()
             })
             .filter(|raw_base| !codes_to_remove.contains(raw_base))
-            .collect::<HashSet<char>>()
+            .collect::<HashSet<ModCodeRepr>>()
             .into_iter()
             .sorted()
-            .collect::<Vec<char>>()
+            .collect::<Vec<ModCodeRepr>>()
     }
 
     pub(crate) fn add_implicit_mod_calls(
         self,
         forward_sequence: &str,
         primary_base: char,
-        codes_to_remove: &HashSet<char>,
+        codes_to_remove: &HashSet<ModCodeRepr>,
         edge_filter: Option<&EdgeFilter>,
     ) -> Self {
         if self.skip_mode == SkipMode::ProbModified
@@ -998,7 +1002,7 @@ pub fn format_mm_ml_tag(
 ) -> (String, Vec<u8>) {
     let canonical_base = converter.canonical_base;
     let mut mod_code_to_position =
-        HashMap::<(char, Strand), Vec<(usize, f32)>>::new();
+        HashMap::<(ModCodeRepr, Strand), Vec<(usize, f32)>>::new();
 
     for (position, mod_base_probs) in positions_to_probs.pos_to_base_mod_probs {
         for (mod_base_code, mod_base_prob) in mod_base_probs.iter_probs() {
@@ -1017,15 +1021,11 @@ pub fn format_mm_ml_tag(
         .map(|s| s.to_string())
         .unwrap_or("".to_string());
     if mod_code_to_position.is_empty() {
-        let raw_mod_code = ModCode::get_ambig_modcode(canonical_base)
-            .map(|mod_code| mod_code.char())
-            .unwrap_or(canonical_base);
-
         mm_tag.push_str(&format!(
             "{}{}{}{};",
             canonical_base,
             strand.to_char(),
-            raw_mod_code,
+            canonical_base, // "any mod" for a base is the same char as itself
             skip_mode_label
         ));
     } else {
@@ -1348,10 +1348,35 @@ impl EdgeFilter {
     }
 }
 
+// DuplexPattern, None means it's a canonical call ('-')
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub enum DuplexModCodeRepr {
+    Code(char),
+    ChEbi(u32),
+    Canonical,
+}
+
+impl From<ModCodeRepr> for DuplexModCodeRepr {
+    fn from(value: ModCodeRepr) -> Self {
+        todo!()
+    }
+}
+
+impl Display for DuplexModCodeRepr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
+const CANONICAL_DUPLEX_PATTERN: [DuplexModCodeRepr; 2] =
+    [DuplexModCodeRepr::Canonical, DuplexModCodeRepr::Canonical];
+
+pub type DuplexPattern = [DuplexModCodeRepr; 2];
+
 #[derive(Hash, Eq, PartialEq, Debug)]
 pub(crate) enum DuplexModCall {
     ModCall {
-        pattern: [char; 2],
+        pattern: DuplexPattern,
         primary_base: char,
     },
     Filtered {
@@ -1371,19 +1396,19 @@ impl DuplexModCall {
         match (pos_base_mod_call, neg_base_mod_call) {
             (BaseModCall::Canonical(_), BaseModCall::Canonical(_)) => {
                 Self::ModCall {
-                    pattern: ['-', '-'],
+                    pattern: CANONICAL_DUPLEX_PATTERN,
                     primary_base,
                 }
             }
             (BaseModCall::Canonical(_), BaseModCall::Modified(_, mod_code)) => {
                 Self::ModCall {
-                    pattern: ['-', mod_code.char()],
+                    pattern: [DuplexModCodeRepr::Canonical, mod_code.into()],
                     primary_base,
                 }
             }
             (BaseModCall::Modified(_, mod_code), BaseModCall::Canonical(_)) => {
                 Self::ModCall {
-                    pattern: [mod_code.char(), '-'],
+                    pattern: [mod_code.into(), DuplexModCodeRepr::Canonical],
                     primary_base,
                 }
             }
@@ -1391,7 +1416,7 @@ impl DuplexModCall {
                 BaseModCall::Modified(_, mod_code_pos),
                 BaseModCall::Modified(_, mod_code_neg),
             ) => Self::ModCall {
-                pattern: [mod_code_pos.char(), mod_code_neg.char()],
+                pattern: [mod_code_pos.into(), mod_code_neg.into()],
                 primary_base,
             },
             (_, BaseModCall::Filtered) | (BaseModCall::Filtered, _) => {
@@ -1416,7 +1441,7 @@ impl DuplexModCall {
             Self::ModCall {
                 pattern,
                 primary_base: _,
-            } => pattern == &['-', '-'],
+            } => pattern == &CANONICAL_DUPLEX_PATTERN,
             _ => false,
         }
     }
@@ -1426,12 +1451,12 @@ impl DuplexModCall {
             Self::ModCall {
                 pattern,
                 primary_base: _,
-            } => pattern != &['-', '-'],
+            } => pattern != &CANONICAL_DUPLEX_PATTERN,
             _ => false,
         }
     }
 
-    pub(crate) fn pattern(&self) -> Option<[char; 2]> {
+    pub(crate) fn pattern(&self) -> Option<DuplexPattern> {
         match self {
             Self::ModCall {
                 pattern,
@@ -1460,15 +1485,21 @@ impl DuplexModCall {
             if self.is_canonical() {
                 self
             } else {
-                let x = if pattern[0] == '-' {
-                    '-'
+                let x = if pattern[0] == DuplexModCodeRepr::Canonical {
+                    DuplexModCodeRepr::Canonical
                 } else {
-                    self.primary_base()
+                    let any_mod_code = ModCodeRepr::any_mod_code(
+                        &DnaBase::parse(self.primary_base()).unwrap(),
+                    );
+                    any_mod_code.into()
                 };
-                let y = if pattern[1] == '-' {
-                    '-'
+                let y = if pattern[1] == DuplexModCodeRepr::Canonical {
+                    DuplexModCodeRepr::Canonical
                 } else {
-                    self.primary_base()
+                    let any_mod_code = ModCodeRepr::any_mod_code(
+                        &DnaBase::parse(self.primary_base()).unwrap(),
+                    );
+                    any_mod_code.into()
                 };
                 let pattern = [x, y];
                 Self::ModCall {

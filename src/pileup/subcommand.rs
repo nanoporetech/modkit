@@ -19,7 +19,7 @@ use crate::command_utils::{
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::CollapseMethod;
-use crate::mod_base_code::ModCode;
+use crate::mod_base_code::{ModCodeRepr, HYDROXY_METHYL_CYTOSINE};
 use crate::motif_bed::{
     get_masked_sequences, MotifLocations, MultipleMotifLocations, RegexMotif,
 };
@@ -189,7 +189,7 @@ pub struct ModBamPileup {
     /// both 'm' and 'C'. A full description of the methods can be found in
     /// collapse.md.
     #[arg(long, group = "combine_args", hide_short_help = true)]
-    ignore: Option<char>,
+    ignore: Option<String>,
     /// Force allow implicit-canonical mode. By default modkit does not allow
     /// pileup with the implicit mode (e.g. C+m, no '.' or '?'). The `update-tags`
     /// subcommand is provided to update tags to the new mode. This option allows
@@ -413,18 +413,17 @@ impl ModBamPileup {
         let (pileup_options, combine_strands, threshold_collapse_method) =
             match self.preset {
                 Some(Presets::traditional) => {
-                    // TODO need to update this for next release
-                    info!("ignoring mod code {}", ModCode::h.char());
-                    info!(
-                        "NOTICE, in the next version of modkit the 'traditional' preset \
-                         will perform --combine-mods instead of --ignore h"
-                    );
+                    info!("ignoring mod code {}", HYDROXY_METHYL_CYTOSINE);
                     (
                         PileupNumericOptions::Collapse(
-                            CollapseMethod::ReDistribute('h'),
+                            CollapseMethod::ReDistribute(
+                                HYDROXY_METHYL_CYTOSINE,
+                            ),
                         ),
                         true,
-                        Some(CollapseMethod::ReDistribute('h')),
+                        Some(CollapseMethod::ReDistribute(
+                            HYDROXY_METHYL_CYTOSINE,
+                        )),
                     )
                 }
                 None => {
@@ -435,9 +434,11 @@ impl ModBamPileup {
                             }
                             (true, _) => (PileupNumericOptions::Combine, None),
                             (_, Some(raw_mod_code)) => {
+                                let mod_code =
+                                    ModCodeRepr::parse(raw_mod_code)?;
                                 info!("ignoring mod code {}", raw_mod_code);
                                 let method =
-                                    CollapseMethod::ReDistribute(*raw_mod_code);
+                                    CollapseMethod::ReDistribute(mod_code);
                                 (
                                     PileupNumericOptions::Collapse(
                                         method.clone(),
@@ -646,7 +647,6 @@ impl ModBamPileup {
                 }
             }
             for (base, threshold) in threshold_caller.iter_mod_thresholds() {
-                let base = base.char();
                 match (threshold * 100f32).ceil() as usize {
                     0..=60 => error!(
                 "Threshold of {threshold} for mod code {base} is very low. Consider increasing the \
@@ -979,7 +979,7 @@ pub struct DuplexModBamPileup {
     /// both 'm' and 'C'. A full description of the methods can be found in
     /// collapse.md.
     #[arg(long, group = "combine_args", hide_short_help = true)]
-    ignore: Option<char>,
+    ignore: Option<String>,
     /// Force allow implicit-canonical mode. By default modkit does not allow
     /// pileup with the implicit mode (e.g. C+m, no '.' or '?'). The `update-tags`
     /// subcommand is provided to update tags to the new mode. This option allows
@@ -1134,12 +1134,13 @@ impl DuplexModBamPileup {
             bail!("filter percentile must be <= 1.0")
         }
         let (pileup_options, collapse_method) =
-            match (self.combine_mods, self.ignore) {
+            match (self.combine_mods, self.ignore.as_ref()) {
                 (false, None) => (PileupNumericOptions::Passthrough, None),
                 (true, _) => (PileupNumericOptions::Combine, None),
                 (_, Some(raw_mod_code)) => {
+                    let mod_code = ModCodeRepr::parse(&raw_mod_code)?;
                     info!("ignoring mod code {}", raw_mod_code);
-                    let method = CollapseMethod::ReDistribute(raw_mod_code);
+                    let method = CollapseMethod::ReDistribute(mod_code);
                     (
                         PileupNumericOptions::Collapse(method.clone()),
                         Some(method),
@@ -1272,17 +1273,18 @@ impl DuplexModBamPileup {
                     _ => info!("Using filter threshold {} for {base}.", threshold),
                 }
             }
-            for (base, threshold) in threshold_caller.iter_mod_thresholds() {
-                let base = base.char();
+            for (mod_code_repr, threshold) in
+                threshold_caller.iter_mod_thresholds()
+            {
                 match (threshold * 100f32).ceil() as usize {
                     0..=60 => error!(
-                "Threshold of {threshold} for mod code {base} is very low. Consider increasing the \
+                "Threshold of {threshold} for mod code {mod_code_repr} is very low. Consider increasing the \
                 filter-percentile or specifying a higher threshold."),
                     61..=70 => warn!(
-                "Threshold of {threshold} for mod code {base} is low. Consider increasing the \
+                "Threshold of {threshold} for mod code {mod_code_repr} is low. Consider increasing the \
                 filter-percentile or specifying a higher threshold."
             ),
-                    _ => info!("Using filter threshold {} for mod code {base}.", threshold),
+                    _ => info!("Using filter threshold {} for mod code {mod_code_repr}.", threshold),
                 }
             }
         }

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result as AnyhowResult};
-use log::debug;
+use std::cmp::Ordering;
+use std::fmt::{Display, Formatter};
 
 pub trait ParseChar {
     fn parse_char(c: char) -> AnyhowResult<Self>
@@ -8,89 +9,105 @@ pub trait ParseChar {
     fn char(&self) -> char;
 }
 
-#[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum ModCode {
-    /// canonical A
-    A,
-    /// canonical C
-    C,
-    a,
-    h,
-    m,
-    G,
-    T,
-    /// Any C mod
-    anyC,
-    /// Any A mod
-    anyA,
+// #[allow(non_camel_case_types)]
+// #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+// pub enum ModCode {
+//     /// canonical A
+//     A,
+//     /// canonical C
+//     C,
+//     a,
+//     h,
+//     m,
+//     G,
+//     T,
+//     /// Any C mod
+//     anyC,
+//     /// Any A mod
+//     anyA,
+// }
+
+// // todo consider renaming..
+// #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+// pub struct ModCode {
+//     repr: ModCodeRepr,
+//     primary_base: DnaBase,
+//     // true when this probability is canonical probability
+//     canonical: bool,
+// }
+//
+// impl ModCode {
+//     // pub(crate) fn parse_raw_mod_code(raw_mod_code: char) -> AnyhowResult<Self> {
+//     //     match raw_mod_code {
+//     //         'a' => Ok(Self::a),
+//     //         'h' => Ok(Self::h),
+//     //         'm' => Ok(Self::m),
+//     //         'C' => Ok(Self::anyC),
+//     //         'A' => Ok(Self::anyA),
+//     //         _ => Err(anyhow!("no mod code for {raw_mod_code}")),
+//     //     }
+//     // }
+//
+//     // pub fn char(&self) -> char {
+//     //     unimplemented!()
+//     // }
+//
+//     pub(crate) fn is_canonical(&self) -> bool {
+//         match self {
+//             Self::Canonical => true,
+//             Self::Modified => false,
+//         }
+//     }
+//
+//     pub(crate) fn primary_base(&self) -> DnaBase {
+//         match self {
+//             ModCode::Canonical { primary_base } | ModCode::Modified { repr: _, primary_base} => {
+//                 *primary_base
+//             }
+//         }
+//
+//     }
+//
+//     pub(crate) fn repr(&self) -> ModCodeRepr {
+//
+//
+//         unimplemented!()
+//     }
+// }
+
+pub const HYDROXY_METHYL_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('h');
+pub const METHYL_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('m');
+pub const SIX_METHYL_ADENINE: ModCodeRepr = ModCodeRepr::Code('a');
+pub const ANY_ADENINE: ModCodeRepr = ModCodeRepr::Code('A');
+pub const ANY_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('C');
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, Hash)]
+pub enum ModCodeRepr {
+    Code(char),
+    ChEbi(u32),
 }
 
-impl ModCode {
-    pub(crate) fn parse_raw_mod_code(raw_mod_code: char) -> AnyhowResult<Self> {
-        match raw_mod_code {
-            'a' => Ok(Self::a),
-            'h' => Ok(Self::h),
-            'm' => Ok(Self::m),
-            'C' => Ok(Self::anyC),
-            'A' => Ok(Self::anyA),
-            _ => Err(anyhow!("no mod code for {raw_mod_code}")),
-        }
-    }
-
-    pub fn char(&self) -> char {
-        match self {
-            Self::A => 'A',
-            Self::C => 'C',
-            Self::a => 'a',
-            Self::h => 'h',
-            Self::m => 'm',
-            Self::G => 'G',
-            Self::T => 'T',
-            Self::anyA => 'A',
-            Self::anyC => 'C',
-        }
-    }
-
-    pub fn canonical_base(&self) -> DnaBase {
-        match self {
-            Self::A => DnaBase::A,
-            Self::C => DnaBase::C,
-            Self::a => DnaBase::A,
-            Self::h => DnaBase::C,
-            Self::m => DnaBase::C,
-            Self::G => DnaBase::G,
-            Self::T => DnaBase::T,
-            Self::anyC => DnaBase::C,
-            Self::anyA => DnaBase::A,
-        }
-    }
-
-    pub(crate) fn is_canonical(&self) -> bool {
-        match self {
-            Self::A | Self::C | Self::G | Self::T => true,
-            _ => false,
-        }
-    }
-
-    pub fn get_ambig_modcode(raw_dna_base: char) -> Option<ModCode> {
-        match raw_dna_base {
-            'C' => Some(ModCode::anyC),
-            'A' => Some(ModCode::anyA),
-            _ => {
-                debug!("raw dna base {raw_dna_base} does not have a 'any mod' code");
-                None
-            }
-        }
+impl ModCodeRepr {
+    pub fn parse(raw: &str) -> anyhow::Result<Self> {
+        unimplemented!()
     }
 }
 
-impl ParseChar for ModCode {
-    fn parse_char(c: char) -> AnyhowResult<Self> {
-        ModCode::parse_raw_mod_code(c)
+impl PartialOrd for ModCodeRepr {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        todo!()
     }
-    fn char(&self) -> char {
-        self.char()
+}
+
+impl ModCodeRepr {
+    pub(crate) fn any_mod_code(dna_base: &DnaBase) -> Self {
+        unimplemented!()
+    }
+}
+
+impl Display for ModCodeRepr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        todo!()
     }
 }
 
@@ -131,18 +148,18 @@ impl DnaBase {
         }
     }
 
-    pub(crate) fn canonical_mod_code(self) -> AnyhowResult<ModCode> {
-        match self {
-            Self::A => Ok(ModCode::A),
-            Self::C => Ok(ModCode::C),
-            Self::G => {
-                Err(anyhow!("no mod code for canonical base {}", self.char()))
-            }
-            Self::T => {
-                Err(anyhow!("no mod code for canonical base {}", self.char()))
-            }
-        }
-    }
+    // pub(crate) fn into_base_state(self) -> AnyhowResult<ModCode> {
+    //     match self {
+    //         Self::A => Ok(ModCode::A),
+    //         Self::C => Ok(ModCode::C),
+    //         Self::G => {
+    //             Err(anyhow!("no mod code for canonical base {}", self.char()))
+    //         }
+    //         Self::T => {
+    //             Err(anyhow!("no mod code for canonical base {}", self.char()))
+    //         }
+    //     }
+    // }
 }
 
 impl ParseChar for DnaBase {
@@ -151,5 +168,17 @@ impl ParseChar for DnaBase {
     }
     fn char(&self) -> char {
         self.char()
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub enum BaseState {
+    Canonical(DnaBase),
+    Modified(ModCodeRepr),
+}
+
+impl Display for BaseState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        todo!()
     }
 }

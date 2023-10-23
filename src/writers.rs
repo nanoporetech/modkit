@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
 use std::path::{Path, PathBuf};
 
+use crate::mod_base_code::{BaseState, ModCodeRepr};
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use derive_new::new;
 use histo_fp::Histogram;
@@ -219,7 +220,7 @@ impl<T: Write> PileupWriter<DuplexModBasePileup> for BedMethylWriter<T> {
 struct BedGraphFileKey {
     partition_key: PartitionKey,
     strand: char,
-    raw_mode_code: char,
+    mod_code_repr: ModCodeRepr,
 }
 
 pub struct BedGraphWriter {
@@ -313,13 +314,13 @@ impl PileupWriter<ModBasePileup> for BedGraphWriter {
                             .map(|l| {
                                 format!(
                                     "{}_{}",
-                                    key.raw_mode_code,
+                                    key.mod_code_repr,
                                     l.replace(",", "")
                                 )
                             })
-                            .unwrap_or(format!("{}", key.raw_mode_code))
+                            .unwrap_or(format!("{}", key.mod_code_repr))
                     } else {
-                        format!("{}", key.raw_mode_code)
+                        format!("{}", key.mod_code_repr)
                     };
                     let fh =
                         self.get_writer_for_modstrand(key, key_name, label);
@@ -401,16 +402,17 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
                 .unwrap_or(0);
             let total_calls = total_filtered_calls + total_pass_calls;
 
-            for (mod_code, pass_counts) in pass_mod_to_counts {
-                let label = if mod_code.is_canonical() {
-                    format!("-")
-                } else {
-                    format!("{}", mod_code.char())
+            for (base_state, pass_counts) in pass_mod_to_counts {
+                let label = match base_state {
+                    BaseState::Canonical(_) => format!("-"),
+                    BaseState::Modified(repr) => format!("{repr}"),
                 };
                 let filtered = *item
                     .filtered_mod_call_counts
                     .get(&canonical_base)
-                    .and_then(|filtered_counts| filtered_counts.get(&mod_code))
+                    .and_then(|filtered_counts| {
+                        filtered_counts.get(&base_state)
+                    })
                     .unwrap_or(&0);
                 let all_counts = pass_counts + filtered;
                 let all_frac = all_counts as f32 / total_calls as f32;
@@ -487,16 +489,17 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
                 .get(&canonical_base)
                 .map(|filtered_counts| filtered_counts.values().sum::<u64>())
                 .unwrap_or(0);
-            for (mod_code, counts) in mod_counts {
-                let label = if mod_code.is_canonical() {
-                    format!("unmodified")
-                } else {
-                    format!("modified_{}", mod_code.char())
+            for (base_state, counts) in mod_counts {
+                let label = match base_state {
+                    BaseState::Canonical(_) => format!("unmodified"),
+                    BaseState::Modified(repr) => format!("modified_{repr}"),
                 };
                 let filtered = *item
                     .filtered_mod_call_counts
                     .get(&canonical_base)
-                    .and_then(|filtered_counts| filtered_counts.get(&mod_code))
+                    .and_then(|filtered_counts| {
+                        filtered_counts.get(&base_state)
+                    })
                     .unwrap_or(&0);
                 report.push_str(&format!(
                     "{}_pass_calls_{}\t{}\n",
@@ -546,7 +549,8 @@ pub(crate) struct MultiTableWriter {
 
 #[derive(new)]
 pub(crate) struct SampledProbs {
-    histograms: Option<HashMap<char, Histogram>>,
+    histograms: Option<HashMap<BaseState, Histogram>>,
+    // char here is primary base
     percentiles: HashMap<char, Percentiles>,
     prefix: Option<String>,
 }

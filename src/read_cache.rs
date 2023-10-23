@@ -9,7 +9,7 @@ use crate::mod_bam::{
     collapse_mod_probs, BaseModCall, CollapseMethod, DuplexModCall, EdgeFilter,
     ModBaseInfo, SeqPosBaseModProbs, SkipMode,
 };
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::motif_bed::MotifLocations;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{self, Strand};
@@ -28,8 +28,8 @@ pub(crate) struct ReadCache<'a> {
     /// these reads don't have mod tags or should be skipped for some other reason
     skip_set: HashSet<String>,
     /// mapping of read_id (query_name) to the mod codes contained in that read
-    pos_mod_codes: FxHashMap<String, FxHashSet<ModCode>>,
-    neg_mod_codes: FxHashMap<String, FxHashSet<ModCode>>,
+    pos_mod_codes: FxHashMap<String, FxHashSet<ModCodeRepr>>,
+    neg_mod_codes: FxHashMap<String, FxHashSet<ModCodeRepr>>,
     /// collapse method
     method: Option<&'a CollapseMethod>,
     /// Force allowing of implicit canonical
@@ -186,14 +186,11 @@ impl<'a> ReadCache<'a> {
                         .pos_to_base_mod_probs
                         .values()
                         .flat_map(|base_mod_probs| {
-                            base_mod_probs.iter_probs().filter_map(
-                                |(&raw_mod_code, _)| {
-                                    ModCode::parse_raw_mod_code(raw_mod_code)
-                                        .ok()
-                                },
-                            )
+                            base_mod_probs
+                                .iter_probs()
+                                .map(|(&mod_code_repr, _)| mod_code_repr)
                         })
-                        .collect::<FxHashSet<ModCode>>();
+                        .collect::<FxHashSet<ModCodeRepr>>();
 
                     let mod_codes_for_read =
                         match (mod_strand, record.is_reverse()) {
@@ -346,8 +343,8 @@ impl<'a> ReadCache<'a> {
     pub(crate) fn add_mod_codes_for_record(
         &mut self,
         record: &bam::Record,
-        pos_strand_mod_codes: &mut HashSet<ModCode>,
-        neg_strand_mod_codes: &mut HashSet<ModCode>,
+        pos_strand_mod_codes: &mut HashSet<ModCodeRepr>,
+        neg_strand_mod_codes: &mut HashSet<ModCodeRepr>,
     ) {
         // optimize, could use a better implementation here - pass the read_id
         // from the calling function perhaps
