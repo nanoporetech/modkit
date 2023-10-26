@@ -157,8 +157,9 @@ pub(crate) fn filter_records_iter<T: bam::Read>(
         .filter_map(|record| match ModBaseInfo::new_from_record(&record) {
             Ok(modbase_info) => {
                 if modbase_info.is_empty() {
-                    // add record name here
-                    error!("modbase info empty!");
+                    let query_name = get_query_name_string(&record)
+                        .unwrap_or("'UTF-8 decode failure'".to_string());
+                    debug!("{query_name} modbase info empty");
                     None
                 } else {
                     Some((record, modbase_info))
