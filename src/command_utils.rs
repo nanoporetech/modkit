@@ -1,14 +1,16 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use anyhow::{anyhow, bail, Context};
+use log::{debug, info};
+use rust_htslib::bam::{self, Header};
+
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
-use crate::mod_base_code::{DnaBase, ModCodeRepr, ParseChar};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::calc_threshold_from_bam;
 use crate::util::Region;
-use anyhow::{anyhow, bail, Context};
-use log::{debug, info};
-use rust_htslib::bam::{self, Header};
-use std::collections::HashMap;
-use std::path::PathBuf;
 
 pub(crate) fn parse_per_mod_thresholds(
     raw_per_mod_thresholds: &[String],
@@ -16,7 +18,7 @@ pub(crate) fn parse_per_mod_thresholds(
     let per_mod_thresholds = raw_per_mod_thresholds
         .iter()
         .map(|raw| {
-            let parts = raw.split(",").collect::<Vec<&str>>();
+            let parts = raw.split(":").collect::<Vec<&str>>();
             if parts.len() != 2 {
                 Err(anyhow!("encountered illegal per-mod threshold: {raw}. Should be mod_code:threshold \
                 e.g. h:0.8"))

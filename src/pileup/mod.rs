@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
@@ -184,31 +185,32 @@ impl Tally {
 
     // all of the counts of calls (canonical and mod) that aren't
     // for the primary base of this mode code
-    fn diff_calls_count(
-        &self,
-        mod_call: &ModCodeRepr,
-        primary_base: &DnaBase,
-    ) -> u32 {
-        unimplemented!()
-        // below is wrong, need to count the mod calls for other primary bases too
-        // let same = match mod_call.primary_base() {
-        //     DnaBase::A => self.n_basecall_A,
-        //     DnaBase::C => self.n_basecall_C,
-        //     DnaBase::G => self.n_basecall_G,
-        //     DnaBase::T => self.n_basecall_T,
-        // };
-        // let total = self.n_basecall_A + self.n_basecall_C + self.n_basecall_G + self.n_basecall_T;
-        // total - same
-    }
+    #[inline]
+    fn diff_calls_count(&self, primary_base: &DnaBase) -> u32 {
+        let n_other_basecall = self
+            .basecall_counts
+            .iter()
+            .filter_map(|(dna_base, count)| {
+                if dna_base == primary_base {
+                    None
+                } else {
+                    Some(*count)
+                }
+            })
+            .sum::<u32>();
+        let n_other_modcall = self
+            .modcall_counts
+            .iter()
+            .filter_map(|(dna_base, mod_counts)| {
+                if dna_base == primary_base {
+                    None
+                } else {
+                    Some(mod_counts.values().map(|&x| x).sum::<u32>())
+                }
+            })
+            .sum::<u32>();
 
-    // number of counts of this base
-    // fn nocall_count(&self, primary_base: &DnaBase) -> u32 {
-    //     unimplemented!()
-    // }
-
-    // number of basecalls other than this base
-    fn diff_basecall_count(&self, primary_base: &DnaBase) -> u32 {
-        unimplemented!()
+        n_other_basecall + n_other_modcall
     }
 }
 
@@ -375,7 +377,7 @@ impl FeatureVector {
         counts: &mut Vec<PileupFeatureCounts>,
         tally: &Tally,
         strand: Strand,
-        // observed_mods: &HashSet<ModCode>,
+        observed_mods: &FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
         pileup_options: &PileupNumericOptions,
         motif_idxs: Option<&Vec<usize>>,
     ) {
@@ -408,13 +410,20 @@ impl FeatureVector {
             match pileup_options {
                 PileupNumericOptions::Passthrough
                 | PileupNumericOptions::Collapse(_) => {
-                    for (mod_code, n_mod) in mod_calls {
-                        let n_diff =
-                            tally.diff_calls_count(&mod_code, primary_base);
+                    for (&mod_code, &n_mod) in observed_mods
+                        .get(primary_base)
+                        .unwrap_or(&HashSet::new())
+                        .iter()
+                        .map(|mod_code| {
+                            (mod_code, mod_calls.get(mod_code).unwrap_or(&0))
+                        })
+                    {
+                        let n_diff = tally.diff_calls_count(primary_base);
                         let n_other_mod =
                             total_num_modified.checked_sub(n_mod).unwrap_or(0);
                         let percent_modified =
-                            n_mod as f32 / (n_mod as f32 + n_canonical as f32);
+                            n_mod as f32 / filtered_coverage as f32;
+
                         if let Some(idxs) = motif_idxs {
                             for &idx in idxs.iter() {
                                 counts.push(PileupFeatureCounts {
@@ -453,7 +462,7 @@ impl FeatureVector {
                 PileupNumericOptions::Combine => {
                     let percent_modified =
                         total_num_modified as f32 / filtered_coverage as f32;
-                    let n_diff = tally.diff_basecall_count(&primary_base);
+                    let n_diff = tally.diff_calls_count(&primary_base);
                     if let Some(idxs) = motif_idxs.as_ref() {
                         for &idx in idxs.iter() {
                             counts.push(PileupFeatureCounts {
@@ -587,19 +596,20 @@ impl FeatureVector {
 
     pub fn decode(
         self,
-        // pos_observed_mods: &HashSet<ModCode>,
-        // neg_observed_mods: &HashSet<ModCode>,
+        pos_observed_mods: &FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
+        neg_observed_mods: &FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
         pileup_options: &PileupNumericOptions,
         positive_motif_idxs: Option<&Vec<usize>>,
         negative_motif_idxs: Option<&Vec<usize>>,
     ) -> Vec<PileupFeatureCounts> {
         let mut counts = Vec::new();
+        // dbg!(&self.pos_tally, &pos_observed_mods);
 
         Self::add_tally_to_counts(
             &mut counts,
             &self.pos_tally,
             Strand::Positive,
-            // pos_observed_mods,
+            pos_observed_mods,
             pileup_options,
             positive_motif_idxs,
         );
@@ -607,11 +617,15 @@ impl FeatureVector {
             &mut counts,
             &self.neg_tally,
             Strand::Negative,
-            // neg_observed_mods,
+            neg_observed_mods,
             pileup_options,
             negative_motif_idxs,
         );
 
+        counts.sort_by(|a, b| match a.raw_strand.cmp(&b.raw_strand) {
+            Ordering::Equal => a.raw_mod_code.cmp(&b.raw_mod_code),
+            o @ _ => o,
+        });
         counts
     }
 }
@@ -1036,8 +1050,14 @@ pub fn process_region<T: AsRef<Path>>(
         let mut feature_vectors = HashMap::new();
 
         // Also make mappings of the observed mod codes per partition key
-        let mut pos_strand_observed_mod_codes = HashMap::new();
-        let mut neg_strand_observed_mod_codes = HashMap::new();
+        let mut pos_strand_observed_mod_codes = FxHashMap::<
+            PartitionKey,
+            FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
+        >::default();
+        let mut neg_strand_observed_mod_codes = FxHashMap::<
+            PartitionKey,
+            FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
+        >::default();
 
         // used for warning about dupes, could make this a bloom filter for better perf?
         let mut observed_read_ids_to_pos = HashMap::new(); // optimize
@@ -1081,11 +1101,11 @@ pub fn process_region<T: AsRef<Path>>(
             let mut pos_strand_mod_codes_for_key =
                 pos_strand_observed_mod_codes
                     .entry(partition_key)
-                    .or_insert(HashSet::new());
+                    .or_insert(FxHashMap::default());
             let mut neg_strand_mod_codes_for_key =
                 neg_strand_observed_mod_codes
                     .entry(partition_key)
-                    .or_insert(HashSet::new());
+                    .or_insert(FxHashMap::default());
             let feature_vector = feature_vectors
                 .entry(partition_key)
                 .or_insert(FeatureVector::new());
@@ -1224,10 +1244,10 @@ pub fn process_region<T: AsRef<Path>>(
                 (
                     partition_key,
                     fv.decode(
-                        // pos_strand_observed_mod_codes_for_key
-                        //     .unwrap_or(&HashSet::new()),
-                        // neg_strand_observed_mod_codes_for_key
-                        //     .unwrap_or(&HashSet::new()),
+                        pos_strand_observed_mod_codes_for_key
+                            .unwrap_or(&FxHashMap::default()),
+                        neg_strand_observed_mod_codes_for_key
+                            .unwrap_or(&FxHashMap::default()),
                         &pileup_numeric_options,
                         positive_motif_idxs,
                         negative_motif_idxs,
@@ -1295,18 +1315,26 @@ pub fn process_region<T: AsRef<Path>>(
 mod mod_pileup_tests {
     use std::collections::HashSet;
 
+    use crate::mod_base_code::{
+        BaseState, HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE,
+    };
     use rust_htslib::bam::{self, Read};
+    use rustc_hash::FxHashMap;
 
     use crate::pileup::{
-        parse_tags_from_record, DnaBase, Feature, FeatureVector, ModCode,
+        parse_tags_from_record, DnaBase, Feature, FeatureVector,
         PileupNumericOptions, StrandRule,
     };
     use crate::util::{SamTag, Strand};
 
     #[test]
     fn test_feature_vector_basic() {
-        let pos_observed_mods = HashSet::from([ModCode::m, ModCode::h]);
-        let neg_observed_mods = HashSet::new();
+        let hmc = HYDROXY_METHYL_CYTOSINE;
+        let mc = METHYL_CYTOSINE;
+        let pos_observed_mods = FxHashMap::from_iter(
+            [(DnaBase::C, HashSet::from([mc, hmc]))].into_iter(),
+        );
+        let neg_observed_mods = FxHashMap::default();
         let mut fv = FeatureVector::new();
         fv.add_feature(
             Strand::Positive,
@@ -1316,19 +1344,19 @@ mod mod_pileup_tests {
         );
         fv.add_feature(
             Strand::Positive,
-            Feature::ModCall(ModCode::C),
+            Feature::ModCall(BaseState::Canonical(DnaBase::C), DnaBase::C),
             Strand::Positive,
             &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Positive,
-            Feature::ModCall(ModCode::m),
+            Feature::ModCall(BaseState::Modified(mc), DnaBase::C),
             Strand::Positive,
             &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Positive,
-            Feature::ModCall(ModCode::m),
+            Feature::ModCall(BaseState::Modified(mc), DnaBase::C),
             Strand::Positive,
             &StrandRule::Both,
         );
@@ -1357,6 +1385,7 @@ mod mod_pileup_tests {
             None,
             None,
         );
+        dbg!(&counts);
         assert_eq!(counts.len(), 2); // h and m, negative strand should not be there
         for pileup_counts in counts {
             assert_eq!(pileup_counts.filtered_coverage, 3);
@@ -1365,16 +1394,18 @@ mod mod_pileup_tests {
             assert_eq!(pileup_counts.raw_strand, Strand::Positive.to_char());
         }
         let mut fv = FeatureVector::new();
-        let neg_observed_mods = HashSet::from([ModCode::m, ModCode::h]);
+        let neg_observed_mods = FxHashMap::from_iter(
+            [(DnaBase::C, HashSet::from([mc, hmc]))].into_iter(),
+        );
         fv.add_feature(
             Strand::Positive,
-            Feature::ModCall(ModCode::C),
+            Feature::ModCall(BaseState::Canonical(DnaBase::C), DnaBase::C),
             Strand::Positive,
             &StrandRule::Both,
         );
         fv.add_feature(
             Strand::Negative,
-            Feature::ModCall(ModCode::m),
+            Feature::ModCall(BaseState::Modified(mc), DnaBase::C),
             Strand::Positive,
             &StrandRule::Both,
         );
@@ -1407,10 +1438,13 @@ mod mod_pileup_tests {
     #[test]
     fn test_feature_vector_with_strand_rules() {
         let mut fv = FeatureVector::new();
-        let pos_observed_mods = HashSet::from([ModCode::m]);
+
+        let mc = METHYL_CYTOSINE;
+        let pos_observed_mods =
+            FxHashMap::from_iter([(DnaBase::C, HashSet::from([mc]))]);
         fv.add_feature(
             Strand::Positive,
-            Feature::ModCall(ModCode::m),
+            Feature::ModCall(BaseState::Modified(mc), DnaBase::C),
             Strand::Positive,
             &StrandRule::Positive,
         );
@@ -1418,13 +1452,13 @@ mod mod_pileup_tests {
         // strand
         fv.add_feature(
             Strand::Negative,
-            Feature::ModCall(ModCode::m),
+            Feature::ModCall(BaseState::Modified(mc), DnaBase::C),
             Strand::Positive,
             &StrandRule::Positive,
         );
         let counts = fv.decode(
             &pos_observed_mods,
-            &HashSet::new(),
+            &FxHashMap::default(),
             &PileupNumericOptions::Passthrough,
             None,
             None,

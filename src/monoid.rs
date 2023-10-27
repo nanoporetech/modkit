@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 pub trait Moniod {
@@ -8,9 +9,17 @@ pub trait Moniod {
     fn len(&self) -> usize;
 }
 
+pub trait BorrowingMoniod {
+    fn zero() -> Self;
+    fn op(self, other: &Self) -> Self;
+    fn op_mut(&mut self, other: &Self);
+    fn len(&self) -> usize;
+}
+
 impl<A, B> Moniod for HashMap<A, Vec<B>>
 where
     A: Eq + Hash,
+    B: Copy,
 {
     fn zero() -> Self {
         HashMap::new()
@@ -89,6 +98,32 @@ where
 
     fn len(&self) -> usize {
         self.len()
+    }
+}
+
+impl<A, B> BorrowingMoniod for FxHashMap<A, HashSet<B>>
+where
+    A: Copy + Eq + Hash,
+    B: Copy + Eq + PartialEq + Hash,
+{
+    fn zero() -> Self {
+        FxHashMap::default()
+    }
+
+    fn op(self, other: &Self) -> Self {
+        let mut this = self;
+        this.op_mut(other);
+        this
+    }
+
+    fn op_mut(&mut self, other: &Self) {
+        other.iter().for_each(|(a, bs)| {
+            self.entry(*a).or_insert(HashSet::new()).extend(bs);
+        })
+    }
+
+    fn len(&self) -> usize {
+        todo!()
     }
 }
 

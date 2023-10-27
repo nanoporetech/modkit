@@ -4,7 +4,7 @@ use crate::common::{
 };
 use anyhow::Context;
 use mod_kit::mod_bam::{CollapseMethod, EdgeFilter};
-use mod_kit::mod_base_code::{DnaBase, ModCode};
+use mod_kit::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -35,7 +35,7 @@ fn test_summary_ignore() {
     let summary_w_collapse = run_simple_summary_with_collapse_method(
         bam_fp.to_str().unwrap(),
         25,
-        &CollapseMethod::ReDistribute('h'),
+        &CollapseMethod::ReDistribute('h'.into()),
     )
     .unwrap();
 
@@ -46,12 +46,18 @@ fn test_summary_ignore() {
             mod_code_counts
                 .keys()
                 .map(|mc| *mc)
-                .collect::<Vec<ModCode>>()
+                .collect::<Vec<BaseState>>()
         })
-        .collect::<HashSet<ModCode>>();
-    let expected = vec![ModCode::C, ModCode::m, ModCode::h]
-        .into_iter()
-        .collect::<HashSet<_>>();
+        .collect::<HashSet<BaseState>>();
+    let expected = HashSet::from([
+        BaseState::Canonical(DnaBase::C),
+        BaseState::Modified('m'.into()),
+        BaseState::Modified('h'.into()),
+    ]);
+    // let expected = vec![ModCode::C, ModCode::m, ModCode::h]
+    //     .into_iter()
+    //     .collect::<HashSet<_>>();
+
     assert_eq!(mod_codes, expected);
     let mod_codes = summary_w_collapse
         .mod_call_counts
@@ -60,12 +66,17 @@ fn test_summary_ignore() {
             mod_code_counts
                 .keys()
                 .map(|mc| *mc)
-                .collect::<Vec<ModCode>>()
+                .collect::<Vec<BaseState>>()
         })
-        .collect::<HashSet<ModCode>>();
-    let expected = vec![ModCode::C, ModCode::m]
-        .into_iter()
-        .collect::<HashSet<_>>();
+        .collect::<HashSet<BaseState>>();
+    // let expected = vec![ModCode::C, ModCode::m]
+    //     .into_iter()
+    //     .collect::<HashSet<_>>();
+    let expected = HashSet::from([
+        BaseState::Canonical(DnaBase::C),
+        BaseState::Modified('m'.into()),
+    ]);
+
     assert_eq!(mod_codes, expected);
 }
 
@@ -148,7 +159,7 @@ fn test_summary_implicit_calls() {
             .mod_call_counts
             .get(&DnaBase::A)
             .unwrap()
-            .get(&ModCode::A)
+            .get(&BaseState::Canonical(DnaBase::A))
             .unwrap(),
         &8
     );

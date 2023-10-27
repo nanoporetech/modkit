@@ -10,6 +10,7 @@ use crate::mod_bam::{
     ModBaseInfo, SeqPosBaseModProbs, SkipMode,
 };
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::monoid::BorrowingMoniod;
 use crate::motif_bed::MotifLocations;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{self, Strand};
@@ -17,6 +18,8 @@ use crate::util::{self, Strand};
 /// Mapping of _reference position_ to base mod calls as determined by the aligned pairs for the
 /// read
 type RefPosBaseModCalls = FxHashMap<u64, BaseModCall>;
+pub(crate) type PrimaryBaseToModCodes =
+    FxHashMap<DnaBase, HashSet<ModCodeRepr>>;
 
 pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that read
@@ -28,8 +31,8 @@ pub(crate) struct ReadCache<'a> {
     /// these reads don't have mod tags or should be skipped for some other reason
     skip_set: HashSet<String>,
     /// mapping of read_id (query_name) to the mod codes contained in that read
-    pos_mod_codes: FxHashMap<String, FxHashSet<ModCodeRepr>>,
-    neg_mod_codes: FxHashMap<String, FxHashSet<ModCodeRepr>>,
+    pos_mod_codes: FxHashMap<String, PrimaryBaseToModCodes>,
+    neg_mod_codes: FxHashMap<String, PrimaryBaseToModCodes>,
     /// collapse method
     method: Option<&'a CollapseMethod>,
     /// Force allowing of implicit canonical
@@ -157,6 +160,7 @@ impl<'a> ReadCache<'a> {
         for (base, mod_strand, seq_base_mod_probs) in mod_prob_iter {
             match DnaBase::parse(base) {
                 Ok(dna_base) => {
+                    // aka the base the modification is actually called on
                     let threshold_base = match mod_strand {
                         Strand::Positive => dna_base,
                         Strand::Negative => dna_base.complement(),
@@ -207,7 +211,9 @@ impl<'a> ReadCache<'a> {
                         };
                     mod_codes_for_read
                         .entry(record_name.to_owned())
-                        .or_insert(FxHashSet::default())
+                        .or_insert(FxHashMap::default())
+                        .entry(threshold_base)
+                        .or_insert(HashSet::new())
                         .extend(mod_codes);
 
                     self.add_modbase_probs_for_record_and_canonical_base(
@@ -343,8 +349,8 @@ impl<'a> ReadCache<'a> {
     pub(crate) fn add_mod_codes_for_record(
         &mut self,
         record: &bam::Record,
-        pos_strand_mod_codes: &mut HashSet<ModCodeRepr>,
-        neg_strand_mod_codes: &mut HashSet<ModCodeRepr>,
+        pos_strand_mod_codes: &mut FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
+        neg_strand_mod_codes: &mut FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
     ) {
         // optimize, could use a better implementation here - pass the read_id
         // from the calling function perhaps
@@ -357,14 +363,19 @@ impl<'a> ReadCache<'a> {
                 self.neg_mod_codes.get(&read_id),
             ) {
                 (Some(pos_codes), Some(neg_codes)) => {
-                    pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
-                    neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
+                    pos_strand_mod_codes.op_mut(pos_codes);
+                    neg_strand_mod_codes.op_mut(neg_codes);
+
+                    // pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
+                    // neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
                 }
                 (Some(pos_codes), None) => {
-                    pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
+                    pos_strand_mod_codes.op_mut(pos_codes);
+                    // pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
                 }
                 (None, Some(neg_codes)) => {
-                    neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
+                    neg_strand_mod_codes.op_mut(neg_codes);
+                    // neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
                 }
                 (None, None) => {
                     match self.add_record(record) {

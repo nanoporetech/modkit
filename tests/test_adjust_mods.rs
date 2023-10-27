@@ -4,7 +4,7 @@ use rust_htslib::{bam, bam::Read};
 use crate::common::{parse_mod_profile, run_simple_summary};
 use common::run_modkit;
 use mod_kit::mod_bam::parse_raw_mod_tags;
-use mod_kit::mod_base_code::{DnaBase, ModCode};
+use mod_kit::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 
 mod common;
 
@@ -130,24 +130,24 @@ fn test_mod_adjust_convert_sum_probs() {
     let initial_m_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m))
+        .and_then(|counts| counts.get(&BaseState::Modified('m'.into())))
         .unwrap();
     let initial_h_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h))
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())))
         .unwrap();
 
     let converted_m_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m))
+        .and_then(|counts| counts.get(&BaseState::Modified('m'.into())))
         .unwrap();
     assert_eq!(*converted_m_calls, initial_m_calls + initial_h_calls);
     let converted_h_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h));
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())));
     assert!(converted_h_calls.is_none());
 }
 
@@ -178,12 +178,12 @@ fn test_mod_adjust_convert_rename() {
     let initial_h_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h))
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())))
         .unwrap();
     let converted_any_c_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::anyC))
+        .and_then(|counts| counts.get(&BaseState::Modified('C'.into())))
         .unwrap();
     assert_eq!(initial_h_calls, converted_any_c_calls);
 }
@@ -218,29 +218,29 @@ fn test_mod_adjust_convert_sum_probs_rename() {
     let initial_m_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m))
+        .and_then(|counts| counts.get(&BaseState::Modified('m'.into())))
         .unwrap();
     let initial_h_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h))
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())))
         .unwrap();
 
     let converted_any_c_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::anyC))
+        .and_then(|counts| counts.get(&BaseState::Modified('C'.into())))
         .unwrap();
     assert_eq!(*converted_any_c_calls, initial_m_calls + initial_h_calls);
     let converted_h_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h));
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())));
     assert!(converted_h_calls.is_none());
     let converted_m_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m));
+        .and_then(|counts| counts.get(&BaseState::Modified('m'.into())));
     assert!(converted_m_calls.is_none());
 }
 

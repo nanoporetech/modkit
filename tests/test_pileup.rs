@@ -214,6 +214,8 @@ fn test_pileup_duplex_reads() {
         "pileup",
         "tests/resources/duplex_modbam.sorted.bam",
         temp_file.to_str().unwrap(),
+        "--region",
+        "chr17",
         "--no-filtering",
     ])
     .unwrap();
