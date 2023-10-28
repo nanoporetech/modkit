@@ -5,7 +5,7 @@ use std::hash::Hash;
 
 use anyhow::bail;
 use derive_new::new;
-use itertools::Itertools;
+use itertools::{Itertools, PeekingNext};
 use log::{debug, error};
 use nom::bytes::complete::tag;
 use nom::character::complete::{digit1, multispace0};
@@ -603,7 +603,8 @@ impl BaseModPositions {
             .ok_or(InputError::new(
                 "failed to get leader for base mod position line",
             ))?
-            .chars();
+            .chars()
+            .peekable();
 
         let canonical_base = header
             .nth(0)
@@ -619,6 +620,27 @@ impl BaseModPositions {
         let mut mode: Option<SkipMode> = None;
 
         let mut offset = 2usize;
+        let mut seen_chebi = false;
+
+        let is_chebi =
+            header.peek().map(|c| c.is_ascii_digit()).unwrap_or(false);
+        if is_chebi {
+            let mut agg = Vec::new();
+            while let Some(d) = header.peeking_next(|d| d.is_ascii_digit()) {
+                agg.push(d)
+            }
+            offset += agg.len();
+            let raw_chebi = agg.into_iter().collect::<String>();
+            let chebi_code = raw_chebi.parse::<u32>().map_err(|e| {
+                InputError(format!(
+                    "illegal chEBI code {raw_chebi}, {}",
+                    e.to_string()
+                ))
+            })?;
+            mod_base_codes.push(ModCodeRepr::ChEbi(chebi_code));
+            seen_chebi = true;
+        }
+
         while let Some(c) = header.next() {
             match c {
                 '?' | '.' => {
@@ -627,19 +649,17 @@ impl BaseModPositions {
                 }
                 _ => {
                     if c.is_ascii_digit() {
-                        if !mod_base_codes.is_empty() {
-                            return Err(InputError::new("cannot have digit mod code, illegal MM tag {mod_positions}"));
-                        }
-                        // todo this is where the ChEBI parsing needs to happen!
-                        unimplemented!()
+                        return Err(InputError::new("cannot have digit mod code, illegal MM tag {mod_positions}"));
                     } else {
+                        if seen_chebi {
+                            return Err(InputError("cannot combine chEBI codes and regular codes, {header}".to_string()));
+                        }
                         mod_base_codes.push(ModCodeRepr::Code(c));
                         offset += 1;
                     }
                 }
             }
         }
-        // default to the "old version"
         let mode = mode.unwrap_or(SkipMode::ImplicitProbModified);
 
         let delta_list = if offset + 1 <= mod_positions.len() {
