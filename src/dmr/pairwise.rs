@@ -11,8 +11,9 @@ use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::dmr::bedmethyl::BedMethylLine;
 use crate::dmr::model::{AggregatedCounts, ModificationCounts};
-use crate::dmr::util::{BedMethylLine, DmrInterval, DmrIntervalIter};
+use crate::dmr::util::{DmrInterval, DmrIntervalIter};
 use crate::position_filter::{Iv, StrandedPositionFilter};
 use crate::util::Strand;
 

@@ -1,3 +1,4 @@
+pub mod bedmethyl;
 mod model;
 mod multi_sample;
 mod pairwise;

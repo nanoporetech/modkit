@@ -345,3 +345,54 @@ fn test_adjust_edge_filter() {
         }
     }
 }
+
+#[test]
+fn test_adjust_chebi_code() {
+    let adjusted_control =
+        std::env::temp_dir().join("test_adjust_mod_code_adjusted.bam");
+    let preadjust_chebi =
+        std::env::temp_dir().join("test_adjust_chebi_code.bam");
+    let adjusted_exp =
+        std::env::temp_dir().join("test_adjust_chebi_code_adjusted.bam");
+
+    // prelude, this ignores h, as usual
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        adjusted_control.to_str().unwrap(),
+        "--ignore",
+        "h",
+    ])
+    .with_context(|| format!("failed to ignore h"))
+    .unwrap();
+
+    // convert h to ChEBI
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        preadjust_chebi.to_str().unwrap(),
+        "--convert",
+        "h",
+        "76792",
+    ])
+    .with_context(|| format!("failed to convert h"))
+    .unwrap();
+    // then ignore it, now the output of this command and the first command should be the same
+    run_modkit(&[
+        "adjust-mods",
+        preadjust_chebi.to_str().unwrap(),
+        adjusted_exp.to_str().unwrap(),
+        "--ignore",
+        "76792",
+    ])
+    .with_context(|| format!("failed to ignore h"))
+    .unwrap();
+
+    let mut test_bam = bam::Reader::from_path(adjusted_control).unwrap();
+    let mut ref_bam = bam::Reader::from_path(adjusted_exp).unwrap();
+    for (test_res, ref_res) in test_bam.records().zip(ref_bam.records()) {
+        let test_record = test_res.unwrap();
+        let ref_record = ref_res.unwrap();
+        assert_eq!(test_record, ref_record);
+    }
+}

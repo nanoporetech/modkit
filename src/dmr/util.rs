@@ -10,16 +10,15 @@ use anyhow::{anyhow, bail};
 use derive_new::new;
 use indicatif::ProgressBar;
 use log::{debug, error};
-use nom::character::complete::{multispace1, none_of, one_of};
-use nom::multi::{many0, many1};
+use nom::character::complete::one_of;
+use nom::multi::many0;
 use nom::IResult;
 use noodles::csi::index::{
     reference_sequence::bin::Chunk as IndexChunk, Index as CsiIndex,
 };
 
 use crate::parsing_utils::{
-    consume_char, consume_char_from_list, consume_digit, consume_float,
-    consume_string, consume_string_spaces,
+    consume_digit, consume_string, consume_string_spaces,
 };
 use crate::position_filter::Iv;
 
@@ -258,70 +257,6 @@ impl Iterator for DmrIntervalIter {
     }
 }
 
-#[derive(new, Debug, PartialEq, Eq)]
-pub(super) struct BedMethylLine {
-    pub(super) chrom: String,
-    pub(super) interval: Iv,
-    pub(super) raw_mod_code: char,
-    // this is actually a StrandRule, since it can be . (both)
-    pub(super) strand: char,
-    pub(super) count_methylated: u64,
-    pub(super) valid_coverage: u64,
-}
-
-fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
-    let (rest, chrom) = consume_string(l)?;
-    let (rest, start) = consume_digit(rest)?;
-    let (rest, stop) = consume_digit(rest)?;
-    let (rest, _) = multispace1(rest)?;
-    let (rest, raw_mod_code) = consume_char_from_list(rest, ",")?;
-    let (rest, valid_coverage) = consume_digit(rest)?;
-    let (rest, strand) = consume_char(rest)?;
-    let (rest, _discard) = many1(consume_digit)(rest)?;
-    let (rest, _discard_too) = many1(none_of(" \t"))(rest)?;
-    let (rest, _score_again) = consume_digit(rest)?;
-    let (rest, _pct_methyl) = consume_float(rest)?;
-    let (_rest, count_methylated) = consume_digit(rest)?;
-
-    let interval = Iv {
-        start,
-        stop,
-        val: (),
-    };
-    Ok((
-        rest,
-        BedMethylLine::new(
-            chrom.to_string(),
-            interval,
-            raw_mod_code,
-            strand,
-            count_methylated,
-            valid_coverage,
-        ),
-    ))
-}
-
-impl BedMethylLine {
-    pub(super) fn parse(line: &str) -> anyhow::Result<Self> {
-        parse_bedmethyl_line(line)
-            .map(|(_, this)| this)
-            .map_err(|e| {
-                anyhow!(
-                    "failed to parse bedmethyl line {line}, {}",
-                    e.to_string()
-                )
-            })
-    }
-
-    pub(super) fn start(&self) -> u64 {
-        self.interval.start
-    }
-
-    pub(super) fn stop(&self) -> u64 {
-        self.interval.stop
-    }
-}
-
 pub(super) fn parse_roi_bed<P: AsRef<Path>>(
     fp: P,
 ) -> anyhow::Result<Vec<DmrInterval>> {
@@ -348,45 +283,8 @@ pub(super) fn parse_roi_bed<P: AsRef<Path>>(
 
 #[cfg(test)]
 mod dmr_util_tests {
-    use crate::dmr::util::{parse_roi_bed, BedMethylLine, DmrInterval};
+    use crate::dmr::util::{parse_roi_bed, DmrInterval};
     use crate::position_filter::Iv;
-
-    #[test]
-    fn test_parse_bedmethyl_line() {
-        for sep in ['\t', ' '] {
-            let line = format!("chr20\t10034963\t10034964\tm,CG,0\t19\t-\t10034963\t10034964\t255,0,0\t19{sep}94.74{sep}18{sep}1{sep}0{sep}0{sep}1{sep}0{sep}2");
-            let bm_line = BedMethylLine::parse(&line).unwrap();
-            let start = 10034963;
-            let stop = 10034964;
-            let iv = Iv {
-                start,
-                stop,
-                val: (),
-            };
-            let expected =
-                BedMethylLine::new("chr20".to_string(), iv, 'm', '-', 18, 19);
-            assert_eq!(bm_line, expected);
-            let line = format!("chr20\t10034963\t10034964\tm\t19\t-\t10034963\t10034964\t255,0,0\t19{sep}94.74{sep}18{sep}1{sep}0{sep}0{sep}1{sep}0{sep}2");
-            let bm_line = BedMethylLine::parse(&line).unwrap();
-            assert_eq!(bm_line, expected);
-
-            let line = format!("oligo_1512_adapters\t9\t10\th\t4\t+\t9\t10\t255,0,0\t4{sep}50.00{sep}2{sep}1{sep}1{sep}0{sep}0{sep}2{sep}0 ");
-            let bm_line = BedMethylLine::parse(&line).unwrap();
-            let expected = BedMethylLine::new(
-                "oligo_1512_adapters".to_string(),
-                Iv {
-                    start: 9,
-                    stop: 10,
-                    val: (),
-                },
-                'h',
-                '+',
-                2,
-                4,
-            );
-            assert_eq!(bm_line, expected);
-        }
-    }
 
     #[test]
     fn test_parse_rois() {
