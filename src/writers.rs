@@ -393,37 +393,88 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
             "all_frac",
         ]);
 
-        for (canonical_base, pass_mod_to_counts) in item.mod_call_counts {
-            let total_pass_calls = pass_mod_to_counts.values().sum::<u64>();
-            let total_filtered_calls = item
-                .filtered_mod_call_counts
-                .get(&canonical_base)
-                .map(|filtered_counts| filtered_counts.values().sum::<u64>())
+        let iter = item.per_base_mod_codes.into_iter().map(
+            |(primary_base, mod_codes)| {
+                let pass_counts = item.mod_call_counts.get(&primary_base);
+                let filtered_counts =
+                    item.filtered_mod_call_counts.get(&primary_base);
+                (primary_base, pass_counts, filtered_counts, mod_codes)
+            },
+        );
+        // for (canonical_base, pass_mod_counts, filtered_modcall_counts)
+        for (
+            canonical_base,
+            pass_mod_to_counts,
+            filtered_counts,
+            mut mod_codes,
+        ) in iter
+        {
+            let total_pass_calls = pass_mod_to_counts
+                .map(|counts| counts.values().sum::<u64>())
                 .unwrap_or(0);
+            let total_filtered_calls = filtered_counts
+                .map(|counts| counts.values().sum::<u64>())
+                .unwrap_or(0);
+            // let total_filtered_calls = item
+            //     .filtered_mod_call_counts
+            //     .get(&canonical_base)
+            //     .map(|filtered_counts| filtered_counts.values().sum::<u64>())
+            //     .unwrap_or(0);
             let total_calls = total_filtered_calls + total_pass_calls;
 
-            for (base_state, pass_counts) in pass_mod_to_counts {
-                let label = match base_state {
-                    BaseState::Canonical(_) => format!("-"),
-                    BaseState::Modified(repr) => format!("{repr}"),
-                };
-                let filtered = *item
-                    .filtered_mod_call_counts
-                    .get(&canonical_base)
-                    .and_then(|filtered_counts| {
-                        filtered_counts.get(&base_state)
-                    })
-                    .unwrap_or(&0);
-                let all_counts = pass_counts + filtered;
-                let all_frac = all_counts as f32 / total_calls as f32;
-                let pass_frac = pass_counts as f32 / total_pass_calls as f32;
+            let mut seen_canonical = false;
+            if let Some(pass_counts) = pass_mod_to_counts {
+                for (base_state, pass_counts) in pass_counts {
+                    let label = match base_state {
+                        BaseState::Canonical(_) => {
+                            seen_canonical = true;
+                            format!("-") // could be a const..
+                        }
+                        BaseState::Modified(repr) => {
+                            mod_codes.remove(repr);
+                            format!("{repr}")
+                        }
+                    };
+                    let filtered = *item
+                        .filtered_mod_call_counts
+                        .get(&canonical_base)
+                        .and_then(|filtered_counts| {
+                            filtered_counts.get(&base_state)
+                        })
+                        .unwrap_or(&0);
+                    let all_counts = *pass_counts + filtered;
+                    let all_frac = all_counts as f32 / total_calls as f32;
+                    let pass_frac =
+                        *pass_counts as f32 / total_pass_calls as f32;
+                    report_table.add_row(row![
+                        canonical_base.char(),
+                        label,
+                        pass_counts,
+                        pass_frac,
+                        all_counts,
+                        all_frac,
+                    ]);
+                }
+            }
+
+            if !seen_canonical {
                 report_table.add_row(row![
                     canonical_base.char(),
-                    label,
-                    pass_counts,
-                    pass_frac,
-                    all_counts,
-                    all_frac,
+                    format!("-"),
+                    0u64,
+                    0f32,
+                    0u64,
+                    0f32
+                ]);
+            }
+            for mod_code in mod_codes {
+                report_table.add_row(row![
+                    canonical_base.char(),
+                    format!("{mod_code}"),
+                    0u64,
+                    0f32,
+                    0u64,
+                    0f32
                 ]);
             }
         }

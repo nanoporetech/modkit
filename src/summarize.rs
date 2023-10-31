@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use derive_new::new;
@@ -39,6 +39,8 @@ pub struct ModSummary<'a> {
     pub per_base_thresholds: HashMap<DnaBase, f32>,
     /// If a region is provided, this is a reference to that region.
     pub region: Option<&'a Region>,
+    /// Mapping of which modcodes were observed for each base
+    pub per_base_mod_codes: HashMap<DnaBase, HashSet<ModCodeRepr>>,
 }
 
 impl<'a> ModSummary<'a> {
@@ -131,6 +133,7 @@ pub(crate) fn sampled_reads_to_summary<'a>(
             let mut mod_call_counts = HashMap::new();
             let mut filtered_mod_call_counts = HashMap::new();
             let mut reads_with_mod_calls = HashMap::new();
+            let mut observed_mods = HashMap::new();
             for (&canonical_base, base_modification_probs) in
                 canonical_base_to_calls
             {
@@ -143,22 +146,10 @@ pub(crate) fn sampled_reads_to_summary<'a>(
                         .entry(canonical_base)
                         .or_insert(HashMap::new());
 
-                // let mod_code_for_canonical_base =
-                //     match canonical_base.into_base_state() {
-                //         Ok(mod_code) => mod_code,
-                //         Err(e) => {
-                //             debug!(
-                //                 "read {} encountered {},\
-                //             this limitation will be removed in a later version",
-                //                 read_id,
-                //                 e.to_string()
-                //             );
-                //             continue;
-                //         }
-                //     };
                 base_modification_probs
                     .iter()
                     .filter_map(|bmp| {
+
                         // need the argmax base_mod_call here too so that we can add to the correct
                         // filtered category
                         // once the whole "ModCode" bits are refactored, this will no longer be
@@ -168,6 +159,10 @@ pub(crate) fn sampled_reads_to_summary<'a>(
                             threshold_caller.call(&canonical_base, bmp);
                         match (thresholded_call, base_mod_call) {
                             (Ok(bmc), Ok(arg_max_base_mod_call)) => {
+                                // add the observed mod codes here so that we report on them even if they're
+                                // never called
+                                observed_mods.entry(canonical_base).or_insert(HashSet::new())
+                                    .extend(bmp.iter_probs().map(|(code, _)| *code));
                                 Some((bmc, arg_max_base_mod_call))
                             }
                             (Err(e), Err(_)) => {
@@ -226,16 +221,19 @@ pub(crate) fn sampled_reads_to_summary<'a>(
                 reads_with_mod_calls,
                 mod_call_counts,
                 filtered_mod_call_counts,
+                observed_mods
             }
         })
         .reduce(|| ReadSummaryChunk::zero(), |a, b| a.op(b));
 
     let elap = start_t.elapsed();
     debug!("computing summary took {}s", elap.as_secs());
+
     let per_base_thresholds = threshold_caller
         .iter_thresholds()
         .map(|(b, t)| (*b, *t))
         .collect::<HashMap<DnaBase, f32>>();
+
     Ok(ModSummary::new(
         read_summary_chunk.reads_with_mod_calls,
         read_summary_chunk.mod_call_counts,
@@ -243,6 +241,7 @@ pub(crate) fn sampled_reads_to_summary<'a>(
         total_reads_used,
         per_base_thresholds,
         region,
+        read_summary_chunk.observed_mods,
     ))
 }
 
@@ -251,6 +250,7 @@ struct ReadSummaryChunk {
     reads_with_mod_calls: HashMap<DnaBase, u64>,
     mod_call_counts: HashMap<DnaBase, HashMap<BaseState, u64>>,
     filtered_mod_call_counts: HashMap<DnaBase, HashMap<BaseState, u64>>,
+    observed_mods: HashMap<DnaBase, HashSet<ModCodeRepr>>,
 }
 
 impl Moniod for ReadSummaryChunk {
@@ -259,6 +259,7 @@ impl Moniod for ReadSummaryChunk {
             reads_with_mod_calls: HashMap::new(),
             mod_call_counts: HashMap::new(),
             filtered_mod_call_counts: HashMap::new(),
+            observed_mods: HashMap::new(),
         }
     }
 
@@ -266,13 +267,18 @@ impl Moniod for ReadSummaryChunk {
         let mut mod_call_counts = self.mod_call_counts;
         let mut filtered_mod_call_counts = self.filtered_mod_call_counts;
         let mut total = self.reads_with_mod_calls;
+        let mut observed_mods = self.observed_mods;
+
         total.op_mut(other.reads_with_mod_calls);
         mod_call_counts.op_mut(other.mod_call_counts);
         filtered_mod_call_counts.op_mut(other.filtered_mod_call_counts);
+        observed_mods.op_mut(other.observed_mods);
+
         Self {
             reads_with_mod_calls: total,
             mod_call_counts,
             filtered_mod_call_counts,
+            observed_mods,
         }
     }
 
@@ -281,6 +287,7 @@ impl Moniod for ReadSummaryChunk {
         self.mod_call_counts.op_mut(other.mod_call_counts);
         self.filtered_mod_call_counts
             .op_mut(other.filtered_mod_call_counts);
+        self.observed_mods.op_mut(other.observed_mods);
     }
 
     fn len(&self) -> usize {

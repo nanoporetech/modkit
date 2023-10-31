@@ -46,6 +46,32 @@ where
     }
 }
 
+impl<A, B> Moniod for HashMap<A, HashSet<B>>
+where
+    A: Eq + Hash,
+    B: Eq + Hash,
+{
+    fn zero() -> Self {
+        HashMap::new()
+    }
+
+    fn op(self, other: Self) -> Self {
+        let mut this = self;
+        this.op_mut(other);
+        this
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        other.into_iter().for_each(|(a, bs)| {
+            self.entry(a).or_insert(HashSet::new()).extend(bs)
+        })
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 impl<A> Moniod for HashMap<A, u64>
 where
     A: Eq + PartialEq + Hash,

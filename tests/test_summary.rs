@@ -54,9 +54,6 @@ fn test_summary_ignore() {
         BaseState::Modified('m'.into()),
         BaseState::Modified('h'.into()),
     ]);
-    // let expected = vec![ModCode::C, ModCode::m, ModCode::h]
-    //     .into_iter()
-    //     .collect::<HashSet<_>>();
 
     assert_eq!(mod_codes, expected);
     let mod_codes = summary_w_collapse
@@ -69,9 +66,6 @@ fn test_summary_ignore() {
                 .collect::<Vec<BaseState>>()
         })
         .collect::<HashSet<BaseState>>();
-    // let expected = vec![ModCode::C, ModCode::m]
-    //     .into_iter()
-    //     .collect::<HashSet<_>>();
     let expected = HashSet::from([
         BaseState::Canonical(DnaBase::C),
         BaseState::Modified('m'.into()),
