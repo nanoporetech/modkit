@@ -172,6 +172,13 @@ mod threshold_mod_caller_tests {
     #[test]
     fn test_multi_threshold_call_semantics() {
         // CASE A
+        // thresholds
+        // A: 0.8
+        // a: 0.9
+        // conditions
+        // {A: 0.2, a: 0.8} => FILTERED
+        // {A: 0.8, a: 0.2} => A
+        // {A: 0.1, a: 0.9} => a
         let per_mod_thresholds = HashMap::from([('a'.into(), 0.9)]);
         let caller = MultipleThresholdModCaller::new(
             HashMap::new(),
@@ -190,6 +197,14 @@ mod threshold_mod_caller_tests {
         assert_eq!(call, BaseModCall::Modified(0.9, SIX_METHYL_ADENINE));
 
         // CASE B
+        // thresholds
+        // A: 0.2
+        // a: 0.9
+        // conditions
+        // {A: 0.2, a: 0.8} => A // **, a fails, A passes
+        // {A: 0.4, a: 0.6} => A // same as above
+        // {A: 0.8, a: 0.2} => A
+        // {A: 0.1, a: 0.9} => a
         let per_mod_thresholds = HashMap::from([('a'.into(), 0.9)]);
         let per_base_thresholds = HashMap::from([(DnaBase::A, 0.2)]);
         let caller = MultipleThresholdModCaller::new(
@@ -217,6 +232,13 @@ mod threshold_mod_caller_tests {
         assert_base_mod_call_modified(call, 0.9, 'a'.into()).unwrap();
 
         // CASE C
+        // thresholds
+        // A: 0.2
+        // a: 0.8 **
+        // conditions
+        // {A: 0.2, a: 0.8} => a // ** both above threshold, choose most likely
+        // {A: 0.8, a: 0.2} => A // same as above
+        // {A: 0.1, a: 0.9} => a // A fails, a is passing
         let per_mod_threshold = HashMap::from([('a'.into(), 0.8)]);
         let per_base_thresholds = HashMap::from([(DnaBase::A, 0.2)]);
         let caller = MultipleThresholdModCaller::new(

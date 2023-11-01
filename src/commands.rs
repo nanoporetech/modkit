@@ -614,7 +614,7 @@ pub struct ModSummarize {
     /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
     /// base option and a default for all other bases with:
     /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
-    /// value of 0.70 for adenosine and 0.9 for all other base modification calls.
+    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
     #[arg(
         long,
         group = "thresholds",
@@ -625,8 +625,8 @@ pub struct ModSummarize {
     /// threshold for the primary sequence base or the default. For example, to set
     /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
     /// threshold will still be estimated as usual and used for canonical cytosine and
-    /// 5mC unless the `--filter-threshold` option is also passed. See the online
-    /// documentation for more details.
+    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// See the online documentation for more details.
     #[arg(
     long,
     action = clap::ArgAction::Append
@@ -1088,7 +1088,7 @@ pub struct CallMods {
     /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
     /// base option and a default for all other bases with:
     /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
-    /// value of 0.70 for adenosine and 0.9 for all other base modification calls.
+    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
     #[arg(
     long,
     group = "thresholds",
@@ -1100,8 +1100,8 @@ pub struct CallMods {
     /// threshold for the primary sequence base or the default. For example, to set
     /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
     /// threshold will still be estimated as usual and used for canonical cytosine and
-    /// 5mC unless the `--filter-threshold` option is also passed. See the online
-    /// documentation for more details.
+    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// See the online documentation for more details.
     #[arg(
     long = "mod-threshold",
     action = clap::ArgAction::Append
