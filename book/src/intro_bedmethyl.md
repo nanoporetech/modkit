@@ -59,7 +59,7 @@ performs three transforms:
 * restricts output to locations where there is a CG dinucleotide in the reference,
 * reports only a C and 5mC counts, using procedures to take into account counts of other
   forms of cytosine modification (notably 5hmC), and
-* aggregates data across strands. The strand field od the output will be marked as '.'
+* aggregates data across strands. The strand field of the output will be marked as '.'
   indicating that the strand information has been lost.
 
 Using this option is equivalent to running with the options:

@@ -1,12 +1,14 @@
 # Removing modification calls from BAMs.
 
-There may be multiple possible base modifications to a specific canonical base. For
-example, cytosine has four known modified variants. As technologies are increasingly able
-to detect these chemical moieties, not all downstream tools may be capable of accepting
-them, or you may want to convert your data to make it comparable to other data with less
-specific resolution. To address this issue, `modkit` implements a method for removing one
-or more DNA base modification call from a BAM as well as a command line flag to simply
-combine all modification calls when performing a pileup to generate a bedMethyl file.
+There may be multiple possible base modifications to a specific canonical base.
+For example, cytosine has at least four known modified variants. As
+technologies are increasingly able to detect these chemical moieties, not all
+downstream tools may be capable of accepting them, or you may want to convert
+your data to make it comparable to other data with less specific resolution. To
+address this issue, `modkit` implements a method for removing one or more DNA
+base modification call from a BAM as well as a command line flag to simply
+combine all modification calls when performing a pileup to generate a bedMethyl
+file.
 
 
 ## Removing DNA base modification probabilities.
@@ -29,7 +31,7 @@ example, the updates are \\( p_C \leftarrow p_C + (\frac{p_h}{2}) \\) and \\( p_
 
 ### Combine: `--combine`
 
-In `modkit pileup` the combine method can be used to produce binary modified/unmodified
+In `modkit` the combine method can be used to produce binary modified/unmodified
 counts. Continuing with the above example, the counts for number of modified reads,
 `N_mod`, becomes the number of reads with 5hmC calls plus the number of reads with 5mC
 calls. `N_other_mod` will always be `0`. The `raw_mod_code` will be reported as the
