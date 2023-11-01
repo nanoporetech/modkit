@@ -24,7 +24,7 @@ use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS,
 };
-use crate::mod_base_code::{BaseState, ModCodeRepr};
+use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
 use crate::motif_bed::motif_bed;
 use crate::pileup::subcommand::{DuplexModBamPileup, ModBamPileup};
@@ -527,9 +527,9 @@ impl SampleModBaseProbs {
                                 canonical_base.char()
                             )
                         })
-                        .map(|percs| (canonical_base.char(), percs))
+                        .map(|percs| (canonical_base, percs))
                 })
-                .collect::<AnyhowResult<HashMap<char, Percentiles>>>()?;
+                .collect::<AnyhowResult<HashMap<DnaBase, Percentiles>>>()?;
 
             let sampled_probs =
                 SampledProbs::new(histograms, percentiles, self.prefix.clone());

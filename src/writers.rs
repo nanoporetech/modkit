@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
 use std::path::{Path, PathBuf};
 
-use crate::mod_base_code::{BaseState, ModCodeRepr};
+use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use derive_new::new;
 use histo_fp::Histogram;
@@ -401,7 +401,6 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
                 (primary_base, pass_counts, filtered_counts, mod_codes)
             },
         );
-        // for (canonical_base, pass_mod_counts, filtered_modcall_counts)
         for (
             canonical_base,
             pass_mod_to_counts,
@@ -415,11 +414,6 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
             let total_filtered_calls = filtered_counts
                 .map(|counts| counts.values().sum::<u64>())
                 .unwrap_or(0);
-            // let total_filtered_calls = item
-            //     .filtered_mod_call_counts
-            //     .get(&canonical_base)
-            //     .map(|filtered_counts| filtered_counts.values().sum::<u64>())
-            //     .unwrap_or(0);
             let total_calls = total_filtered_calls + total_pass_calls;
 
             let mut seen_canonical = false;
@@ -601,8 +595,8 @@ pub(crate) struct MultiTableWriter {
 #[derive(new)]
 pub(crate) struct SampledProbs {
     histograms: Option<HashMap<BaseState, Histogram>>,
-    // char here is primary base
-    percentiles: HashMap<char, Percentiles>,
+    // char here is primary base, that's why it works
+    percentiles: HashMap<DnaBase, Percentiles>,
     prefix: Option<String>,
 }
 
@@ -665,7 +659,7 @@ impl SampledProbs {
         for (base, percentiles) in &self.percentiles {
             for (q, p) in percentiles.qs.iter() {
                 let q = *q * 100f32;
-                table.add_row(row![base, q, *p]);
+                table.add_row(row![base.char(), q, *p]);
             }
         }
         table
