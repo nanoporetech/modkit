@@ -11,14 +11,14 @@ use crate::parsing_utils::{
     consume_string_from_list,
 };
 use crate::position_filter::Iv;
+use crate::util::StrandRule;
 
 #[derive(new, Debug, PartialEq, Eq)]
 pub struct BedMethylLine {
     pub chrom: String,
     pub interval: Iv,
     pub raw_mod_code: ModCodeRepr,
-    // this is actually a StrandRule, since it can be . (both)
-    pub strand: char,
+    pub strand: StrandRule,
     pub count_methylated: u64,
     pub valid_coverage: u64,
 }
@@ -29,6 +29,7 @@ fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
         ModCodeRepr::parse(raw)
             .with_context(|| format!("{raw} invalid mod code representation"))
     });
+    let mut parse_strand = map_res(consume_char, |x| StrandRule::try_from(x));
 
     let (rest, chrom) = consume_string(l)?;
     let (rest, start) = consume_digit(rest)?;
@@ -37,7 +38,7 @@ fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
     // let (rest, raw_mod_code) = consume_char_from_list(rest, ",")?;
     let (rest, raw_mod_code) = parse_modcode(rest)?;
     let (rest, valid_coverage) = consume_digit(rest)?;
-    let (rest, strand) = consume_char(rest)?;
+    let (rest, strand) = parse_strand(rest)?;
     let (rest, _discard) = many1(consume_digit)(rest)?;
     let (rest, _discard_too) = many1(none_of(" \t"))(rest)?;
     let (rest, _score_again) = consume_digit(rest)?;
@@ -104,7 +105,7 @@ mod bedmethylline_tests {
                 "chr20".to_string(),
                 iv,
                 'm'.into(),
-                '-',
+                '-'.try_into().unwrap(),
                 18,
                 19,
             );
@@ -123,7 +124,7 @@ mod bedmethylline_tests {
                     val: (),
                 },
                 'h'.into(),
-                '+',
+                '+'.try_into().unwrap(),
                 2,
                 4,
             );
@@ -144,7 +145,7 @@ mod bedmethylline_tests {
                     val: (),
                 },
                 76792u32.into(),
-                '+',
+                '+'.try_into().unwrap(),
                 2,
                 4,
             );

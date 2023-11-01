@@ -15,7 +15,7 @@ use crate::dmr::bedmethyl::BedMethylLine;
 use crate::dmr::model::{AggregatedCounts, ModificationCounts};
 use crate::dmr::util::{DmrInterval, DmrIntervalIter};
 use crate::position_filter::{Iv, StrandedPositionFilter};
-use crate::util::Strand;
+use crate::util::{Strand, StrandRule};
 
 fn aggregate_counts(
     bm_lines: &[BedMethylLine],
@@ -25,28 +25,21 @@ fn aggregate_counts(
     let grouped_by_position: FxHashMap<u64, Vec<&BedMethylLine>> = bm_lines
         .iter()
         .filter(|bm_line| match bm_line.strand {
-            '+' => position_filter.contains(
+            StrandRule::Positive => position_filter.contains(
                 chrom_id as i32,
                 bm_line.start(),
                 Strand::Positive,
             ),
-            '-' => position_filter.contains(
+            StrandRule::Negative => position_filter.contains(
                 chrom_id as i32,
                 bm_line.start(),
                 Strand::Negative,
             ),
-            '.' => position_filter.overlaps_not_stranded(
+            StrandRule::Both => position_filter.overlaps_not_stranded(
                 chrom_id,
                 bm_line.start(),
                 bm_line.stop(),
             ),
-            _ => {
-                debug!(
-                    "encountered illegal strand in bedmethyl {}",
-                    bm_line.strand
-                );
-                false
-            }
         })
         .fold(FxHashMap::default(), |mut acc, bm_line| {
             acc.entry(bm_line.start())
