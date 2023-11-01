@@ -141,7 +141,7 @@ bedMethyl specification can be found on [Encode](https://www.encodeproject.org/d
 * N<sub>mod</sub> - Number of calls passing filters that were classified as a residue with a specified base modification.
 * N<sub>canonical</sub> - Number of calls passing filters were classified as the canonical base rather than modified. The
 exact base must be inferred by the modification code. For example, if the modification code is `m` (5mC) then
-the canonical base is cytosine. If the modification code is `a`, the canonical base is adenosine.
+the canonical base is cytosine. If the modification code is `a`, the canonical base is adenine.
 * N<sub>other mod</sub> - Number of calls passing filters that were classified as modified, but where the modification is different from the listed base (and the corresponding canonical base is equal). For example, for a given cytosine there may be 3 reads with
 `h` calls, 1 with a canonical call, and 2 with `m` calls. In the bedMethyl row for `h` N<sub>other_mod</sub> would be 2. In the
 `m` row N<sub>other_mod</sub> would be 3.

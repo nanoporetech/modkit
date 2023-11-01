@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
 use histo_fp::Histogram;
+use itertools::Itertools;
 use log::{debug, info};
 use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
@@ -21,10 +22,9 @@ use crate::errs::{InputError, RunError};
 use crate::extract_mods::ExtractMods;
 use crate::logging::init_logging;
 use crate::mod_bam::{
-    format_mm_ml_tag, CollapseMethod, ModBaseInfo, RawModCode, SkipMode,
-    ML_TAGS, MM_TAGS,
+    format_mm_ml_tag, CollapseMethod, ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS,
 };
-use crate::mod_base_code::ModCode;
+use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
 use crate::motif_bed::motif_bed;
 use crate::pileup::subcommand::{DuplexModBamPileup, ModBamPileup};
@@ -150,7 +150,7 @@ pub struct Adjust {
     /// https://samtools.github.io/hts-specs/SAMtags.pdf for details on
     /// the modified base codes.
     #[arg(long, conflicts_with = "convert")]
-    ignore: Option<char>,
+    ignore: Option<String>,
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
@@ -161,7 +161,7 @@ pub struct Adjust {
     /// Convert one mod-tag to another, summing the probabilities together if
     /// the retained mod tag is already present.
     #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
-    convert: Option<Vec<char>>,
+    convert: Option<Vec<String>>,
     /// Discard base modification calls that are this many bases from the start or the end
     /// of the read. Two comma-separated values may be provided to asymmetrically filter out
     /// base modification calls from the start and end of the reads. For example, 4,8 will
@@ -195,17 +195,21 @@ impl Adjust {
             get_bam_writer(&self.out_bam, &header, self.output_sam)?;
 
         let methods = if let Some(convert) = &self.convert {
+            let convert = convert
+                .iter()
+                .map(|s| ModCodeRepr::parse(s.as_str()))
+                .collect::<anyhow::Result<Vec<ModCodeRepr>>>()?;
             let mut conversions = HashMap::new();
             for chunk in convert.chunks(2) {
                 debug_assert_eq!(chunk.len(), 2);
-                let from: RawModCode = chunk[0];
-                let to: RawModCode = chunk[1];
+                let from: ModCodeRepr = chunk[0];
+                let to: ModCodeRepr = chunk[1];
                 conversions.entry(to).or_insert(HashSet::new()).insert(from);
             }
             for (to_code, from_codes) in conversions.iter() {
                 info!(
                     "Converting {} to {}",
-                    from_codes.iter().collect::<String>(),
+                    from_codes.iter().sorted().join(","),
                     to_code
                 )
             }
@@ -222,6 +226,7 @@ impl Adjust {
                 .collect::<Vec<CollapseMethod>>()
         } else {
             if let Some(ignore_base) = self.ignore.as_ref() {
+                let ignore_base = ModCodeRepr::parse(ignore_base.as_str())?;
                 info!(
                     "Removing mod base {} from {}, new bam {}",
                     ignore_base,
@@ -240,7 +245,7 @@ impl Adjust {
                         }
                     }
                 );
-                let method = CollapseMethod::ReDistribute(*ignore_base);
+                let method = CollapseMethod::ReDistribute(ignore_base);
                 vec![method]
             } else {
                 Vec::new()
@@ -326,7 +331,7 @@ pub struct SampleModBaseProbs {
     /// both 'm' and 'C'. A full description of the methods can be found in
     /// collapse.md.
     #[arg(long, hide_short_help = true)]
-    ignore: Option<char>,
+    ignore: Option<String>,
     /// Discard base modification calls that are this many bases from the start or the end
     /// of the read. Two comma-separated values may be provided to asymmetrically filter out
     /// base modification calls from the start and end of the reads. For example, 4,8 will
@@ -439,13 +444,14 @@ impl SampleModBaseProbs {
             })
             .transpose()?;
 
-        let collapse_method = if let Some(raw_mod_code_to_ignore) = self.ignore
-        {
-            let _ = ModCode::parse_raw_mod_code(raw_mod_code_to_ignore)?;
-            Some(CollapseMethod::ReDistribute(raw_mod_code_to_ignore))
-        } else {
-            None
-        };
+        let collapse_method =
+            if let Some(raw_mod_code_to_ignore) = self.ignore.as_ref() {
+                let mod_code_to_ignore =
+                    ModCodeRepr::parse(raw_mod_code_to_ignore)?;
+                Some(CollapseMethod::ReDistribute(mod_code_to_ignore))
+            } else {
+                None
+            };
 
         let desired_percentiles = parse_percentiles(&self.percentiles)
             .with_context(|| {
@@ -504,7 +510,7 @@ impl SampleModBaseProbs {
                             }
                             (*base, hist)
                         })
-                        .collect::<HashMap<char, Histogram>>(),
+                        .collect::<HashMap<BaseState, Histogram>>(),
                 )
             } else {
                 None
@@ -521,9 +527,9 @@ impl SampleModBaseProbs {
                                 canonical_base.char()
                             )
                         })
-                        .map(|percs| (canonical_base.char(), percs))
+                        .map(|percs| (canonical_base, percs))
                 })
-                .collect::<AnyhowResult<HashMap<char, Percentiles>>>()?;
+                .collect::<AnyhowResult<HashMap<DnaBase, Percentiles>>>()?;
 
             let sampled_probs =
                 SampledProbs::new(histograms, percentiles, self.prefix.clone());
@@ -608,7 +614,7 @@ pub struct ModSummarize {
     /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
     /// base option and a default for all other bases with:
     /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
-    /// value of 0.70 for adenosine and 0.9 for all other base modification calls.
+    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
     #[arg(
         long,
         group = "thresholds",
@@ -619,8 +625,8 @@ pub struct ModSummarize {
     /// threshold for the primary sequence base or the default. For example, to set
     /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
     /// threshold will still be estimated as usual and used for canonical cytosine and
-    /// 5mC unless the `--filter-threshold` option is also passed. See the online
-    /// documentation for more details.
+    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// See the online documentation for more details.
     #[arg(
     long,
     action = clap::ArgAction::Append
@@ -632,7 +638,7 @@ pub struct ModSummarize {
     /// both 'm' and 'C'. A full description of the methods can be found in
     /// collapse.md.
     #[arg(long, group = "combine_args", hide_short_help = true)]
-    ignore: Option<char>,
+    ignore: Option<String>,
     /// Discard base modification calls that are this many bases from the start or the end
     /// of the read. Two comma-separated values may be provided to asymmetrically filter out
     /// base modification calls from the start and end of the reads. For example, 4,8 will
@@ -732,13 +738,14 @@ impl ModSummarize {
                 None
             };
 
-        let collapse_method = if let Some(raw_mod_code_to_ignore) = self.ignore
-        {
-            let _ = ModCode::parse_raw_mod_code(raw_mod_code_to_ignore)?;
-            Some(CollapseMethod::ReDistribute(raw_mod_code_to_ignore))
-        } else {
-            None
-        };
+        let collapse_method =
+            if let Some(raw_mod_code_to_ignore) = self.ignore.as_ref() {
+                let mod_code_to_ignore =
+                    ModCodeRepr::parse(raw_mod_code_to_ignore)?;
+                Some(CollapseMethod::ReDistribute(mod_code_to_ignore))
+            } else {
+                None
+            };
 
         let mod_summary = pool.install(|| {
             let read_ids_to_base_mod_calls = if using_stream(&self.in_bam) {
@@ -1081,7 +1088,7 @@ pub struct CallMods {
     /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
     /// base option and a default for all other bases with:
     /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
-    /// value of 0.70 for adenosine and 0.9 for all other base modification calls.
+    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
     #[arg(
     long,
     group = "thresholds",
@@ -1093,8 +1100,8 @@ pub struct CallMods {
     /// threshold for the primary sequence base or the default. For example, to set
     /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
     /// threshold will still be estimated as usual and used for canonical cytosine and
-    /// 5mC unless the `--filter-threshold` option is also passed. See the online
-    /// documentation for more details.
+    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// See the online documentation for more details.
     #[arg(
     long = "mod-threshold",
     action = clap::ArgAction::Append

@@ -1,11 +1,15 @@
 use anyhow::Context;
+use itertools::Itertools;
 use rust_htslib::bam;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use common::{check_against_expected_text_file, run_modkit};
+use mod_kit::dmr::bedmethyl::BedMethylLine;
+use mod_kit::mod_base_code::{ModCodeRepr, METHYL_CYTOSINE};
 
 mod common;
 
@@ -214,6 +218,8 @@ fn test_pileup_duplex_reads() {
         "pileup",
         "tests/resources/duplex_modbam.sorted.bam",
         temp_file.to_str().unwrap(),
+        "--region",
+        "chr17",
         "--no-filtering",
     ])
     .unwrap();
@@ -768,4 +774,76 @@ fn test_pileup_motifs_cg0_cgcg2_combined() {
         temp_file.to_str().unwrap(),
         "tests/resources/cgcg2_cg0_test2_combine_strands.bed",
     );
+}
+
+#[test]
+fn test_chebi_code_same_output() {
+    let ord_bm_line = |a: &BedMethylLine, b: &BedMethylLine| -> Ordering {
+        match a.chrom.cmp(&b.chrom) {
+            Ordering::Equal => match a.start().cmp(&b.start()) {
+                Ordering::Equal => a.raw_mod_code.cmp(&b.raw_mod_code),
+                o @ _ => o,
+            },
+            o @ _ => o,
+        }
+    };
+    let adjusted_bam =
+        std::env::temp_dir().join("test_chebi_code_same_output_hmc2chEBI.bam");
+    let pileup =
+        std::env::temp_dir().join("test_chebi_code_same_output_pileup.bed");
+    let expected_fp = "tests/resources/modbam.modpileup_nofilt.methyl.bed";
+    let expected = BufReader::new(File::open(expected_fp).unwrap())
+        .lines()
+        .map(|l| BedMethylLine::parse(&l.unwrap()).unwrap())
+        .sorted_by(|a, b| ord_bm_line(a, b))
+        .collect::<Vec<BedMethylLine>>();
+    for to_code in [ModCodeRepr::ChEbi(76792), ModCodeRepr::Code('c')] {
+        run_modkit(&[
+            "adjust-mods",
+            "tests/resources/bc_anchored_10_reads.sorted.bam",
+            adjusted_bam.to_str().unwrap(),
+            "--convert",
+            "h",
+            &to_code.to_string(),
+        ])
+        .with_context(|| format!("failed to change 5hmC to {to_code}"))
+        .unwrap();
+
+        bam::index::build(adjusted_bam.clone(), None, bam::index::Type::Bai, 1)
+            .unwrap();
+
+        run_modkit(&[
+            "pileup",
+            adjusted_bam.to_str().unwrap(),
+            pileup.to_str().unwrap(),
+            "-i",
+            "25", // use small interval to make sure chunking works
+            "--no-filtering",
+            "--only-tabs",
+        ])
+        .context("failed to generate pileup")
+        .unwrap();
+
+        let observed = BufReader::new(File::open(pileup.clone()).unwrap())
+            .lines()
+            .map(|l| {
+                let bm = BedMethylLine::parse(&l.unwrap()).unwrap();
+                if bm.raw_mod_code != METHYL_CYTOSINE {
+                    assert_eq!(bm.raw_mod_code, to_code);
+                    BedMethylLine::new(
+                        bm.chrom,
+                        bm.interval,
+                        ModCodeRepr::Code('h'), // change back so we can compare
+                        bm.strand,
+                        bm.count_methylated,
+                        bm.valid_coverage,
+                    )
+                } else {
+                    bm
+                }
+            })
+            .sorted_by(|a, b| ord_bm_line(a, b))
+            .collect::<Vec<BedMethylLine>>();
+        assert_eq!(expected, observed);
+    }
 }

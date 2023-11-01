@@ -7,7 +7,7 @@ use log::debug;
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
-use crate::mod_bam::{DuplexModCall, EdgeFilter};
+use crate::mod_bam::{DuplexModCall, DuplexPattern, EdgeFilter};
 use crate::motif_bed::MultipleMotifLocations;
 use crate::pileup::{
     get_forward_read_base, get_motif_locations_for_region, PileupIter,
@@ -32,9 +32,9 @@ pub struct DuplexModBasePileup {
     pub skipped_records: usize,
 }
 
-#[derive(new, Debug, Eq, PartialEq, PartialOrd)]
+#[derive(new, Debug, Eq, PartialEq)]
 pub struct DuplexPatternCounts {
-    pattern: [char; 2],
+    pattern: DuplexPattern,
     pub count: usize,
     pub n_other_pattern: usize,
     pub n_diff: usize,
@@ -65,6 +65,12 @@ impl Ord for DuplexPatternCounts {
             Ordering::Equal => self.pattern[1].cmp(&other.pattern[1]),
             o @ _ => o,
         }
+    }
+}
+
+impl PartialOrd for DuplexPatternCounts {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -133,7 +139,7 @@ impl DuplexFeatureVector {
             let pattern_counts = duplex_calls
                 .iter()
                 .filter_map(|(x, c)| x.pattern().map(|p| (p, *c)))
-                .collect::<HashMap<[char; 2], usize>>();
+                .collect::<HashMap<DuplexPattern, usize>>();
 
             let n_diff = grouped_by_base
                 .iter()

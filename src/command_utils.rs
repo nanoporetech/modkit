@@ -1,31 +1,47 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use anyhow::{anyhow, bail, Context};
+use log::{debug, info};
+use rust_htslib::bam::{self, Header};
+
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
-use crate::mod_base_code::{DnaBase, ModCode, ParseChar};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::calc_threshold_from_bam;
 use crate::util::Region;
-use anyhow::{anyhow, bail, Context};
-use log::{debug, info};
-use rust_htslib::bam::{self, Header};
-use std::collections::HashMap;
-use std::path::PathBuf;
 
 pub(crate) fn parse_per_mod_thresholds(
     raw_per_mod_thresholds: &[String],
-) -> anyhow::Result<HashMap<ModCode, f32>> {
+) -> anyhow::Result<HashMap<ModCodeRepr, f32>> {
     let per_mod_thresholds = raw_per_mod_thresholds
         .iter()
-        .map(|raw| parse_raw_threshold::<ModCode>(raw))
-        .collect::<anyhow::Result<HashMap<ModCode, f32>>>()?;
+        .map(|raw| {
+            let parts = raw.split(":").collect::<Vec<&str>>();
+            if parts.len() != 2 {
+                Err(anyhow!("encountered illegal per-mod threshold: {raw}. Should be mod_code:threshold \
+                e.g. h:0.8"))
+            } else {
+                ModCodeRepr::parse(parts[0])
+                    .and_then(|x| {
+                        parts[1].parse::<f32>().map(|t| (x, t))
+                            .map_err(|e|
+                                anyhow!("failed to parse per-mod threshold value {}, {}", &parts[1], e.to_string())
+                            )
+                    })
+            }
+        })
+        .collect::<anyhow::Result<HashMap<ModCodeRepr, f32>>>()?;
     per_mod_thresholds.iter().for_each(|(mod_code, thresh)| {
-        info!("using threshold {thresh} for mod-code {}", mod_code.char());
+        info!("using threshold {thresh} for mod-code {}", mod_code);
     });
     Ok(per_mod_thresholds)
 }
 
 pub(crate) fn parse_thresholds(
     raw_base_thresholds: &[String],
-    per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+    per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
 ) -> anyhow::Result<MultipleThresholdModCaller> {
     let (default, per_base_thresholds) =
         parse_per_base_thresholds(raw_base_thresholds)?;
@@ -46,7 +62,7 @@ pub(crate) fn get_threshold_from_options(
     filter_percentile: f32,
     seed: Option<u64>,
     region: Option<&Region>,
-    per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+    per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
     edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
     position_filter: Option<&StrandedPositionFilter>,
@@ -98,7 +114,7 @@ pub(crate) fn get_threshold_from_options(
     ))
 }
 
-fn parse_raw_threshold<T: ParseChar>(raw: &str) -> anyhow::Result<(T, f32)> {
+fn parse_raw_threshold(raw: &str) -> anyhow::Result<(DnaBase, f32)> {
     let parts = raw.split(':').collect::<Vec<&str>>();
     if parts.len() != 2 {
         bail!(
@@ -110,7 +126,7 @@ fn parse_raw_threshold<T: ParseChar>(raw: &str) -> anyhow::Result<(T, f32)> {
         .chars()
         .nth(0)
         .ok_or(anyhow!("failed to parse canonical base {}", &parts[0]))?;
-    let base = T::parse_char(raw_base)
+    let base = DnaBase::parse(raw_base)
         .context(format!("failed to parse base {}", raw_base))?;
     let threshold_value = parts[1]
         .parse::<f32>()
@@ -127,7 +143,7 @@ fn parse_per_base_thresholds(
     if raw_thresholds.len() == 1 {
         let raw = &raw_thresholds[0];
         if raw.contains(':') {
-            let (dna_base, threshold) = parse_raw_threshold::<DnaBase>(raw)?;
+            let (dna_base, threshold) = parse_raw_threshold(raw)?;
             info!("using threshold {} for base {}", threshold, dna_base.char());
             let per_base_threshold = vec![(dna_base, threshold)]
                 .into_iter()
@@ -144,8 +160,7 @@ fn parse_per_base_thresholds(
         let mut per_base_thresholds = HashMap::new();
         for raw_threshold in raw_thresholds {
             if raw_threshold.contains(':') {
-                let (dna_base, threshold) =
-                    parse_raw_threshold::<DnaBase>(raw_threshold)?;
+                let (dna_base, threshold) = parse_raw_threshold(raw_threshold)?;
                 info!(
                     "using threshold {} for base {}",
                     threshold,

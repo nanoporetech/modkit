@@ -7,7 +7,7 @@ use log::{debug, info};
 use rayon::prelude::*;
 
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
@@ -72,7 +72,7 @@ pub(crate) fn calc_thresholds_per_base(
     read_ids_to_base_mod_calls: &ReadIdsToBaseModProbs,
     filter_percentile: f32,
     default_threshold: Option<f32>,
-    per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+    per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
 ) -> AnyhowResult<MultipleThresholdModCaller> {
     debug!("calculating per base thresholds");
     let st = std::time::Instant::now();

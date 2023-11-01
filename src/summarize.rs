@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use derive_new::new;
@@ -8,7 +8,7 @@ use log::{debug, error, info};
 use rayon::prelude::*;
 
 use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
@@ -27,10 +27,10 @@ pub struct ModSummary<'a> {
     pub reads_with_mod_calls: HashMap<DnaBase, u64>,
     /// For each canonical base, how many of each base modification
     /// code were observed and not filtered out.
-    pub mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
+    pub mod_call_counts: HashMap<DnaBase, HashMap<BaseState, u64>>,
     /// For each canonical base, how many of each base modification
     /// code were observed but filtered out.
-    pub filtered_mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
+    pub filtered_mod_call_counts: HashMap<DnaBase, HashMap<BaseState, u64>>,
     /// Total number of reads used in the summary. Usually a summary is computed
     /// on a sub-sample of the reads in a modBAM (or a sub-region).
     pub total_reads_used: usize,
@@ -39,6 +39,8 @@ pub struct ModSummary<'a> {
     pub per_base_thresholds: HashMap<DnaBase, f32>,
     /// If a region is provided, this is a reference to that region.
     pub region: Option<&'a Region>,
+    /// Mapping of which modcodes were observed for each base
+    pub per_base_mod_codes: HashMap<DnaBase, HashSet<ModCodeRepr>>,
 }
 
 impl<'a> ModSummary<'a> {
@@ -63,7 +65,7 @@ pub fn summarize_modbam<'a>(
     region: Option<&'a Region>,
     filter_percentile: f32,
     filter_thresholds: Option<MultipleThresholdModCaller>,
-    per_mod_thresholds: Option<HashMap<ModCode, f32>>,
+    per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
     position_filter: Option<&StrandedPositionFilter>,
@@ -127,10 +129,11 @@ pub(crate) fn sampled_reads_to_summary<'a>(
         .inner
         .par_iter()
         .progress_with(pb)
-        .map(|(read_id, canonical_base_to_calls)| {
+        .map(|(_read_id, canonical_base_to_calls)| {
             let mut mod_call_counts = HashMap::new();
             let mut filtered_mod_call_counts = HashMap::new();
             let mut reads_with_mod_calls = HashMap::new();
+            let mut observed_mods = HashMap::new();
             for (&canonical_base, base_modification_probs) in
                 canonical_base_to_calls
             {
@@ -143,74 +146,70 @@ pub(crate) fn sampled_reads_to_summary<'a>(
                         .entry(canonical_base)
                         .or_insert(HashMap::new());
 
-                let mod_code_for_canonical_base =
-                    match canonical_base.canonical_mod_code() {
-                        Ok(mod_code) => mod_code,
-                        Err(e) => {
-                            debug!(
-                                "read {} encountered {},\
-                            this limitation will be removed in a later version",
-                                read_id,
-                                e.to_string()
-                            );
-                            continue;
-                        }
-                    };
                 base_modification_probs
                     .iter()
-                    .filter_map(|bmp| {
+                    .map(|bmp| {
                         // need the argmax base_mod_call here too so that we can add to the correct
                         // filtered category
                         // once the whole "ModCode" bits are refactored, this will no longer be
                         // a necessary match
-                        let base_mod_call = bmp.argmax_base_mod_call();
+                        let argmax_base_mod_call = bmp.argmax_base_mod_call();
                         let thresholded_call =
                             threshold_caller.call(&canonical_base, bmp);
-                        match (thresholded_call, base_mod_call) {
-                            (Ok(bmc), Ok(arg_max_base_mod_call)) => {
-                                Some((bmc, arg_max_base_mod_call))
-                            }
-                            (Err(e), Err(_)) => {
-                                debug!(
-                                    "failed to make thresholded mod call {}",
-                                    e.to_string()
-                                );
-                                // expected failure
-                                None
-                            }
-                            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
-                                // logic error, until refactor the two errors here are the same
-                                error!(
-                                    "both should error or neither should! {}",
-                                    e.to_string()
-                                );
-                                None
-                            }
-                        }
+                        observed_mods
+                            .entry(canonical_base)
+                            .or_insert(HashSet::new())
+                            .extend(bmp.iter_probs().map(|(code, _)| *code));
+                        (thresholded_call, argmax_base_mod_call)
+                        // match (thresholded_call, base_mod_call) {
+                        //     (Ok(bmc), Ok(arg_max_base_mod_call)) => {
+                        //         // add the observed mod codes here so that we report on them even if they're
+                        //         // never called
+                        //         observed_mods.entry(canonical_base).or_insert(HashSet::new())
+                        //             .extend(bmp.iter_probs().map(|(code, _)| *code));
+                        //         Some((bmc, arg_max_base_mod_call))
+                        //     }
+                        //     (Err(e), Err(_)) => {
+                        //         debug!(
+                        //             "read {read_id} failed to make thresholded mod call {}",
+                        //             e.to_string()
+                        //         );
+                        //         // expected failure
+                        //         None
+                        //     }
+                        //     (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                        //         // logic error, until refactor the two errors here are the same
+                        //         error!(
+                        //             "both should error or neither should! {}",
+                        //             e.to_string()
+                        //         );
+                        //         None
+                        //     }
+                        // }
                     })
                     .for_each(|(threshold_call, argmax_call)| {
                         let agg = match (threshold_call, argmax_call) {
                             (BaseModCall::Canonical(_), _) => {
                                 canonical_base_mod_counts
-                                    .entry(mod_code_for_canonical_base)
+                                    .entry(BaseState::Canonical(canonical_base))
                                     .or_insert(0)
                             }
-                            (BaseModCall::Modified(_, mod_code), _) => {
+                            (BaseModCall::Modified(_, mod_code_repr), _) => {
                                 canonical_base_mod_counts
-                                    .entry(mod_code)
+                                    .entry(BaseState::Modified(mod_code_repr))
                                     .or_insert(0)
                             }
                             (
                                 BaseModCall::Filtered,
                                 BaseModCall::Canonical(_),
                             ) => canonical_base_filtered_mod_counts
-                                .entry(mod_code_for_canonical_base)
+                                .entry(BaseState::Canonical(canonical_base))
                                 .or_insert(0),
                             (
                                 BaseModCall::Filtered,
-                                BaseModCall::Modified(_, mod_code),
+                                BaseModCall::Modified(_, mod_code_repr),
                             ) => canonical_base_filtered_mod_counts
-                                .entry(mod_code)
+                                .entry(BaseState::Modified(mod_code_repr))
                                 .or_insert(0),
                             (BaseModCall::Filtered, BaseModCall::Filtered) => {
                                 error!("should not get filtered argmax calls");
@@ -226,16 +225,19 @@ pub(crate) fn sampled_reads_to_summary<'a>(
                 reads_with_mod_calls,
                 mod_call_counts,
                 filtered_mod_call_counts,
+                observed_mods,
             }
         })
         .reduce(|| ReadSummaryChunk::zero(), |a, b| a.op(b));
 
     let elap = start_t.elapsed();
     debug!("computing summary took {}s", elap.as_secs());
+
     let per_base_thresholds = threshold_caller
         .iter_thresholds()
         .map(|(b, t)| (*b, *t))
         .collect::<HashMap<DnaBase, f32>>();
+
     Ok(ModSummary::new(
         read_summary_chunk.reads_with_mod_calls,
         read_summary_chunk.mod_call_counts,
@@ -243,14 +245,16 @@ pub(crate) fn sampled_reads_to_summary<'a>(
         total_reads_used,
         per_base_thresholds,
         region,
+        read_summary_chunk.observed_mods,
     ))
 }
 
 #[derive(Debug)]
 struct ReadSummaryChunk {
     reads_with_mod_calls: HashMap<DnaBase, u64>,
-    mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
-    filtered_mod_call_counts: HashMap<DnaBase, HashMap<ModCode, u64>>,
+    mod_call_counts: HashMap<DnaBase, HashMap<BaseState, u64>>,
+    filtered_mod_call_counts: HashMap<DnaBase, HashMap<BaseState, u64>>,
+    observed_mods: HashMap<DnaBase, HashSet<ModCodeRepr>>,
 }
 
 impl Moniod for ReadSummaryChunk {
@@ -259,6 +263,7 @@ impl Moniod for ReadSummaryChunk {
             reads_with_mod_calls: HashMap::new(),
             mod_call_counts: HashMap::new(),
             filtered_mod_call_counts: HashMap::new(),
+            observed_mods: HashMap::new(),
         }
     }
 
@@ -266,13 +271,18 @@ impl Moniod for ReadSummaryChunk {
         let mut mod_call_counts = self.mod_call_counts;
         let mut filtered_mod_call_counts = self.filtered_mod_call_counts;
         let mut total = self.reads_with_mod_calls;
+        let mut observed_mods = self.observed_mods;
+
         total.op_mut(other.reads_with_mod_calls);
         mod_call_counts.op_mut(other.mod_call_counts);
         filtered_mod_call_counts.op_mut(other.filtered_mod_call_counts);
+        observed_mods.op_mut(other.observed_mods);
+
         Self {
             reads_with_mod_calls: total,
             mod_call_counts,
             filtered_mod_call_counts,
+            observed_mods,
         }
     }
 
@@ -281,6 +291,7 @@ impl Moniod for ReadSummaryChunk {
         self.mod_call_counts.op_mut(other.mod_call_counts);
         self.filtered_mod_call_counts
             .op_mut(other.filtered_mod_call_counts);
+        self.observed_mods.op_mut(other.observed_mods);
     }
 
     fn len(&self) -> usize {

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail};
 use std::collections::{HashMap, HashSet};
+use std::fmt::{Display, Formatter};
 
 use std::string::FromUtf8Error;
 
@@ -210,6 +211,31 @@ impl From<Strand> for StrandRule {
             Strand::Positive => Self::Positive,
             Strand::Negative => Self::Negative,
         }
+    }
+}
+
+impl TryFrom<char> for StrandRule {
+    type Error = anyhow::Error;
+
+    fn try_from(value: char) -> Result<Self, Self::Error> {
+        match value {
+            '+' => Ok(Self::Positive),
+            '-' => Ok(Self::Negative),
+            '.' => Ok(Self::Both),
+            _ => bail!("illegal strand rule {value}"),
+        }
+    }
+}
+
+impl Display for StrandRule {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let lab = match self {
+            Self::Positive => '+',
+            Self::Negative => '-',
+            Self::Both => '.',
+        };
+
+        write!(f, "{}", lab)
     }
 }
 

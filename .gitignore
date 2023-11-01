@@ -19,3 +19,5 @@ book/book/*
 scripts
 scripts/*
 *.bak
+artifacts
+artifacts/

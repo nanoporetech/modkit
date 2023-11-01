@@ -1,9 +1,11 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::fmt::{Debug, Display, Formatter};
+use std::hash::Hash;
 
 use anyhow::bail;
 use derive_new::new;
-use itertools::Itertools;
+use itertools::{Itertools, PeekingNext};
 use log::{debug, error};
 use nom::bytes::complete::tag;
 use nom::character::complete::{digit1, multispace0};
@@ -14,7 +16,7 @@ use rust_htslib::bam::record::Aux;
 use rustc_hash::FxHashMap;
 
 use crate::errs::{InputError, RunError};
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::util;
 use crate::util::{
@@ -180,7 +182,7 @@ pub(crate) fn filter_records_iter<T: bam::Read>(
 pub const MM_TAGS: [&str; 2] = ["MM", "Mm"];
 pub const ML_TAGS: [&str; 2] = ["ML", "Ml"];
 
-pub type RawModCode = char;
+// pub type RawModCode = char;
 
 pub struct RawModTags {
     raw_mm: String,
@@ -222,20 +224,20 @@ impl RawModTags {
 #[derive(Debug, Clone)]
 pub enum CollapseMethod {
     /// ModCode is the modified base to remove
-    ReNormalize(RawModCode),
+    ReNormalize(ModCodeRepr),
     /// ModCode is the modified base to remove
-    ReDistribute(RawModCode),
+    ReDistribute(ModCodeRepr),
     /// Convert one mod base to another
     Convert {
-        from: HashSet<RawModCode>,
-        to: RawModCode,
+        from: HashSet<ModCodeRepr>,
+        to: ModCodeRepr,
     },
 }
 
 impl CollapseMethod {
     pub fn parse_str(
         raw: &str,
-        mod_code: RawModCode,
+        mod_code: ModCodeRepr,
     ) -> Result<Self, InputError> {
         match raw {
             "norm" => Ok(Self::ReNormalize(mod_code)),
@@ -245,7 +247,7 @@ impl CollapseMethod {
     }
 
     // todo(arand) consider making this return an iterator
-    pub(crate) fn get_codes_to_remove(&self) -> HashSet<char> {
+    pub(crate) fn get_codes_to_remove(&self) -> HashSet<ModCodeRepr> {
         match self {
             CollapseMethod::ReNormalize(raw_code)
             | CollapseMethod::ReDistribute(raw_code) => {
@@ -292,7 +294,7 @@ impl SkipMode {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BaseModCall {
     Canonical(f32),
-    Modified(f32, ModCode),
+    Modified(f32, ModCodeRepr),
     Filtered,
 }
 
@@ -321,38 +323,38 @@ impl PartialOrd for BaseModCall {
 
 #[derive(new, Debug, PartialEq, Clone)]
 pub struct BaseModProbs {
-    probs: FxHashMap<char, f32>,
+    probs: FxHashMap<ModCodeRepr, f32>,
     // skip_mode: SkipMode,
     // strand: Strand,
 }
 
 impl BaseModProbs {
-    pub fn new_init(mod_code: char, prob: f32) -> Self {
+    pub fn new_init<T: Into<ModCodeRepr>>(mod_code: T, prob: f32) -> Self {
         Self {
-            probs: [(mod_code, prob)].into_iter().collect(),
+            probs: FxHashMap::from_iter([(mod_code.into(), prob)]),
         }
     }
 
-    pub fn insert_base_mod_prob(&mut self, mod_code: char, prob: f32) {
+    pub fn insert_base_mod_prob(&mut self, mod_code: ModCodeRepr, prob: f32) {
         (*self.probs.entry(mod_code).or_insert(0f32)) += prob;
     }
 
-    pub fn argmax_base_mod_call(&self) -> anyhow::Result<BaseModCall> {
+    pub fn argmax_base_mod_call(&self) -> BaseModCall {
         let canonical_prob = self.canonical_prob();
         let max_mod_prob = self
             .iter_probs()
             .max_by(|(_, p), (_, q)| p.partial_cmp(q).unwrap());
         let base_mod_call = if let Some((mod_code, mod_prob)) = max_mod_prob {
-            let mod_code = ModCode::parse_raw_mod_code(*mod_code)?;
+            // let mod_code = ModCode::parse_raw_mod_code(*mod_code)?;
             if *mod_prob > canonical_prob {
-                BaseModCall::Modified(*mod_prob, mod_code)
+                BaseModCall::Modified(*mod_prob, *mod_code)
             } else {
                 BaseModCall::Canonical(canonical_prob)
             }
         } else {
             BaseModCall::Canonical(canonical_prob)
         };
-        Ok(base_mod_call)
+        base_mod_call
     }
 
     pub fn canonical_prob(&self) -> f32 {
@@ -360,7 +362,7 @@ impl BaseModProbs {
     }
 
     // todo(arand): these methods should be removed/renamed to be more useful
-    pub fn iter_probs(&self) -> impl Iterator<Item = (&char, &f32)> {
+    pub fn iter_probs(&self) -> impl Iterator<Item = (&ModCodeRepr, &f32)> {
         self.probs.iter()
     }
 
@@ -368,7 +370,9 @@ impl BaseModProbs {
         self.probs.iter_mut().map(|(_, p)| p)
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&char, &mut f32)> {
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&ModCodeRepr, &mut f32)> {
         self.probs.iter_mut()
     }
 
@@ -382,7 +386,7 @@ impl BaseModProbs {
                 let marginal_collapsed_prob = self
                     .iter_probs()
                     .filter(|(mod_code, _prob)| *mod_code != mod_to_collapse)
-                    .collect::<Vec<(&char, &f32)>>();
+                    .collect::<Vec<(&ModCodeRepr, &f32)>>();
                 let total_marginal_collapsed_prob = marginal_collapsed_prob
                     .iter()
                     .map(|(_, p)| *p)
@@ -413,7 +417,7 @@ impl BaseModProbs {
                 let other_mods = self
                     .iter_probs()
                     .filter(|(mod_code, _prob)| *mod_code != mod_to_collapse)
-                    .collect::<Vec<(&char, &f32)>>();
+                    .collect::<Vec<(&ModCodeRepr, &f32)>>();
 
                 let n_other_mods = other_mods.len() as f32 + 1f32; // plus 1 for the canonical base
                 let prob_to_redistribute = marginal_prob / n_other_mods;
@@ -577,7 +581,7 @@ pub struct BaseModPositions {
     pub(crate) canonical_base: char,
     mode: SkipMode,
     strand: Strand,
-    mod_base_codes: Vec<char>,
+    mod_base_codes: Vec<ModCodeRepr>,
     delta_list: Vec<u32>,
 }
 
@@ -599,7 +603,8 @@ impl BaseModPositions {
             .ok_or(InputError::new(
                 "failed to get leader for base mod position line",
             ))?
-            .chars();
+            .chars()
+            .peekable();
 
         let canonical_base = header
             .nth(0)
@@ -615,6 +620,27 @@ impl BaseModPositions {
         let mut mode: Option<SkipMode> = None;
 
         let mut offset = 2usize;
+        let mut seen_chebi = false;
+
+        let is_chebi =
+            header.peek().map(|c| c.is_ascii_digit()).unwrap_or(false);
+        if is_chebi {
+            let mut agg = Vec::new();
+            while let Some(d) = header.peeking_next(|d| d.is_ascii_digit()) {
+                agg.push(d)
+            }
+            offset += agg.len();
+            let raw_chebi = agg.into_iter().collect::<String>();
+            let chebi_code = raw_chebi.parse::<u32>().map_err(|e| {
+                InputError(format!(
+                    "illegal chEBI code {raw_chebi}, {}",
+                    e.to_string()
+                ))
+            })?;
+            mod_base_codes.push(ModCodeRepr::ChEbi(chebi_code));
+            seen_chebi = true;
+        }
+
         while let Some(c) = header.next() {
             match c {
                 '?' | '.' => {
@@ -622,12 +648,18 @@ impl BaseModPositions {
                     offset += 1;
                 }
                 _ => {
-                    mod_base_codes.push(c);
-                    offset += 1;
+                    if c.is_ascii_digit() {
+                        return Err(InputError::new("cannot have digit mod code, illegal MM tag {mod_positions}"));
+                    } else {
+                        if seen_chebi {
+                            return Err(InputError("cannot combine chEBI codes and regular codes, {header}".to_string()));
+                        }
+                        mod_base_codes.push(ModCodeRepr::Code(c));
+                        offset += 1;
+                    }
                 }
             }
         }
-        // default to the "old version"
         let mode = mode.unwrap_or(SkipMode::ImplicitProbModified);
 
         let delta_list = if offset + 1 <= mod_positions.len() {
@@ -673,7 +705,7 @@ fn combine_positions_to_probs(
 ) -> Result<(), InputError> {
     if agg.skip_mode != to_add.skip_mode {
         let record_name =
-            util::get_query_name_string(record).unwrap_or("???".to_string());
+            get_query_name_string(record).unwrap_or("???".to_string());
         Err(InputError::new(&format!(
             "record: {record_name}, two skip modes ({} and {}) do not match",
             agg.skip_mode.char().unwrap_or('.'),
@@ -834,28 +866,28 @@ impl SeqPosBaseModProbs {
 
     pub(crate) fn get_mod_codes(
         &self,
-        codes_to_remove: &HashSet<char>,
-    ) -> Vec<char> {
+        codes_to_remove: &HashSet<ModCodeRepr>,
+    ) -> Vec<ModCodeRepr> {
         self.pos_to_base_mod_probs
             .values()
             .flat_map(|base_mod_probs| {
                 base_mod_probs
                     .iter_probs()
                     .map(|(raw_mod_code, _)| *raw_mod_code)
-                    .collect::<HashSet<char>>()
+                    .collect::<HashSet<ModCodeRepr>>()
             })
             .filter(|raw_base| !codes_to_remove.contains(raw_base))
-            .collect::<HashSet<char>>()
+            .collect::<HashSet<ModCodeRepr>>()
             .into_iter()
             .sorted()
-            .collect::<Vec<char>>()
+            .collect::<Vec<ModCodeRepr>>()
     }
 
     pub(crate) fn add_implicit_mod_calls(
         self,
         forward_sequence: &str,
         primary_base: char,
-        codes_to_remove: &HashSet<char>,
+        codes_to_remove: &HashSet<ModCodeRepr>,
         edge_filter: Option<&EdgeFilter>,
     ) -> Self {
         if self.skip_mode == SkipMode::ProbModified
@@ -998,7 +1030,7 @@ pub fn format_mm_ml_tag(
 ) -> (String, Vec<u8>) {
     let canonical_base = converter.canonical_base;
     let mut mod_code_to_position =
-        HashMap::<(char, Strand), Vec<(usize, f32)>>::new();
+        HashMap::<(ModCodeRepr, Strand), Vec<(usize, f32)>>::new();
 
     for (position, mod_base_probs) in positions_to_probs.pos_to_base_mod_probs {
         for (mod_base_code, mod_base_prob) in mod_base_probs.iter_probs() {
@@ -1017,15 +1049,11 @@ pub fn format_mm_ml_tag(
         .map(|s| s.to_string())
         .unwrap_or("".to_string());
     if mod_code_to_position.is_empty() {
-        let raw_mod_code = ModCode::get_ambig_modcode(canonical_base)
-            .map(|mod_code| mod_code.char())
-            .unwrap_or(canonical_base);
-
         mm_tag.push_str(&format!(
             "{}{}{}{};",
             canonical_base,
             strand.to_char(),
-            raw_mod_code,
+            canonical_base, // "any mod" for a base is the same char as itself
             skip_mode_label
         ));
     } else {
@@ -1218,7 +1246,7 @@ impl ModBaseInfo {
     pub fn into_iter_base_mod_probs(
         self,
     ) -> (
-        HashMap<char, DeltaListConverter>,
+        HashMap<char, DeltaListConverter>, // todo make this DnaBase
         impl Iterator<Item = (char, Strand, SeqPosBaseModProbs)>,
     ) {
         // todo(arand) change the Item here to include the converter
@@ -1348,10 +1376,46 @@ impl EdgeFilter {
     }
 }
 
+// DuplexPattern, None means it's a canonical call ('-')
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub enum DuplexModCodeRepr {
+    Canonical,
+    Code(char),
+    ChEbi(u32),
+}
+
+impl From<ModCodeRepr> for DuplexModCodeRepr {
+    fn from(value: ModCodeRepr) -> Self {
+        match value {
+            ModCodeRepr::Code(c) => Self::Code(c),
+            ModCodeRepr::ChEbi(n) => Self::ChEbi(n),
+        }
+    }
+}
+
+impl Display for DuplexModCodeRepr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ChEbi(x) => {
+                write!(f, "{}", x)
+            }
+            Self::Code(x) => write!(f, "{}", x),
+            Self::Canonical => {
+                write!(f, "-")
+            }
+        }
+    }
+}
+
+const CANONICAL_DUPLEX_PATTERN: [DuplexModCodeRepr; 2] =
+    [DuplexModCodeRepr::Canonical, DuplexModCodeRepr::Canonical];
+
+pub type DuplexPattern = [DuplexModCodeRepr; 2];
+
 #[derive(Hash, Eq, PartialEq, Debug)]
 pub(crate) enum DuplexModCall {
     ModCall {
-        pattern: [char; 2],
+        pattern: DuplexPattern,
         primary_base: char,
     },
     Filtered {
@@ -1371,19 +1435,19 @@ impl DuplexModCall {
         match (pos_base_mod_call, neg_base_mod_call) {
             (BaseModCall::Canonical(_), BaseModCall::Canonical(_)) => {
                 Self::ModCall {
-                    pattern: ['-', '-'],
+                    pattern: CANONICAL_DUPLEX_PATTERN,
                     primary_base,
                 }
             }
             (BaseModCall::Canonical(_), BaseModCall::Modified(_, mod_code)) => {
                 Self::ModCall {
-                    pattern: ['-', mod_code.char()],
+                    pattern: [DuplexModCodeRepr::Canonical, mod_code.into()],
                     primary_base,
                 }
             }
             (BaseModCall::Modified(_, mod_code), BaseModCall::Canonical(_)) => {
                 Self::ModCall {
-                    pattern: [mod_code.char(), '-'],
+                    pattern: [mod_code.into(), DuplexModCodeRepr::Canonical],
                     primary_base,
                 }
             }
@@ -1391,7 +1455,7 @@ impl DuplexModCall {
                 BaseModCall::Modified(_, mod_code_pos),
                 BaseModCall::Modified(_, mod_code_neg),
             ) => Self::ModCall {
-                pattern: [mod_code_pos.char(), mod_code_neg.char()],
+                pattern: [mod_code_pos.into(), mod_code_neg.into()],
                 primary_base,
             },
             (_, BaseModCall::Filtered) | (BaseModCall::Filtered, _) => {
@@ -1416,7 +1480,7 @@ impl DuplexModCall {
             Self::ModCall {
                 pattern,
                 primary_base: _,
-            } => pattern == &['-', '-'],
+            } => pattern == &CANONICAL_DUPLEX_PATTERN,
             _ => false,
         }
     }
@@ -1426,12 +1490,12 @@ impl DuplexModCall {
             Self::ModCall {
                 pattern,
                 primary_base: _,
-            } => pattern != &['-', '-'],
+            } => pattern != &CANONICAL_DUPLEX_PATTERN,
             _ => false,
         }
     }
 
-    pub(crate) fn pattern(&self) -> Option<[char; 2]> {
+    pub(crate) fn pattern(&self) -> Option<DuplexPattern> {
         match self {
             Self::ModCall {
                 pattern,
@@ -1460,15 +1524,21 @@ impl DuplexModCall {
             if self.is_canonical() {
                 self
             } else {
-                let x = if pattern[0] == '-' {
-                    '-'
+                let x = if pattern[0] == DuplexModCodeRepr::Canonical {
+                    DuplexModCodeRepr::Canonical
                 } else {
-                    self.primary_base()
+                    let any_mod_code = ModCodeRepr::any_mod_code(
+                        &DnaBase::parse(self.primary_base()).unwrap(),
+                    );
+                    any_mod_code.into()
                 };
-                let y = if pattern[1] == '-' {
-                    '-'
+                let y = if pattern[1] == DuplexModCodeRepr::Canonical {
+                    DuplexModCodeRepr::Canonical
                 } else {
-                    self.primary_base()
+                    let any_mod_code = ModCodeRepr::any_mod_code(
+                        &DnaBase::parse(self.primary_base()).unwrap(),
+                    );
+                    any_mod_code.into()
                 };
                 let pattern = [x, y];
                 Self::ModCall {
@@ -1502,85 +1572,85 @@ mod mod_bam_tests {
     }
 
     // first implementation that does not account for multiple mods in the MM tag (i.e. C and A))
-    pub fn get_mod_probs_for_query_positions(
-        mm: &str,
-        canonical_base: char,
-        mod_quals: &[u16],
-        converter: &DeltaListConverter,
-    ) -> Result<HashMap<usize, BaseModProbs>, InputError> {
-        // todo move this outside this function. should handle the case where mods for another base
-        //  come first and the offset of mod_quals is already handled
-        let filtered_mod_positions = mm
-            .split(';')
-            .filter(|positions| positions.starts_with(canonical_base))
-            .collect::<Vec<&str>>();
-
-        let mut probs_for_positions = HashMap::<usize, BaseModProbs>::new();
-        let mut prob_array_idx = 0usize;
-        for mod_positions in filtered_mod_positions {
-            let mut parts = mod_positions.split(',');
-            let mut header = parts
-                .nth(0)
-                .ok_or(InputError::new(
-                    "failed to get leader for base mod position line",
-                ))?
-                .chars();
-
-            let raw_stand = header
-                .nth(1)
-                .ok_or(InputError::new("failed to get strand"))?;
-
-            // TODO handle duplex
-            let _strand = Strand::parse_char(raw_stand).unwrap();
-
-            let mut mod_base_codes = Vec::new();
-            let mut _mode: Option<char> = None;
-
-            while let Some(c) = header.next() {
-                match c {
-                    '?' | '.' => {
-                        _mode = Some(c);
-                    }
-                    _ => mod_base_codes.push(c),
-                }
-            }
-
-            // taking the liberty to think that a read wouldn't be larger
-            // than 2**32 - 1 bases long
-            let delta_list = parts
-                .into_iter()
-                .map(|raw_pos| raw_pos.parse::<u32>())
-                .collect::<Result<Vec<u32>, _>>()
-                .map_err(|e| {
-                    InputError::new(&format!(
-                        "failed to parse position list, {}",
-                        e.to_string()
-                    ))
-                })?;
-
-            let positions = converter.to_positions(&delta_list)?;
-            for mod_base in mod_base_codes {
-                for pos in &positions {
-                    let qual = mod_quals[prob_array_idx];
-                    let prob = qual_to_prob(qual);
-                    if let Some(base_mod_probs) =
-                        probs_for_positions.get_mut(pos)
-                    {
-                        base_mod_probs.insert_base_mod_prob(mod_base, prob);
-                    } else {
-                        probs_for_positions.insert(
-                            *pos,
-                            BaseModProbs::new_init(mod_base, prob),
-                        );
-                    }
-                    // consume from the ML array
-                    prob_array_idx += 1;
-                }
-            }
-        }
-
-        Ok(probs_for_positions)
-    }
+    // pub fn get_mod_probs_for_query_positions(
+    //     mm: &str,
+    //     canonical_base: char,
+    //     mod_quals: &[u16],
+    //     converter: &DeltaListConverter,
+    // ) -> Result<HashMap<usize, BaseModProbs>, InputError> {
+    //     // todo move this outside this function. should handle the case where mods for another base
+    //     //  come first and the offset of mod_quals is already handled
+    //     let filtered_mod_positions = mm
+    //         .split(';')
+    //         .filter(|positions| positions.starts_with(canonical_base))
+    //         .collect::<Vec<&str>>();
+    //
+    //     let mut probs_for_positions = HashMap::<usize, BaseModProbs>::new();
+    //     let mut prob_array_idx = 0usize;
+    //     for mod_positions in filtered_mod_positions {
+    //         let mut parts = mod_positions.split(',');
+    //         let mut header = parts
+    //             .nth(0)
+    //             .ok_or(InputError::new(
+    //                 "failed to get leader for base mod position line",
+    //             ))?
+    //             .chars();
+    //
+    //         let raw_stand = header
+    //             .nth(1)
+    //             .ok_or(InputError::new("failed to get strand"))?;
+    //
+    //         // TODO handle duplex
+    //         let _strand = Strand::parse_char(raw_stand).unwrap();
+    //
+    //         let mut mod_base_codes = Vec::new();
+    //         let mut _mode: Option<char> = None;
+    //
+    //         while let Some(c) = header.next() {
+    //             match c {
+    //                 '?' | '.' => {
+    //                     _mode = Some(c);
+    //                 }
+    //                 _ => mod_base_codes.push(c),
+    //             }
+    //         }
+    //
+    //         // taking the liberty to think that a read wouldn't be larger
+    //         // than 2**32 - 1 bases long
+    //         let delta_list = parts
+    //             .into_iter()
+    //             .map(|raw_pos| raw_pos.parse::<u32>())
+    //             .collect::<Result<Vec<u32>, _>>()
+    //             .map_err(|e| {
+    //                 InputError::new(&format!(
+    //                     "failed to parse position list, {}",
+    //                     e.to_string()
+    //                 ))
+    //             })?;
+    //
+    //         let positions = converter.to_positions(&delta_list)?;
+    //         for mod_base in mod_base_codes {
+    //             for pos in &positions {
+    //                 let qual = mod_quals[prob_array_idx];
+    //                 let prob = qual_to_prob(qual);
+    //                 if let Some(base_mod_probs) =
+    //                     probs_for_positions.get_mut(pos)
+    //                 {
+    //                     base_mod_probs.insert_base_mod_prob(mod_base, prob);
+    //                 } else {
+    //                     probs_for_positions.insert(
+    //                         *pos,
+    //                         BaseModProbs::new_init(mod_base, prob),
+    //                     );
+    //                 }
+    //                 // consume from the ML array
+    //                 prob_array_idx += 1;
+    //             }
+    //         }
+    //     }
+    //
+    //     Ok(probs_for_positions)
+    // }
 
     #[test]
     fn test_delta_list_to_positions() {
@@ -1612,158 +1682,162 @@ mod mod_bam_tests {
 
     #[test]
     fn test_mod_prob_collapse() {
-        let probs = vec![('h', 0.85), ('m', 0.10)].into_iter().collect();
+        let probs = HashMap::from([('h'.into(), 0.85), ('m'.into(), 0.10)])
+            .into_iter()
+            .collect();
 
         let mod_base_probs = BaseModProbs { probs };
         let collapsed = mod_base_probs
             .clone()
-            .into_collapsed(&CollapseMethod::ReDistribute('h'));
+            .into_collapsed(&CollapseMethod::ReDistribute('h'.into()));
         assert_eq!(
             collapsed.probs,
-            vec![('m', 0.52500004)]
+            vec![('m'.into(), 0.52500004)]
                 .into_iter()
-                .collect::<FxHashMap<char, f32>>()
+                .collect::<FxHashMap<ModCodeRepr, f32>>()
         );
         let collapsed = mod_base_probs
             .clone()
-            .into_collapsed(&CollapseMethod::ReNormalize('h'));
+            .into_collapsed(&CollapseMethod::ReNormalize('h'.into()));
         assert_eq!(
             collapsed.probs,
-            vec![('m', 0.6666669)]
+            vec![('m'.into(), 0.6666669)]
                 .into_iter()
-                .collect::<FxHashMap<char, f32>>()
+                .collect::<FxHashMap<ModCodeRepr, f32>>()
         );
 
         let collapsed = mod_base_probs
             .clone()
-            .into_collapsed(&CollapseMethod::ReNormalize('a'));
+            .into_collapsed(&CollapseMethod::ReNormalize('a'.into()));
         assert_eq!(&collapsed, &mod_base_probs);
         let collapsed = mod_base_probs
             .clone()
-            .into_collapsed(&CollapseMethod::ReDistribute('a'));
+            .into_collapsed(&CollapseMethod::ReDistribute('a'.into()));
         assert_eq!(&collapsed, &mod_base_probs);
     }
 
     #[test]
     fn test_mod_prob_collapse_norm_examples() {
-        let probs = vec![('h', 0.05273438), ('m', 0.03320312)]
+        let probs = vec![('h'.into(), 0.05273438), ('m'.into(), 0.03320312)]
             .into_iter()
             .collect();
 
         let mod_base_probs = BaseModProbs { probs };
-        let collapsed =
-            mod_base_probs.into_collapsed(&CollapseMethod::ReNormalize('h'));
+        let collapsed = mod_base_probs
+            .into_collapsed(&CollapseMethod::ReNormalize('h'.into()));
         assert_eq!(
             collapsed.probs,
-            vec![('m', 0.035051543)]
+            vec![('m'.into(), 0.035051543)]
                 .into_iter()
-                .collect::<FxHashMap<char, f32>>()
+                .collect::<FxHashMap<ModCodeRepr, f32>>()
         );
     }
 
     #[test]
     fn test_mod_prob_collapse_dist_examples() {
-        let probs = vec![('h', 0.05273438), ('m', 0.03320312)]
+        let probs = vec![('h'.into(), 0.05273438), ('m'.into(), 0.03320312)]
             .into_iter()
             .collect();
         let mod_base_probs = BaseModProbs { probs };
-        let collapsed =
-            mod_base_probs.into_collapsed(&CollapseMethod::ReDistribute('h'));
+        let collapsed = mod_base_probs
+            .into_collapsed(&CollapseMethod::ReDistribute('h'.into()));
         assert_eq!(
             collapsed.probs,
-            vec![('m', 0.059570313)]
+            vec![('m'.into(), 0.059570313)]
                 .into_iter()
-                .collect::<FxHashMap<char, f32>>()
+                .collect::<FxHashMap<ModCodeRepr, f32>>()
         );
     }
 
     #[test]
     fn test_mod_prob_convert() {
-        let probs = vec![('h', 0.10), ('m', 0.75)]
+        let probs = vec![('h'.into(), 0.10), ('m'.into(), 0.75)]
             .into_iter()
-            .collect::<FxHashMap<char, f32>>();
+            .collect::<FxHashMap<ModCodeRepr, f32>>();
         let mod_base_probs = BaseModProbs {
             probs: probs.clone(),
         };
 
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
-                from: HashSet::from(['h']),
-                to: 'C',
+                from: HashSet::from(['h'.into()]),
+                to: 'C'.into(),
             });
         assert_eq!(
             collapsed.probs,
-            vec![('m', 0.75), ('C', 0.10)]
+            vec![('m'.into(), 0.75), ('C'.into(), 0.10)]
                 .into_iter()
-                .collect::<FxHashMap<char, f32>>()
+                .collect::<FxHashMap<ModCodeRepr, f32>>()
         );
         let mod_base_probs = BaseModProbs {
             probs: probs.clone(),
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
-                from: HashSet::from(['h', 'm']),
-                to: 'C',
+                from: HashSet::from(['h'.into(), 'm'.into()]),
+                to: 'C'.into(),
             });
         assert_eq!(
             collapsed.probs,
-            vec![('C', 0.85)]
+            vec![('C'.into(), 0.85)]
                 .into_iter()
-                .collect::<FxHashMap<char, f32>>()
+                .collect::<FxHashMap<ModCodeRepr, f32>>()
         );
     }
 
     #[test]
     fn test_mod_prob_convert_sums_prob() {
-        let probs = vec![('h', 0.10), ('m', 0.75)].into_iter().collect();
+        let probs = vec![('h'.into(), 0.10), ('m'.into(), 0.75)]
+            .into_iter()
+            .collect();
         let mod_base_probs = BaseModProbs { probs };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
-                from: HashSet::from(['h']),
-                to: 'm',
+                from: HashSet::from(['h'.into()]),
+                to: 'm'.into(),
             });
         assert_eq!(
             collapsed.probs,
-            vec![('m', 0.85)]
+            vec![('m'.into(), 0.85)]
                 .into_iter()
-                .collect::<FxHashMap<char, f32>>()
+                .collect::<FxHashMap<ModCodeRepr, f32>>()
         );
     }
 
     #[test]
     fn test_mod_prob_convert_noop() {
-        let probs = vec![('h', 0.10), ('m', 0.75)]
+        let probs = vec![('h'.into(), 0.10), ('m'.into(), 0.75)]
             .into_iter()
-            .collect::<FxHashMap<char, f32>>();
+            .collect::<FxHashMap<ModCodeRepr, f32>>();
         let mod_base_probs = BaseModProbs {
             probs: probs.clone(),
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
-                from: HashSet::from(['a']),
-                to: 'A',
+                from: HashSet::from(['a'.into()]),
+                to: 'A'.into(),
             });
         assert_eq!(collapsed.probs, probs);
     }
 
     #[test]
     fn test_mod_prob_combine() {
-        let a_probs = vec![('h', 0.05273438), ('m', 0.03320312)]
+        let a_probs = vec![('h'.into(), 0.05273438), ('m'.into(), 0.03320312)]
             .into_iter()
             .collect();
         let mut a = BaseModProbs { probs: a_probs };
-        let b_probs = vec![('m', 0.03320312)].into_iter().collect();
+        let b_probs = vec![('m'.into(), 0.03320312)].into_iter().collect();
         let b = BaseModProbs { probs: b_probs };
         a.combine(b);
         assert_eq!(
             &a.probs,
-            &vec![('h', 0.05273438), ('m', 0.06640624)]
+            &vec![('h'.into(), 0.05273438), ('m'.into(), 0.06640624)]
                 .into_iter()
-                .collect::<FxHashMap<char, f32>>()
+                .collect::<FxHashMap<ModCodeRepr, f32>>()
         );
 
-        let a_probs = vec![('m', 0.03320312)].into_iter().collect();
-        let b_probs = vec![('h', 0.05273438)].into_iter().collect();
+        let a_probs = vec![('m'.into(), 0.03320312)].into_iter().collect();
+        let b_probs = vec![('h'.into(), 0.05273438)].into_iter().collect();
 
         let mut a = BaseModProbs { probs: a_probs };
 
@@ -1771,29 +1845,31 @@ mod mod_bam_tests {
         a.combine(b);
         assert_eq!(
             &a.probs,
-            &[('m', 0.03320312), ('h', 0.05273438)]
+            &[('m'.into(), 0.03320312), ('h'.into(), 0.05273438)]
                 .into_iter()
-                .collect::<FxHashMap<char, f32>>()
+                .collect::<FxHashMap<ModCodeRepr, f32>>()
         );
     }
 
     #[test]
+    #[ignore = "old implementation"]
     fn test_parse_mm_tag() {
         let tag =
             "C+h?,5,2,1,3,1,2,3,1,2,1,11,5;C+m?,5,2,1,3,1,2,3,1,2,1,11,5;";
-        let dna = "ATGTGCCTGCTGGACATGTTTATGCTCGTCTACTTCGTTCAGTTACGTATTGCTCCAG\
-            CGCTCGAACTGTAGCCGCTGCTGCTGGGTGAAGTTGTGGCGGTACACGAGCTCCGCCGGCTGCAGCAGCTTC\
-            TCCCCATCCTGGCGCTTCTCCCCGAGCAATTGGTG";
-        let mod_quals = vec![
-            197, 13, 156, 1, 3, 5, 9, 26, 8, 1, 0, 13, 10, 67, 1, 0, 1, 0, 5,
-            5, 5, 0, 0, 8,
-        ];
-
-        let converter = DeltaListConverter::new(dna, 'C');
-        let positions_to_probs =
-            get_mod_probs_for_query_positions(tag, 'C', &mod_quals, &converter)
-                .unwrap();
-        assert_eq!(positions_to_probs.len(), 12);
+        // let dna = "ATGTGCCTGCTGGACATGTTTATGCTCGTCTACTTCGTTCAGTTACGTATTGCTCCAG\
+        //     CGCTCGAACTGTAGCCGCTGCTGCTGGGTGAAGTTGTGGCGGTACACGAGCTCCGCCGGCTGCAGCAGCTTC\
+        //     TCCCCATCCTGGCGCTTCTCCCCGAGCAATTGGTG";
+        // let mod_quals = vec![
+        //     197, 13, 156, 1, 3, 5, 9, 26, 8, 1, 0, 13, 10, 67, 1, 0, 1, 0, 5,
+        //     5, 5, 0, 0, 8,
+        // ];
+        //
+        // let converter = DeltaListConverter::new(dna, 'C');
+        // let positions_to_probs =
+        //     get_mod_probs_for_query_positions(tag, 'C', &mod_quals, &converter)
+        //         .unwrap();
+        // assert_eq!(positions_to_probs.len(), 12);
+        unimplemented!()
     }
 
     #[test]
@@ -1849,7 +1925,7 @@ mod mod_bam_tests {
             canonical_base: 'C',
             mode: SkipMode::Ambiguous,
             strand: Strand::Positive,
-            mod_base_codes: vec!['h'],
+            mod_base_codes: vec!['h'.into()],
             delta_list: vec![5, 2, 1, 3, 1, 2, 3, 1, 2, 1, 11, 5],
         };
 
@@ -1862,7 +1938,7 @@ mod mod_bam_tests {
             canonical_base: 'C',
             mode: SkipMode::ImplicitProbModified,
             strand: Strand::Positive,
-            mod_base_codes: vec!['m'],
+            mod_base_codes: vec!['m'.into()],
             delta_list: vec![5, 2, 1, 3, 1, 2, 3, 1, 2, 1, 11, 5],
         };
 
@@ -1874,7 +1950,7 @@ mod mod_bam_tests {
             canonical_base: 'C',
             mode: SkipMode::ProbModified,
             strand: Strand::Positive,
-            mod_base_codes: vec!['m'],
+            mod_base_codes: vec!['m'.into()],
             delta_list: vec![5, 2, 1, 3, 1, 2, 3, 1, 2, 1, 11, 5],
         };
         assert_eq!(base_mod_positions, expected);
@@ -1933,9 +2009,9 @@ mod mod_bam_tests {
         {
             assert_eq!(
                 &base_mod_probs.probs,
-                &[('h', 0.005859375), ('m', 0.005859375)]
+                &[('h'.into(), 0.005859375), ('m'.into(), 0.005859375)]
                     .into_iter()
-                    .collect::<FxHashMap<char, f32>>()
+                    .collect::<FxHashMap<ModCodeRepr, f32>>()
             );
         }
 
@@ -1988,13 +2064,15 @@ mod mod_bam_tests {
         )
         .unwrap();
 
-        let c_expected_probs = vec![('h', 0.005859375), ('m', 0.39257813)]
-            .into_iter()
-            .collect();
+        let c_expected_probs =
+            vec![('h'.into(), 0.005859375), ('m'.into(), 0.39257813)]
+                .into_iter()
+                .collect();
         let c_expected = BaseModProbs {
             probs: c_expected_probs,
         };
-        let a_expected_probs = vec![('a', 0.7832031)].into_iter().collect();
+        let a_expected_probs =
+            vec![('a'.into(), 0.7832031)].into_iter().collect();
         let a_expected = BaseModProbs {
             probs: a_expected_probs,
         };
@@ -2121,7 +2199,7 @@ mod mod_bam_tests {
                     HashSet::from([12, 15, 4])
                 );
                 let expected_probs =
-                    vec![('h', 0.39257813), ('m', 0.005859375)]
+                    vec![('h'.into(), 0.39257813), ('m'.into(), 0.005859375)]
                         .into_iter()
                         .collect();
                 let expected_modbase_probs = BaseModProbs {
@@ -2141,9 +2219,10 @@ mod mod_bam_tests {
                         .collect::<HashSet<usize>>(),
                     HashSet::from([13, 16, 5])
                 );
-                let expected_probs = vec![('h', 0.5878906), ('m', 0.009765625)]
-                    .into_iter()
-                    .collect();
+                let expected_probs =
+                    vec![('h'.into(), 0.5878906), ('m'.into(), 0.009765625)]
+                        .into_iter()
+                        .collect();
                 let expected_modbase_probs = BaseModProbs {
                     probs: expected_probs,
                 };
@@ -2158,8 +2237,8 @@ mod mod_bam_tests {
     fn test_base_modcall_equality() {
         let a = BaseModCall::Canonical(1.0);
         let b = BaseModCall::Canonical(1.0);
-        let c = BaseModCall::Modified(0.8, ModCode::a);
-        let d = BaseModCall::Modified(0.7, ModCode::a);
+        let c = BaseModCall::Modified(0.8, 'a'.into());
+        let d = BaseModCall::Modified(0.7, 'a'.into());
         let e = BaseModCall::Filtered;
         assert_eq!(a, b);
         assert!(a > c);

@@ -4,7 +4,7 @@ use rust_htslib::{bam, bam::Read};
 use crate::common::{parse_mod_profile, run_simple_summary};
 use common::run_modkit;
 use mod_kit::mod_bam::parse_raw_mod_tags;
-use mod_kit::mod_base_code::{DnaBase, ModCode};
+use mod_kit::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 
 mod common;
 
@@ -130,24 +130,24 @@ fn test_mod_adjust_convert_sum_probs() {
     let initial_m_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m))
+        .and_then(|counts| counts.get(&BaseState::Modified('m'.into())))
         .unwrap();
     let initial_h_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h))
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())))
         .unwrap();
 
     let converted_m_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m))
+        .and_then(|counts| counts.get(&BaseState::Modified('m'.into())))
         .unwrap();
     assert_eq!(*converted_m_calls, initial_m_calls + initial_h_calls);
     let converted_h_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h));
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())));
     assert!(converted_h_calls.is_none());
 }
 
@@ -178,12 +178,12 @@ fn test_mod_adjust_convert_rename() {
     let initial_h_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h))
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())))
         .unwrap();
     let converted_any_c_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::anyC))
+        .and_then(|counts| counts.get(&BaseState::Modified('C'.into())))
         .unwrap();
     assert_eq!(initial_h_calls, converted_any_c_calls);
 }
@@ -218,29 +218,29 @@ fn test_mod_adjust_convert_sum_probs_rename() {
     let initial_m_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m))
+        .and_then(|counts| counts.get(&BaseState::Modified('m'.into())))
         .unwrap();
     let initial_h_calls = initial_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h))
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())))
         .unwrap();
 
     let converted_any_c_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::anyC))
+        .and_then(|counts| counts.get(&BaseState::Modified('C'.into())))
         .unwrap();
     assert_eq!(*converted_any_c_calls, initial_m_calls + initial_h_calls);
     let converted_h_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::h));
+        .and_then(|counts| counts.get(&BaseState::Modified('h'.into())));
     assert!(converted_h_calls.is_none());
     let converted_m_calls = converted_mod_summary
         .mod_call_counts
         .get(&DnaBase::C)
-        .and_then(|counts| counts.get(&ModCode::m));
+        .and_then(|counts| counts.get(&BaseState::Modified('m'.into())));
     assert!(converted_m_calls.is_none());
 }
 
@@ -343,5 +343,56 @@ fn test_adjust_edge_filter() {
                 assert!(mod_data.q_pos <= high_bound);
             }
         }
+    }
+}
+
+#[test]
+fn test_adjust_chebi_code() {
+    let adjusted_control =
+        std::env::temp_dir().join("test_adjust_mod_code_adjusted.bam");
+    let preadjust_chebi =
+        std::env::temp_dir().join("test_adjust_chebi_code.bam");
+    let adjusted_exp =
+        std::env::temp_dir().join("test_adjust_chebi_code_adjusted.bam");
+
+    // prelude, this ignores h, as usual
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        adjusted_control.to_str().unwrap(),
+        "--ignore",
+        "h",
+    ])
+    .with_context(|| format!("failed to ignore h"))
+    .unwrap();
+
+    // convert h to ChEBI
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        preadjust_chebi.to_str().unwrap(),
+        "--convert",
+        "h",
+        "76792",
+    ])
+    .with_context(|| format!("failed to convert h"))
+    .unwrap();
+    // then ignore it, now the output of this command and the first command should be the same
+    run_modkit(&[
+        "adjust-mods",
+        preadjust_chebi.to_str().unwrap(),
+        adjusted_exp.to_str().unwrap(),
+        "--ignore",
+        "76792",
+    ])
+    .with_context(|| format!("failed to ignore h"))
+    .unwrap();
+
+    let mut test_bam = bam::Reader::from_path(adjusted_control).unwrap();
+    let mut ref_bam = bam::Reader::from_path(adjusted_exp).unwrap();
+    for (test_res, ref_res) in test_bam.records().zip(ref_bam.records()) {
+        let test_record = test_res.unwrap();
+        let ref_record = ref_res.unwrap();
+        assert_eq!(test_record, ref_record);
     }
 }

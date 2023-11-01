@@ -14,12 +14,20 @@ pub(crate) fn consume_float(l: &str) -> IResult<&str, f32> {
     multispace1(l).and_then(|(r, _)| float(r))
 }
 
+#[allow(dead_code)] // keeping this in case I want it later.. so I don't have to reinvent it
 pub(crate) fn consume_char_from_list<'a>(
     l: &'a str,
     sep: &str,
 ) -> IResult<&'a str, char> {
     separated_list0(tag(sep), alphanumeric1)(l)
         .and_then(|(r, parts)| anychar(parts[0]).map(|(_, mc)| (r, mc)))
+}
+
+pub(crate) fn consume_string_from_list<'a>(
+    l: &'a str,
+    sep: &str,
+) -> IResult<&'a str, &'a str> {
+    separated_list0(tag(sep), alphanumeric1)(l).map(|(r, parts)| (r, parts[0]))
 }
 
 pub(crate) fn consume_string_spaces(l: &str) -> IResult<&str, String> {

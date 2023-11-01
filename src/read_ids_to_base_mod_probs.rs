@@ -2,7 +2,7 @@ use crate::mod_bam::{
     filter_records_iter, BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
     ModBaseInfo, SeqPosBaseModProbs, SkipMode, TrackingModRecordIter,
 };
-use crate::mod_base_code::DnaBase;
+use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
 use anyhow::anyhow;
 use bio::alphabets::dna::{complement, revcomp};
@@ -74,17 +74,13 @@ impl ReadIdsToBaseModProbs {
                     .map(|(canonical_base, base_mod_probs)| {
                         let probs = base_mod_probs
                             .iter()
-                            .filter_map(|bmc| match bmc.argmax_base_mod_call() {
-                                Ok(BaseModCall::Modified(f, _)) => Some(f),
-                                Ok(BaseModCall::Canonical(f)) => Some(f),
-                                Ok(BaseModCall::Filtered) => {
+                            .map(|bmc| match bmc.argmax_base_mod_call() {
+                                BaseModCall::Modified(f, _) => f,
+                                BaseModCall::Canonical(f) => f,
+                                BaseModCall::Filtered => {
                                     unreachable!(
                                         "argmax base mod call should not return Filtered"
                                     )
-                                }
-                                Err(e) => {
-                                    debug!("{}", e.to_string());
-                                    None
                                 }
                             })
                             .collect::<Vec<f32>>();
@@ -96,7 +92,9 @@ impl ReadIdsToBaseModProbs {
     }
 
     /// return argmax probs for each mod-code
-    pub(crate) fn mle_probs_per_base_mod(&self) -> HashMap<char, Vec<f64>> {
+    pub(crate) fn mle_probs_per_base_mod(
+        &self,
+    ) -> HashMap<BaseState, Vec<f64>> {
         // todo(arand) should really aggregate per mod-code
         let pb = get_master_progress_bar(self.inner.len());
         pb.set_message("aggregating per-mod probabilities");
@@ -110,25 +108,21 @@ impl ReadIdsToBaseModProbs {
                         base_mod_probs
                             .iter()
                             // can make this .base_mod_call
-                            .filter_map(|bmc| match bmc.argmax_base_mod_call() {
-                                Ok(BaseModCall::Modified(p, code)) => {
-                                    Some((code.char(), p as f64))
+                            .map(|bmc| match bmc.argmax_base_mod_call() {
+                                BaseModCall::Modified(p, code) => {
+                                    (BaseState::Modified(code), p as f64)
                                 }
-                                Ok(BaseModCall::Canonical(p)) => {
-                                    Some((base.char(), p as f64))
+                                BaseModCall::Canonical(p) => {
+                                    (BaseState::Canonical(*base), p as f64)
                                 }
-                                Ok(BaseModCall::Filtered) => {
+                                BaseModCall::Filtered => {
                                     unreachable!(
                                         "argmax base mod call should not return Filtered"
                                     )
                                 }
-                                Err(e) => {
-                                    debug!("{}", e.to_string());
-                                    None
-                                }
                             })
                             .fold(
-                                HashMap::<char, Vec<f64>>::new(),
+                                HashMap::<BaseState, Vec<f64>>::new(),
                                 |mut acc, (base, p)| {
                                     acc.entry(base).or_insert(Vec::new()).push(p);
                                     acc
@@ -367,7 +361,7 @@ pub(crate) struct ModProfile {
     num_soft_clipped_end: usize,
     read_length: usize,
     q_mod: f32,
-    raw_mod_code: char,
+    raw_mod_code: ModCodeRepr,
     q_base: u8,
     query_kmer: [u8; 5],
     pub(crate) mod_strand: Strand,
@@ -583,7 +577,7 @@ impl ReadBaseModProfile {
     ) -> Vec<ModProfile> {
         let codes_to_remove = collapse_method
             .map(|method| method.get_codes_to_remove())
-            .unwrap_or_else(|| HashSet::<char>::new());
+            .unwrap_or_else(|| HashSet::<ModCodeRepr>::new());
         let mod_codes = seq_pos_base_mod_probs.get_mod_codes(&codes_to_remove);
         mod_codes
             .into_iter()

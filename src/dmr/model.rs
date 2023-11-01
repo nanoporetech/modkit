@@ -6,16 +6,17 @@ use itertools::Itertools;
 use rv::prelude::*;
 
 use crate::dmr::util::DmrInterval;
+use crate::mod_base_code::ModCodeRepr;
 
 #[derive(Debug)]
 pub(super) struct AggregatedCounts {
-    mod_code_counts: HashMap<char, usize>,
+    mod_code_counts: HashMap<ModCodeRepr, usize>,
     total: usize,
 }
 
 impl AggregatedCounts {
     pub(super) fn try_new(
-        mod_code_counts: HashMap<char, usize>,
+        mod_code_counts: HashMap<ModCodeRepr, usize>,
         total: usize,
     ) -> anyhow::Result<Self> {
         let total_modification_counts = mod_code_counts.values().sum::<usize>();
@@ -51,7 +52,7 @@ impl AggregatedCounts {
 
     fn categorical_trials(
         &self,
-        mod_codes_to_index: &HashMap<char, usize>,
+        mod_codes_to_index: &HashMap<ModCodeRepr, usize>,
     ) -> anyhow::Result<Vec<usize>> {
         let mut trials = self
             .mod_code_counts
@@ -172,7 +173,7 @@ impl ModificationCounts {
 fn dirichlet_llk(
     counts: &AggregatedCounts,
     prior: &Dirichlet,
-    mod_codes_to_index: &HashMap<char, usize>,
+    mod_codes_to_index: &HashMap<ModCodeRepr, usize>,
 ) -> anyhow::Result<f64> {
     // categorical outputs, die rolls, etc.
     let xs = counts.categorical_trials(&mod_codes_to_index)?;
@@ -190,12 +191,12 @@ fn llk_dirichlet(
         .keys()
         .chain(exp_counts.mod_code_counts.keys())
         .copied()
-        .collect::<HashSet<char>>()
+        .collect::<HashSet<ModCodeRepr>>()
         .into_iter()
         .sorted_by(|a, b| a.cmp(b))
         .enumerate()
         .map(|(i, c)| (c, i + 1))
-        .collect::<HashMap<char, usize>>();
+        .collect::<HashMap<ModCodeRepr, usize>>();
 
     let k = mods_to_index.len() + 1;
     let prior = Dirichlet::jeffreys(k)?;
@@ -232,11 +233,12 @@ fn llk_beta(
         .keys()
         .copied()
         .chain(exp_counts.mod_code_counts.keys().copied())
-        .collect::<HashSet<char>>();
+        .collect::<HashSet<ModCodeRepr>>();
     if all_mods.len() != 1 {
         bail!("should have exactly one modification to use beta llk")
     }
-    let raw_mod_code = all_mods.into_iter().take(1).collect::<Vec<char>>()[0];
+    let raw_mod_code =
+        all_mods.into_iter().take(1).collect::<Vec<ModCodeRepr>>()[0];
 
     let control_methyls = *control_counts
         .mod_code_counts
@@ -278,6 +280,9 @@ pub(super) fn llk_ratio(
 #[cfg(test)]
 mod dmr_model_tests {
     use crate::dmr::model::{llk_beta, llk_dirichlet, AggregatedCounts};
+    use crate::mod_base_code::{
+        ModCodeRepr, HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE,
+    };
     use itertools::Itertools;
     use rand::prelude::*;
     use rand::rngs::StdRng;
@@ -292,7 +297,7 @@ mod dmr_model_tests {
             .into_iter()
             .filter(|b: &bool| *b)
             .count();
-        let mod_code_counts = HashMap::from([('m', mod_count)]);
+        let mod_code_counts = HashMap::from([('m'.into(), mod_count)]);
         AggregatedCounts::try_new(mod_code_counts, n).unwrap()
     }
 
@@ -301,7 +306,7 @@ mod dmr_model_tests {
         n: usize,
         rng: &mut StdRng,
     ) -> AggregatedCounts {
-        let mods = ['h', 'm'];
+        let mods = [HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE];
         let counts = Categorical::new(alphas)
             .unwrap()
             .sample(n, rng)
@@ -310,7 +315,7 @@ mod dmr_model_tests {
                 0 => None,
                 _ => Some(mods[x - 1]),
             })
-            .collect::<Vec<char>>();
+            .collect::<Vec<ModCodeRepr>>();
         let counts = counts.into_iter().counts();
         AggregatedCounts::try_new(counts, n).unwrap()
     }

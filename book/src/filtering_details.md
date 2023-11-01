@@ -34,12 +34,14 @@ threshold for all canonical cytosine: mod_threshold_C
 threshold for all 5mC: mod_threshold_m 
 threshold for all 5hmC: mod_threshold_h 
 
-mod_threshold_C: 0.7
+command line: --filter-threshold C:0.7 --mod-threshold m:0.8 --mod-threshold h:0.9
+
+filter_threshold C: 0.7
 mod_threshold_m: 0.8
 mod_threshold_h: 0.9
 {p_C: 0.05, p_m: 0.85, p_h: 0.1} => call: 5mC (m) most likely
 
-mod_threshold_C: 0.7
+filter_threshold C: 0.7
 mod_threshold_m: 0.8
 mod_threshold_h: 0.9
 {p_C: 0.75, p_m: 0.05, p_h: 0.2} => call: C (canonical) most likely

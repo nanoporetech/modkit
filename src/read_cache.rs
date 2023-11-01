@@ -9,7 +9,8 @@ use crate::mod_bam::{
     collapse_mod_probs, BaseModCall, CollapseMethod, DuplexModCall, EdgeFilter,
     ModBaseInfo, SeqPosBaseModProbs, SkipMode,
 };
-use crate::mod_base_code::{DnaBase, ModCode};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::monoid::BorrowingMoniod;
 use crate::motif_bed::MotifLocations;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{self, Strand};
@@ -17,6 +18,7 @@ use crate::util::{self, Strand};
 /// Mapping of _reference position_ to base mod calls as determined by the aligned pairs for the
 /// read
 type RefPosBaseModCalls = FxHashMap<u64, BaseModCall>;
+type PrimaryBaseToModCodes = FxHashMap<DnaBase, HashSet<ModCodeRepr>>;
 
 pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that read
@@ -28,8 +30,8 @@ pub(crate) struct ReadCache<'a> {
     /// these reads don't have mod tags or should be skipped for some other reason
     skip_set: HashSet<String>,
     /// mapping of read_id (query_name) to the mod codes contained in that read
-    pos_mod_codes: FxHashMap<String, FxHashSet<ModCode>>,
-    neg_mod_codes: FxHashMap<String, FxHashSet<ModCode>>,
+    pos_mod_codes: FxHashMap<String, PrimaryBaseToModCodes>,
+    neg_mod_codes: FxHashMap<String, PrimaryBaseToModCodes>,
     /// collapse method
     method: Option<&'a CollapseMethod>,
     /// Force allowing of implicit canonical
@@ -76,7 +78,6 @@ impl<'a> ReadCache<'a> {
             .filter_map(|ap| ap.ok())
             .collect::<FxHashMap<usize, u64>>();
 
-        let mut warned = false;
         let ref_pos_base_mod_calls = seq_pos_base_mod_probs
             .pos_to_base_mod_probs
             .into_iter() // par iter?
@@ -84,22 +85,8 @@ impl<'a> ReadCache<'a> {
             .flat_map(|(q_pos, bmp)| {
                 if let Some(r_pos) = aligned_pairs.get(&q_pos) {
                     // filtering happens here.
-                    match self.caller.call(&threshold_base, &bmp) {
-                        Ok(base_mod_call) => Some((*r_pos, base_mod_call)),
-                        Err(e) => {
-                            if !warned {
-                                let warning = e.to_string();
-                                let e = e.context(format!(
-                                    "{} has out of spec mod code, {warning}",
-                                    record_name
-                                ));
-                                debug!("{}, update tags with modkit adjust-mods --convert",
-                                e.to_string());
-                                warned = true
-                            }
-                            None
-                        }
-                    }
+                    let call = self.caller.call(&threshold_base, &bmp);
+                    Some((*r_pos, call))
                 } else {
                     None
                 }
@@ -157,6 +144,7 @@ impl<'a> ReadCache<'a> {
         for (base, mod_strand, seq_base_mod_probs) in mod_prob_iter {
             match DnaBase::parse(base) {
                 Ok(dna_base) => {
+                    // aka the base the modification is actually called on
                     let threshold_base = match mod_strand {
                         Strand::Positive => dna_base,
                         Strand::Negative => dna_base.complement(),
@@ -186,14 +174,11 @@ impl<'a> ReadCache<'a> {
                         .pos_to_base_mod_probs
                         .values()
                         .flat_map(|base_mod_probs| {
-                            base_mod_probs.iter_probs().filter_map(
-                                |(&raw_mod_code, _)| {
-                                    ModCode::parse_raw_mod_code(raw_mod_code)
-                                        .ok()
-                                },
-                            )
+                            base_mod_probs
+                                .iter_probs()
+                                .map(|(&mod_code_repr, _)| mod_code_repr)
                         })
-                        .collect::<FxHashSet<ModCode>>();
+                        .collect::<FxHashSet<ModCodeRepr>>();
 
                     let mod_codes_for_read =
                         match (mod_strand, record.is_reverse()) {
@@ -210,7 +195,9 @@ impl<'a> ReadCache<'a> {
                         };
                     mod_codes_for_read
                         .entry(record_name.to_owned())
-                        .or_insert(FxHashSet::default())
+                        .or_insert(FxHashMap::default())
+                        .entry(threshold_base)
+                        .or_insert(HashSet::new())
                         .extend(mod_codes);
 
                     self.add_modbase_probs_for_record_and_canonical_base(
@@ -346,8 +333,8 @@ impl<'a> ReadCache<'a> {
     pub(crate) fn add_mod_codes_for_record(
         &mut self,
         record: &bam::Record,
-        pos_strand_mod_codes: &mut HashSet<ModCode>,
-        neg_strand_mod_codes: &mut HashSet<ModCode>,
+        pos_strand_mod_codes: &mut PrimaryBaseToModCodes,
+        neg_strand_mod_codes: &mut PrimaryBaseToModCodes,
     ) {
         // optimize, could use a better implementation here - pass the read_id
         // from the calling function perhaps
@@ -360,14 +347,14 @@ impl<'a> ReadCache<'a> {
                 self.neg_mod_codes.get(&read_id),
             ) {
                 (Some(pos_codes), Some(neg_codes)) => {
-                    pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
-                    neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
+                    pos_strand_mod_codes.op_mut(pos_codes);
+                    neg_strand_mod_codes.op_mut(neg_codes);
                 }
                 (Some(pos_codes), None) => {
-                    pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
+                    pos_strand_mod_codes.op_mut(pos_codes);
                 }
                 (None, Some(neg_codes)) => {
-                    neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
+                    neg_strand_mod_codes.op_mut(neg_codes);
                 }
                 (None, None) => {
                     match self.add_record(record) {
