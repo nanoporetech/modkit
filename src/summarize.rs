@@ -129,7 +129,7 @@ pub(crate) fn sampled_reads_to_summary<'a>(
         .inner
         .par_iter()
         .progress_with(pb)
-        .map(|(read_id, canonical_base_to_calls)| {
+        .map(|(_read_id, canonical_base_to_calls)| {
             let mut mod_call_counts = HashMap::new();
             let mut filtered_mod_call_counts = HashMap::new();
             let mut reads_with_mod_calls = HashMap::new();
@@ -148,40 +148,44 @@ pub(crate) fn sampled_reads_to_summary<'a>(
 
                 base_modification_probs
                     .iter()
-                    .filter_map(|bmp| {
-
+                    .map(|bmp| {
                         // need the argmax base_mod_call here too so that we can add to the correct
                         // filtered category
                         // once the whole "ModCode" bits are refactored, this will no longer be
                         // a necessary match
-                        let base_mod_call = bmp.argmax_base_mod_call();
+                        let argmax_base_mod_call = bmp.argmax_base_mod_call();
                         let thresholded_call =
                             threshold_caller.call(&canonical_base, bmp);
-                        match (thresholded_call, base_mod_call) {
-                            (Ok(bmc), Ok(arg_max_base_mod_call)) => {
-                                // add the observed mod codes here so that we report on them even if they're
-                                // never called
-                                observed_mods.entry(canonical_base).or_insert(HashSet::new())
-                                    .extend(bmp.iter_probs().map(|(code, _)| *code));
-                                Some((bmc, arg_max_base_mod_call))
-                            }
-                            (Err(e), Err(_)) => {
-                                debug!(
-                                    "read {read_id} failed to make thresholded mod call {}",
-                                    e.to_string()
-                                );
-                                // expected failure
-                                None
-                            }
-                            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
-                                // logic error, until refactor the two errors here are the same
-                                error!(
-                                    "both should error or neither should! {}",
-                                    e.to_string()
-                                );
-                                None
-                            }
-                        }
+                        observed_mods
+                            .entry(canonical_base)
+                            .or_insert(HashSet::new())
+                            .extend(bmp.iter_probs().map(|(code, _)| *code));
+                        (thresholded_call, argmax_base_mod_call)
+                        // match (thresholded_call, base_mod_call) {
+                        //     (Ok(bmc), Ok(arg_max_base_mod_call)) => {
+                        //         // add the observed mod codes here so that we report on them even if they're
+                        //         // never called
+                        //         observed_mods.entry(canonical_base).or_insert(HashSet::new())
+                        //             .extend(bmp.iter_probs().map(|(code, _)| *code));
+                        //         Some((bmc, arg_max_base_mod_call))
+                        //     }
+                        //     (Err(e), Err(_)) => {
+                        //         debug!(
+                        //             "read {read_id} failed to make thresholded mod call {}",
+                        //             e.to_string()
+                        //         );
+                        //         // expected failure
+                        //         None
+                        //     }
+                        //     (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                        //         // logic error, until refactor the two errors here are the same
+                        //         error!(
+                        //             "both should error or neither should! {}",
+                        //             e.to_string()
+                        //         );
+                        //         None
+                        //     }
+                        // }
                     })
                     .for_each(|(threshold_call, argmax_call)| {
                         let agg = match (threshold_call, argmax_call) {
@@ -221,7 +225,7 @@ pub(crate) fn sampled_reads_to_summary<'a>(
                 reads_with_mod_calls,
                 mod_call_counts,
                 filtered_mod_call_counts,
-                observed_mods
+                observed_mods,
             }
         })
         .reduce(|| ReadSummaryChunk::zero(), |a, b| a.op(b));

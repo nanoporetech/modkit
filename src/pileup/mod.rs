@@ -148,20 +148,8 @@ impl PileupFeatureCounts {
 struct Tally {
     n_delete: u32,
     n_filtered: u32,
-    // n_basecall_A: u32,
-    // n_basecall_C: u32,
-    // n_basecall_G: u32,
-    // n_basecall_T: u32,
     basecall_counts: FxHashMap<DnaBase, u32>,
     modcall_counts: FxHashMap<DnaBase, FxHashMap<BaseState, u32>>,
-    // canonical_counts: FxHashMap<DnaBase, u32>,
-    // modcall_counts: FxHashMap<BaseModCall, u32>,
-    // n_modcall_A: u32,
-    // n_modcall_C: u32,
-    // n_modcall_a: u32,
-    // n_modcall_h: u32,
-    // n_modcall_m: u32,
-    // feature_counts: FxHashMap<Feature, u32>,
 }
 
 impl Tally {
@@ -270,108 +258,6 @@ impl FeatureVector {
             },
         }
     }
-
-    // fn add_pileup_counts(
-    //     pileup_options: &PileupNumericOptions,
-    //     counts: &mut Vec<PileupFeatureCounts>,
-    //     observed_mods: &HashSet<ModCode>,
-    //     strand: Strand,
-    //     filtered_coverage: u32,
-    //     n_h: u32,
-    //     n_m: u32,
-    //     n_canonical: u32,
-    //     n_delete: u32,
-    //     n_filtered: u32,
-    //     n_diff: u32,
-    //     n_nocall: u32,
-    //     motif_idxs: Option<&Vec<usize>>,
-    // ) {
-    //     match pileup_options {
-    //         PileupNumericOptions::Passthrough
-    //         | PileupNumericOptions::Collapse(_) => {
-    //             for (mod_code, (n_modified, n_other_modified)) in
-    //                 [(ModCode::h, (n_h, n_m)), (ModCode::m, (n_m, n_h))]
-    //             {
-    //                 if observed_mods.contains(&mod_code) {
-    //                     let percent_modified =
-    //                         n_modified as f32 / filtered_coverage as f32;
-    //                     if let Some(idxs) = motif_idxs.as_ref() {
-    //                         for &idx in idxs.iter() {
-    //                             counts.push(PileupFeatureCounts {
-    //                                 raw_strand: strand.to_char(),
-    //                                 filtered_coverage,
-    //                                 raw_mod_code: mod_code.char(),
-    //                                 fraction_modified: percent_modified,
-    //                                 n_canonical,
-    //                                 n_modified,
-    //                                 n_other_modified,
-    //                                 n_delete,
-    //                                 n_filtered,
-    //                                 n_diff,
-    //                                 n_nocall,
-    //                                 motif_idx: Some(idx),
-    //                             })
-    //                         }
-    //                     } else {
-    //                         counts.push(PileupFeatureCounts {
-    //                             raw_strand: strand.to_char(),
-    //                             filtered_coverage,
-    //                             raw_mod_code: mod_code.char(),
-    //                             fraction_modified: percent_modified,
-    //                             n_canonical,
-    //                             n_modified,
-    //                             n_other_modified,
-    //                             n_delete,
-    //                             n_filtered,
-    //                             n_diff,
-    //                             n_nocall,
-    //                             motif_idx: None,
-    //                         })
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         PileupNumericOptions::Combine => {
-    //             // todo maybe want a check for seen the mod here?
-    //             let n_modified = n_h + n_m;
-    //             let percent_modified =
-    //                 n_modified as f32 / filtered_coverage as f32;
-    //             if let Some(idxs) = motif_idxs.as_ref() {
-    //                 for &idx in idxs.iter() {
-    //                     counts.push(PileupFeatureCounts {
-    //                         raw_strand: strand.to_char(),
-    //                         filtered_coverage,
-    //                         raw_mod_code: ModCode::C.char(),
-    //                         fraction_modified: percent_modified,
-    //                         n_canonical,
-    //                         n_modified,
-    //                         n_other_modified: 0,
-    //                         n_delete,
-    //                         n_filtered,
-    //                         n_diff,
-    //                         n_nocall,
-    //                         motif_idx: Some(idx),
-    //                     })
-    //                 }
-    //             } else {
-    //                 counts.push(PileupFeatureCounts {
-    //                     raw_strand: strand.to_char(),
-    //                     filtered_coverage,
-    //                     raw_mod_code: ModCode::C.char(),
-    //                     fraction_modified: percent_modified,
-    //                     n_canonical,
-    //                     n_modified,
-    //                     n_other_modified: 0,
-    //                     n_delete,
-    //                     n_filtered,
-    //                     n_diff,
-    //                     n_nocall,
-    //                     motif_idx: None,
-    //                 })
-    //             }
-    //         }
-    //     }
-    // }
 
     fn add_tally_to_counts(
         counts: &mut Vec<PileupFeatureCounts>,

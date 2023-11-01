@@ -232,7 +232,7 @@ impl PairwiseDmr {
             let index_path = Path::new(&index_fp).to_path_buf();
 
             noodles::tabix::read(&index_fp)
-                .context("foo")
+                .context("failed to read index inferred from bedmethyl file name at {index_fp}")
                 .map(|idx| (idx, index_path))
         }
     }

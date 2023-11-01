@@ -18,8 +18,7 @@ use crate::util::{self, Strand};
 /// Mapping of _reference position_ to base mod calls as determined by the aligned pairs for the
 /// read
 type RefPosBaseModCalls = FxHashMap<u64, BaseModCall>;
-pub(crate) type PrimaryBaseToModCodes =
-    FxHashMap<DnaBase, HashSet<ModCodeRepr>>;
+type PrimaryBaseToModCodes = FxHashMap<DnaBase, HashSet<ModCodeRepr>>;
 
 pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that read
@@ -79,7 +78,6 @@ impl<'a> ReadCache<'a> {
             .filter_map(|ap| ap.ok())
             .collect::<FxHashMap<usize, u64>>();
 
-        let mut warned = false;
         let ref_pos_base_mod_calls = seq_pos_base_mod_probs
             .pos_to_base_mod_probs
             .into_iter() // par iter?
@@ -87,22 +85,8 @@ impl<'a> ReadCache<'a> {
             .flat_map(|(q_pos, bmp)| {
                 if let Some(r_pos) = aligned_pairs.get(&q_pos) {
                     // filtering happens here.
-                    match self.caller.call(&threshold_base, &bmp) {
-                        Ok(base_mod_call) => Some((*r_pos, base_mod_call)),
-                        Err(e) => {
-                            if !warned {
-                                let warning = e.to_string();
-                                let e = e.context(format!(
-                                    "{} has out of spec mod code, {warning}",
-                                    record_name
-                                ));
-                                debug!("{}, update tags with modkit adjust-mods --convert",
-                                e.to_string());
-                                warned = true
-                            }
-                            None
-                        }
-                    }
+                    let call = self.caller.call(&threshold_base, &bmp);
+                    Some((*r_pos, call))
                 } else {
                     None
                 }
@@ -349,8 +333,8 @@ impl<'a> ReadCache<'a> {
     pub(crate) fn add_mod_codes_for_record(
         &mut self,
         record: &bam::Record,
-        pos_strand_mod_codes: &mut FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
-        neg_strand_mod_codes: &mut FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
+        pos_strand_mod_codes: &mut PrimaryBaseToModCodes,
+        neg_strand_mod_codes: &mut PrimaryBaseToModCodes,
     ) {
         // optimize, could use a better implementation here - pass the read_id
         // from the calling function perhaps
@@ -365,17 +349,12 @@ impl<'a> ReadCache<'a> {
                 (Some(pos_codes), Some(neg_codes)) => {
                     pos_strand_mod_codes.op_mut(pos_codes);
                     neg_strand_mod_codes.op_mut(neg_codes);
-
-                    // pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
-                    // neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
                 }
                 (Some(pos_codes), None) => {
                     pos_strand_mod_codes.op_mut(pos_codes);
-                    // pos_strand_mod_codes.extend(pos_codes.iter().map(|mc| *mc));
                 }
                 (None, Some(neg_codes)) => {
                     neg_strand_mod_codes.op_mut(neg_codes);
-                    // neg_strand_mod_codes.extend(neg_codes.iter().map(|mc| *mc));
                 }
                 (None, None) => {
                     match self.add_record(record) {

@@ -74,17 +74,13 @@ impl ReadIdsToBaseModProbs {
                     .map(|(canonical_base, base_mod_probs)| {
                         let probs = base_mod_probs
                             .iter()
-                            .filter_map(|bmc| match bmc.argmax_base_mod_call() {
-                                Ok(BaseModCall::Modified(f, _)) => Some(f),
-                                Ok(BaseModCall::Canonical(f)) => Some(f),
-                                Ok(BaseModCall::Filtered) => {
+                            .map(|bmc| match bmc.argmax_base_mod_call() {
+                                BaseModCall::Modified(f, _) => f,
+                                BaseModCall::Canonical(f) => f,
+                                BaseModCall::Filtered => {
                                     unreachable!(
                                         "argmax base mod call should not return Filtered"
                                     )
-                                }
-                                Err(e) => {
-                                    debug!("{}", e.to_string());
-                                    None
                                 }
                             })
                             .collect::<Vec<f32>>();
@@ -112,21 +108,17 @@ impl ReadIdsToBaseModProbs {
                         base_mod_probs
                             .iter()
                             // can make this .base_mod_call
-                            .filter_map(|bmc| match bmc.argmax_base_mod_call() {
-                                Ok(BaseModCall::Modified(p, code)) => {
-                                    Some((BaseState::Modified(code), p as f64))
+                            .map(|bmc| match bmc.argmax_base_mod_call() {
+                                BaseModCall::Modified(p, code) => {
+                                    (BaseState::Modified(code), p as f64)
                                 }
-                                Ok(BaseModCall::Canonical(p)) => {
-                                    Some((BaseState::Canonical(*base), p as f64))
+                                BaseModCall::Canonical(p) => {
+                                    (BaseState::Canonical(*base), p as f64)
                                 }
-                                Ok(BaseModCall::Filtered) => {
+                                BaseModCall::Filtered => {
                                     unreachable!(
                                         "argmax base mod call should not return Filtered"
                                     )
-                                }
-                                Err(e) => {
-                                    debug!("{}", e.to_string());
-                                    None
                                 }
                             })
                             .fold(

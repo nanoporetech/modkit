@@ -339,7 +339,7 @@ impl BaseModProbs {
         (*self.probs.entry(mod_code).or_insert(0f32)) += prob;
     }
 
-    pub fn argmax_base_mod_call(&self) -> anyhow::Result<BaseModCall> {
+    pub fn argmax_base_mod_call(&self) -> BaseModCall {
         let canonical_prob = self.canonical_prob();
         let max_mod_prob = self
             .iter_probs()
@@ -354,7 +354,7 @@ impl BaseModProbs {
         } else {
             BaseModCall::Canonical(canonical_prob)
         };
-        Ok(base_mod_call)
+        base_mod_call
     }
 
     pub fn canonical_prob(&self) -> f32 {
