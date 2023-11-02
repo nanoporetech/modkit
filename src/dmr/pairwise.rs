@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::bail;
 use indicatif::ProgressBar;
+use itertools::{Itertools, MinMaxResult};
 use log::{debug, error};
 use log_once::debug_once;
 use noodles::bgzf;
@@ -71,7 +72,7 @@ fn aggregate_counts(
                 .push(bm_line);
             acc
         });
-    let (counts_per_code, total) = grouped_by_position.into_iter().fold(
+    let (counts_per_code, total) = grouped_by_position.into_iter().try_fold(
         (HashMap::new(), 0),
         |(mut acc, mut total_so_far), (_pos, grouped)| {
             let valid_covs = grouped
@@ -83,23 +84,32 @@ fn aggregate_counts(
                 .map(|bml| &bml.chrom)
                 .collect::<FxHashSet<&String>>();
             let valid_coverage = grouped[0].valid_coverage as usize;
-            assert_eq!(valid_covs.len(), 1);
-            assert_eq!(
-                chroms.len(),
-                1,
-                "should only get 1 chrom, got {} {:?}, {:?}",
-                chroms.len(),
-                &chroms,
-                &grouped
-            );
+            if valid_covs.len() != 1 {
+                let mut message = format!("invalid data found, should not have more than 1 score per position for a \
+                    base.");
+                match grouped.iter().minmax_by(|a, b| a.start().cmp(&b.start())) {
+                    MinMaxResult::NoElements => {},
+                    MinMaxResult::MinMax(s, t) => {
+                        message.push_str(&format!("starting at {}, ending at {}", s.start(), t.stop()))
+                    }
+                    MinMaxResult::OneElement(s) => {
+                        message.push_str(&format!("starting at {}", s.start()))
+                    }
+                }
+                bail!(message)
+            }
+
+            if chroms.len() != 1 {
+                bail!(format!("should only get one chrom, got {}", chroms.len()))
+            }
             for x in grouped {
                 *acc.entry(x.raw_mod_code).or_insert(0) +=
                     x.count_methylated as usize;
             }
             total_so_far += valid_coverage;
-            (acc, total_so_far)
+            Ok((acc, total_so_far))
         },
-    );
+    )?;
     AggregatedCounts::try_new(counts_per_code, total)
 }
 
