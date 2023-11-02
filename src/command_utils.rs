@@ -10,7 +10,7 @@ use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::calc_threshold_from_bam;
-use crate::util::Region;
+use crate::util::{create_out_directory, Region};
 
 pub(crate) fn parse_per_mod_thresholds(
     raw_per_mod_thresholds: &[String],
@@ -204,16 +204,24 @@ pub(crate) fn get_bam_writer(
     raw: &str,
     header: &Header,
     output_sam: bool,
-) -> rust_htslib::errors::Result<bam::Writer> {
+) -> anyhow::Result<bam::Writer> {
     let format = if output_sam {
         bam::Format::Sam
     } else {
         bam::Format::Bam
     };
     if using_stream(raw) {
-        bam::Writer::from_stdout(&header, format)
+        bam::Writer::from_stdout(&header, format).map_err(|e| {
+            anyhow!(
+                "failed to make stdout {format:?} writer, {}",
+                e.to_string()
+            )
+        })
     } else {
-        bam::Writer::from_path(&raw, &header, format)
+        create_out_directory(&raw)?;
+        bam::Writer::from_path(&raw, &header, format).map_err(|e| {
+            anyhow!("failed to make {format:?} writer, {}", e.to_string())
+        })
     }
 }
 

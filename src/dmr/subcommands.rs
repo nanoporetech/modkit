@@ -23,7 +23,8 @@ use crate::logging::init_logging;
 use crate::mod_base_code::{DnaBase, ParseChar};
 use crate::position_filter::{BaseIv, GenomeLapper, StrandedPositionFilter};
 use crate::util::{
-    get_master_progress_bar, get_subroutine_progress_bar, get_ticker,
+    create_out_directory, get_master_progress_bar, get_subroutine_progress_bar,
+    get_ticker,
 };
 
 #[derive(Subcommand)]
@@ -211,7 +212,7 @@ impl PairwiseDmr {
         specified_index: Option<&PathBuf>,
     ) -> anyhow::Result<(CsiIndex, PathBuf)> {
         if let Some(index_fp) = specified_index {
-            info!(
+            debug!(
                 "loading user-specified index at {}",
                 index_fp.to_string_lossy()
             );
@@ -225,14 +226,14 @@ impl PairwiseDmr {
                 anyhow!("could not format control (a) bedmethyl filepath")
             })?;
             let index_fp = format!("{}.tbi", bedmethyl_fp);
-            info!(
+            debug!(
                 "looking for index associated with {} at {}",
                 bedmethyl_fp, &index_fp
             );
             let index_path = Path::new(&index_fp).to_path_buf();
 
             noodles::tabix::read(&index_fp)
-                .context("failed to read index inferred from bedmethyl file name at {index_fp}")
+                .with_context(|| format!("failed to read index inferred from bedMethyl file name at {index_fp}"))
                 .map(|idx| (idx, index_path))
         }
     }
@@ -287,15 +288,7 @@ impl PairwiseDmr {
                 None => Box::new(BufWriter::new(std::io::stdout())),
                 Some(fp) => {
                     let p = Path::new(fp);
-                    if let Some(parent) = p.parent() {
-                        if !parent.exists() {
-                            info!(
-                                "creating output directory {}",
-                                parent.to_str().unwrap_or("failed to parse")
-                            );
-                            std::fs::create_dir_all(parent)?;
-                        }
-                    }
+                    create_out_directory(p)?;
                     if p.exists() && !self.force {
                         bail!("refusing to overwrite existing file {}", fp)
                     } else {
@@ -405,7 +398,8 @@ impl PairwiseDmr {
 
 #[derive(Args)]
 pub struct MultiSampleDmr {
-    /// Two or more named samples to compare. Two arguments are required <path> <name>.
+    /// Two or more named samples to compare. Two arguments are required <path> <name>. This
+    /// option should be repeated at least two times.
     #[arg(short = 's', long = "sample", num_args = 2)]
     samples: Vec<String>,
     /// Optional, paths to tabix indices associated with named samples. Two arguments
@@ -524,6 +518,7 @@ impl MultiSampleDmr {
         let _pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build_global()?;
+        create_out_directory(&self.out_dir)?;
 
         PairwiseDmr::validate_modified_bases(&self.modified_bases)?;
         let indices = self.indices
