@@ -18,7 +18,7 @@ use crate::dmr::multi_sample::{
     get_reference_modified_base_positions, n_choose_2, DmrSample,
 };
 use crate::dmr::pairwise::run_pairwise_dmr;
-use crate::dmr::util::{parse_roi_bed, DmrIntervalIter};
+use crate::dmr::util::{parse_roi_bed, DmrInterval, DmrIntervalIter};
 use crate::logging::init_logging;
 use crate::mod_base_code::{DnaBase, ParseChar};
 use crate::position_filter::{BaseIv, GenomeLapper, StrandedPositionFilter};
@@ -327,6 +327,30 @@ impl PairwiseDmr {
             .enumerate()
             .map(|(idx, r)| (r.to_owned(), idx))
             .collect::<HashMap<String, usize>>();
+
+        let regions_of_interest = regions_of_interest
+            .into_iter()
+            .filter_map(|roi| {
+                if !control_contig_lookup.contains_key(&roi.chrom) {
+                    info!(
+                        "discarding {}, missing from 'a' bedMethyl index",
+                        &roi.chrom
+                    );
+                    None
+                } else if !exp_contig_lookup.contains_key(&roi.chrom) {
+                    info!(
+                        "discarding {}, missing from 'b' bedMethyl index",
+                        &roi.chrom
+                    );
+                    None
+                } else {
+                    Some(roi)
+                }
+            })
+            .collect::<Vec<DmrInterval>>();
+        if regions_of_interest.is_empty() {
+            bail!("no valid regions in input")
+        }
 
         let motifs = self
             .modified_bases

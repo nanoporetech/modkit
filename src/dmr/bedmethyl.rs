@@ -6,7 +6,7 @@ use nom::multi::many1;
 use nom::IResult;
 use std::collections::HashMap;
 
-use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::mod_base_code::{DnaBase, ModCodeRepr, SUPPORTED_CODES};
 use crate::parsing_utils::{
     consume_char, consume_digit, consume_float, consume_string,
     consume_string_from_list,
@@ -82,6 +82,10 @@ impl BedMethylLine {
 
     pub fn stop(&self) -> u64 {
         self.interval.stop
+    }
+
+    pub fn check_mod_code_supported(&self) -> bool {
+        SUPPORTED_CODES.contains(&self.raw_mod_code)
     }
 
     pub fn check_base(

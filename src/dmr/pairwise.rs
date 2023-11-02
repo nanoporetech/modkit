@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use anyhow::bail;
 use indicatif::ProgressBar;
 use log::{debug, error};
+use log_once::debug_once;
 use noodles::bgzf;
 use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 use rayon::prelude::*;
@@ -52,11 +53,14 @@ fn aggregate_counts(
                     // todo add user mappings
                     Some(bm_line)
                 } else {
-                    debug!(
-                        "modification code {} in bedMethyl record {bm_line:?} \
-                    not currently supported",
+                    if !bm_line.check_mod_code_supported() {
+                        debug_once!(
+                            "encountered modification code {} in bedMethyl record, \
+                             not currently supported",
                         bm_line.raw_mod_code
                     );
+
+                    }
                     None
                 }
             })

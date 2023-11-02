@@ -31,6 +31,23 @@ pub const ANY_THYMINE: ModCodeRepr = ModCodeRepr::Code('T');
 pub const OXO_GUANINE: ModCodeRepr = ModCodeRepr::Code('o');
 pub const ANY_GUANINE: ModCodeRepr = ModCodeRepr::Code('G');
 
+pub const SUPPORTED_CODES: [ModCodeRepr; 14] = [
+    METHYL_CYTOSINE,
+    HYDROXY_METHYL_CYTOSINE,
+    FOUR_METHYL_CYTOSINE,
+    CARBOXY_CYTOSINE,
+    FOUR_METHYL_CYTOSINE,
+    ANY_CYTOSINE,
+    SIX_METHYL_ADENINE,
+    ANY_ADENINE,
+    HYDROXY_METHYL_URACIL,
+    FORMYL_URACIL,
+    CARBOXY_URACIL,
+    ANY_THYMINE,
+    OXO_GUANINE,
+    ANY_GUANINE,
+];
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, Hash)]
 pub enum ModCodeRepr {
     Code(char),
