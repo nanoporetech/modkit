@@ -595,8 +595,8 @@ impl ExtractMods {
 
 #[derive(new)]
 struct ReferencePositionFilter {
-    include_pos: Option<StrandedPositionFilter>,
-    exclude_pos: Option<StrandedPositionFilter>,
+    include_pos: Option<StrandedPositionFilter<()>>,
+    exclude_pos: Option<StrandedPositionFilter<()>>,
     include_unmapped: bool,
 }
 

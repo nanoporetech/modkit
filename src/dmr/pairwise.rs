@@ -14,32 +14,52 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::dmr::bedmethyl::BedMethylLine;
 use crate::dmr::model::{AggregatedCounts, ModificationCounts};
 use crate::dmr::util::{DmrInterval, DmrIntervalIter};
+use crate::mod_base_code::DnaBase;
 use crate::position_filter::{Iv, StrandedPositionFilter};
 use crate::util::{Strand, StrandRule};
 
 fn aggregate_counts(
     bm_lines: &[BedMethylLine],
     chrom_id: u32,
-    position_filter: &StrandedPositionFilter,
+    position_filter: &StrandedPositionFilter<DnaBase>,
 ) -> anyhow::Result<AggregatedCounts> {
     let grouped_by_position: FxHashMap<u64, Vec<&BedMethylLine>> = bm_lines
         .iter()
-        .filter(|bm_line| match bm_line.strand {
-            StrandRule::Positive => position_filter.contains(
-                chrom_id as i32,
-                bm_line.start(),
-                Strand::Positive,
-            ),
-            StrandRule::Negative => position_filter.contains(
-                chrom_id as i32,
-                bm_line.start(),
-                Strand::Negative,
-            ),
-            StrandRule::Both => position_filter.overlaps_not_stranded(
-                chrom_id,
-                bm_line.start(),
-                bm_line.stop(),
-            ),
+        .filter_map(|bm_line| {
+            let base = match bm_line.strand {
+                StrandRule::Positive => position_filter
+                    .get_base_at_position_stranded(
+                        chrom_id as i32,
+                        bm_line.start(),
+                        Strand::Positive,
+                    ),
+                StrandRule::Negative => position_filter
+                    .get_base_at_position_stranded(
+                        chrom_id as i32,
+                        bm_line.start(),
+                        Strand::Negative,
+                    )
+                    .map(|b| b.complement()),
+                StrandRule::Both => position_filter
+                    .get_base_at_position_stranded(
+                        chrom_id as i32,
+                        bm_line.start(),
+                        Strand::Positive,
+                    ),
+            };
+            base.and_then(|b| {
+                if bm_line.check_base(b, None) {
+                    // todo add user mappings
+                    Some(bm_line)
+                } else {
+                    debug!(
+                        "modification code {} in bedMethyl record {bm_line:?} \
+                    not currently supported",
+                        bm_line.raw_mod_code
+                    );
+                    None
+                }
+            })
         })
         .fold(FxHashMap::default(), |mut acc, bm_line| {
             acc.entry(bm_line.start())
@@ -84,7 +104,7 @@ fn get_mod_counts_for_condition(
     chunks: &[IndexChunk],
     interval: &Iv,
     chrom_id: u32,
-    position_filter: &StrandedPositionFilter,
+    position_filter: &StrandedPositionFilter<DnaBase>,
     filename: &PathBuf,
 ) -> anyhow::Result<AggregatedCounts> {
     let mut bedmethyl_lines = Vec::new();
@@ -144,7 +164,7 @@ pub(super) fn get_modification_counts(
     control_chunks: &[IndexChunk],
     exp_chunks: &[IndexChunk],
     dmr_interval: DmrInterval,
-    position_filter: &StrandedPositionFilter,
+    position_filter: &StrandedPositionFilter<DnaBase>,
     chrom_id: u32,
 ) -> anyhow::Result<ModificationCounts> {
     let mut control_reader =
@@ -187,7 +207,7 @@ pub(super) fn run_pairwise_dmr(
     control_bed_fp: &PathBuf,
     exp_bed_fp: &PathBuf,
     dmr_interval_iter: DmrIntervalIter,
-    position_filter: StrandedPositionFilter,
+    position_filter: StrandedPositionFilter<DnaBase>,
     mut writer: Box<dyn std::io::Write>,
     pb: ProgressBar,
 ) -> anyhow::Result<usize> {

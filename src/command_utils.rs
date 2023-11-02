@@ -65,7 +65,7 @@ pub(crate) fn get_threshold_from_options(
     per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
     edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<MultipleThresholdModCaller> {

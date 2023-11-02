@@ -1,3 +1,4 @@
+use crate::mod_base_code::DnaBase;
 use crate::util::{get_targets, get_ticker, Strand};
 use anyhow::bail;
 use log::info;
@@ -10,15 +11,69 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 pub(crate) type Iv = lapper::Interval<u64, ()>;
-pub(crate) type GenomeLapper = lapper::Lapper<u64, ()>;
+pub(crate) type BaseIv = lapper::Interval<u64, DnaBase>;
+pub(crate) type GenomeLapper<T> = lapper::Lapper<u64, T>;
 
 #[derive(Debug)]
-pub struct StrandedPositionFilter {
-    pub(crate) pos_positions: FxHashMap<u32, GenomeLapper>,
-    pub(crate) neg_positions: FxHashMap<u32, GenomeLapper>,
+pub struct StrandedPositionFilter<T: Send + Sync + Eq + Clone> {
+    pub(crate) pos_positions: FxHashMap<u32, GenomeLapper<T>>,
+    pub(crate) neg_positions: FxHashMap<u32, GenomeLapper<T>>,
 }
 
-impl StrandedPositionFilter {
+impl<T: Send + Sync + Eq + Clone> StrandedPositionFilter<T> {
+    pub fn contains(
+        &self,
+        chrom_id: i32,
+        position: u64,
+        strand: Strand,
+    ) -> bool {
+        let positions = match strand {
+            Strand::Positive => &self.pos_positions,
+            Strand::Negative => &self.neg_positions,
+        };
+        positions
+            // todo(arand) chromId should really be an enum.. encoding things as missing by making them
+            //  negative numbers is so.. C
+            .get(&(chrom_id as u32))
+            .map(|lp| lp.find(position, position + 1).count() > 0)
+            .unwrap_or(false)
+    }
+
+    pub fn overlaps_not_stranded(
+        &self,
+        chrom_id: u32,
+        start: u64,
+        end: u64,
+    ) -> bool {
+        // check pos positions first, if overlaps with positive positions eagerly return true
+        // otherwise check negative overlaps
+        let pos_overlaps = self
+            .pos_positions
+            .get(&chrom_id)
+            .map(|lp| lp.find(start, end).count() > 0)
+            .unwrap_or(false);
+        if !pos_overlaps {
+            self.neg_positions
+                .get(&chrom_id)
+                .map(|lp| lp.find(start, end).count() > 0)
+                .unwrap_or(false)
+        } else {
+            true
+        }
+    }
+
+    pub fn contains_chrom_id(&self, chrom_id: &i64) -> bool {
+        if *chrom_id < 0 {
+            false
+        } else {
+            let chrom_id = *chrom_id as u32;
+            self.pos_positions.contains_key(&chrom_id)
+                || self.neg_positions.contains_key(&chrom_id)
+        }
+    }
+}
+
+impl StrandedPositionFilter<()> {
     pub fn from_bam_and_bed(
         bam_fp: &PathBuf,
         bed_fp: &PathBuf,
@@ -126,7 +181,7 @@ impl StrandedPositionFilter {
                 lp.merge_overlaps();
                 (chrom_id, lp)
             })
-            .collect::<FxHashMap<u32, GenomeLapper>>();
+            .collect::<FxHashMap<u32, GenomeLapper<()>>>();
 
         let neg_lapper = neg_positions
             .into_iter()
@@ -135,7 +190,7 @@ impl StrandedPositionFilter {
                 lp.merge_overlaps();
                 (chrom_id, lp)
             })
-            .collect::<FxHashMap<u32, GenomeLapper>>();
+            .collect::<FxHashMap<u32, GenomeLapper<()>>>();
 
         lines_processed.finish_and_clear();
         info!("processed {} BED lines", lines_processed.position());
@@ -145,55 +200,25 @@ impl StrandedPositionFilter {
             neg_positions: neg_lapper,
         })
     }
+}
 
-    pub fn contains(
+impl StrandedPositionFilter<DnaBase> {
+    pub fn get_base_at_position_stranded(
         &self,
         chrom_id: i32,
         position: u64,
         strand: Strand,
-    ) -> bool {
+    ) -> Option<DnaBase> {
         let positions = match strand {
             Strand::Positive => &self.pos_positions,
             Strand::Negative => &self.neg_positions,
         };
-        positions
-            // todo(arand) chromId should really be an enum.. encoding things as missing by making them
-            //  negative numbers is so.. C
-            .get(&(chrom_id as u32))
-            .map(|lp| lp.find(position, position + 1).count() > 0)
-            .unwrap_or(false)
+        positions.get(&(chrom_id as u32)).and_then(|lp| {
+            lp.find(position, position + 1).map(|x| x.val).next()
+        })
     }
 
-    pub fn overlaps_not_stranded(
-        &self,
-        chrom_id: u32,
-        start: u64,
-        end: u64,
-    ) -> bool {
-        // check pos positions first, if overlaps with positive positions eagerly return true
-        // otherwise check negative overlaps
-        let pos_overlaps = self
-            .pos_positions
-            .get(&chrom_id)
-            .map(|lp| lp.find(start, end).count() > 0)
-            .unwrap_or(false);
-        if !pos_overlaps {
-            self.neg_positions
-                .get(&chrom_id)
-                .map(|lp| lp.find(start, end).count() > 0)
-                .unwrap_or(false)
-        } else {
-            true
-        }
-    }
-
-    pub fn contains_chrom_id(&self, chrom_id: &i64) -> bool {
-        if *chrom_id < 0 {
-            false
-        } else {
-            let chrom_id = *chrom_id as u32;
-            self.pos_positions.contains_key(&chrom_id)
-                || self.neg_positions.contains_key(&chrom_id)
-        }
-    }
+    // pub fn get_forward_base_at_position(&self, chrom_id: u32, position: u64) -> Option<DnaBase> {
+    //     unimplemented!()
+    // }
 }

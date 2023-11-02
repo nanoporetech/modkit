@@ -20,8 +20,8 @@ use crate::dmr::multi_sample::{
 use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::util::{parse_roi_bed, DmrIntervalIter};
 use crate::logging::init_logging;
-use crate::mod_base_code::DnaBase;
-use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
+use crate::mod_base_code::{DnaBase, ParseChar};
+use crate::position_filter::{BaseIv, GenomeLapper, StrandedPositionFilter};
 use crate::util::{
     get_master_progress_bar, get_subroutine_progress_bar, get_ticker,
 };
@@ -110,7 +110,7 @@ impl PairwiseDmr {
         name_to_id: Arc<HashMap<String, usize>>,
         multi_pb: &MultiProgress,
         modified_bases: &[DnaBase],
-    ) -> anyhow::Result<StrandedPositionFilter> {
+    ) -> anyhow::Result<StrandedPositionFilter<DnaBase>> {
         let fasta_reader = FastaReader::from_file(&self.reference_fasta)?;
         let reader_pb = multi_pb.add(get_ticker());
         reader_pb.set_message("sequences read");
@@ -162,16 +162,16 @@ impl PairwiseDmr {
                     let (pos_strand_intervals, neg_strand_intervals) = sequence.chars().enumerate()
                         .fold((Vec::new(), Vec::new()), |(mut pos_agg, mut neg_agg), (pos, base)| {
                             if pos_bases.contains(&base) {
-                                pos_agg.push(Iv {
+                                pos_agg.push(BaseIv {
                                     start: pos as u64,
                                     stop: (pos + 1) as u64,
-                                    val: ()
+                                    val: DnaBase::parse_char(base).unwrap()
                                 })
                             } else if neg_bases.contains(&base) {
-                                neg_agg.push(Iv {
+                                neg_agg.push(BaseIv {
                                     start: pos as u64,
                                     stop: (pos + 1) as u64,
-                                    val: ()
+                                    val: DnaBase::parse_char(base).unwrap()
                                 })
                             };
                             (pos_agg, neg_agg)
@@ -191,11 +191,11 @@ impl PairwiseDmr {
                     let pos = a_pos
                         .into_iter()
                         .chain(b_pos.into_iter())
-                        .collect::<FxHashMap<u32, GenomeLapper>>();
+                        .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
                     let neg = a_neg
                         .into_iter()
                         .chain(b_neg.into_iter())
-                        .collect::<FxHashMap<u32, GenomeLapper>>();
+                        .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
                     (pos, neg)
                 },
             );
@@ -449,27 +449,27 @@ impl MultiSampleDmr {
 
     fn get_stranded_position_filter(
         &self,
-        pos_positions: &HashMap<String, Vec<u64>>,
-        neg_positions: &HashMap<String, Vec<u64>>,
+        pos_positions: &HashMap<String, Vec<(DnaBase, u64)>>,
+        neg_positions: &HashMap<String, Vec<(DnaBase, u64)>>,
         name_to_tid: Arc<HashMap<String, usize>>,
-    ) -> anyhow::Result<StrandedPositionFilter> {
+    ) -> anyhow::Result<StrandedPositionFilter<DnaBase>> {
         let pos_lps = pos_positions
             .iter()
             .filter_map(|(name, positions)| {
                 name_to_tid.get(name).map(|tid| {
                     let ivs = positions
                         .iter()
-                        .map(|p| Iv {
-                            start: *p,
-                            stop: *p + 1,
-                            val: (),
+                        .map(|(base, pos)| BaseIv {
+                            start: *pos,
+                            stop: *pos + 1,
+                            val: *base,
                         })
-                        .collect::<Vec<Iv>>();
+                        .collect::<Vec<BaseIv>>();
                     let lp = GenomeLapper::new(ivs);
                     (*tid as u32, lp)
                 })
             })
-            .collect::<FxHashMap<u32, GenomeLapper>>();
+            .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
 
         let neg_lps = neg_positions
             .iter()
@@ -477,17 +477,17 @@ impl MultiSampleDmr {
                 name_to_tid.get(name).map(|&tid| {
                     let ivs = positions
                         .iter()
-                        .map(|p| Iv {
-                            start: *p,
-                            stop: *p + 1,
-                            val: (),
+                        .map(|(base, pos)| BaseIv {
+                            start: *pos,
+                            stop: *pos + 1,
+                            val: *base,
                         })
-                        .collect::<Vec<Iv>>();
+                        .collect::<Vec<BaseIv>>();
                     let lp = GenomeLapper::new(ivs);
                     (tid as u32, lp)
                 })
             })
-            .collect::<FxHashMap<u32, GenomeLapper>>();
+            .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
 
         Ok(StrandedPositionFilter {
             pos_positions: pos_lps,

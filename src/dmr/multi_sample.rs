@@ -44,7 +44,11 @@ pub(super) fn get_reference_modified_base_positions(
     modified_bases: &[DnaBase],
     mask: bool,
     mpb: MultiProgress,
-) -> anyhow::Result<(HashMap<String, Vec<u64>>, HashMap<String, Vec<u64>>)> {
+) -> anyhow::Result<(
+    HashMap<String, Vec<(DnaBase, u64)>>,
+    HashMap<String, Vec<(DnaBase, u64)>>,
+)> {
+    // this should probably be a struct...
     let fasta_reader = FastaReader::from_file(ref_fasta)?;
     let reader_pb = mpb.add(get_ticker());
     reader_pb.set_message("sequences read");
@@ -87,14 +91,14 @@ pub(super) fn get_reference_modified_base_positions(
                 .enumerate()
                 .filter_map(|(i, c)| {
                     if pos_bases.contains(&c) {
-                        Some((i, Strand::Positive))
+                        Some((i, Strand::Positive, c))
                     } else if neg_bases.contains(&c) {
-                        Some((i, Strand::Negative))
+                        Some((i, Strand::Negative, c))
                     } else {
                         None
                     }
                 })
-                .collect::<Vec<(usize, Strand)>>();
+                .collect::<Vec<(usize, Strand, char)>>();
             positions_pb.inc(modified_positions.len() as u64);
             (name, modified_positions)
         })
@@ -102,19 +106,20 @@ pub(super) fn get_reference_modified_base_positions(
             || (HashMap::new(), HashMap::new()),
             |(mut positive_positions, mut negative_positions),
              (name, positions)| {
-                for (position, strand) in positions {
+                for (position, strand, raw_base) in positions {
+                    let dna_base = DnaBase::parse(raw_base).unwrap();
                     match strand {
                         Strand::Positive => {
                             positive_positions
                                 .entry(name.clone())
                                 .or_insert(Vec::new())
-                                .push(position as u64);
+                                .push((dna_base, position as u64));
                         }
                         Strand::Negative => {
                             negative_positions
                                 .entry(name.clone())
                                 .or_insert(Vec::new())
-                                .push(position as u64);
+                                .push((dna_base, position as u64));
                         }
                     }
                 }

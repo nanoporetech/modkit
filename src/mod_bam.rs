@@ -791,7 +791,7 @@ impl SeqPosBaseModProbs {
     pub(crate) fn filter_positions(
         self,
         edge_filter: Option<&EdgeFilter>,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
         aligned_pairs: &FxHashMap<usize, u64>,
         mod_strand: Strand,

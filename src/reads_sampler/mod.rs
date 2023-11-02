@@ -29,7 +29,7 @@ pub(crate) fn get_sampled_read_ids_to_base_mod_probs<P: RecordProcessor>(
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<P::Output>
@@ -144,7 +144,7 @@ fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
     region: Option<&Region>,
     edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
     sampling_schedule: &SamplingSchedule,
     only_mapped: bool,
     suppress_progress: bool,
@@ -265,7 +265,7 @@ pub(crate) fn sample_reads_from_interval<P: RecordProcessor>(
     record_sampler: RecordSampler,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
 ) -> anyhow::Result<P::Output>
 where
