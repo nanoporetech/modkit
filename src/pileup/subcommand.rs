@@ -253,8 +253,8 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     combine_mods: bool,
-    /// When performing CpG analysis, sum the counts from the positive and
-    /// negative strands into the counts for the positive strand.
+    /// When performing motif analysis (such as CpG), sum the counts from the positive and
+    /// negative strands into the counts for the positive strand position.
     #[arg(long, default_value_t = false)]
     combine_strands: bool,
     /// Discard base modification calls that are this many bases from the start or the end

@@ -34,7 +34,10 @@ pub(crate) fn parse_per_mod_thresholds(
         })
         .collect::<anyhow::Result<HashMap<ModCodeRepr, f32>>>()?;
     per_mod_thresholds.iter().for_each(|(mod_code, thresh)| {
-        info!("using threshold {thresh} for mod-code {}", mod_code);
+        info!(
+            "parsed user-input threshold {thresh} for mod-code {}",
+            mod_code
+        );
     });
     Ok(per_mod_thresholds)
 }
