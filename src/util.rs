@@ -1,13 +1,14 @@
-use anyhow::{anyhow, bail};
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::path::Path;
-
 use std::string::FromUtf8Error;
 
 use anyhow::Result as AnyhowResult;
+use anyhow::{anyhow, bail};
+use bio::alphabets::dna::complement;
 use derive_new::new;
 use indicatif::{ProgressBar, ProgressStyle};
+use itertools::Itertools;
 use linear_map::LinearMap;
 use log::{debug, error, info};
 use regex::Regex;
@@ -591,14 +592,91 @@ pub(crate) fn reader_is_bam(reader: &bam::IndexedReader) -> bool {
     }
 }
 
+#[derive(Copy, Clone)]
+pub(crate) struct Kmer {
+    inner: [u8; 12],
+    size: usize,
+}
+
+impl Kmer {
+    // kinda risky, size needs to be < 12
+    pub(crate) fn new(seq: &[u8], position: usize, size: usize) -> Self {
+        if size > 12 {
+            debug!("kmers greater that size 12 will be corrupted");
+        }
+        let get_back_base_safe = |i| -> Option<u8> {
+            position
+                .checked_sub(i)
+                .and_then(|idx| seq.get(idx).map(|b| *b))
+        };
+        let before = if size % 2 == 0 {
+            size / 2 - 1
+        } else {
+            size / 2
+        };
+
+        let after = size / 2;
+        let mut buffer = [Some(45u8); 12];
+        let mut i = 0;
+        let mut assign = |b: Option<u8>| {
+            buffer[i] = b;
+            i = std::cmp::min(i + 1, 11);
+        };
+
+        for offset in (1..=before).rev() {
+            let b = get_back_base_safe(offset);
+            assign(b);
+        }
+        assign(seq.get(position).map(|b| *b));
+        for offset in 1..=after {
+            assign(seq.get(position + offset).map(|b| *b))
+        }
+        let inner = buffer.map(|b| b.unwrap_or(45));
+        Self { inner, size }
+    }
+
+    pub(crate) fn reverse_complement(self) -> Self {
+        let mut inner = [45u8; 12];
+        for (i, p) in (0..self.size).rev().enumerate() {
+            let mut b = self.inner[p];
+            if b != 45 {
+                b = complement(b)
+            }
+            inner[i] = b
+        }
+        Self {
+            inner,
+            size: self.size,
+        }
+    }
+}
+
+impl Debug for Kmer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = self
+            .inner
+            .iter()
+            .take(self.size)
+            .map(|b| *b as char)
+            .join("");
+        write!(f, "{s}")
+    }
+}
+
+impl Display for Kmer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
 #[cfg(test)]
 mod utils_tests {
-    use crate::util::{
-        get_query_name_string, get_stringable_aux, parse_partition_tags, SamTag,
-    };
     use anyhow::Context;
     use rust_htslib::bam;
     use rust_htslib::bam::Read;
+
+    use crate::util::{
+        get_query_name_string, get_stringable_aux, parse_partition_tags, SamTag,
+    };
 
     #[test]
     fn test_util_get_stringable_tag() {

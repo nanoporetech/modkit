@@ -15,6 +15,7 @@ pub(crate) trait RecordProcessor {
         edge_filter: Option<&EdgeFilter>,
         position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
+        kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output>;
 }
 

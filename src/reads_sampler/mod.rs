@@ -99,6 +99,7 @@ where
                 edge_filter,
                 position_filter,
                 only_mapped,
+                None,
             )?;
             debug!(
                 "sampled {} unmapped records",
@@ -130,6 +131,7 @@ where
             edge_filter,
             position_filter,
             only_mapped,
+            None,
         )?;
         debug!("sampled {} records", read_ids_to_base_mod_probs.len());
         Ok(read_ids_to_base_mod_probs)
@@ -229,6 +231,7 @@ where
                     edge_filter,
                     position_filter,
                     only_mapped,
+                    None,
                 ) {
                     Ok(res) => {
                         let sampled_count = res.size();
@@ -267,6 +270,7 @@ pub(crate) fn sample_reads_from_interval<P: RecordProcessor>(
     edge_filter: Option<&EdgeFilter>,
     position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
+    kmer_size: Option<usize>,
 ) -> anyhow::Result<P::Output>
 where
     P::Output: Moniod,
@@ -286,5 +290,6 @@ where
         edge_filter,
         position_filter,
         only_mapped,
+        kmer_size,
     )
 }
