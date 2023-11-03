@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [extract] Adds `--kmer-length` option to modulate the kmer length on the command line.
 ### Fixes
 - [dmr] Automatically select the correct bedMethyl rows when using multiple modified bases (e.g. C-mods and A-mods). Removes assert and replaces it with a warning.
+### Deprecated
+- In the next version `pileup` output will only have tab delimiters and the `--only-tabs` flag will be removed.
 
 ## [v0.2.2-rc1]
 ### Fixes
