@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.2]
+### Adds
+- [all] Allow ChEBI codes and more flexible single-character modification codes. E.g. now you can use `c` for carboxy cytosine or `z` for something exotic.
+- [extract] Adds `--kmer-length` option to modulate the kmer length on the command line.
+### Fixes
+- [dmr] Automatically select the correct bedMethyl rows when using multiple modified bases (e.g. C-mods and A-mods). Removes assert and replaces it with a warning.
+### Deprecated
+- In the next version `pileup` output will only have tab delimiters and the `--only-tabs` flag will be removed.
+
 ## [v0.2.2-rc1]
 ### Fixes
 - [logging] Changes log level from error to debug when a record doesn't have any base modification probabilities.
