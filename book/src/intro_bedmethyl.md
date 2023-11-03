@@ -14,7 +14,7 @@ for details.
 
 In its simplest form `modkit` creates a bedMethyl file using the following:
 
-```bash
+```text
 modkit pileup path/to/reads.bam output/path/pileup.bed --log-filepath pileup.log
 ```
 

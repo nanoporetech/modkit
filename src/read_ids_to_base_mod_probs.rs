@@ -4,7 +4,6 @@ use anyhow::anyhow;
 use bio::alphabets::dna::revcomp;
 use derive_new::new;
 use indicatif::ParallelProgressIterator;
-use itertools::Itertools;
 use log::{debug, error};
 use rayon::prelude::*;
 use rust_htslib::bam::ext::BamRecordExtensions;

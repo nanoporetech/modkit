@@ -138,15 +138,15 @@ Options:
           cytosine modification calls. Additional per-base thresholds can be specified by repeating
           the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
           single base option and a default for all other bases with: --filter-threshold A:0.70
-          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
-          all other base modification calls.
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenine and 0.9 for all
+          other base modification calls.
 
       --mod-thresholds <MOD_THRESHOLDS>
           Specify a passing threshold to use for a base modification, independent of the threshold
           for the primary sequence base or the default. For example, to set the pass threshold for
           5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
-          usual and used for canonical cytosine and 5mC unless the `--filter-threshold` option is
-          also passed. See the online documentation for more details.
+          usual and used for canonical cytosine and other modifications unless the
+          `--filter-threshold` option is also passed. See the online documentation for more details.
 
       --sample-region <SAMPLE_REGION>
           Specify a region for sampling reads from when estimating the threshold probability. If
@@ -214,8 +214,8 @@ Options:
           collapse.md for details.
 
       --combine-strands
-          When performing CpG analysis, sum the counts from the positive and negative strands into
-          the counts for the positive strand.
+          When performing motif analysis (such as CpG), sum the counts from the positive and
+          negative strands into the counts for the positive strand position.
 
       --edge-filter <EDGE_FILTER>
           Discard base modification calls that are this many bases from the start or the end of the
@@ -525,15 +525,15 @@ Options:
           cytosine modification calls. Additional per-base thresholds can be specified by repeating
           the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
           single base option and a default for all other bases with: --filter-threshold A:0.70
-          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
-          all other base modification calls.
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenine and 0.9 for all
+          other base modification calls.
 
       --mod-thresholds <MOD_THRESHOLDS>
           Specify a passing threshold to use for a base modification, independent of the threshold
           for the primary sequence base or the default. For example, to set the pass threshold for
           5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
-          usual and used for canonical cytosine and 5mC unless the `--filter-threshold` option is
-          also passed. See the online documentation for more details.
+          usual and used for canonical cytosine and other modifications unless the
+          `--filter-threshold` option is also passed. See the online documentation for more details.
 
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base modification probability
@@ -669,15 +669,15 @@ Options:
           cytosine modification calls. Additional per-base thresholds can be specified by repeating
           the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
           single base option and a default for all other bases with: --filter-threshold A:0.70
-          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
-          all other base modification calls.
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenine and 0.9 for all
+          other base modification calls.
 
       --mod-threshold <MOD_THRESHOLDS>
           Specify a passing threshold to use for a base modification, independent of the threshold
           for the primary sequence base or the default. For example, to set the pass threshold for
           5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
-          usual and used for canonical cytosine and 5mC unless the `--filter-threshold` option is
-          also passed. See the online documentation for more details.
+          usual and used for canonical cytosine and other modifications unless the
+          `--filter-threshold` option is also passed. See the online documentation for more details.
 
       --no-filtering
           Don't filter base modification calls, assign each base modification to the highest
@@ -742,6 +742,9 @@ Options:
 
       --suppress-progress
           Hide the progress bar.
+
+      --kmer-size <KMER_SIZE>
+          [default: 5]
 
       --reference <REFERENCE>
           Path to reference FASTA to extract reference context information from. If no reference is
@@ -914,15 +917,15 @@ Options:
           cytosine modification calls. Additional per-base thresholds can be specified by repeating
           the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
           single base option and a default for all other bases with: --filter-threshold A:0.70
-          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenosine and 0.9 for
-          all other base modification calls.
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenine and 0.9 for all
+          other base modification calls.
 
       --mod-thresholds <MOD_THRESHOLDS>
           Specify a passing threshold to use for a base modification, independent of the threshold
           for the primary sequence base or the default. For example, to set the pass threshold for
           5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
-          usual and used for canonical cytosine and 5mC unless the `--filter-threshold` option is
-          also passed. See the online documentation for more details.
+          usual and used for canonical cytosine and other modifications unless the
+          `--filter-threshold` option is also passed. See the online documentation for more details.
 
       --sample-region <SAMPLE_REGION>
           Specify a region for sampling reads from when estimating the threshold probability. If
@@ -1023,21 +1026,24 @@ Options:
   -h, --help                         Print help information
 ```
 
-## pileup-hemi `multi`
+## pileup-hemi
 ```text
-Compare regions between all pairs of samples (for example a trio sample set or haplotyped trio sample set).
-As with `pair` all inputs must be bgzip compressed bedMethyl files with associated tabix indices. Each sample
-must be assigned a name. Output is a directory of BED files with the score column indicating the magnitude 
-of the difference in methylation between the two samples indicated in the file name. See the online 
-documentation for additional details.
+Compare regions between all pairs of samples (for example a trio sample set or haplotyped trio
+sample set). As with `pair` all inputs must be bgzip compressed bedMethyl files with associated
+tabix indices. Each sample must be assigned a name. Output is a directory of BED files with the
+score column indicating the magnitude of the difference in methylation between the two samples
+indicated in the file name. See the online documentation for additional details.
 
 Usage: modkit dmr multi [OPTIONS] --regions-bed <REGIONS_BED> --out-dir <OUT_DIR> --ref <REFERENCE_FASTA>
 
 Options:
-  -s, --sample <SAMPLES> <SAMPLES>   Two or more named samples to compare. Two arguments are required <path> <name>.
-  -i, --index <INDICES> <INDICES>    Optional, paths to tabix indices associated with named samples. Two arguments 
-                                     are required <path> <name> where <name> corresponds to the name of the sample
-                                     given to the -s/--sample argument.
+  -s, --sample <SAMPLES> <SAMPLES>   Two or more named samples to compare. Two arguments are
+                                     required <path> <name>. This option should be repeated at least
+                                     two times.
+  -i, --index <INDICES> <INDICES>    Optional, paths to tabix indices associated with named samples.
+                                     Two arguments are required <path> <name> where <name>
+                                     corresponds to the name of the sample given to the -s/--sample
+                                     argument.
   -r, --regions-bed <REGIONS_BED>    Regions BED file over which to compare methylation levels.
                                      Should be tab-separated (spaces allowed in the "name" column).
                                      Requires chrom, chromStart and chromEnd. The Name column is
