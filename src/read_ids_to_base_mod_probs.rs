@@ -184,7 +184,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         mut record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
     ) -> anyhow::Result<Self::Output> {
         let spinner = if with_progress {
@@ -904,7 +904,7 @@ impl RecordProcessor for ReadsBaseModProfile {
         mut record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
-        _position_filter: Option<&StrandedPositionFilter>,
+        _position_filter: Option<&StrandedPositionFilter<()>>,
         _only_mapped: bool,
     ) -> anyhow::Result<Self::Output> {
         let mut mod_iter = TrackingModRecordIter::new(records, false);

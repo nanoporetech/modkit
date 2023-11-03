@@ -37,6 +37,7 @@ noodles = { version = "0.50.0", features = ["tabix", "core", "bgzf", "csi"] }
 #bgzip = "0.3.1"
 rv = "0.16.0"
 ndarray = "0.15.6"
+log-once = "0.4.0"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"

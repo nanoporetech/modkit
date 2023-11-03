@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
+use std::path::Path;
 
 use std::string::FromUtf8Error;
 
@@ -8,7 +9,7 @@ use anyhow::Result as AnyhowResult;
 use derive_new::new;
 use indicatif::{ProgressBar, ProgressStyle};
 use linear_map::LinearMap;
-use log::{debug, error};
+use log::{debug, error, info};
 use regex::Regex;
 use rust_htslib::bam::{
     self, ext::BamRecordExtensions, header::HeaderRecord, record::Aux,
@@ -16,6 +17,18 @@ use rust_htslib::bam::{
 };
 
 use crate::errs::{InputError, RunError};
+
+pub(crate) fn create_out_directory<T: AsRef<std::ffi::OsStr>>(
+    raw_path: T,
+) -> anyhow::Result<()> {
+    if let Some(p) = Path::new(&raw_path).parent() {
+        if !p.exists() {
+            info!("creating directory at {p:?}");
+            std::fs::create_dir_all(p)?;
+        }
+    }
+    Ok(())
+}
 
 pub(crate) fn get_ticker() -> ProgressBar {
     let ticker = ProgressBar::new_spinner();

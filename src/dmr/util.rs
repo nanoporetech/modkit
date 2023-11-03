@@ -185,7 +185,6 @@ impl Iterator for DmrIntervalIter {
                     }
                     (None, _) => {
                         self.failures.inc(1);
-                        // todo change "control" and "experimental" to the filepaths
                         debug!(
                             "didn't find chrom id for {} in {} tabix header",
                             &self.control_fn, &dmr_interval.chrom

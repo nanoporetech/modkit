@@ -239,9 +239,6 @@ impl<'a> ReadCache<'a> {
             |(ref_pos_mod_calls, skip_mode)| {
                 let mod_base_call =
                     ref_pos_mod_calls.get(&(position as u64)).map(|bmc| *bmc);
-                // .map(|base_mod_call| {
-                //     Self::filter_base_mod_call(base_mod_call, threshold)
-                // });
                 match skip_mode {
                     SkipMode::Ambiguous => mod_base_call,
                     SkipMode::ImplicitProbModified | SkipMode::ProbModified => {

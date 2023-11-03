@@ -68,7 +68,7 @@ pub fn summarize_modbam<'a>(
     per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<ModSummary<'a>> {

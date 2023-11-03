@@ -18,6 +18,9 @@ fn main() -> Result<(), String> {
     }
     if let Err(err) = cli.command.run() {
         error!("Error! {err}");
+        for cause in err.chain().skip(1) {
+            error!(" caused by {cause}")
+        }
         std::process::exit(1);
     }
     Ok(())

@@ -698,7 +698,7 @@ struct PileupIter<'a> {
     start_pos: u32,
     end_pos: u32,
     motif_locations: Option<&'a FxHashMap<u32, StrandRule>>,
-    position_filter: Option<&'a StrandedPositionFilter>,
+    position_filter: Option<&'a StrandedPositionFilter<()>>,
 }
 
 impl<'a> PileupIter<'a> {
@@ -708,7 +708,7 @@ impl<'a> PileupIter<'a> {
         start_pos: u32,
         end_pos: u32,
         motif_locations: Option<&'a FxHashMap<u32, StrandRule>>,
-        position_filter: Option<&'a StrandedPositionFilter>,
+        position_filter: Option<&'a StrandedPositionFilter<()>>,
     ) -> Self {
         Self {
             pileups,
@@ -886,7 +886,7 @@ pub fn process_region<T: AsRef<Path>>(
     motif_locations: Option<&MultipleMotifLocations>,
     edge_filter: Option<&EdgeFilter>,
     partition_tags: Option<&Vec<SamTag>>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;

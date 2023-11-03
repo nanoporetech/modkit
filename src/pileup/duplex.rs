@@ -218,7 +218,7 @@ pub fn process_region_duplex<T: AsRef<Path>>(
     max_depth: u32,
     motif_locations: &MultipleMotifLocations,
     edge_filter: Option<&EdgeFilter>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
 ) -> anyhow::Result<DuplexModBasePileup> {
     let mut bam_reader = bam::IndexedReader::from_path(bam_fp)?;
     let chrom_name =

@@ -9,11 +9,44 @@ pub trait ParseChar {
     fn char(&self) -> char;
 }
 
-pub const HYDROXY_METHYL_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('h');
+// Cytosine mods
 pub const METHYL_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('m');
+pub const HYDROXY_METHYL_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('h');
+pub const FORMYL_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('f');
+pub const CARBOXY_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('c');
+pub const FOUR_METHYL_CYTOSINE: ModCodeRepr = ModCodeRepr::ChEbi(21839);
+pub const ANY_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('C');
+
+// Adenine mods
 pub const SIX_METHYL_ADENINE: ModCodeRepr = ModCodeRepr::Code('a');
 pub const ANY_ADENINE: ModCodeRepr = ModCodeRepr::Code('A');
-pub const ANY_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('C');
+
+// Thymine(/Uracil) mods
+pub const HYDROXY_METHYL_URACIL: ModCodeRepr = ModCodeRepr::Code('g');
+pub const FORMYL_URACIL: ModCodeRepr = ModCodeRepr::Code('e');
+pub const CARBOXY_URACIL: ModCodeRepr = ModCodeRepr::Code('b');
+pub const ANY_THYMINE: ModCodeRepr = ModCodeRepr::Code('T');
+
+// Guanine mods
+pub const OXO_GUANINE: ModCodeRepr = ModCodeRepr::Code('o');
+pub const ANY_GUANINE: ModCodeRepr = ModCodeRepr::Code('G');
+
+pub const SUPPORTED_CODES: [ModCodeRepr; 14] = [
+    METHYL_CYTOSINE,
+    HYDROXY_METHYL_CYTOSINE,
+    FOUR_METHYL_CYTOSINE,
+    CARBOXY_CYTOSINE,
+    FOUR_METHYL_CYTOSINE,
+    ANY_CYTOSINE,
+    SIX_METHYL_ADENINE,
+    ANY_ADENINE,
+    HYDROXY_METHYL_URACIL,
+    FORMYL_URACIL,
+    CARBOXY_URACIL,
+    ANY_THYMINE,
+    OXO_GUANINE,
+    ANY_GUANINE,
+];
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, Hash)]
 pub enum ModCodeRepr {
@@ -31,6 +64,24 @@ impl ModCodeRepr {
             } else {
                 Err(anyhow!("failed to parse mod code {raw}"))
             }
+        }
+    }
+
+    pub fn check_base(&self, dna_base: DnaBase) -> bool {
+        match self {
+            &METHYL_CYTOSINE
+            | &HYDROXY_METHYL_CYTOSINE
+            | &FORMYL_CYTOSINE
+            | &CARBOXY_CYTOSINE
+            | &FOUR_METHYL_CYTOSINE
+            | &ANY_CYTOSINE => dna_base == DnaBase::C,
+            &SIX_METHYL_ADENINE | &ANY_ADENINE => dna_base == DnaBase::A,
+            &HYDROXY_METHYL_URACIL
+            | &FORMYL_URACIL
+            | &CARBOXY_URACIL
+            | &ANY_THYMINE => dna_base == DnaBase::T,
+            &OXO_GUANINE | &ANY_GUANINE => dna_base == DnaBase::G,
+            _ => false,
         }
     }
 }
@@ -109,19 +160,6 @@ impl DnaBase {
             Self::T => 'T',
         }
     }
-
-    // pub(crate) fn into_base_state(self) -> AnyhowResult<ModCode> {
-    //     match self {
-    //         Self::A => Ok(ModCode::A),
-    //         Self::C => Ok(ModCode::C),
-    //         Self::G => {
-    //             Err(anyhow!("no mod code for canonical base {}", self.char()))
-    //         }
-    //         Self::T => {
-    //             Err(anyhow!("no mod code for canonical base {}", self.char()))
-    //         }
-    //     }
-    // }
 }
 
 impl ParseChar for DnaBase {

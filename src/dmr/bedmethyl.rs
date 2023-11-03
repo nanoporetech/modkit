@@ -4,8 +4,9 @@ use nom::character::complete::{multispace1, none_of};
 use nom::combinator::map_res;
 use nom::multi::many1;
 use nom::IResult;
+use std::collections::HashMap;
 
-use crate::mod_base_code::ModCodeRepr;
+use crate::mod_base_code::{DnaBase, ModCodeRepr, SUPPORTED_CODES};
 use crate::parsing_utils::{
     consume_char, consume_digit, consume_float, consume_string,
     consume_string_from_list,
@@ -81,6 +82,29 @@ impl BedMethylLine {
 
     pub fn stop(&self) -> u64 {
         self.interval.stop
+    }
+
+    pub fn check_mod_code_supported(&self) -> bool {
+        SUPPORTED_CODES.contains(&self.raw_mod_code)
+    }
+
+    pub fn check_base(
+        &self,
+        dna_base: DnaBase,
+        additional_mappings: Option<&HashMap<ModCodeRepr, DnaBase>>,
+    ) -> bool {
+        if self.raw_mod_code.check_base(dna_base) {
+            true
+        } else {
+            if let Some(mappings) = additional_mappings {
+                mappings
+                    .get(&self.raw_mod_code)
+                    .map(|b| *b == dna_base)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }
     }
 }
 

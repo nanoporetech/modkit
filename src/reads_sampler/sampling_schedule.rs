@@ -141,7 +141,7 @@ impl SamplingSchedule {
         bam_fp: T,
         num_reads: usize,
         region: Option<&Region>,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
         include_unmapped: bool,
     ) -> anyhow::Result<Self> {
         let mut reader = bam::IndexedReader::from_path(bam_fp)?;
@@ -246,7 +246,7 @@ impl SamplingSchedule {
         bam_fp: T,
         sample_frac: f32,
         region: Option<&Region>,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
         include_unmapped: bool,
     ) -> anyhow::Result<Self> {
         if sample_frac > 1.0 {
@@ -374,7 +374,7 @@ impl IdxStats {
     pub(crate) fn check_any_mapped_reads(
         bam_fp: &PathBuf,
         region: Option<&Region>,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
     ) -> anyhow::Result<bool> {
         Self::new_from_path(bam_fp, region, position_filter)
             .map(|idx_stats| idx_stats.mapped_read_count > 0)
@@ -383,7 +383,7 @@ impl IdxStats {
     fn new_from_path(
         bam_fp: &PathBuf,
         region: Option<&Region>,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
     ) -> anyhow::Result<Self> {
         let mut reader = bam::IndexedReader::from_path(bam_fp)
             .context("could not create reader for getting mapping stats")?;
@@ -393,7 +393,7 @@ impl IdxStats {
     fn new_from_reader(
         reader: &mut bam::IndexedReader,
         region: Option<&Region>,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
     ) -> anyhow::Result<Self> {
         let header = reader.header();
         // get the tid of the region if we're using it

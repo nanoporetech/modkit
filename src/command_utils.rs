@@ -10,7 +10,7 @@ use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::calc_threshold_from_bam;
-use crate::util::Region;
+use crate::util::{create_out_directory, Region};
 
 pub(crate) fn parse_per_mod_thresholds(
     raw_per_mod_thresholds: &[String],
@@ -34,7 +34,10 @@ pub(crate) fn parse_per_mod_thresholds(
         })
         .collect::<anyhow::Result<HashMap<ModCodeRepr, f32>>>()?;
     per_mod_thresholds.iter().for_each(|(mod_code, thresh)| {
-        info!("using threshold {thresh} for mod-code {}", mod_code);
+        info!(
+            "parsed user-input threshold {thresh} for mod-code {}",
+            mod_code
+        );
     });
     Ok(per_mod_thresholds)
 }
@@ -65,7 +68,7 @@ pub(crate) fn get_threshold_from_options(
     per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
     edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<MultipleThresholdModCaller> {
@@ -204,16 +207,24 @@ pub(crate) fn get_bam_writer(
     raw: &str,
     header: &Header,
     output_sam: bool,
-) -> rust_htslib::errors::Result<bam::Writer> {
+) -> anyhow::Result<bam::Writer> {
     let format = if output_sam {
         bam::Format::Sam
     } else {
         bam::Format::Bam
     };
     if using_stream(raw) {
-        bam::Writer::from_stdout(&header, format)
+        bam::Writer::from_stdout(&header, format).map_err(|e| {
+            anyhow!(
+                "failed to make stdout {format:?} writer, {}",
+                e.to_string()
+            )
+        })
     } else {
-        bam::Writer::from_path(&raw, &header, format)
+        create_out_directory(&raw)?;
+        bam::Writer::from_path(&raw, &header, format).map_err(|e| {
+            anyhow!("failed to make {format:?} writer, {}", e.to_string())
+        })
     }
 }
 

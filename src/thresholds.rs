@@ -124,7 +124,7 @@ pub fn calc_threshold_from_bam(
     region: Option<&Region>,
     edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
     suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, f32>> {
@@ -163,7 +163,7 @@ pub fn get_modbase_probs_from_bam(
     region: Option<&Region>,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
-    position_filter: Option<&StrandedPositionFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
     suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, Vec<f32>>> {

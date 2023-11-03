@@ -28,8 +28,9 @@ use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::util::{
-    get_master_progress_bar, get_subroutine_progress_bar, get_targets,
-    get_ticker, parse_partition_tags, reader_is_bam, ReferenceRecord, Region,
+    create_out_directory, get_master_progress_bar, get_subroutine_progress_bar,
+    get_targets, get_ticker, parse_partition_tags, reader_is_bam,
+    ReferenceRecord, Region,
 };
 use crate::writers::{
     BedGraphWriter, BedMethylWriter, PartitioningBedMethylWriter, PileupWriter,
@@ -252,8 +253,8 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     combine_mods: bool,
-    /// When performing CpG analysis, sum the counts from the positive and
-    /// negative strands into the counts for the positive strand.
+    /// When performing motif analysis (such as CpG), sum the counts from the positive and
+    /// negative strands into the counts for the positive strand position.
     #[arg(long, default_value_t = false)]
     combine_strands: bool,
     /// Discard base modification calls that are this many bases from the start or the end
@@ -538,6 +539,7 @@ impl ModBamPileup {
                         Box::new(BedMethylWriter::new(writer, !self.only_tabs))
                     }
                     _ => {
+                        create_out_directory(&out_fp_str)?;
                         let fh = std::fs::File::create(out_fp_str)
                             .context("failed to make output file")?;
                         let writer = BufWriter::new(fh);
@@ -1179,6 +1181,7 @@ impl DuplexModBamPileup {
 
         let mut writer: Box<dyn PileupWriter<DuplexModBasePileup>> =
             if let Some(out_fp) = self.out_bed.as_ref() {
+                create_out_directory(out_fp)?;
                 let fh = std::fs::File::create(out_fp)
                     .context("failed to make output file")?;
                 let writer = BufWriter::new(fh);

@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use anyhow::bail;
 use indicatif::ProgressBar;
+use itertools::{Itertools, MinMaxResult};
 use log::{debug, error};
+use log_once::debug_once;
 use noodles::bgzf;
 use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 use rayon::prelude::*;
@@ -14,32 +16,50 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::dmr::bedmethyl::BedMethylLine;
 use crate::dmr::model::{AggregatedCounts, ModificationCounts};
 use crate::dmr::util::{DmrInterval, DmrIntervalIter};
+use crate::mod_base_code::DnaBase;
 use crate::position_filter::{Iv, StrandedPositionFilter};
 use crate::util::{Strand, StrandRule};
 
 fn aggregate_counts(
     bm_lines: &[BedMethylLine],
     chrom_id: u32,
-    position_filter: &StrandedPositionFilter,
+    position_filter: &StrandedPositionFilter<DnaBase>,
 ) -> anyhow::Result<AggregatedCounts> {
     let grouped_by_position: FxHashMap<u64, Vec<&BedMethylLine>> = bm_lines
         .iter()
-        .filter(|bm_line| match bm_line.strand {
-            StrandRule::Positive => position_filter.contains(
-                chrom_id as i32,
-                bm_line.start(),
-                Strand::Positive,
-            ),
-            StrandRule::Negative => position_filter.contains(
-                chrom_id as i32,
-                bm_line.start(),
-                Strand::Negative,
-            ),
-            StrandRule::Both => position_filter.overlaps_not_stranded(
-                chrom_id,
-                bm_line.start(),
-                bm_line.stop(),
-            ),
+        .filter_map(|bm_line| {
+            let base = match bm_line.strand {
+                StrandRule::Positive | StrandRule::Both => position_filter
+                    .get_base_at_position_stranded(
+                        chrom_id as i32,
+                        bm_line.start(),
+                        Strand::Positive,
+                    ),
+                StrandRule::Negative => position_filter
+                    .get_base_at_position_stranded(
+                        chrom_id as i32,
+                        bm_line.start(),
+                        Strand::Negative,
+                    )
+                    .map(|b| b.complement()),
+            };
+            base.and_then(|b| {
+                if bm_line.check_base(b, None) {
+                    // todo add user mappings
+                    Some(bm_line)
+                } else {
+                    // this will eventually change when user-input is accepted
+                    if !bm_line.check_mod_code_supported() {
+                        debug_once!(
+                            "encountered modification code {} in bedMethyl record, \
+                             not currently supported",
+                        bm_line.raw_mod_code
+                    );
+
+                    }
+                    None
+                }
+            })
         })
         .fold(FxHashMap::default(), |mut acc, bm_line| {
             acc.entry(bm_line.start())
@@ -47,7 +67,7 @@ fn aggregate_counts(
                 .push(bm_line);
             acc
         });
-    let (counts_per_code, total) = grouped_by_position.into_iter().fold(
+    let (counts_per_code, total) = grouped_by_position.into_iter().try_fold(
         (HashMap::new(), 0),
         |(mut acc, mut total_so_far), (_pos, grouped)| {
             let valid_covs = grouped
@@ -59,23 +79,32 @@ fn aggregate_counts(
                 .map(|bml| &bml.chrom)
                 .collect::<FxHashSet<&String>>();
             let valid_coverage = grouped[0].valid_coverage as usize;
-            assert_eq!(valid_covs.len(), 1);
-            assert_eq!(
-                chroms.len(),
-                1,
-                "should only get 1 chrom, got {} {:?}, {:?}",
-                chroms.len(),
-                &chroms,
-                &grouped
-            );
+            if valid_covs.len() != 1 {
+                let mut message = format!("invalid data found, should not have more than 1 score per position for a \
+                    base.");
+                match grouped.iter().minmax_by(|a, b| a.start().cmp(&b.start())) {
+                    MinMaxResult::NoElements => {},
+                    MinMaxResult::MinMax(s, t) => {
+                        message.push_str(&format!("starting at {}, ending at {}", s.start(), t.stop()))
+                    }
+                    MinMaxResult::OneElement(s) => {
+                        message.push_str(&format!("starting at {}", s.start()))
+                    }
+                }
+                bail!(message)
+            }
+
+            if chroms.len() != 1 {
+                bail!(format!("should only get one chrom, got {}", chroms.len()))
+            }
             for x in grouped {
                 *acc.entry(x.raw_mod_code).or_insert(0) +=
                     x.count_methylated as usize;
             }
             total_so_far += valid_coverage;
-            (acc, total_so_far)
+            Ok((acc, total_so_far))
         },
-    );
+    )?;
     AggregatedCounts::try_new(counts_per_code, total)
 }
 
@@ -84,7 +113,7 @@ fn get_mod_counts_for_condition(
     chunks: &[IndexChunk],
     interval: &Iv,
     chrom_id: u32,
-    position_filter: &StrandedPositionFilter,
+    position_filter: &StrandedPositionFilter<DnaBase>,
     filename: &PathBuf,
 ) -> anyhow::Result<AggregatedCounts> {
     let mut bedmethyl_lines = Vec::new();
@@ -144,7 +173,7 @@ pub(super) fn get_modification_counts(
     control_chunks: &[IndexChunk],
     exp_chunks: &[IndexChunk],
     dmr_interval: DmrInterval,
-    position_filter: &StrandedPositionFilter,
+    position_filter: &StrandedPositionFilter<DnaBase>,
     chrom_id: u32,
 ) -> anyhow::Result<ModificationCounts> {
     let mut control_reader =
@@ -187,9 +216,10 @@ pub(super) fn run_pairwise_dmr(
     control_bed_fp: &PathBuf,
     exp_bed_fp: &PathBuf,
     dmr_interval_iter: DmrIntervalIter,
-    position_filter: StrandedPositionFilter,
+    position_filter: StrandedPositionFilter<DnaBase>,
     mut writer: Box<dyn std::io::Write>,
     pb: ProgressBar,
+    failure_counter: ProgressBar,
 ) -> anyhow::Result<usize> {
     let (snd, rcv) = crossbeam_channel::bounded(1000);
     let control_bedmethyl_fp = control_bed_fp.clone();
@@ -251,6 +281,7 @@ pub(super) fn run_pairwise_dmr(
             }
             Err(e) => {
                 debug!("unexpected error, {}", e.to_string());
+                failure_counter.inc(1);
             }
         }
     }

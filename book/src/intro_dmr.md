@@ -82,6 +82,27 @@ modkit dmr pair \
   --log-filepath dmr.log
 ```
 
+### Running multiple samples
+The `modkit dmr multi` command runs all pairwise comparisons for more than two samples.
+The preparation of the data is identical to that for `dmr pair` (for each sample, of course). 
+An example command could be:
+```bash
+modkit dmr multi \
+  -s ${norm_pileup_1}.gz norm1 \
+  -s ${tumor_pileup_1}.gz tumor1 \
+  -s ${norm_pileup_2}.gz norm2 \
+  -s ${tumor_pileup_2}.gz tumor2 \
+  -o ${dmr_dir} \ # required for multi
+  -r ${cpg_islands} \
+  --ref ${ref} \
+  --base C \
+  -t 10 \
+  -f \
+  --log-filepath dmr_multi.log
+```
+
+For example the samples could be haplotype-partitioned bedMethyl tables or biological replicates.
+
 ## Differential methylation output format
 The output from `modkit dmr pair` (and for each pairwise comparison with `modkit dmr multi`) is (roughly)
 a BED file with the following schema:

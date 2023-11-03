@@ -13,7 +13,7 @@ pub(crate) trait RecordProcessor {
         record_sampler: RecordSampler,
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
     ) -> anyhow::Result<Self::Output>;
 }

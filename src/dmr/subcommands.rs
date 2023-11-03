@@ -18,12 +18,13 @@ use crate::dmr::multi_sample::{
     get_reference_modified_base_positions, n_choose_2, DmrSample,
 };
 use crate::dmr::pairwise::run_pairwise_dmr;
-use crate::dmr::util::{parse_roi_bed, DmrIntervalIter};
+use crate::dmr::util::{parse_roi_bed, DmrInterval, DmrIntervalIter};
 use crate::logging::init_logging;
-use crate::mod_base_code::DnaBase;
-use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
+use crate::mod_base_code::{DnaBase, ParseChar};
+use crate::position_filter::{BaseIv, GenomeLapper, StrandedPositionFilter};
 use crate::util::{
-    get_master_progress_bar, get_subroutine_progress_bar, get_ticker,
+    create_out_directory, get_master_progress_bar, get_subroutine_progress_bar,
+    get_ticker,
 };
 
 #[derive(Subcommand)]
@@ -110,7 +111,7 @@ impl PairwiseDmr {
         name_to_id: Arc<HashMap<String, usize>>,
         multi_pb: &MultiProgress,
         modified_bases: &[DnaBase],
-    ) -> anyhow::Result<StrandedPositionFilter> {
+    ) -> anyhow::Result<StrandedPositionFilter<DnaBase>> {
         let fasta_reader = FastaReader::from_file(&self.reference_fasta)?;
         let reader_pb = multi_pb.add(get_ticker());
         reader_pb.set_message("sequences read");
@@ -162,16 +163,16 @@ impl PairwiseDmr {
                     let (pos_strand_intervals, neg_strand_intervals) = sequence.chars().enumerate()
                         .fold((Vec::new(), Vec::new()), |(mut pos_agg, mut neg_agg), (pos, base)| {
                             if pos_bases.contains(&base) {
-                                pos_agg.push(Iv {
+                                pos_agg.push(BaseIv {
                                     start: pos as u64,
                                     stop: (pos + 1) as u64,
-                                    val: ()
+                                    val: DnaBase::parse_char(base).unwrap()
                                 })
                             } else if neg_bases.contains(&base) {
-                                neg_agg.push(Iv {
+                                neg_agg.push(BaseIv {
                                     start: pos as u64,
                                     stop: (pos + 1) as u64,
-                                    val: ()
+                                    val: DnaBase::parse_char(base).unwrap()
                                 })
                             };
                             (pos_agg, neg_agg)
@@ -191,11 +192,11 @@ impl PairwiseDmr {
                     let pos = a_pos
                         .into_iter()
                         .chain(b_pos.into_iter())
-                        .collect::<FxHashMap<u32, GenomeLapper>>();
+                        .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
                     let neg = a_neg
                         .into_iter()
                         .chain(b_neg.into_iter())
-                        .collect::<FxHashMap<u32, GenomeLapper>>();
+                        .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
                     (pos, neg)
                 },
             );
@@ -211,7 +212,7 @@ impl PairwiseDmr {
         specified_index: Option<&PathBuf>,
     ) -> anyhow::Result<(CsiIndex, PathBuf)> {
         if let Some(index_fp) = specified_index {
-            info!(
+            debug!(
                 "loading user-specified index at {}",
                 index_fp.to_string_lossy()
             );
@@ -225,14 +226,14 @@ impl PairwiseDmr {
                 anyhow!("could not format control (a) bedmethyl filepath")
             })?;
             let index_fp = format!("{}.tbi", bedmethyl_fp);
-            info!(
+            debug!(
                 "looking for index associated with {} at {}",
                 bedmethyl_fp, &index_fp
             );
             let index_path = Path::new(&index_fp).to_path_buf();
 
             noodles::tabix::read(&index_fp)
-                .context("failed to read index inferred from bedmethyl file name at {index_fp}")
+                .with_context(|| format!("failed to read index inferred from bedMethyl file name at {index_fp}"))
                 .map(|idx| (idx, index_path))
         }
     }
@@ -287,15 +288,7 @@ impl PairwiseDmr {
                 None => Box::new(BufWriter::new(std::io::stdout())),
                 Some(fp) => {
                     let p = Path::new(fp);
-                    if let Some(parent) = p.parent() {
-                        if !parent.exists() {
-                            info!(
-                                "creating output directory {}",
-                                parent.to_str().unwrap_or("failed to parse")
-                            );
-                            std::fs::create_dir_all(parent)?;
-                        }
-                    }
+                    create_out_directory(p)?;
                     if p.exists() && !self.force {
                         bail!("refusing to overwrite existing file {}", fp)
                     } else {
@@ -327,6 +320,30 @@ impl PairwiseDmr {
             .enumerate()
             .map(|(idx, r)| (r.to_owned(), idx))
             .collect::<HashMap<String, usize>>();
+
+        let regions_of_interest = regions_of_interest
+            .into_iter()
+            .filter_map(|roi| {
+                if !control_contig_lookup.contains_key(&roi.chrom) {
+                    info!(
+                        "discarding {}, missing from 'a' bedMethyl index",
+                        &roi.chrom
+                    );
+                    None
+                } else if !exp_contig_lookup.contains_key(&roi.chrom) {
+                    info!(
+                        "discarding {}, missing from 'b' bedMethyl index",
+                        &roi.chrom
+                    );
+                    None
+                } else {
+                    Some(roi)
+                }
+            })
+            .collect::<Vec<DmrInterval>>();
+        if regions_of_interest.is_empty() {
+            bail!("no valid regions in input")
+        }
 
         let motifs = self
             .modified_bases
@@ -367,6 +384,7 @@ impl PairwiseDmr {
             position_filter,
             writer,
             pb,
+            failures.clone(),
         )?;
 
         info!(
@@ -381,7 +399,8 @@ impl PairwiseDmr {
 
 #[derive(Args)]
 pub struct MultiSampleDmr {
-    /// Two or more named samples to compare. Two arguments are required <path> <name>.
+    /// Two or more named samples to compare. Two arguments are required <path> <name>. This
+    /// option should be repeated at least two times.
     #[arg(short = 's', long = "sample", num_args = 2)]
     samples: Vec<String>,
     /// Optional, paths to tabix indices associated with named samples. Two arguments
@@ -449,27 +468,27 @@ impl MultiSampleDmr {
 
     fn get_stranded_position_filter(
         &self,
-        pos_positions: &HashMap<String, Vec<u64>>,
-        neg_positions: &HashMap<String, Vec<u64>>,
+        pos_positions: &HashMap<String, Vec<(DnaBase, u64)>>,
+        neg_positions: &HashMap<String, Vec<(DnaBase, u64)>>,
         name_to_tid: Arc<HashMap<String, usize>>,
-    ) -> anyhow::Result<StrandedPositionFilter> {
+    ) -> anyhow::Result<StrandedPositionFilter<DnaBase>> {
         let pos_lps = pos_positions
             .iter()
             .filter_map(|(name, positions)| {
                 name_to_tid.get(name).map(|tid| {
                     let ivs = positions
                         .iter()
-                        .map(|p| Iv {
-                            start: *p,
-                            stop: *p + 1,
-                            val: (),
+                        .map(|(base, pos)| BaseIv {
+                            start: *pos,
+                            stop: *pos + 1,
+                            val: *base,
                         })
-                        .collect::<Vec<Iv>>();
+                        .collect::<Vec<BaseIv>>();
                     let lp = GenomeLapper::new(ivs);
                     (*tid as u32, lp)
                 })
             })
-            .collect::<FxHashMap<u32, GenomeLapper>>();
+            .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
 
         let neg_lps = neg_positions
             .iter()
@@ -477,17 +496,17 @@ impl MultiSampleDmr {
                 name_to_tid.get(name).map(|&tid| {
                     let ivs = positions
                         .iter()
-                        .map(|p| Iv {
-                            start: *p,
-                            stop: *p + 1,
-                            val: (),
+                        .map(|(base, pos)| BaseIv {
+                            start: *pos,
+                            stop: *pos + 1,
+                            val: *base,
                         })
-                        .collect::<Vec<Iv>>();
+                        .collect::<Vec<BaseIv>>();
                     let lp = GenomeLapper::new(ivs);
                     (tid as u32, lp)
                 })
             })
-            .collect::<FxHashMap<u32, GenomeLapper>>();
+            .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
 
         Ok(StrandedPositionFilter {
             pos_positions: pos_lps,
@@ -500,6 +519,7 @@ impl MultiSampleDmr {
         let _pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build_global()?;
+        create_out_directory(&self.out_dir)?;
 
         PairwiseDmr::validate_modified_bases(&self.modified_bases)?;
         let indices = self.indices
@@ -640,6 +660,7 @@ impl MultiSampleDmr {
                 position_filter,
                 writer,
                 pb,
+                failures.clone(),
             )?;
             debug!(
                 "{} regions processed successfully and {} regions failed for pair {} {}",

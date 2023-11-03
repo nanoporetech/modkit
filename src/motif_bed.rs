@@ -439,7 +439,7 @@ pub struct MotifLocations {
 impl MotifLocations {
     pub fn from_sequences(
         regex_motif: RegexMotif,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
         sequences_and_ids: &[(String, u32)],
         master_progress_bar: &MultiProgress,
     ) -> AnyhowResult<Self> {
@@ -493,7 +493,7 @@ impl MotifLocations {
         regex_motif: RegexMotif,
         name_to_tid: &HashMap<&str, u32>,
         mask: bool,
-        position_filter: Option<&StrandedPositionFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
         master_progress_bar: &MultiProgress,
     ) -> AnyhowResult<Self> {
         let seqs_and_target_ids = get_masked_sequences(
