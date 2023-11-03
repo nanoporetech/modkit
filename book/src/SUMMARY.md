@@ -5,7 +5,7 @@
     - [Updating and adjusting MM tags](./intro_adjust.md)
     - [Summarizing a modBAM](./intro_summary.md)
     - [Making a motif BED file](./intro_motif_bed.md)
-    - [Extracting MM/ML tags to a table](./intro_extract.md)
+    - [Extracting read information to a table](./intro_extract.md)
     - [Calling mods in a modBAM](./intro_call_mods.md)
     - [Removing modification calls at the ends of reads](./intro_edge_filter.md)
     - [Narrow output to specific positions](./intro_include_bed.md)

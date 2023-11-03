@@ -1,6 +1,8 @@
 # Calling mods in a modBAM
 
-The `call-mods` subcommand in `modkit` transforms one modBAM into another modBAM where the base modification probabilities have been clamped to 100% and 0%. If the `--filter-threshold` and/or `--mod-threshold` [options](./advanced_usage.md#call-mods) are provided, base modification calls failing the threshold will be removed prior to changing the probabilities. The resultant modBAM can be used for visualization, `pileup`, or other applications. 
+The `call-mods` subcommand in `modkit` transforms one modBAM into another modBAM where the base modification probabilities have been clamped to 100% and 0%.
+If the `--filter-threshold` and/or `--mod-threshold` [options](./advanced_usage.md#call-mods) are provided, base modification calls failing the threshold will be removed prior to changing the probabilities.
+The output modBAM can be used for visualization, `pileup`, or other applications. 
 
 A modBAM that has been transformed with `call-mods` using `--filter-threshold` and/or `--mod-threshold` cannot be re-transformed with different thresholds.
 
