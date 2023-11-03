@@ -29,7 +29,7 @@ fn aggregate_counts(
         .iter()
         .filter_map(|bm_line| {
             let base = match bm_line.strand {
-                StrandRule::Positive => position_filter
+                StrandRule::Positive | StrandRule::Both => position_filter
                     .get_base_at_position_stranded(
                         chrom_id as i32,
                         bm_line.start(),
@@ -42,18 +42,13 @@ fn aggregate_counts(
                         Strand::Negative,
                     )
                     .map(|b| b.complement()),
-                StrandRule::Both => position_filter
-                    .get_base_at_position_stranded(
-                        chrom_id as i32,
-                        bm_line.start(),
-                        Strand::Positive,
-                    ),
             };
             base.and_then(|b| {
                 if bm_line.check_base(b, None) {
                     // todo add user mappings
                     Some(bm_line)
                 } else {
+                    // this will eventually change when user-input is accepted
                     if !bm_line.check_mod_code_supported() {
                         debug_once!(
                             "encountered modification code {} in bedMethyl record, \
@@ -224,6 +219,7 @@ pub(super) fn run_pairwise_dmr(
     position_filter: StrandedPositionFilter<DnaBase>,
     mut writer: Box<dyn std::io::Write>,
     pb: ProgressBar,
+    failure_counter: ProgressBar,
 ) -> anyhow::Result<usize> {
     let (snd, rcv) = crossbeam_channel::bounded(1000);
     let control_bedmethyl_fp = control_bed_fp.clone();
@@ -285,6 +281,7 @@ pub(super) fn run_pairwise_dmr(
             }
             Err(e) => {
                 debug!("unexpected error, {}", e.to_string());
+                failure_counter.inc(1);
             }
         }
     }

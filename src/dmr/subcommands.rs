@@ -384,6 +384,7 @@ impl PairwiseDmr {
             position_filter,
             writer,
             pb,
+            failures.clone(),
         )?;
 
         info!(
@@ -659,6 +660,7 @@ impl MultiSampleDmr {
                 position_filter,
                 writer,
                 pb,
+                failures.clone(),
             )?;
             debug!(
                 "{} regions processed successfully and {} regions failed for pair {} {}",
