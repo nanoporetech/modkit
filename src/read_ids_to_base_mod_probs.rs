@@ -1,31 +1,32 @@
+use std::collections::{HashMap, HashSet};
+
+use anyhow::anyhow;
+use bio::alphabets::dna::revcomp;
+use derive_new::new;
+use indicatif::ParallelProgressIterator;
+use itertools::Itertools;
+use log::{debug, error};
+use rayon::prelude::*;
+use rust_htslib::bam::ext::BamRecordExtensions;
+use rust_htslib::bam::record::Cigar;
+use rust_htslib::bam::{self, Read, Records};
+use rustc_hash::FxHashMap;
+
+use crate::errs::RunError;
 use crate::mod_bam::{
     filter_records_iter, BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
     ModBaseInfo, SeqPosBaseModProbs, SkipMode, TrackingModRecordIter,
 };
 use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
-use anyhow::anyhow;
-use bio::alphabets::dna::{complement, revcomp};
-use derive_new::new;
-use indicatif::ParallelProgressIterator;
-use itertools::Itertools;
-use log::{debug, error};
-use rust_htslib::bam::{self, Read, Records};
-use std::collections::{HashMap, HashSet};
-
-use crate::errs::RunError;
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util;
 use crate::util::{
     get_aligned_pairs_forward, get_forward_sequence, get_master_progress_bar,
-    get_query_name_string, get_reference_mod_strand, get_spinner, Strand,
+    get_query_name_string, get_reference_mod_strand, get_spinner, Kmer, Strand,
 };
-use rayon::prelude::*;
-use rust_htslib::bam::ext::BamRecordExtensions;
-use rust_htslib::bam::record::Cigar;
-use rustc_hash::FxHashMap;
 
 /// Read IDs mapped to their base modification probabilities, organized
 /// by the canonical base. This data structure contains essentially all
@@ -186,6 +187,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         edge_filter: Option<&EdgeFilter>,
         position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
+        _kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
         let spinner = if with_progress {
             Some(record_sampler.get_progress_bar())
@@ -363,7 +365,7 @@ pub(crate) struct ModProfile {
     q_mod: f32,
     raw_mod_code: ModCodeRepr,
     q_base: u8,
-    query_kmer: [u8; 5],
+    query_kmer: Kmer,
     pub(crate) mod_strand: Strand,
     pub(crate) alignment_strand: Option<Strand>,
     canonical_base: char,
@@ -401,8 +403,9 @@ impl ModProfile {
         read_id: &str,
         chrom_name: &str,
         reference_seqs: &HashMap<String, Vec<u8>>,
+        kmer_size: usize,
     ) -> String {
-        let query_kmer = self.query_kmer.iter().map(|c| *c as char).join("");
+        let query_kmer = format!("{}", self.query_kmer);
         let ref_kmer = if let Some(ref_pos) = self.ref_position {
             if ref_pos < 0 {
                 ".".to_string()
@@ -410,10 +413,12 @@ impl ModProfile {
                 reference_seqs
                     .get(chrom_name)
                     .map(|s| {
-                        ReadsBaseModProfile::get_fivemer(s, ref_pos as usize)
-                            .iter()
-                            .map(|b| *b as char)
-                            .join("")
+                        ReadsBaseModProfile::get_kmer_from_seq(
+                            s,
+                            ref_pos as usize,
+                            kmer_size,
+                        )
+                        .to_string()
                     })
                     .unwrap_or(".".to_string())
             }
@@ -481,40 +486,23 @@ pub(crate) struct ReadBaseModProfile {
 }
 
 impl ReadBaseModProfile {
-    fn get_fivemer_from_seq(
+    fn get_kmer_from_sequence(
         record: &bam::Record,
         forward_position: usize,
         mod_strand: Strand,
-    ) -> [u8; 5] {
+        kmer_size: usize,
+    ) -> Kmer {
         let seq = if record.is_reverse() {
             revcomp(record.seq().as_bytes())
         } else {
             record.seq().as_bytes()
         };
-        let missing = 45;
-        let get_back_base_safe = |i| -> Option<u8> {
-            forward_position
-                .checked_sub(i)
-                .and_then(|idx| seq.get(idx).map(|b| *b))
-        };
-        let fivemer = [
-            get_back_base_safe(2),
-            get_back_base_safe(1),
-            seq.get(forward_position).map(|b| *b),
-            seq.get(forward_position + 1).map(|b| *b),
-            seq.get(forward_position + 2).map(|b| *b),
-        ];
-
-        let fivemer = match mod_strand {
-            Strand::Positive => fivemer,
-            Strand::Negative => {
-                let mut comp = fivemer.map(|b| b.map(complement));
-                comp.reverse();
-                comp
-            }
-        };
-
-        fivemer.map(|b| b.unwrap_or(missing))
+        let kmer = Kmer::new(&seq, forward_position, kmer_size);
+        if mod_strand == Strand::Negative {
+            kmer.reverse_complement()
+        } else {
+            kmer
+        }
     }
 
     #[inline]
@@ -525,7 +513,7 @@ impl ReadBaseModProfile {
         base_mod_probs: BaseModProbs,
         collapse_method: Option<&CollapseMethod>,
         base_qual: u8,
-        fivemer: [u8; 5],
+        kmer: Kmer,
         read_length: usize,
         ref_pos: Option<i64>,
         alignment_strand: Option<Strand>,
@@ -550,7 +538,7 @@ impl ReadBaseModProfile {
                     *prob,
                     *raw_mod_code,
                     base_qual,
-                    fivemer,
+                    kmer,
                     mod_strand,
                     alignment_strand,
                     primary_base,
@@ -568,7 +556,7 @@ impl ReadBaseModProfile {
         num_clip_end: usize,
         read_length: usize,
         base_qual: u8,
-        fivemer: [u8; 5],
+        kmer: Kmer,
         mod_strand: Strand,
         alignment_strand: Option<Strand>,
         primary_base: char,
@@ -591,7 +579,7 @@ impl ReadBaseModProfile {
                     0f32,
                     raw_mod_code,
                     base_qual,
-                    fivemer,
+                    kmer,
                     mod_strand,
                     alignment_strand,
                     primary_base,
@@ -607,6 +595,7 @@ impl ReadBaseModProfile {
         mod_base_info: ModBaseInfo,
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
+        kmer_size: usize,
     ) -> Result<Self, RunError> {
         let read_length = record.seq_len();
         let (num_clip_start, num_clip_end) =
@@ -718,8 +707,8 @@ impl ReadBaseModProfile {
                         let ref_pos = forward_query_pos_to_ref_pos
                             .get(forward_pos)
                             .and_then(|(_query_aligned_pos, ref_pos)| *ref_pos);
-                        let fivemer =
-                            Self::get_fivemer_from_seq(&record, *forward_pos, mod_strand);
+                        let seq_kmer =
+                            Self::get_kmer_from_sequence(&record, *forward_pos, mod_strand, kmer_size);
                         let base_qual =
                             quals.get(*forward_pos).map(|q| *q).unwrap_or_else(|| {
                                 error!( "didn't find base quality for position {forward_pos}" );
@@ -734,7 +723,7 @@ impl ReadBaseModProfile {
                                 base_mod_probs,
                                 collapse_method,
                                 base_qual,
-                                fivemer,
+                                seq_kmer,
                                 read_length,
                                 ref_pos,
                                 alignment_strand,
@@ -751,7 +740,7 @@ impl ReadBaseModProfile {
                                 num_clip_end,
                                 read_length,
                                 base_qual,
-                                fivemer,
+                                seq_kmer,
                                 mod_strand,
                                 alignment_strand,
                                 primary_base,
@@ -794,16 +783,8 @@ pub(crate) struct ReadsBaseModProfile {
 
 impl ReadsBaseModProfile {
     // todo(arand) need to make these safe subtractions
-    fn get_fivemer(seq: &[u8], pos: usize) -> [u8; 5] {
-        let missing = 45u8;
-        let fivemer = [
-            seq.get(pos - 2).map(|b| *b),
-            seq.get(pos - 1).map(|b| *b),
-            seq.get(pos).map(|b| *b),
-            seq.get(pos + 1).map(|b| *b),
-            seq.get(pos + 2).map(|b| *b),
-        ];
-        fivemer.map(|b| b.unwrap_or(missing))
+    fn get_kmer_from_seq(seq: &[u8], pos: usize, kmer_size: usize) -> Kmer {
+        Kmer::new(seq, pos, kmer_size)
     }
 
     fn get_soft_clipped(cigar: &[Cigar]) -> anyhow::Result<(usize, usize)> {
@@ -906,6 +887,7 @@ impl RecordProcessor for ReadsBaseModProfile {
         edge_filter: Option<&EdgeFilter>,
         _position_filter: Option<&StrandedPositionFilter<()>>,
         _only_mapped: bool,
+        kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
         let mut mod_iter = TrackingModRecordIter::new(records, false);
         let mut agg = Vec::new();
@@ -927,6 +909,7 @@ impl RecordProcessor for ReadsBaseModProfile {
                         modbase_info,
                         collapse_method,
                         edge_filter,
+                        kmer_size.unwrap_or(5),
                     ) {
                         Ok(read_base_mod_profile) => {
                             if seen.contains(&record_name) {

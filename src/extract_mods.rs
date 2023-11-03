@@ -1,3 +1,4 @@
+use anyhow::bail;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::thread;
@@ -67,6 +68,8 @@ pub struct ExtractMods {
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
+    #[arg(long, default_value_t = 5)]
+    kmer_size: usize,
 
     /// Path to reference FASTA to extract reference context information from.
     /// If no reference is provided, `ref_kmer` column will be "." in the output.
@@ -210,6 +213,10 @@ impl ExtractMods {
     pub(crate) fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
 
+        if self.kmer_size > 12 {
+            bail!("kmer size must be less than or equal to 12")
+        }
+
         let pool =
             ThreadPoolBuilder::new().num_threads(self.threads).build()?;
 
@@ -316,6 +323,7 @@ impl ExtractMods {
         let threads = self.threads;
         let mapped_only = self.mapped_only;
         let in_bam = self.in_bam.clone();
+        let kmer_size = self.kmer_size;
 
         thread::spawn(move || {
             pool.install(|| {
@@ -391,6 +399,7 @@ impl ExtractMods {
                                         edge_filter.as_ref(),
                                         None,
                                         false,
+                                        Some(kmer_size),
                                     ).map(|reads_base_mod_profile| {
                                         reference_position_filter.filter_read_base_mod_probs(reads_base_mod_profile)
                                     });
@@ -434,7 +443,8 @@ impl ExtractMods {
                                     collapse_method.as_ref(),
                                     edge_filter.as_ref(),
                                     false,
-                                    "unmapped "
+                                    "unmapped ",
+                                        kmer_size,
                                 );
                                 let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
                             },
@@ -454,6 +464,7 @@ impl ExtractMods {
                             edge_filter.as_ref(),
                             mapped_only,
                             "",
+                        kmer_size,
                     );
                     let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
                 }
@@ -501,7 +512,7 @@ impl ExtractMods {
                     n_used.inc(mod_profile.num_reads() as u64);
                     n_failed.inc(mod_profile.num_fails as u64);
                     n_skipped.inc(mod_profile.num_skips as u64);
-                    match writer.write(mod_profile) {
+                    match writer.write(mod_profile, kmer_size) {
                         Ok(n) => n_rows.inc(n),
                         Err(e) => {
                             error!("failed to write {}", e.to_string());
@@ -540,6 +551,7 @@ impl ExtractMods {
         edge_filter: Option<&EdgeFilter>,
         only_mapped: bool,
         message: &'static str,
+        kmer_size: usize,
     ) -> (usize, usize) {
         let mut mod_iter = TrackingModRecordIter::new(records, false);
         let pb = multi_pb.add(get_spinner());
@@ -554,6 +566,7 @@ impl ExtractMods {
                 mod_base_info,
                 collapse_method,
                 edge_filter,
+                kmer_size,
             ) {
                 Ok(mod_profile) => {
                     ReadsBaseModProfile::new(vec![mod_profile], 0, 0)

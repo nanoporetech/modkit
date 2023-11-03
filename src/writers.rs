@@ -20,7 +20,7 @@ use crate::summarize::ModSummary;
 use crate::thresholds::Percentiles;
 
 pub trait OutwriterWithMemory<T> {
-    fn write(&mut self, item: T) -> AnyhowResult<u64>;
+    fn write(&mut self, item: T, kmer_size: usize) -> AnyhowResult<u64>;
     fn num_reads(&self) -> usize;
 }
 
@@ -760,7 +760,11 @@ pub struct TsvWriterWithContigNames<W: Write> {
 impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
     for TsvWriterWithContigNames<W>
 {
-    fn write(&mut self, item: ReadsBaseModProfile) -> AnyhowResult<u64> {
+    fn write(
+        &mut self,
+        item: ReadsBaseModProfile,
+        kmer_size: usize,
+    ) -> AnyhowResult<u64> {
         let missing_chrom = ".".to_string();
         let mut rows_written = 0u64;
         for profile in item.profiles.iter() {
@@ -777,6 +781,7 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
                         &profile.record_name,
                         chrom_name.unwrap_or(&missing_chrom),
                         &self.name_to_seq,
+                        kmer_size,
                     );
                     self.tsv_writer.buf_writer.write(row.as_bytes())?;
                     rows_written += 1;
