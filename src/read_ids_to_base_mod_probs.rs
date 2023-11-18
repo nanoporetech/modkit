@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use bio::alphabets::dna::revcomp;
 use derive_new::new;
 use indicatif::ParallelProgressIterator;
-use log::{debug, error};
+use log::{debug, error, info};
 use rayon::prelude::*;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Cigar;
@@ -13,8 +13,9 @@ use rustc_hash::FxHashMap;
 
 use crate::errs::RunError;
 use crate::mod_bam::{
-    filter_records_iter, BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
-    ModBaseInfo, SeqPosBaseModProbs, SkipMode, TrackingModRecordIter,
+    filter_records_iter, BaseModCall, BaseModProbs, BaseModificationIterator,
+    CollapseMethod, EdgeFilter, ModBaseInfo, SeqPosBaseModProbs, SkipMode,
+    TrackingModRecordIter,
 };
 use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
@@ -486,22 +487,54 @@ pub(crate) struct ReadBaseModProfile {
 
 impl ReadBaseModProfile {
     fn get_kmer_from_sequence(
-        record: &bam::Record,
+        forward_sequence: &[u8],
         forward_position: usize,
         mod_strand: Strand,
         kmer_size: usize,
     ) -> Kmer {
-        let seq = if record.is_reverse() {
-            revcomp(record.seq().as_bytes())
-        } else {
-            record.seq().as_bytes()
-        };
-        let kmer = Kmer::new(&seq, forward_position, kmer_size);
+        let kmer = Kmer::new(&forward_sequence, forward_position, kmer_size);
         if mod_strand == Strand::Negative {
             kmer.reverse_complement()
         } else {
             kmer
         }
+    }
+
+    #[inline]
+    fn base_mod_probs_to_mod_profile2(
+        query_pos_forward: usize,
+        primary_base: char,
+        mod_strand: Strand,
+        base_mod_probs: BaseModProbs,
+        base_qual: u8,
+        kmer: Kmer,
+        read_length: usize,
+        ref_pos: Option<i64>,
+        alignment_strand: Option<Strand>,
+        num_clip_start: usize,
+        num_clip_end: usize,
+    ) -> Vec<ModProfile> {
+        let inferred = base_mod_probs.inferred;
+        base_mod_probs
+            .iter_probs()
+            .map(|(raw_mod_code, prob)| {
+                ModProfile::new(
+                    query_pos_forward,
+                    ref_pos,
+                    num_clip_start,
+                    num_clip_end,
+                    read_length,
+                    *prob,
+                    *raw_mod_code,
+                    base_qual,
+                    kmer,
+                    mod_strand,
+                    alignment_strand,
+                    primary_base,
+                    inferred,
+                )
+            })
+            .collect::<Vec<ModProfile>>()
     }
 
     #[inline]
@@ -597,6 +630,8 @@ impl ReadBaseModProfile {
         kmer_size: usize,
     ) -> Result<Self, RunError> {
         let read_length = record.seq_len();
+        // let (num_clip_start, num_clip_end) =
+        //     ReadsBaseModProfile::get_soft_clipped(record.cigar().as_slice());
         let (num_clip_start, num_clip_end) =
             match ReadsBaseModProfile::get_soft_clipped(
                 record.cigar().as_slice(),
@@ -662,93 +697,138 @@ impl ReadBaseModProfile {
                 })
                 .collect::<HashMap<usize, (usize, Option<i64>)>>()
         };
-        let (_, mod_probs_iter) = mod_base_info.into_iter_base_mod_probs();
+        let base_modification_iter = BaseModificationIterator::new(
+            &record,
+            mod_base_info,
+            edge_filter,
+            collapse_method,
+        )?;
+        // let (_, mod_probs_iter) = mod_base_info.into_iter_base_mod_probs();
         let quals = if record.is_reverse() {
             record.qual().to_vec().into_iter().rev().collect()
         } else {
             record.qual().to_vec()
         };
-        let forward_sequence = util::get_forward_sequence(&record)?
-            .char_indices()
-            .collect::<Vec<(usize, char)>>();
+        // let forward_sequence = util::get_forward_sequence(&record)?
+        //     .char_indices()
+        //     .collect::<Vec<(usize, char)>>();
+        let seq_len = record.seq_len();
+        let forward_sequence = if record.is_reverse() {
+            revcomp(record.seq().as_bytes())
+        } else {
+            record.seq().as_bytes()
+        };
+        let codes_to_remove = collapse_method
+            .map(|m| m.get_codes_to_remove())
+            .unwrap_or(HashSet::new());
 
-        let mut mod_profiles = mod_probs_iter
-            .filter_map(|(primary_base, mod_strand, seq_pos_base_mod_probs)| {
-                let filtered = if let Some(edge_filter) = edge_filter {
-                    seq_pos_base_mod_probs.edge_filter_positions(edge_filter, record.seq_len())
-                } else {
-                    Some(seq_pos_base_mod_probs)
-                };
-                match (&filtered, edge_filter) {
-                    (None, Some(_)) => {
-                        debug!("all base mod positions for record {record_name} and canonical \
-                        base {primary_base} were filtered out");
-                    },
-                    _ => {}
-                }
-                filtered.map(|seq_pos_base_mod_probs| (primary_base, mod_strand, seq_pos_base_mod_probs))
-            })
-            .flat_map(|(primary_base, mod_strand, mut seq_pos_base_mod_probs)| {
-                forward_sequence.iter()
-                    .filter(|(pos, b)| {
-                        let base_matches = *b == primary_base;
-                        let keep_position = edge_filter
-                            .map(|ef| match ef.keep_position(*pos, read_length) {
-                                Ok(b) => b,
-                                Err(e) => {
-                                    debug!("{}, error while edge trimming, {}", &record_name, e.to_string());
-                                    false
-                                }
-                            }).unwrap_or(true);
-                        base_matches && keep_position
-                    })
-                    .filter_map(|(forward_pos, base)| {
+        let mut mod_profiles = base_modification_iter
+            // .filter_map(|(primary_base, mod_strand, seq_pos_base_mod_probs)| {
+            //     let filtered = if let Some(edge_filter) = edge_filter {
+            //         seq_pos_base_mod_probs.edge_filter_positions(edge_filter, record.seq_len())
+            //     } else {
+            //         Some(seq_pos_base_mod_probs)
+            //     };
+            //     match (&filtered, edge_filter) {
+            //         (None, Some(_)) => {
+            //             debug!("all base mod positions for record {record_name} and canonical \
+            //             base {primary_base} were filtered out");
+            //         },
+            //         _ => {}
+            //     }
+            //     filtered.map(|seq_pos_base_mod_probs| (primary_base, mod_strand, seq_pos_base_mod_probs))
+            // })
+            .flat_map(|(primary_base, mod_strand, seq_pos_base_mod_probs)| {
+                seq_pos_base_mod_probs
+                    .pos_to_base_mod_probs
+                    .into_iter()
+                    .flat_map(|(forward_pos, base_mod_probs)| {
                         let ref_pos = forward_query_pos_to_ref_pos
-                            .get(forward_pos)
+                            .get(&forward_pos)
                             .and_then(|(_query_aligned_pos, ref_pos)| *ref_pos);
                         let seq_kmer =
-                            Self::get_kmer_from_sequence(&record, *forward_pos, mod_strand, kmer_size);
+                            Self::get_kmer_from_sequence(&forward_sequence, forward_pos, mod_strand, kmer_size);
                         let base_qual =
-                            quals.get(*forward_pos).map(|q| *q).unwrap_or_else(|| {
+                            quals.get(forward_pos).map(|q| *q).unwrap_or_else(|| {
                                 error!( "didn't find base quality for position {forward_pos}" );
                                 0u8
                             });
+                        Self::base_mod_probs_to_mod_profile2(
+                            forward_pos,
+                            primary_base,
+                            mod_strand,
+                            base_mod_probs,
+                            base_qual,
+                            seq_kmer,
+                            seq_len,
+                            ref_pos,
+                            alignment_strand,
+                            num_clip_start,
+                            num_clip_end,
+                        )
+                    }).collect::<Vec<ModProfile>>()
 
-                        if let Some(base_mod_probs) = seq_pos_base_mod_probs.pos_to_base_mod_probs.remove(forward_pos) {
-                            Some(Self::base_mod_probs_to_mod_profile(
-                                *forward_pos,
-                                *base,
-                                mod_strand,
-                                base_mod_probs,
-                                collapse_method,
-                                base_qual,
-                                seq_kmer,
-                                read_length,
-                                ref_pos,
-                                alignment_strand,
-                                num_clip_start,
-                                num_clip_end,
-                            ))
-                        } else if
-                        (seq_pos_base_mod_probs.skip_mode == SkipMode::ImplicitProbModified)
-                            || (seq_pos_base_mod_probs.skip_mode == SkipMode::ProbModified) {
-                            Some(Self::add_implicit_mod_profile(
-                                *forward_pos,
-                                ref_pos,
-                                num_clip_start,
-                                num_clip_end,
-                                read_length,
-                                base_qual,
-                                seq_kmer,
-                                mod_strand,
-                                alignment_strand,
-                                primary_base,
-                                &seq_pos_base_mod_probs,
-                                collapse_method))
-                        } else {
-                            None
-                        }
-                    }).flatten().collect::<Vec<ModProfile>>()
+                //
+                // forward_sequence.iter()
+                //     .filter(|(pos, b)| {
+                //         let base_matches = *b == primary_base;
+                //         let keep_position = edge_filter
+                //             .map(|ef| match ef.keep_position(*pos, read_length) {
+                //                 Ok(b) => b,
+                //                 Err(e) => {
+                //                     debug!("{}, error while edge trimming, {}", &record_name, e.to_string());
+                //                     false
+                //                 }
+                //             }).unwrap_or(true);
+                //         base_matches && keep_position
+                //     })
+                //     .filter_map(|(forward_pos, base)| {
+                //         let ref_pos = forward_query_pos_to_ref_pos
+                //             .get(forward_pos)
+                //             .and_then(|(_query_aligned_pos, ref_pos)| *ref_pos);
+                //         let seq_kmer =
+                //             Self::get_kmer_from_sequence(&record, *forward_pos, mod_strand, kmer_size);
+                //         let base_qual =
+                //             quals.get(*forward_pos).map(|q| *q).unwrap_or_else(|| {
+                //                 error!( "didn't find base quality for position {forward_pos}" );
+                //                 0u8
+                //             });
+                //
+                //         if let Some(base_mod_probs) = seq_pos_base_mod_probs.pos_to_base_mod_probs.remove(forward_pos) {
+                //             Some(Self::base_mod_probs_to_mod_profile(
+                //                 *forward_pos,
+                //                 *base,
+                //                 mod_strand,
+                //                 base_mod_probs,
+                //                 collapse_method,
+                //                 base_qual,
+                //                 seq_kmer,
+                //                 read_length,
+                //                 ref_pos,
+                //                 alignment_strand,
+                //                 num_clip_start,
+                //                 num_clip_end,
+                //             ))
+                //         } else if
+                //         (seq_pos_base_mod_probs.skip_mode == SkipMode::ImplicitProbModified)
+                //             || (seq_pos_base_mod_probs.skip_mode == SkipMode::ProbModified) {
+                //             Some(Self::add_implicit_mod_profile(
+                //                 *forward_pos,
+                //                 ref_pos,
+                //                 num_clip_start,
+                //                 num_clip_end,
+                //                 read_length,
+                //                 base_qual,
+                //                 seq_kmer,
+                //                 mod_strand,
+                //                 alignment_strand,
+                //                 primary_base,
+                //                 &seq_pos_base_mod_probs,
+                //                 collapse_method))
+                //         } else {
+                //             None
+                //         }
+                //     }).flatten().collect::<Vec<ModProfile>>()
             })
             .collect::<Vec<ModProfile>>();
         mod_profiles.par_sort_by(|a, b| {
@@ -808,6 +888,27 @@ impl ReadsBaseModProfile {
         }
         Ok((sc_start.unwrap_or(0), sc_end.unwrap_or(0)))
     }
+
+    fn get_soft_clipped1(cigar: &[Cigar]) -> (usize, usize) {
+        // todo maybe bench this and make sure this optimization is necessary..
+        let mut sc_start = None;
+        let mut sc_end = None;
+        'cigar_loop: for op in cigar {
+            match op {
+                Cigar::SoftClip(l) => match (sc_start, sc_end) {
+                    (None, None) => sc_start = Some(*l as usize),
+                    (Some(_), None) => {
+                        sc_end = Some(*l as usize);
+                        break 'cigar_loop;
+                    }
+                    _ => unreachable!("logic error"),
+                },
+                _ => {}
+            }
+        }
+        (sc_start.unwrap_or(0), sc_end.unwrap_or(0))
+    }
+
 
     pub(crate) fn remove_inferred(self) -> Self {
         let profiles = self

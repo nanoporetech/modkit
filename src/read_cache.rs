@@ -6,8 +6,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::errs::RunError;
 use crate::mod_bam::{
-    collapse_mod_probs, BaseModCall, CollapseMethod, DuplexModCall, EdgeFilter,
-    ModBaseInfo, SeqPosBaseModProbs, SkipMode,
+    BaseModCall, CollapseMethod, DuplexModCall, EdgeFilter, ModBaseInfo,
+    SeqPosBaseModProbs, SkipMode,
 };
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::monoid::BorrowingMoniod;
@@ -167,7 +167,7 @@ impl<'a> ReadCache<'a> {
                     let mut seq_base_mod_probs = seq_base_mod_probs.unwrap();
                     if let Some(method) = &self.method {
                         seq_base_mod_probs =
-                            collapse_mod_probs(seq_base_mod_probs, method);
+                            seq_base_mod_probs.into_collapsed(method);
                     }
                     // could move this into it's own routine..?
                     let mod_codes = seq_base_mod_probs
