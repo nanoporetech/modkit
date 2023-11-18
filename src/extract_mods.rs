@@ -19,9 +19,7 @@ use rust_htslib::bam::{self, FetchDefinition, Read};
 use crate::errs::RunError;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
-use crate::mod_bam::{
-    filter_records_iter, CollapseMethod, EdgeFilter, TrackingModRecordIter,
-};
+use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCodeRepr;
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::{
@@ -32,9 +30,9 @@ use crate::reads_sampler::sample_reads_from_interval;
 use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
 use crate::util::{
-    get_master_progress_bar, get_query_name_string, get_reference_mod_strand,
-    get_spinner, get_subroutine_progress_bar, get_targets, get_ticker,
-    ReferenceRecord, Region, Strand,
+    get_master_progress_bar, get_reference_mod_strand, get_spinner,
+    get_subroutine_progress_bar, get_targets, get_ticker, ReferenceRecord,
+    Region, Strand,
 };
 use crate::writers::{
     OutwriterWithMemory, TsvWriter, TsvWriterWithContigNames,
@@ -604,7 +602,7 @@ impl ExtractMods {
             }
         }
         pb.finish_and_clear();
-        (0, 0)
+        (mod_iter.num_skipped, mod_iter.num_failed)
     }
 }
 

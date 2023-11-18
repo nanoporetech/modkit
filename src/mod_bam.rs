@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 
@@ -20,8 +20,7 @@ use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::util;
 use crate::util::{
-    get_forward_sequence, get_query_name_string, get_tag, record_is_secondary,
-    Strand,
+    get_query_name_string, get_tag, record_is_secondary, Strand,
 };
 
 pub(crate) struct TrackingModRecordIter<'a, T: bam::Read> {
@@ -928,11 +927,6 @@ impl SeqPosBaseModProbs {
                 .fold(self.pos_to_base_mod_probs, |mut acc, (pos, _)| {
                     acc.entry(pos).or_insert_with(|| {
                         BaseModProbs::new_inferred_canonical(&all_mod_codes)
-                        // let probs = all_mod_codes
-                        //     .iter()
-                        //     .map(|&code| (code, 0f32))
-                        //     .collect();
-                        // BaseModProbs { probs }
                     });
                     acc
                 });
@@ -1039,23 +1033,6 @@ fn get_base_mod_probs(
         base_mod_positions.mode,
     ))
 }
-
-// fn collapse_mod_probs(
-//     positions_to_probs: SeqPosBaseModProbs,
-//     method: &CollapseMethod,
-// ) -> SeqPosBaseModProbs {
-//     let collapsed_positions_to_probs = positions_to_probs
-//         .pos_to_base_mod_probs
-//         .into_iter()
-//         .map(|(pos, mod_base_probs)| {
-//             (pos, mod_base_probs.into_collapsed(method))
-//         })
-//         .collect();
-//     SeqPosBaseModProbs {
-//         pos_to_base_mod_probs: collapsed_positions_to_probs,
-//         skip_mode: positions_to_probs.skip_mode,
-//     }
-// }
 
 pub fn format_mm_ml_tag(
     positions_to_probs: SeqPosBaseModProbs,
@@ -1583,65 +1560,6 @@ impl DuplexModCall {
         } else {
             self
         }
-    }
-}
-
-pub struct BaseModificationIterator<'a> {
-    base_mod_probs: VecDeque<(char, Strand, SeqPosBaseModProbs)>,
-    forward_sequence: String,
-    edge_filter: Option<&'a EdgeFilter>,
-    collapse_method: Option<&'a CollapseMethod>,
-}
-
-impl<'a> BaseModificationIterator<'a> {
-    pub fn new(
-        record: &'a bam::Record,
-        mod_base_info: ModBaseInfo,
-        edge_filter: Option<&'a EdgeFilter>,
-        collapse_method: Option<&'a CollapseMethod>,
-    ) -> Result<Self, RunError> {
-        let forward_sequence = get_forward_sequence(&record)?;
-        let codes_to_remove = collapse_method
-            .map(|m| m.get_codes_to_remove())
-            .unwrap_or(HashSet::new());
-        let (_converters, iter) = mod_base_info.into_iter_base_mod_probs();
-        let base_mod_probs = iter
-            .into_iter()
-            .filter_map(|(base, strand, probs)| {
-                let filtered = if let Some(edge_filter) = edge_filter {
-                    probs.edge_filter_positions(edge_filter, record.seq_len())
-                } else {
-                    Some(probs)
-                };
-                filtered.map(|probs| (base, strand, probs))
-            })
-            .map(|(base, strand, mut probs)| {
-                let mut probs = probs.add_implicit_mod_calls(
-                    &forward_sequence,
-                    base,
-                    &codes_to_remove,
-                    edge_filter,
-                );
-                if let Some(collapse_method) = collapse_method {
-                    probs = probs.into_collapsed(collapse_method);
-                }
-                (base, strand, probs)
-            })
-            .collect::<VecDeque<_>>();
-        Ok(Self {
-            base_mod_probs,
-            forward_sequence,
-            edge_filter,
-            collapse_method,
-        })
-    }
-}
-
-impl<'a> Iterator for BaseModificationIterator<'a> {
-    type Item = (char, Strand, SeqPosBaseModProbs);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.base_mod_probs.pop_front()
     }
 }
 
