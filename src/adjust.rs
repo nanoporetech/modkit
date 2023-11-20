@@ -7,8 +7,7 @@ use rust_htslib::bam::{self, Read};
 
 use crate::errs::{InputError, RunError};
 use crate::mod_bam::{
-    collapse_mod_probs, format_mm_ml_tag, CollapseMethod, EdgeFilter,
-    ModBaseInfo,
+    format_mm_ml_tag, CollapseMethod, EdgeFilter, ModBaseInfo,
 };
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
@@ -76,8 +75,7 @@ pub fn adjust_mod_probs(
         };
         if let Some(mut seq_pos_mod_probs) = filtered_seq_pos_mod_probs {
             for method in methods {
-                seq_pos_mod_probs =
-                    collapse_mod_probs(seq_pos_mod_probs, method);
+                seq_pos_mod_probs = seq_pos_mod_probs.into_collapsed(method);
             }
             match (caller, DnaBase::parse(base)) {
                 (Some(caller), Ok(dna_base)) => {

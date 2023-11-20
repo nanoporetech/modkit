@@ -324,6 +324,7 @@ impl PartialOrd for BaseModCall {
 #[derive(new, Debug, PartialEq, Clone)]
 pub struct BaseModProbs {
     probs: FxHashMap<ModCodeRepr, f32>,
+    pub inferred: bool,
     // skip_mode: SkipMode,
     // strand: Strand,
 }
@@ -332,6 +333,20 @@ impl BaseModProbs {
     pub fn new_init<T: Into<ModCodeRepr>>(mod_code: T, prob: f32) -> Self {
         Self {
             probs: FxHashMap::from_iter([(mod_code.into(), prob)]),
+            inferred: false,
+        }
+    }
+
+    pub fn new_inferred_canonical<T: Into<ModCodeRepr> + Copy>(
+        mod_codes: &[T],
+    ) -> Self {
+        let probs = mod_codes
+            .iter()
+            .map(|code| ((*code).into(), 0f32))
+            .collect();
+        Self {
+            probs,
+            inferred: true,
         }
     }
 
@@ -381,6 +396,7 @@ impl BaseModProbs {
         method: &CollapseMethod,
     ) -> BaseModProbs {
         let canonical_prob = self.canonical_prob();
+        let inferred = self.inferred;
         match method {
             CollapseMethod::ReNormalize(mod_to_collapse) => {
                 let marginal_collapsed_prob = self
@@ -401,7 +417,7 @@ impl BaseModProbs {
                         (mod_code, collapsed_prob)
                     })
                     .collect();
-                Self { probs }
+                Self { probs, inferred }
             }
             CollapseMethod::ReDistribute(mod_to_collapse) => {
                 let marginal_prob = self
@@ -443,7 +459,7 @@ impl BaseModProbs {
                     )
                 }
 
-                Self { probs }
+                Self { probs, inferred }
             }
             CollapseMethod::Convert { from, to } => {
                 let (probs, converted_prob) = self.iter_probs().fold(
@@ -457,7 +473,7 @@ impl BaseModProbs {
                         }
                     },
                 );
-                let mut new_base_mod_probs = Self { probs };
+                let mut new_base_mod_probs = Self { probs, inferred };
 
                 if converted_prob > 0f32 {
                     new_base_mod_probs
@@ -910,17 +926,29 @@ impl SeqPosBaseModProbs {
                 })
                 .fold(self.pos_to_base_mod_probs, |mut acc, (pos, _)| {
                     acc.entry(pos).or_insert_with(|| {
-                        let probs = all_mod_codes
-                            .iter()
-                            .map(|&code| (code, 0f32))
-                            .collect();
-                        BaseModProbs { probs }
+                        BaseModProbs::new_inferred_canonical(&all_mod_codes)
                     });
                     acc
                 });
             Self::new(probs, SkipMode::Ambiguous)
         } else {
             self
+        }
+    }
+
+    pub(crate) fn into_collapsed(
+        self,
+        collapse_method: &CollapseMethod,
+    ) -> Self {
+        let skip_mode = self.skip_mode;
+        let pos_to_base_mod_probs = self
+            .pos_to_base_mod_probs
+            .into_iter()
+            .map(|(pos, probs)| (pos, probs.into_collapsed(collapse_method)))
+            .collect::<FxHashMap<usize, BaseModProbs>>();
+        Self {
+            skip_mode,
+            pos_to_base_mod_probs,
         }
     }
 }
@@ -1004,23 +1032,6 @@ fn get_base_mod_probs(
         positions_to_probs,
         base_mod_positions.mode,
     ))
-}
-
-pub fn collapse_mod_probs(
-    positions_to_probs: SeqPosBaseModProbs,
-    method: &CollapseMethod,
-) -> SeqPosBaseModProbs {
-    let collapsed_positions_to_probs = positions_to_probs
-        .pos_to_base_mod_probs
-        .into_iter()
-        .map(|(pos, mod_base_probs)| {
-            (pos, mod_base_probs.into_collapsed(method))
-        })
-        .collect();
-    SeqPosBaseModProbs {
-        pos_to_base_mod_probs: collapsed_positions_to_probs,
-        skip_mode: positions_to_probs.skip_mode,
-    }
 }
 
 pub fn format_mm_ml_tag(
@@ -1686,7 +1697,10 @@ mod mod_bam_tests {
             .into_iter()
             .collect();
 
-        let mod_base_probs = BaseModProbs { probs };
+        let mod_base_probs = BaseModProbs {
+            probs,
+            inferred: false,
+        };
         let collapsed = mod_base_probs
             .clone()
             .into_collapsed(&CollapseMethod::ReDistribute('h'.into()));
@@ -1722,7 +1736,10 @@ mod mod_bam_tests {
             .into_iter()
             .collect();
 
-        let mod_base_probs = BaseModProbs { probs };
+        let mod_base_probs = BaseModProbs {
+            probs,
+            inferred: false,
+        };
         let collapsed = mod_base_probs
             .into_collapsed(&CollapseMethod::ReNormalize('h'.into()));
         assert_eq!(
@@ -1738,7 +1755,10 @@ mod mod_bam_tests {
         let probs = vec![('h'.into(), 0.05273438), ('m'.into(), 0.03320312)]
             .into_iter()
             .collect();
-        let mod_base_probs = BaseModProbs { probs };
+        let mod_base_probs = BaseModProbs {
+            probs,
+            inferred: false,
+        };
         let collapsed = mod_base_probs
             .into_collapsed(&CollapseMethod::ReDistribute('h'.into()));
         assert_eq!(
@@ -1751,11 +1771,13 @@ mod mod_bam_tests {
 
     #[test]
     fn test_mod_prob_convert() {
+        let inferred = false;
         let probs = vec![('h'.into(), 0.10), ('m'.into(), 0.75)]
             .into_iter()
             .collect::<FxHashMap<ModCodeRepr, f32>>();
         let mod_base_probs = BaseModProbs {
             probs: probs.clone(),
+            inferred,
         };
 
         let collapsed =
@@ -1771,6 +1793,7 @@ mod mod_bam_tests {
         );
         let mod_base_probs = BaseModProbs {
             probs: probs.clone(),
+            inferred,
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
@@ -1790,7 +1813,10 @@ mod mod_bam_tests {
         let probs = vec![('h'.into(), 0.10), ('m'.into(), 0.75)]
             .into_iter()
             .collect();
-        let mod_base_probs = BaseModProbs { probs };
+        let mod_base_probs = BaseModProbs {
+            probs,
+            inferred: false,
+        };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
                 from: HashSet::from(['h'.into()]),
@@ -1811,6 +1837,7 @@ mod mod_bam_tests {
             .collect::<FxHashMap<ModCodeRepr, f32>>();
         let mod_base_probs = BaseModProbs {
             probs: probs.clone(),
+            inferred: false,
         };
         let collapsed =
             mod_base_probs.into_collapsed(&CollapseMethod::Convert {
@@ -1822,12 +1849,19 @@ mod mod_bam_tests {
 
     #[test]
     fn test_mod_prob_combine() {
+        let inferred = false;
         let a_probs = vec![('h'.into(), 0.05273438), ('m'.into(), 0.03320312)]
             .into_iter()
             .collect();
-        let mut a = BaseModProbs { probs: a_probs };
+        let mut a = BaseModProbs {
+            probs: a_probs,
+            inferred,
+        };
         let b_probs = vec![('m'.into(), 0.03320312)].into_iter().collect();
-        let b = BaseModProbs { probs: b_probs };
+        let b = BaseModProbs {
+            probs: b_probs,
+            inferred,
+        };
         a.combine(b);
         assert_eq!(
             &a.probs,
@@ -1839,9 +1873,15 @@ mod mod_bam_tests {
         let a_probs = vec![('m'.into(), 0.03320312)].into_iter().collect();
         let b_probs = vec![('h'.into(), 0.05273438)].into_iter().collect();
 
-        let mut a = BaseModProbs { probs: a_probs };
+        let mut a = BaseModProbs {
+            probs: a_probs,
+            inferred,
+        };
 
-        let b = BaseModProbs { probs: b_probs };
+        let b = BaseModProbs {
+            probs: b_probs,
+            inferred,
+        };
         a.combine(b);
         assert_eq!(
             &a.probs,
@@ -2037,6 +2077,7 @@ mod mod_bam_tests {
 
     #[test]
     fn test_mod_base_info() {
+        let inferred = false;
         // Preamble, make a short DNA and the converters
         let dna = "GATCGACTACGTCGA";
         let c_converter = DeltaListConverter::new(dna, 'C');
@@ -2070,11 +2111,13 @@ mod mod_bam_tests {
                 .collect();
         let c_expected = BaseModProbs {
             probs: c_expected_probs,
+            inferred,
         };
         let a_expected_probs =
             vec![('a'.into(), 0.7832031)].into_iter().collect();
         let a_expected = BaseModProbs {
             probs: a_expected_probs,
+            inferred,
         };
         assert_eq!(
             c_expected_seq_pos_base_mod_probs
@@ -2186,6 +2229,7 @@ mod mod_bam_tests {
         let quals = vec![100, 100, 100, 1, 1, 1, 150, 150, 150, 2, 2, 2];
         let tags = RawModTags::new(tag, &quals, true);
         let info = ModBaseInfo::new(&tags, dna, &bam::Record::new()).unwrap();
+        let inferred = false;
         let (_converters, iterator) = info.into_iter_base_mod_probs();
         for (c, strand, probs) in iterator {
             if c == 'C' {
@@ -2204,6 +2248,7 @@ mod mod_bam_tests {
                         .collect();
                 let expected_modbase_probs = BaseModProbs {
                     probs: expected_probs,
+                    inferred,
                 };
                 for mod_probs in probs.pos_to_base_mod_probs.values() {
                     assert_eq!(mod_probs, &expected_modbase_probs);
@@ -2225,6 +2270,7 @@ mod mod_bam_tests {
                         .collect();
                 let expected_modbase_probs = BaseModProbs {
                     probs: expected_probs,
+                    inferred,
                 };
                 for mod_probs in probs.pos_to_base_mod_probs.values() {
                     assert_eq!(mod_probs, &expected_modbase_probs);
