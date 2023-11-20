@@ -154,13 +154,17 @@ fn get_mod_counts_for_condition(
     }
 
     if successfully_parsed == 0 {
-        bail!("failed to parse any bedMethyl lines from {:?}", filename);
+        bail!(
+            "failed to parse any bedMethyl lines from {:?} at \
+            interval {interval:?}",
+            filename
+        );
     }
 
     if failed_to_parse > 0 {
         debug!(
-            "failed to parse {} lines from {:?}",
-            failed_to_parse, filename
+            "failed to parse {} lines from {:?} at interval {interval:?}, successfully \
+            parsed {successfully_parsed}, continuing", failed_to_parse, filename
         );
     }
 
@@ -181,10 +185,18 @@ pub(super) fn get_modification_counts(
     let mut exp_bed_reader =
         File::open(exp_bedmethyl).map(bgzf::Reader::new)?;
     if control_chunks.len() != 1 {
-        debug!("more than 1 control chunk?, got {}", control_chunks.len());
+        debug!(
+            "more than 1 control chunk?, got {} at interval {}",
+            control_chunks.len(),
+            &dmr_interval
+        );
     }
     if exp_chunks.len() != 1 {
-        debug!("more than 1 exp chunk?, got {}", exp_chunks.len());
+        debug!(
+            "more than 1 exp chunk?, got {} at interval {}",
+            exp_chunks.len(),
+            &dmr_interval
+        );
     }
     let control_counts = get_mod_counts_for_condition(
         &mut control_reader,

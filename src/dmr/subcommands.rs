@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -6,10 +7,11 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context};
 use bio::io::fasta::Reader as FastaReader;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use indicatif::{MultiProgress, ProgressIterator};
 use itertools::Itertools;
 use log::{debug, error, info};
+use log_once::debug_once;
 use noodles::csi::Index as CsiIndex;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -18,7 +20,7 @@ use crate::dmr::multi_sample::{
     get_reference_modified_base_positions, n_choose_2, DmrSample,
 };
 use crate::dmr::pairwise::run_pairwise_dmr;
-use crate::dmr::util::{parse_roi_bed, DmrInterval, DmrIntervalIter};
+use crate::dmr::util::{parse_roi_bed, DmrIntervalIter};
 use crate::logging::init_logging;
 use crate::mod_base_code::{DnaBase, ParseChar};
 use crate::position_filter::{BaseIv, GenomeLapper, StrandedPositionFilter};
@@ -55,6 +57,24 @@ impl BedMethylDmr {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[allow(non_camel_case_types)]
+enum HandleMissing {
+    quiet,
+    warn,
+    fail,
+}
+
+impl Display for HandleMissing {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HandleMissing::quiet => write!(f, "quiet"),
+            HandleMissing::warn => write!(f, "warn"),
+            HandleMissing::fail => write!(f, "fail"),
+        }
+    }
+}
+
 #[derive(Args)]
 pub struct PairwiseDmr {
     /// Bgzipped bedMethyl file for the first (usually control) sample. There should be
@@ -70,11 +90,12 @@ pub struct PairwiseDmr {
     /// Path to file to direct output, optional, no argument will direct output to stdout.
     #[arg(short = 'o', long)]
     out_path: Option<String>,
-    /// Regions BED file over which to compare methylation levels. Should be tab-separated (spaces
+    /// Regions BED file over which to compare methylation levels. When omitted, methylation levels
+    /// are compared at each individual base (see --base argument. Should be tab-separated (spaces
     /// allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name column is
     /// optional. Strand is currently ignored.
-    #[arg(long, short = 'r')]
-    regions_bed: PathBuf,
+    #[arg(long, short = 'r', alias = "regions")]
+    regions_bed: Option<PathBuf>,
     /// Path to reference fasta for the pileup.
     #[arg(long = "ref")]
     reference_fasta: PathBuf,
@@ -103,6 +124,13 @@ pub struct PairwiseDmr {
     /// Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl file.
     #[arg(long)]
     index_b: Option<PathBuf>,
+    /// How to handle regions found in the `--regions` BED file. "quiet" will ignore regions
+    /// that are not found in the bedMethyl tabix headers.
+    /// quiet => ignore regions that are not found in the tabix header
+    /// warn => log (debug) regions that are missing
+    /// fatal => log (error) and exit the program when a region is missing.
+    #[arg(long="missing", requires = "regions_bed", default_value_t=HandleMissing::warn)]
+    handle_missing: HandleMissing,
 }
 
 impl PairwiseDmr {
@@ -299,8 +327,14 @@ impl PairwiseDmr {
             }
         };
 
-        let regions_of_interest = parse_roi_bed(&self.regions_bed)?;
-        info!("loaded {} regions", regions_of_interest.len());
+        let regions_of_interest =
+            if let Some(roi_bed) = self.regions_bed.as_ref() {
+                let rois = parse_roi_bed(roi_bed)?;
+                info!("loaded {} regions", rois.len());
+                rois
+            } else {
+                unimplemented!()
+            };
 
         let control_contig_lookup = control_index
             .header()
@@ -321,26 +355,37 @@ impl PairwiseDmr {
             .map(|(idx, r)| (r.to_owned(), idx))
             .collect::<HashMap<String, usize>>();
 
-        let regions_of_interest = regions_of_interest
-            .into_iter()
-            .filter_map(|roi| {
-                if !control_contig_lookup.contains_key(&roi.chrom) {
-                    info!(
-                        "discarding {}, missing from 'a' bedMethyl index",
-                        &roi.chrom
-                    );
-                    None
-                } else if !exp_contig_lookup.contains_key(&roi.chrom) {
-                    info!(
-                        "discarding {}, missing from 'b' bedMethyl index",
-                        &roi.chrom
-                    );
-                    None
+        let handle_missing = self.handle_missing;
+        let regions_of_interest = regions_of_interest.into_iter()
+            .try_fold(Vec::new(), |mut acc, roi| {
+                let a_found = control_contig_lookup.contains_key(&roi.chrom);
+                let b_found = exp_contig_lookup.contains_key(&roi.chrom);
+                if a_found && b_found {
+                    acc.push(roi);
+                    Ok(acc)
                 } else {
-                    Some(roi)
+                    let which = if b_found {
+                        format!("'a'")
+                    } else {
+                        format!("'a' and 'b'")
+                    };
+                    match handle_missing {
+                        HandleMissing::quiet => {
+                            Ok(acc)
+                        },
+                        HandleMissing::warn => {
+                            debug_once!("chrom {} is missing from {which} bedMethyl index, discarding", &roi.chrom);
+                            Ok(acc)
+                        },
+                        HandleMissing::fail => {
+                            let message = format!("chrom {} is missing from {which} bedMethyl index, fatal error", &roi.chrom);
+                            error!("{message}");
+                            bail!(message)
+                        }
+                    }
                 }
-            })
-            .collect::<Vec<DmrInterval>>();
+            })?;
+
         if regions_of_interest.is_empty() {
             bail!("no valid regions in input")
         }
@@ -357,8 +402,8 @@ impl PairwiseDmr {
             &motifs,
         )?;
 
-        let chunk_size = (self.threads as f32 * 1.5f32).floor() as usize;
-        info!("processing {chunk_size} regions concurrently");
+        let batch_size = (self.threads as f32 * 1.5f32).floor() as usize;
+        info!("processing {batch_size} regions concurrently");
 
         let pb = mpb.add(get_master_progress_bar(regions_of_interest.len()));
         pb.set_message("regions processed");
@@ -373,7 +418,7 @@ impl PairwiseDmr {
             control_index,
             exp_index,
             regions_of_interest.into_iter().collect(),
-            chunk_size,
+            batch_size,
             failures.clone(),
         );
 
