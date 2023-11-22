@@ -71,6 +71,19 @@ impl<T: Send + Sync + Eq + Clone> StrandedPositionFilter<T> {
                 || self.neg_positions.contains_key(&chrom_id)
         }
     }
+
+    pub fn iter_intervals(
+        &self,
+    ) -> impl Iterator<Item = (u32, &lapper::Interval<u64, T>)> + '_ {
+        self.pos_positions
+            .iter()
+            .flat_map(|(tid, lp)| lp.intervals.iter().map(|iv| (*tid, iv)))
+            .chain(
+                self.neg_positions.iter().flat_map(|(tid, lp)| {
+                    lp.intervals.iter().map(|iv| (*tid, iv))
+                }),
+            )
+    }
 }
 
 impl StrandedPositionFilter<()> {

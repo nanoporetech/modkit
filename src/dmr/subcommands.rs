@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::dmr::bedmethyl::BedMethylLine;
 use anyhow::{anyhow, bail, Context};
 use bio::io::fasta::Reader as FastaReader;
 use clap::{Args, Subcommand, ValueEnum};
@@ -12,6 +13,7 @@ use indicatif::{MultiProgress, ProgressIterator};
 use itertools::Itertools;
 use log::{debug, error, info};
 use log_once::debug_once;
+use noodles::bgzf;
 use noodles::csi::Index as CsiIndex;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -20,7 +22,7 @@ use crate::dmr::multi_sample::{
     get_reference_modified_base_positions, n_choose_2, DmrSample,
 };
 use crate::dmr::pairwise::run_pairwise_dmr;
-use crate::dmr::util::{parse_roi_bed, DmrIntervalIter};
+use crate::dmr::util::{parse_roi_bed, DmrInterval, DmrIntervalIter};
 use crate::logging::init_logging;
 use crate::mod_base_code::{DnaBase, ParseChar};
 use crate::position_filter::{BaseIv, GenomeLapper, StrandedPositionFilter};
@@ -90,12 +92,17 @@ pub struct PairwiseDmr {
     /// Path to file to direct output, optional, no argument will direct output to stdout.
     #[arg(short = 'o', long)]
     out_path: Option<String>,
-    /// Regions BED file over which to compare methylation levels. When omitted, methylation levels
-    /// are compared at each individual base (see --base argument. Should be tab-separated (spaces
+    /// BED file of regions over which to compare methylation levels. Should be tab-separated (spaces
     /// allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name column is
-    /// optional. Strand is currently ignored.
+    /// optional. Strand is currently ignored. When omitted, methylation levels are compared at
+    /// each site in the `-a`/`control_bed_methyl` BED file (or optionally, the
+    /// `-b`/`exp_bed_methyl` file with the `--use-b` flag.
     #[arg(long, short = 'r', alias = "regions")]
     regions_bed: Option<PathBuf>,
+    /// When performing site-level DMR, use the bedMethyl indicated by the -b/exp_bed_methyl
+    /// argument to collect bases to score.
+    #[arg(long, default_value_t = false)]
+    use_b: bool,
     /// Path to reference fasta for the pileup.
     #[arg(long = "ref")]
     reference_fasta: PathBuf,
@@ -109,6 +116,12 @@ pub struct PairwiseDmr {
     /// Number of threads to use.
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
+    /// Control the  batch size. The batch size is the number of regions to load at a time. Each
+    /// region will be processed concurrently. Loading more regions at a time will decrease
+    /// IO to load data, but will use more memory. Default will be 50% more than the number of
+    /// threads assigned.
+    #[arg(long, alias = "batch")]
+    batch_size: Option<usize>,
     /// Respect soft masking in the reference FASTA.
     #[arg(long, short = 'k', default_value_t = false)]
     mask: bool,
@@ -124,8 +137,7 @@ pub struct PairwiseDmr {
     /// Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl file.
     #[arg(long)]
     index_b: Option<PathBuf>,
-    /// How to handle regions found in the `--regions` BED file. "quiet" will ignore regions
-    /// that are not found in the bedMethyl tabix headers.
+    /// How to handle regions found in the `--regions` BED file.
     /// quiet => ignore regions that are not found in the tabix header
     /// warn => log (debug) regions that are missing
     /// fatal => log (error) and exit the program when a region is missing.
@@ -283,6 +295,33 @@ impl PairwiseDmr {
         Ok(())
     }
 
+    fn load_regions_from_bedmethyl(&self) -> anyhow::Result<Vec<DmrInterval>> {
+        let reader = if self.use_b {
+            File::open(&self.exp_bed_methyl).map(bgzf::Reader::new)
+        } else {
+            File::open(&self.control_bed_methyl).map(bgzf::Reader::new)
+        }?;
+
+        let regions = reader
+            .lines()
+            .filter_map(|l| l.ok())
+            .map(|l| {
+                BedMethylLine::parse(&l).map(|bm| {
+                    let interval = bm.interval;
+                    let name = format!(
+                        "{}:{}-{}",
+                        &bm.chrom, interval.start, interval.stop
+                    );
+                    let chrom = bm.chrom;
+                    DmrInterval::new(interval, chrom, name)
+                })
+            })
+            .collect::<anyhow::Result<BTreeSet<DmrInterval>>>()?
+            .into_iter()
+            .collect_vec();
+        Ok(regions)
+    }
+
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         self.check_modified_bases()?;
@@ -327,14 +366,11 @@ impl PairwiseDmr {
             }
         };
 
-        let regions_of_interest =
-            if let Some(roi_bed) = self.regions_bed.as_ref() {
-                let rois = parse_roi_bed(roi_bed)?;
-                info!("loaded {} regions", rois.len());
-                rois
-            } else {
-                unimplemented!()
-            };
+        let motifs = self
+            .modified_bases
+            .iter()
+            .map(|c| DnaBase::parse(*c))
+            .collect::<anyhow::Result<Vec<DnaBase>>>()?;
 
         let control_contig_lookup = control_index
             .header()
@@ -354,6 +390,25 @@ impl PairwiseDmr {
             .enumerate()
             .map(|(idx, r)| (r.to_owned(), idx))
             .collect::<HashMap<String, usize>>();
+
+        let position_filter = self.get_stranded_position_filter(
+            control_contig_lookup.clone(),
+            &mpb,
+            &motifs,
+        )?;
+
+        let (regions_of_interest, what) =
+            if let Some(roi_bed) = self.regions_bed.as_ref() {
+                let rois = parse_roi_bed(roi_bed)?;
+                info!("loaded {} regions", rois.len());
+                (rois, "regions")
+            } else {
+                let which = if self.use_b { "b" } else { "a" };
+                info!("loading sites from input '{which}' bedMethyl");
+                let regions = self.load_regions_from_bedmethyl()?;
+                info!("loaded {} sites", regions.len());
+                (regions, "sites")
+            };
 
         let handle_missing = self.handle_missing;
         let regions_of_interest = regions_of_interest.into_iter()
@@ -390,23 +445,14 @@ impl PairwiseDmr {
             bail!("no valid regions in input")
         }
 
-        let motifs = self
-            .modified_bases
-            .iter()
-            .map(|c| DnaBase::parse(*c))
-            .collect::<anyhow::Result<Vec<DnaBase>>>()?;
-
-        let position_filter = self.get_stranded_position_filter(
-            control_contig_lookup.clone(),
-            &mpb,
-            &motifs,
-        )?;
-
-        let batch_size = (self.threads as f32 * 1.5f32).floor() as usize;
-        info!("processing {batch_size} regions concurrently");
+        let batch_size =
+            self.batch_size.as_ref().map(|x| *x).unwrap_or_else(|| {
+                (self.threads as f32 * 1.5f32).floor() as usize
+            });
+        info!("loading {batch_size} {what} at a time");
 
         let pb = mpb.add(get_master_progress_bar(regions_of_interest.len()));
-        pb.set_message("regions processed");
+        pb.set_message(format!("{what} processed"));
         let failures = mpb.add(get_ticker());
         failures.set_message("regions failed to process");
 

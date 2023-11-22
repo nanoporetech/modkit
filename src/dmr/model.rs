@@ -8,7 +8,7 @@ use rv::prelude::*;
 use crate::dmr::util::DmrInterval;
 use crate::mod_base_code::ModCodeRepr;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) struct AggregatedCounts {
     mod_code_counts: HashMap<ModCodeRepr, usize>,
     total: usize,
@@ -22,7 +22,8 @@ impl AggregatedCounts {
         let total_modification_counts = mod_code_counts.values().sum::<usize>();
         if total_modification_counts > total {
             bail!(
-                "total modification counts cannot be greater than total counts"
+                "total modification counts ({total_modification_counts}) cannot be greater \
+                than total counts ({total})"
             )
         }
         Ok(Self {

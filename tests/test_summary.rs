@@ -4,7 +4,7 @@ use crate::common::{
 };
 use anyhow::Context;
 use mod_kit::mod_bam::{CollapseMethod, EdgeFilter};
-use mod_kit::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
+use mod_kit::mod_base_code::{BaseState, DnaBase};
 use std::collections::HashSet;
 use std::path::Path;
 

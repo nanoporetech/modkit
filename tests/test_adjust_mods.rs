@@ -4,7 +4,7 @@ use rust_htslib::{bam, bam::Read};
 use crate::common::{parse_mod_profile, run_simple_summary};
 use common::run_modkit;
 use mod_kit::mod_bam::parse_raw_mod_tags;
-use mod_kit::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
+use mod_kit::mod_base_code::{BaseState, DnaBase};
 
 mod common;
 

@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -9,6 +9,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail};
 use derive_new::new;
 use indicatif::ProgressBar;
+
 use log::{debug, error};
 use nom::character::complete::one_of;
 use nom::multi::many0;
@@ -117,8 +118,8 @@ impl Display for DmrInterval {
 #[derive(new)]
 pub(super) struct DmrChunk {
     pub(super) chrom_id: u32,
-    pub(super) control_chunks: Vec<IndexChunk>,
-    pub(super) exp_chunks: Vec<IndexChunk>,
+    // pub(super) control_chunks: Vec<IndexChunk>,
+    // pub(super) exp_chunks: Vec<IndexChunk>,
     pub(super) dmr_interval: DmrInterval,
 }
 
@@ -169,11 +170,115 @@ impl DmrIntervalIter {
     }
 }
 
+#[derive(new, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+struct ProtoIndexChunk {
+    start: u64,
+    stop: u64,
+}
+
+impl Into<IndexChunk> for ProtoIndexChunk {
+    fn into(self) -> IndexChunk {
+        IndexChunk::new(self.start.into(), self.stop.into())
+    }
+}
+
+impl From<IndexChunk> for ProtoIndexChunk {
+    fn from(value: IndexChunk) -> Self {
+        let start: u64 = value.start().into();
+        let stop: u64 = value.end().into();
+        Self { start, stop }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct DmrBatch {
+    pub(super) dmr_chunks: Vec<DmrChunk>, // todo could make this DmrInterval?
+    control_chunks: BTreeSet<ProtoIndexChunk>,
+    experiment_chunks: BTreeSet<ProtoIndexChunk>,
+}
+
+impl DmrBatch {
+    fn append(
+        &mut self,
+        dmr_chunk: DmrChunk,
+        control_index_chunks: Vec<IndexChunk>,
+        experiment_index_chunks: Vec<IndexChunk>,
+    ) {
+        self.dmr_chunks.push(dmr_chunk);
+        for x in control_index_chunks {
+            self.control_chunks.insert(x.into());
+        }
+        for x in experiment_index_chunks {
+            self.experiment_chunks.insert(x.into());
+        }
+    }
+
+    fn size(&self) -> usize {
+        self.dmr_chunks.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.dmr_chunks.is_empty()
+    }
+
+    #[inline]
+    fn proto_iter(chunks: &BTreeSet<ProtoIndexChunk>) -> Vec<IndexChunk> {
+        if let Some(&first) = chunks.first() {
+            let (mut chunks, last) = chunks.iter().skip(1).fold(
+                (Vec::new(), first),
+                |(mut acc, mut front), chunk| {
+                    if chunk.start <= front.stop {
+                        front = ProtoIndexChunk::new(front.start, chunk.stop);
+                        (acc, front)
+                    } else {
+                        acc.push(front);
+                        (acc, *chunk)
+                    }
+                },
+            );
+            chunks.push(last);
+            chunks.into_iter().map(|x| x.into()).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub(super) fn get_control_chunks(&self) -> Vec<IndexChunk> {
+        Self::proto_iter(&self.control_chunks)
+    }
+
+    pub(super) fn get_exp_chunks(&self) -> Vec<IndexChunk> {
+        Self::proto_iter(&self.experiment_chunks)
+    }
+}
+
+// #[derive(Default)]
+// pub(super) struct DmrBatch {
+//     pub(super) batches: FxHashMap<u32, ContigBatch>
+// }
+//
+// impl DmrBatch {
+//     fn append(&mut self, dmr_chunk: DmrChunk, control_index_chunks: Vec<IndexChunk>, experiment_index_chunks: Vec<IndexChunk>) {
+//         self.batches.entry(dmr_chunk.chrom_id).or_insert(ContigBatch::default()).append(
+//             dmr_chunk, control_index_chunks, experiment_index_chunks
+//         );
+//     }
+//
+//     fn size(&self) -> usize {
+//         self.batches.values().map(|x| x.size()).max().unwrap_or(0)
+//     }
+//
+//     fn is_empty(&self) -> bool {
+//         self.batches.values().all(|x| x.is_empty())
+//     }
+// }
+
 impl Iterator for DmrIntervalIter {
-    type Item = Vec<DmrChunk>;
+    type Item = DmrBatch;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut chunks = Self::Item::with_capacity(self.chunk_size);
+        let mut batch = DmrBatch::default();
+        // let mut chunks = Self::Item::with_capacity(self.chunk_size);
         loop {
             if let Some(dmr_interval) = self.regions_of_interest.pop_front() {
                 let (control_chr_id, exp_chr_id) = match (
@@ -204,42 +309,37 @@ impl Iterator for DmrIntervalIter {
                     .get_index_chunks(&self.control_index, control_chr_id);
                 let exp_chunks =
                     dmr_interval.get_index_chunks(&self.exp_index, exp_chr_id);
-                let (control_chunks, exp_chunks) =
-                    match (control_chunks, exp_chunks) {
-                        (Ok(control_chunks), Ok(exp_chunks)) => {
-                            (control_chunks, exp_chunks)
-                        }
-                        (Err(e), _) => {
-                            self.failures.inc(1);
-                            debug!(
-                                "failed to index into {} bedMethyl \
-                            for region {}, {}",
-                                &self.control_fn,
-                                dmr_interval,
-                                e.to_string()
-                            );
-                            continue;
-                        }
-                        (_, Err(e)) => {
-                            self.failures.inc(1);
-                            debug!(
-                                "failed to index into {} bedMethyl \
-                            for chrom id {}, {}",
-                                &self.exp_fn,
-                                exp_chr_id,
-                                e.to_string()
-                            );
-                            continue;
-                        }
-                    };
-                let chunk = DmrChunk::new(
-                    control_chr_id as u32,
-                    control_chunks,
-                    exp_chunks,
-                    dmr_interval,
-                );
-                chunks.push(chunk);
-                if chunks.len() >= self.chunk_size {
+                match (control_chunks, exp_chunks) {
+                    (Ok(control_chunks), Ok(exp_chunks)) => {
+                        let dmr_chunk =
+                            DmrChunk::new(control_chr_id as u32, dmr_interval);
+                        batch.append(dmr_chunk, control_chunks, exp_chunks);
+                    }
+                    (Err(e), _) => {
+                        self.failures.inc(1);
+                        debug!(
+                            "failed to index into {} bedMethyl \
+                        for region {}, {}",
+                            &self.control_fn,
+                            dmr_interval,
+                            e.to_string()
+                        );
+                        continue;
+                    }
+                    (_, Err(e)) => {
+                        self.failures.inc(1);
+                        debug!(
+                            "failed to index into {} bedMethyl \
+                        for chrom id {}, {}",
+                            &self.exp_fn,
+                            exp_chr_id,
+                            e.to_string()
+                        );
+                        continue;
+                    }
+                };
+
+                if batch.size() >= self.chunk_size {
                     break;
                 } else {
                     continue;
@@ -248,10 +348,10 @@ impl Iterator for DmrIntervalIter {
                 break;
             }
         }
-        if chunks.is_empty() {
+        if batch.is_empty() {
             None
         } else {
-            Some(chunks)
+            Some(batch)
         }
     }
 }
@@ -271,6 +371,7 @@ pub(super) fn parse_roi_bed<P: AsRef<Path>>(
                 None
             }
         })
+        // todo check that regions do not overlap
         .map(|line| DmrInterval::parse_str(&line))
         .collect::<anyhow::Result<Vec<DmrInterval>>>()?;
     if intervals.is_empty() {
@@ -282,8 +383,11 @@ pub(super) fn parse_roi_bed<P: AsRef<Path>>(
 
 #[cfg(test)]
 mod dmr_util_tests {
-    use crate::dmr::util::{parse_roi_bed, DmrInterval};
+    use crate::dmr::util::{parse_roi_bed, DmrInterval, ProtoIndexChunk};
     use crate::position_filter::Iv;
+    use noodles::bgzf::VirtualPosition;
+    use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
+    use std::collections::BTreeSet;
 
     #[test]
     fn test_parse_rois() {
@@ -399,5 +503,18 @@ mod dmr_util_tests {
         ]
         .to_vec();
         assert_eq!(rois, expected);
+    }
+
+    #[test]
+    fn test_position_offset_in_set() {
+        let start = VirtualPosition::from(18176487209);
+        let end = VirtualPosition::from(18762153665);
+        let chunk1: IndexChunk = IndexChunk::from(start..end);
+        let chunk2: IndexChunk = IndexChunk::from(start..end);
+        let mut chunks: BTreeSet<ProtoIndexChunk> = BTreeSet::new();
+        let added = chunks.insert(chunk1.into());
+        assert!(added);
+        let added = chunks.insert(chunk2.into());
+        assert!(!added);
     }
 }
