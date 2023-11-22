@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.3-rc1]
+### Adds
+- [dmr, pair] Allow site-level scoring by omitting the `--regions` argument. Sites will be collected from the input bedMethyl files.
+- [dmr] Friendlier handling of missing files and when regions aren't found in the bedMethyl input files.
+### Fixes
+- [extract] Improve performance, especially on longer reads.
+### Changes
+
+
 ## [v0.2.2]
 ### Adds
 - [all] Allow ChEBI codes and more flexible single-character modification codes. E.g. now you can use `c` for carboxy cytosine or `z` for something exotic.
