@@ -55,7 +55,11 @@ pub struct ExtractMods {
     /// Include only mapped bases in output (alias: mapped).
     #[arg(long, alias = "mapped", default_value_t = false)]
     mapped_only: bool,
-    /// Number of reads to use
+    /// Number of reads to use. Note that when using a sorted, indexed modBAM that
+    /// the sampling algorithm will attempt to sample records evenly over the length
+    /// of the reference sequence. The result is the final number of records used
+    /// may be slightly more or less than the requested number. When piping from stdin
+    /// or using a modBAM without an index, the requested number of reads will be exact.
     #[arg(long)]
     num_reads: Option<usize>,
     /// Process only reads that are aligned to a specified region of the BAM.
