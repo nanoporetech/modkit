@@ -1894,7 +1894,7 @@ mod mod_bam_tests {
     #[test]
     #[ignore = "old implementation"]
     fn test_parse_mm_tag() {
-        let tag =
+        let _tag =
             "C+h?,5,2,1,3,1,2,3,1,2,1,11,5;C+m?,5,2,1,3,1,2,3,1,2,1,11,5;";
         // let dna = "ATGTGCCTGCTGGACATGTTTATGCTCGTCTACTTCGTTCAGTTACGTATTGCTCCAG\
         //     CGCTCGAACTGTAGCCGCTGCTGCTGGGTGAAGTTGTGGCGGTACACGAGCTCCGCCGGCTGCAGCAGCTTC\

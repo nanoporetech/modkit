@@ -6,7 +6,6 @@ use anyhow::{anyhow, bail, Context};
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{MultiProgress, ParallelProgressIterator};
-use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};

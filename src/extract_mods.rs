@@ -13,15 +13,18 @@ use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
 use log::{debug, error, info};
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use rust_htslib::bam::{self, FetchDefinition, Read};
+use rustc_hash::FxHashMap;
 
 use crate::errs::RunError;
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCodeRepr;
-use crate::position_filter::StrandedPositionFilter;
+use crate::monoid::Moniod;
+use crate::motif_bed::{find_motif_hits, RegexMotif};
+use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
 };
@@ -88,6 +91,29 @@ pub struct ExtractMods {
     /// BED file with regions to _exclude_ (alias: exclude).
     #[arg(long, alias = "exclude", short = 'v')]
     exclude_bed: Option<PathBuf>,
+    /// Output read-level base modification probabilities restricted to the reference sequence
+    /// motifs provided. The first argument should be the sequence motif and the second argument
+    /// is the 0-based offset to the base to pileup base modification counts for.
+    /// For example: --motif CGCG 0 indicates include base modifications for which the read is
+    /// aligned to the first C on the top strand and the last C (complement to G) on
+    /// the bottom strand. The --cpg argument is short hand for --motif CG 0.
+    /// This argument can be passed multiple times.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference")]
+    motif: Option<Vec<String>>,
+    /// Only output counts at CpG motifs. Requires a reference sequence to be
+    /// provided.
+    #[arg(long, requires = "reference", default_value_t = false)]
+    cpg: bool,
+    /// When using motifs, respect soft masking in the reference sequence.
+    #[arg(
+        long,
+        short = 'k',
+        requires = "motif",
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    mask: bool,
+
     /// Discard base modification calls that are this many bases from the start or the end
     /// of the read. Two comma-separated values may be provided to asymmetrically filter out
     /// base modification calls from the start and end of the reads. For example, 4,8 will
@@ -141,13 +167,27 @@ impl ExtractMods {
         &self,
         name_to_tid: &HashMap<&str, u32>,
         region: Option<&Region>,
+        contigs: &HashMap<String, Vec<u8>>,
+        master_progress_bar: &MultiProgress,
+        thread_pool: &ThreadPool,
     ) -> anyhow::Result<(Option<ReferenceAndIntervals>, ReferencePositionFilter)>
     {
         let include_unmapped = if self.include_bed.is_some() {
             info!("specifying include-only BED outputs only mapped sites");
             false
+        } else if self.motif.is_some() || self.cpg {
+            info!("specifying a motif (including --cpg) outputs only mapped sites");
+            false
         } else {
             !self.mapped_only
+        };
+
+        let motifs = if let Some(raw_motif_parts) = &self.motif {
+            Some(RegexMotif::from_raw_parts(&raw_motif_parts, self.cpg)?)
+        } else if self.cpg {
+            Some(vec![RegexMotif::parse_string("CG", 0).unwrap()])
+        } else {
+            None
         };
 
         let include_positions = self
@@ -161,6 +201,7 @@ impl ExtractMods {
                 )
             })
             .transpose()?;
+
         let exclude_positions = self
             .exclude_bed
             .as_ref()
@@ -172,6 +213,98 @@ impl ExtractMods {
                 )
             })
             .transpose()?;
+
+        // intersect the motif positions with the include positions from the BED file
+        let include_positions = if let Some(motifs) = motifs {
+            let pb = master_progress_bar
+                .add(get_subroutine_progress_bar(contigs.len()));
+            pb.set_message("contigs searched");
+            let tid_to_positions = thread_pool.install(|| {
+                contigs
+                    .into_par_iter()
+                    .progress_with(pb)
+                    .filter_map(|(name, raw_seq)| {
+                        name_to_tid
+                            .get(name.as_str())
+                            .map(|tid| (*tid, raw_seq))
+                    })
+                    .map(|(tid, raw_seq)| {
+                        let seq = raw_seq
+                            .iter()
+                            .map(|&b| b as char)
+                            .collect::<String>();
+                        let seq = if self.mask {
+                            seq
+                        } else {
+                            seq.to_ascii_uppercase()
+                        };
+                        motifs
+                            .par_iter()
+                            .map(|motif| {
+                                let positions = find_motif_hits(&seq, motif);
+                                let positions = if let Some(filter) =
+                                    include_positions.as_ref()
+                                {
+                                    positions
+                                        .into_iter()
+                                        .filter(|(pos, strand)| {
+                                            filter.contains(
+                                                tid as i32,
+                                                *pos as u64,
+                                                *strand,
+                                            )
+                                        })
+                                        .collect::<Vec<(usize, Strand)>>()
+                                } else {
+                                    positions
+                                };
+                                (tid, positions)
+                            })
+                            .collect::<HashMap<u32, Vec<(usize, Strand)>>>()
+                    })
+                    .reduce(|| HashMap::zero(), |a, b| a.op(b))
+            });
+            let (pos_lappers, neg_lappers) = tid_to_positions.into_iter().fold(
+                (FxHashMap::default(), FxHashMap::default()),
+                |(mut pos, mut neg), (tid, positions)| {
+                    let to_lapper =
+                        |intervals: Vec<(Iv, Strand)>| -> GenomeLapper<()> {
+                            let intervals = intervals
+                                .into_iter()
+                                .map(|(iv, _)| iv)
+                                .collect();
+                            GenomeLapper::new(intervals)
+                        };
+
+                    let (pos_positions, neg_positions): (
+                        Vec<(Iv, Strand)>,
+                        Vec<(Iv, Strand)>,
+                    ) = positions
+                        .into_iter()
+                        .map(|(position, strand)| {
+                            let iv = Iv {
+                                start: position as u64,
+                                stop: (position + 1) as u64,
+                                val: (),
+                            };
+                            (iv, strand)
+                        })
+                        .partition(|(_iv, strand)| *strand == Strand::Positive);
+                    let pos_lapper = to_lapper(pos_positions);
+                    let neg_lapper = to_lapper(neg_positions);
+                    pos.insert(tid, pos_lapper);
+                    neg.insert(tid, neg_lapper);
+                    (pos, neg)
+                },
+            );
+
+            Some(StrandedPositionFilter {
+                pos_positions: pos_lappers,
+                neg_positions: neg_lappers,
+            })
+        } else {
+            include_positions
+        };
 
         let reference_and_intervals = if !self.using_stdin() {
             match bam::IndexedReader::from_path(&self.in_bam) {
@@ -279,14 +412,25 @@ impl ExtractMods {
             None => HashMap::new(),
         };
 
+        let multi_prog = MultiProgress::new();
+        if self.suppress_progress {
+            multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
+
         let region = self
             .region
             .as_ref()
             .map(|raw_region| Region::parse_str(raw_region, &header))
             .transpose()?;
 
-        let (references_and_intervals, reference_position_filter) =
-            self.load_regions(&name_to_tid, region.as_ref())?;
+        let (references_and_intervals, reference_position_filter) = self
+            .load_regions(
+                &name_to_tid,
+                region.as_ref(),
+                &chrom_to_seq,
+                &multi_prog,
+                &pool,
+            )?;
 
         // allowed to use the sampling schedule if there is an index, if
         // asked for num_reads with no index, scan first N reads
@@ -310,10 +454,6 @@ impl ExtractMods {
             (None, false) => None,
         };
 
-        let multi_prog = MultiProgress::new();
-        if self.suppress_progress {
-            multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
-        }
         let n_failed = multi_prog.add(get_ticker());
         n_failed.set_message("~records failed");
         let n_skipped = multi_prog.add(get_ticker());
