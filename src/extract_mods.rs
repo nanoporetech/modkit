@@ -75,8 +75,13 @@ pub struct ExtractMods {
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
+    /// Set the query and reference k-mer size (if a reference is provided). Maxumum number
+    /// for this value is 12.
     #[arg(long, default_value_t = 5)]
     kmer_size: usize,
+    /// Ignore the BAM index (if it exists) and default to a serial scan of the BAM.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    ignore_index: bool,
 
     /// Path to reference FASTA to extract reference context information from.
     /// If no reference is provided, `ref_kmer` column will be "." in the output.
@@ -306,7 +311,9 @@ impl ExtractMods {
             include_positions
         };
 
-        let reference_and_intervals = if !self.using_stdin() {
+        let reference_and_intervals = if !self.using_stdin()
+            && !self.ignore_index
+        {
             match bam::IndexedReader::from_path(&self.in_bam) {
                 Ok(reader) => {
                     info!("found BAM index, processing reads in {} base pair chunks", self.interval_size);

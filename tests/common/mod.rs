@@ -111,10 +111,7 @@ pub fn run_simple_summary_with_edge_filter<'a>(
 }
 
 pub fn check_against_expected_text_file(output_fp: &str, expected_fp: &str) {
-    assert_ne!(
-        output_fp, expected_fp,
-        "cannot check a faile against itself"
-    );
+    assert_ne!(output_fp, expected_fp, "cannot check a file against itself");
     let test = {
         let mut fh = File::open(output_fp).unwrap();
         let mut buff = String::new();
@@ -130,7 +127,11 @@ pub fn check_against_expected_text_file(output_fp: &str, expected_fp: &str) {
         buff
     };
 
-    similar_asserts::assert_eq!(test, expected);
+    similar_asserts::assert_eq!(
+        test,
+        expected,
+        "{output_fp} is not the same as {expected_fp}"
+    );
 }
 #[derive(new, Eq, PartialEq, Debug)]
 pub struct ModData {

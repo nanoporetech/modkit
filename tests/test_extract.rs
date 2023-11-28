@@ -191,11 +191,12 @@ fn test_extract_include_sites() {
 #[test]
 fn test_extract_include_sites_duplex_regression() {
     let out_fp =
-        std::env::temp_dir().join("test_extract_include_sites_duplex.bed");
+        std::env::temp_dir().join("test_extract_include_sites_duplex.tsv");
     let include_bed_fp = "tests/resources/hg38_chr17_CG0_snip.bed";
     run_modkit(&[
         "extract",
         "tests/resources/duplex_modbam.sorted.bam",
+        "--ignore-index",
         out_fp.to_str().unwrap(),
         "--include-bed",
         include_bed_fp,
@@ -360,4 +361,51 @@ fn test_extract_implicit_mod_calls() {
     )
     .context("test_extract_implicit_mod_calls, output didn't match")
     .unwrap();
+}
+
+#[test]
+fn test_extract_cpg_motif() {
+    let extract_tsv =
+        std::env::temp_dir().join("test_extract_cpg_motif_extract.tsv");
+    let reference_fasta_fp = "tests/resources/CGI_ladder_3.6kb_ref.fa";
+    let cpg_positions = parse_bed_file(
+        &Path::new("tests/resources/CGI_ladder_3.6kb_ref_CG.bed").to_path_buf(),
+    )
+    .get("oligo_741_adapters")
+    .unwrap()
+    .to_owned();
+    let (pos_positions, neg_positions) = cpg_positions.into_iter().fold(
+        (HashSet::new(), HashSet::new()),
+        |(mut pos, mut neg), (position, strand)| {
+            if strand == '+' {
+                pos.insert(position);
+            } else {
+                neg.insert(position);
+            }
+            (pos, neg)
+        },
+    );
+
+    run_modkit(&[
+        "extract",
+        "tests/resources/2_reads_all_context.bam",
+        extract_tsv.to_str().unwrap(),
+        "--cpg",
+        "--reference",
+        reference_fasta_fp,
+        "--force",
+    ])
+    .unwrap();
+
+    let mod_profile = parse_mod_profile(&extract_tsv).unwrap();
+    for (_read, mod_data) in mod_profile {
+        for row in mod_data {
+            if row.strand == '+' {
+                assert!(pos_positions.contains(&row.ref_pos));
+            } else {
+                assert_eq!(row.strand, '-');
+                assert!(neg_positions.contains(&row.ref_pos));
+            }
+        }
+    }
 }
