@@ -482,6 +482,13 @@ impl<T: Write> TsvWriter<T> {
     }
 }
 
+impl TsvWriter<std::io::Sink> {
+    pub fn new_null() -> Self {
+        let out = BufWriter::new(std::io::sink());
+        Self { buf_writer: out }
+    }
+}
+
 impl TsvWriter<Stdout> {
     pub fn new_stdout(header: Option<String>) -> Self {
         let out = BufWriter::new(std::io::stdout());
@@ -494,21 +501,31 @@ impl TsvWriter<Stdout> {
 }
 
 impl TsvWriter<File> {
-    pub fn new_file(
-        fp: &str,
+    pub fn new_path(
+        path: &PathBuf,
         force: bool,
         header: Option<String>,
-    ) -> AnyhowResult<Self> {
-        let p = Path::new(fp);
-        if p.exists() && !force {
-            return Err(anyhow!("refusing to write over existing file {fp}"));
+    ) -> anyhow::Result<Self> {
+        if path.exists() && !force {
+            return Err(anyhow!(
+                "refusing to write over existing file {path:?}"
+            ));
         }
-        let fh = File::create(p)?;
+        let fh = File::create(path)?;
         let mut buf_writer = BufWriter::new(fh);
         if let Some(header) = header {
             buf_writer.write(format!("{header}\n").as_bytes())?;
         }
         Ok(Self { buf_writer })
+    }
+
+    pub fn new_file(
+        fp: &str,
+        force: bool,
+        header: Option<String>,
+    ) -> AnyhowResult<Self> {
+        let p = Path::new(fp).to_path_buf();
+        Self::new_path(&p, force, header)
     }
 }
 

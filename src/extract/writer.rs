@@ -1,26 +1,402 @@
-use crate::extract::subcommand::PositionModCalls;
-use crate::read_ids_to_base_mod_probs::ReadsBaseModProfile;
-use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::writers::TsvWriter;
-use derive_new::new;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
+use std::path::PathBuf;
+
+use derive_new::new;
+use itertools::Itertools;
+use log::{debug, error};
+use rustc_hash::FxHashMap;
+
+use crate::mod_bam::{BaseModCall, BaseModProbs};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::read_ids_to_base_mod_probs::{ModProfile, ReadsBaseModProfile};
+use crate::threshold_mod_caller::MultipleThresholdModCaller;
+use crate::util::{
+    create_out_directory, get_reference_mod_strand, Kmer, Strand,
+};
+use crate::writers::TsvWriter;
+
+#[derive(new)]
+struct ReadPositionPileup {
+    position: usize,
+    percent_modified: f32,
+    num_modified: usize,
+    num_canonical: usize,
+    total_count: usize,
+    filtered_count: usize,
+    modified_counts: String,
+}
+
+impl ReadPositionPileup {
+    fn header() -> String {
+        let sep = '\t';
+        format!(
+            "\
+            position{sep}\
+            percent_modified{sep}\
+            num_modified{sep}\
+            num_canonical{sep}\
+            total_pass_calls{sep}\
+            total_fail_calls{sep}\
+            modified_counts\n"
+        )
+    }
+
+    fn to_row(&self) -> String {
+        let sep = '\t';
+        let position = self.position;
+        let percent_modified = self.percent_modified;
+        let num_modified = self.num_modified;
+        let num_canonical = self.num_canonical;
+        let total_pass_calls = self.total_count;
+        let total_fail_calls = self.filtered_count;
+        let modified_counts = &self.modified_counts;
+        format!(
+            "\
+            {position}{sep}\
+            {percent_modified}{sep}\
+            {num_modified}{sep}\
+            {num_canonical}{sep}\
+            {total_pass_calls}{sep}\
+            {total_fail_calls}{sep}\
+            {modified_counts}\n"
+        )
+    }
+}
+
+#[derive(new)]
+pub(crate) struct PositionModCalls {
+    query_position: usize,
+    pub(crate) ref_position: Option<i64>,
+    aligned_query_position: usize,
+    num_soft_clipped_start: usize,
+    num_soft_clipped_end: usize,
+    base_mod_probs: BaseModProbs,
+    q_base: u8,
+    query_kmer: Kmer,
+    pub(crate) mod_strand: Strand,
+    pub(crate) alignment_strand: Option<Strand>,
+    canonical_base: DnaBase,
+}
+
+impl PositionModCalls {
+    fn header() -> String {
+        let tab = '\t';
+        format!(
+            "\
+            read_id{tab}\
+            forward_read_position{tab}\
+            forward_aligned_read_position{tab}\
+            ref_position{tab}\
+            chrom{tab}\
+            mod_strand{tab}\
+            ref_strand{tab}\
+            ref_mod_strand{tab}\
+            fw_soft_clipped_start{tab}\
+            fw_soft_clipped_end{tab}\
+            call_prob{tab}\
+            call_code{tab}\
+            base_qual{tab}\
+            ref_kmer{tab}\
+            query_kmer{tab}\
+            canonical_base{tab}\
+            modified_primary_base{tab}\
+            fail{tab}\
+            inferred\n"
+        )
+    }
+
+    pub(crate) fn from_profile(
+        read_id: &str,
+        profile: &[ModProfile],
+    ) -> Vec<Self> {
+        type Key = (usize, Strand, DnaBase);
+        let mod_codes = profile
+            .iter()
+            .map(|x| x.raw_mod_code)
+            .collect::<HashSet<ModCodeRepr>>()
+            .into_iter()
+            .collect::<Vec<ModCodeRepr>>();
+
+        profile.iter()
+            .fold(HashMap::<Key, Vec<&ModProfile>>::new(), |mut acc, x| {
+                let k = (x.query_position, x.mod_strand, x.canonical_base);
+                acc.entry(k).or_insert(Vec::new()).push(x);
+                acc
+            })
+            .into_iter()
+            .fold(Vec::<Self>::new(), |mut acc, ((query_pos, strand, base), mod_profile)| {
+                let base_mod_probs = if mod_profile.iter().any(|x| x.inferred) {
+                    if mod_profile.len() != 1 {
+                        // todo come back and make this debug after testing
+                        error!("should have only 1 when position is inferred? read: {read_id} pos: {query_pos}.");
+                    }
+                    BaseModProbs::new_inferred_canonical(&mod_codes)
+                } else {
+                    let mut probs = mod_profile
+                        .iter()
+                        .map(|x| {
+                            (x.raw_mod_code, x.q_mod)
+                        }).collect::<FxHashMap<ModCodeRepr, f32>>();
+                    for code in mod_codes.iter() {
+                        if !probs.contains_key(&code) {
+                            probs.insert(*code, 0f32);
+                        }
+                    }
+
+                    BaseModProbs::new(probs, false)
+                };
+                let template = &mod_profile[0];
+                let ref_position = template.ref_position;
+                let aligned_query_position = template
+                    .query_position
+                    .checked_sub(template.num_soft_clipped_start).unwrap_or(0);
+                let num_clip_start = template.num_soft_clipped_start;
+                let num_clip_end = template.num_soft_clipped_end;
+                let q_base = template.q_base;
+                let kmer = template.query_kmer;
+                let alignment_strand = template.alignment_strand;
+
+
+                let pos_mod_calls = PositionModCalls::new(
+                    query_pos,
+                    ref_position,
+                    aligned_query_position,
+                    num_clip_start,
+                    num_clip_end,
+                    base_mod_probs,
+                    q_base,
+                    kmer,
+                    strand,
+                    alignment_strand,
+                    base
+                );
+                acc.push(pos_mod_calls);
+
+                acc
+            })
+            .into_iter()
+            .sorted_by(|a, b| {
+                if a.alignment_strand.map(|s| s == Strand::Negative).unwrap_or(false) {
+                    b.query_position.cmp(&a.query_position)
+                } else {
+                    a.query_position.cmp(&b.query_position)
+                }
+            }).collect()
+    }
+
+    pub(crate) fn to_row(
+        &self,
+        read_id: &str,
+        chrom_name: Option<&String>,
+        caller: &MultipleThresholdModCaller,
+        reference_seqs: &HashMap<String, Vec<u8>>,
+    ) -> String {
+        let tab = '\t';
+        let missing = ".".to_string();
+        let chrom_name = chrom_name.unwrap_or(&missing).to_owned();
+        let forward_read_position = self.query_position;
+        let forward_aligned_read_position = self.aligned_query_position;
+        let ref_position = self.ref_position.unwrap_or(-1);
+        let mod_strand = self.mod_strand.to_char();
+        let ref_strand =
+            self.alignment_strand.map(|x| x.to_char()).unwrap_or('.');
+        let ref_mod_strand = self
+            .alignment_strand
+            .map(|x| get_reference_mod_strand(self.mod_strand, x).to_char())
+            .unwrap_or('.');
+        let fw_soft_clipped_start = self.num_soft_clipped_start;
+        let fw_soft_clipped_end = self.num_soft_clipped_end;
+        let (mod_call_prob, mod_call_code) =
+            match self.base_mod_probs.argmax_base_mod_call() {
+                BaseModCall::Canonical(p) => (p, "-".to_string()),
+                BaseModCall::Modified(p, code) => (p, code.to_string()),
+                BaseModCall::Filtered => {
+                    unreachable!("argmax should not output filtered calls")
+                }
+            };
+        let base_qual = self.q_base;
+        let query_kmer = format!("{}", self.query_kmer);
+        let ref_kmer = if let Some(ref_pos) = self.ref_position {
+            if ref_pos < 0 {
+                ".".to_string()
+            } else {
+                reference_seqs
+                    .get(&chrom_name)
+                    .map(|s| {
+                        Kmer::from_seq(
+                            s,
+                            ref_pos as usize,
+                            self.query_kmer.size,
+                        )
+                        .to_string()
+                    })
+                    .unwrap_or(".".to_string())
+            }
+        } else {
+            ".".to_string()
+        };
+        let canonical_base = self.canonical_base.char();
+        let modified_primary_base = if self.mod_strand == Strand::Negative {
+            self.canonical_base.complement().char()
+        } else {
+            self.canonical_base.char()
+        };
+        let filtered = caller.call(&self.canonical_base, &self.base_mod_probs)
+            == BaseModCall::Filtered;
+        let inferred = self.base_mod_probs.inferred;
+
+        format!(
+            "\
+            {read_id}{tab}\
+            {forward_read_position}{tab}\
+            {forward_aligned_read_position}{tab}\
+            {ref_position}{tab}\
+            {chrom_name}{tab}\
+            {mod_strand}{tab}\
+            {ref_strand}{tab}\
+            {ref_mod_strand}{tab}\
+            {fw_soft_clipped_start}{tab}\
+            {fw_soft_clipped_end}{tab}\
+            {mod_call_prob}{tab}\
+            {mod_call_code}{tab}\
+            {base_qual}{tab}\
+            {ref_kmer}{tab}\
+            {query_kmer}{tab}\
+            {canonical_base}{tab}\
+            {modified_primary_base}{tab}\
+            {filtered}{tab}\
+            {inferred}\n"
+        )
+    }
+}
 
 pub trait OutwriterWithMemory<T> {
     fn write(&mut self, item: T, kmer_size: usize) -> anyhow::Result<u64>;
     fn num_reads(&self) -> usize;
+    fn complete(&mut self) -> anyhow::Result<()>;
 }
 
-#[derive(new)]
+// #[derive(new)]
 pub struct TsvWriterWithContigNames<W: Write> {
     tsv_writer: TsvWriter<W>,
     tid_to_name: HashMap<u32, String>,
     name_to_seq: HashMap<String, Vec<u8>>,
     written_reads: HashSet<String>,
+    position_to_calls: HashMap<usize, Vec<BaseModCall>>,
     read_calls_writer: Option<TsvWriter<File>>,
     read_pos_pileup_writer: Option<TsvWriter<File>>,
     caller: MultipleThresholdModCaller,
+    alignment_offset: bool,
+}
+
+impl<W: Write> TsvWriterWithContigNames<W> {
+    pub(crate) fn new(
+        output_writer: TsvWriter<W>,
+        tid_to_name: HashMap<u32, String>,
+        name_to_seq: HashMap<String, Vec<u8>>,
+        read_calls_path: Option<&PathBuf>,
+        read_pileup_path: Option<&PathBuf>,
+        caller: MultipleThresholdModCaller,
+        force: bool,
+        use_alignment_offset: bool,
+    ) -> anyhow::Result<Self> {
+        let read_calls_writer = read_calls_path
+            .map(|fp| {
+                create_out_directory(fp)?;
+                TsvWriter::new_path(fp, force, Some(PositionModCalls::header()))
+            })
+            .transpose()?;
+        let read_pos_pileup_writer = read_pileup_path
+            .map(|fp| {
+                create_out_directory(fp)?;
+                TsvWriter::new_path(
+                    fp,
+                    force,
+                    Some(ReadPositionPileup::header()),
+                )
+            })
+            .transpose()?;
+
+        Ok(Self {
+            tsv_writer: output_writer,
+            tid_to_name,
+            name_to_seq,
+            written_reads: HashSet::new(),
+            position_to_calls: HashMap::new(),
+            read_calls_writer,
+            read_pos_pileup_writer,
+            caller,
+            alignment_offset: use_alignment_offset,
+        })
+    }
+
+    pub(crate) fn write_read_pileup(&mut self) -> anyhow::Result<()> {
+        if let Some(read_pileup_writer) = self.read_pos_pileup_writer.as_mut() {
+            let rows =
+                self.position_to_calls.iter()
+                    .sorted_by(|(a, _), (b, _)| a.cmp(b))
+                    .map(|(position, calls)| {
+                    let (
+                        num_modified,
+                        num_canonical,
+                        num_calls,
+                        num_filtered,
+                        counts_per_mod,
+                    ) = calls.iter().fold(
+                        (0, 0, 0, 0, HashMap::<ModCodeRepr, usize>::new()),
+                        |(mods, can, total, filt, mut counts), call| match call
+                        {
+                            BaseModCall::Canonical(_) => {
+                                (mods, can + 1, total + 1, filt, counts)
+                            }
+                            BaseModCall::Modified(_, code) => {
+                                *counts.entry(*code).or_insert(0) += 1;
+                                (mods + 1, can, total + 1, filt, counts)
+                            }
+                            BaseModCall::Filtered => {
+                                (mods, can, total, filt + 1, counts)
+                            }
+                        },
+                    );
+                    let percent_modified =
+                        num_modified as f32 / num_calls as f32;
+                    let mod_counts = if counts_per_mod.is_empty() {
+                        ".".to_string()
+                    } else {
+                        let csv = counts_per_mod
+                            .iter()
+                            .sorted_by(|(a, _), (b, _)| a.cmp(b))
+                            .fold(String::new(), |mut acc, (code, count)| {
+                                acc.push_str(&format!("{}:{},", code, count));
+                                acc
+                            });
+                        csv.chars().into_iter().take(csv.len() - 1).collect()
+                    };
+
+                    ReadPositionPileup::new(
+                        *position,
+                        percent_modified,
+                        num_modified,
+                        num_canonical,
+                        num_calls,
+                        num_filtered,
+                        mod_counts,
+                    )
+                });
+
+            let mut i = 0;
+            for row in rows {
+                read_pileup_writer.write(row.to_row().as_bytes())?;
+                i += 1;
+            };
+            debug!("wrote pileup for {i} positions");
+            Ok(())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
@@ -69,6 +445,18 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
                             )
                             .as_bytes(),
                         )?;
+                        let position = if self.alignment_offset {
+                            call.aligned_query_position
+                        } else {
+                            call.query_position
+                        };
+                        let base_mod_call = self
+                            .caller
+                            .call(&call.canonical_base, &call.base_mod_probs);
+                        self.position_to_calls
+                            .entry(position)
+                            .or_insert(Vec::new())
+                            .push(base_mod_call);
                     }
                 }
             }
@@ -78,5 +466,9 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
 
     fn num_reads(&self) -> usize {
         self.written_reads.len()
+    }
+
+    fn complete(&mut self) -> anyhow::Result<()> {
+        self.write_read_pileup()
     }
 }

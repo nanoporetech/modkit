@@ -1,12 +1,8 @@
-use anyhow::{anyhow, bail};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::thread;
 
-use crate::command_utils::{
-    get_serial_reader, get_threshold_from_options, parse_edge_filter_input,
-    parse_per_mod_thresholds, parse_thresholds, using_stream,
-};
+use anyhow::{anyhow, bail};
 use bio::io::fasta::Reader as FastaReader;
 use clap::Args;
 use crossbeam_channel::{bounded, Sender};
@@ -19,15 +15,16 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
+use crate::command_utils::{
+    get_serial_reader, get_threshold_from_options, parse_edge_filter_input,
+    parse_per_mod_thresholds, parse_thresholds, using_stream,
+};
 use crate::errs::RunError;
 use crate::extract::writer::{OutwriterWithMemory, TsvWriterWithContigNames};
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
-use crate::mod_bam::{
-    BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
-    TrackingModRecordIter,
-};
-use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
+use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::Moniod;
 use crate::motif_bed::{find_motif_hits, RegexMotif};
 use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
@@ -41,7 +38,7 @@ use crate::record_processor::WithRecords;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
     create_out_directory, get_master_progress_bar, get_reference_mod_strand,
-    get_spinner, get_subroutine_progress_bar, get_targets, get_ticker, Kmer,
+    get_spinner, get_subroutine_progress_bar, get_targets, get_ticker,
     ReferenceRecord, Region, Strand,
 };
 use crate::writers::TsvWriter;
@@ -91,6 +88,8 @@ pub struct ExtractMods {
     read_calls_path: Option<PathBuf>,
     #[arg(long, alias = "position-pileup", hide_short_help = true)]
     read_pileup_path: Option<PathBuf>,
+    #[arg(long, requires = "read_pileup_path", hide_short_help = true)]
+    use_alignment_offset: bool,
 
     /// Path to reference FASTA to extract reference context information from.
     /// If no reference is provided, `ref_kmer` column will be "." in the output.
@@ -774,21 +773,6 @@ impl ExtractMods {
             })
         });
 
-        let read_calls_writer = if let Some(fp) = self.read_calls_path.as_ref()
-        {
-            create_out_directory(fp)?;
-            let fp = fp
-                .to_str()
-                .ok_or(anyhow!("{fp:?} is an invalid path for read calls"))?;
-            Some(TsvWriter::new_file(
-                fp,
-                self.force,
-                Some(PositionModCalls::header()),
-            )?)
-        } else {
-            None
-        };
-
         let mut writer: Box<dyn OutwriterWithMemory<ReadsBaseModProfile>> =
             match self.out_path.as_str() {
                 "stdout" | "-" => {
@@ -798,11 +782,12 @@ impl ExtractMods {
                         tsv_writer,
                         tid_to_name,
                         chrom_to_seq,
-                        HashSet::new(),
-                        read_calls_writer,
-                        None, // todo pileup
+                        self.read_calls_path.as_ref(),
+                        self.read_pileup_path.as_ref(),
                         caller,
-                    );
+                        self.force,
+                        self.use_alignment_offset,
+                    )?;
                     Box::new(writer)
                 }
                 _ => {
@@ -815,11 +800,12 @@ impl ExtractMods {
                         tsv_writer,
                         tid_to_name,
                         chrom_to_seq,
-                        HashSet::new(),
-                        read_calls_writer,
-                        None, // todo pileup
+                        self.read_calls_path.as_ref(),
+                        self.read_pileup_path.as_ref(),
                         caller,
-                    );
+                        self.force,
+                        self.use_alignment_offset,
+                    )?;
                     Box::new(writer)
                 }
             };
@@ -851,6 +837,8 @@ impl ExtractMods {
                 }
             }
         }
+        writer.complete()?;
+
         n_failed.finish_and_clear();
         n_skipped.finish_and_clear();
         n_used.finish_and_clear();
@@ -1009,212 +997,5 @@ impl ReferencePositionFilter {
             .count();
         n_skipped += empty;
         ReadsBaseModProfile::new(profiles, n_skipped, n_failed)
-    }
-}
-
-#[derive(new)]
-pub(crate) struct PositionModCalls {
-    query_position: usize,
-    pub(crate) ref_position: Option<i64>,
-    aligned_query_position: usize,
-    num_soft_clipped_start: usize,
-    num_soft_clipped_end: usize,
-    base_mod_probs: BaseModProbs,
-    q_base: u8,
-    query_kmer: Kmer,
-    pub(crate) mod_strand: Strand,
-    pub(crate) alignment_strand: Option<Strand>,
-    canonical_base: DnaBase,
-}
-
-impl PositionModCalls {
-    fn header() -> String {
-        let tab = '\t';
-        format!(
-            "\
-            read_id{tab}\
-            forward_read_position{tab}\
-            forward_aligned_read_position{tab}\
-            ref_position{tab}\
-            chrom{tab}\
-            mod_strand{tab}\
-            ref_strand{tab}\
-            ref_mod_strand{tab}\
-            fw_soft_clipped_start{tab}\
-            fw_soft_clipped_end{tab}\
-            call_prob{tab}\
-            call_code{tab}\
-            base_qual{tab}\
-            ref_kmer{tab}\
-            query_kmer{tab}\
-            canonical_base{tab}\
-            modified_primary_base{tab}\
-            filtered{tab}\
-            inferred\n"
-        )
-    }
-
-    pub(crate) fn from_profile(
-        read_id: &str,
-        profile: &[ModProfile],
-    ) -> Vec<Self> {
-        type Key = (usize, Strand, DnaBase);
-        let mod_codes = profile
-            .iter()
-            .map(|x| x.raw_mod_code)
-            .collect::<HashSet<ModCodeRepr>>()
-            .into_iter()
-            .collect::<Vec<ModCodeRepr>>();
-
-        profile.iter()
-            .fold(HashMap::<Key, Vec<&ModProfile>>::new(), |mut acc, x| {
-                let k = (x.query_position, x.mod_strand, x.canonical_base);
-                acc.entry(k).or_insert(Vec::new()).push(x);
-                acc
-            })
-            .into_iter()
-            .fold(Vec::<Self>::new(), |mut acc, ((query_pos, strand, base), mod_profile)| {
-                let base_mod_probs = if mod_profile.iter().any(|x| x.inferred) {
-                    if mod_profile.len() != 1 {
-                        // todo come back and make this debug after testing
-                        error!("should have only 1 when position is inferred? read: {read_id} pos: {query_pos}.");
-                    }
-                    BaseModProbs::new_inferred_canonical(&mod_codes)
-                } else {
-                    let mut probs = mod_profile
-                        .iter()
-                        .map(|x| {
-                            (x.raw_mod_code, x.q_mod)
-                        }).collect::<FxHashMap<ModCodeRepr, f32>>();
-                    for code in mod_codes.iter() {
-                        if !probs.contains_key(&code) {
-                            probs.insert(*code, 0f32);
-                        }
-                    }
-
-                    BaseModProbs::new(probs, false)
-                };
-                let template = &mod_profile[0];
-                let ref_position = template.ref_position;
-                let aligned_query_position = template
-                    .query_position
-                    .checked_sub(template.num_soft_clipped_start).unwrap_or(0);
-                let num_clip_start = template.num_soft_clipped_start;
-                let num_clip_end = template.num_soft_clipped_end;
-                let q_base = template.q_base;
-                let kmer = template.query_kmer;
-                let alignment_strand = template.alignment_strand;
-
-
-                let pos_mod_calls = PositionModCalls::new(
-                    query_pos,
-                    ref_position,
-                    aligned_query_position,
-                    num_clip_start,
-                    num_clip_end,
-                        base_mod_probs,
-                    q_base,
-                    kmer,
-                    strand,
-                    alignment_strand,
-                    base
-                );
-                acc.push(pos_mod_calls);
-
-                acc
-        })
-        .into_iter()
-        .sorted_by(|a, b| {
-            if a.alignment_strand.map(|s| s == Strand::Negative).unwrap_or(false) {
-                b.query_position.cmp(&a.query_position)
-            } else {
-                a.query_position.cmp(&b.query_position)
-            }
-        }).collect()
-    }
-
-    pub(crate) fn to_row(
-        &self,
-        read_id: &str,
-        chrom_name: Option<&String>,
-        caller: &MultipleThresholdModCaller,
-        reference_seqs: &HashMap<String, Vec<u8>>,
-    ) -> String {
-        let tab = '\t';
-        let missing = ".".to_string();
-        let chrom_name = chrom_name.unwrap_or(&missing).to_owned();
-        let forward_read_position = self.query_position;
-        let forward_aligned_read_position = self.aligned_query_position;
-        let ref_position = self.ref_position.unwrap_or(-1);
-        let mod_strand = self.mod_strand.to_char();
-        let ref_strand =
-            self.alignment_strand.map(|x| x.to_char()).unwrap_or('.');
-        let ref_mod_strand = self
-            .alignment_strand
-            .map(|x| get_reference_mod_strand(self.mod_strand, x).to_char())
-            .unwrap_or('.');
-        let fw_soft_clipped_start = self.num_soft_clipped_start;
-        let fw_soft_clipped_end = self.num_soft_clipped_end;
-        let (mod_call_prob, mod_call_code) =
-            match self.base_mod_probs.argmax_base_mod_call() {
-                BaseModCall::Canonical(p) => (p, "-".to_string()),
-                BaseModCall::Modified(p, code) => (p, code.to_string()),
-                BaseModCall::Filtered => {
-                    unreachable!("argmax should not output filtered calls")
-                }
-            };
-        let base_qual = self.q_base;
-        let query_kmer = format!("{}", self.query_kmer);
-        let ref_kmer = if let Some(ref_pos) = self.ref_position {
-            if ref_pos < 0 {
-                ".".to_string()
-            } else {
-                reference_seqs
-                    .get(&chrom_name)
-                    .map(|s| {
-                        Kmer::from_seq(
-                            s,
-                            ref_pos as usize,
-                            self.query_kmer.size,
-                        )
-                        .to_string()
-                    })
-                    .unwrap_or(".".to_string())
-            }
-        } else {
-            ".".to_string()
-        };
-        let canonical_base = self.canonical_base.char();
-        let modified_primary_base = if self.mod_strand == Strand::Negative {
-            self.canonical_base.complement().char()
-        } else {
-            self.canonical_base.char()
-        };
-        let filtered = caller.call(&self.canonical_base, &self.base_mod_probs)
-            == BaseModCall::Filtered;
-        let inferred = self.base_mod_probs.inferred;
-
-        format!(
-            "\
-            {read_id}{tab}\
-            {forward_read_position}{tab}\
-            {forward_aligned_read_position}{tab}\
-            {ref_position}{tab}\
-            {chrom_name}{tab}\
-            {mod_strand}{tab}\
-            {ref_strand}{tab}\
-            {ref_mod_strand}{tab}\
-            {fw_soft_clipped_start}{tab}\
-            {fw_soft_clipped_end}{tab}\
-            {mod_call_prob}{tab}\
-            {mod_call_code}{tab}\
-            {base_qual}{tab}\
-            {ref_kmer}{tab}\
-            {query_kmer}{tab}\
-            {canonical_base}{tab}\
-            {modified_primary_base}{tab}\
-            {filtered}{tab}\
-            {inferred}\n"
-        )
     }
 }
