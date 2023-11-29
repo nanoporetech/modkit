@@ -1,10 +1,11 @@
 use anyhow::{anyhow, bail};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 
 use crate::command_utils::{
-    get_serial_reader, parse_edge_filter_input, using_stream,
+    get_serial_reader, get_threshold_from_options, parse_edge_filter_input,
+    parse_per_mod_thresholds, parse_thresholds, using_stream,
 };
 use bio::io::fasta::Reader as FastaReader;
 use clap::Args;
@@ -126,6 +127,92 @@ pub struct ExtractMods {
         hide_short_help = true
     )]
     mask: bool,
+
+    // sampling and filtering
+    /// Specify the filter threshold globally or per-base. Global filter threshold
+    /// can be specified with by a decimal number (e.g. 0.75). Per-base thresholds
+    /// can be specified by colon-separated values, for example C:0.75 specifies a
+    /// threshold value of 0.75 for cytosine modification calls. Additional
+    /// per-base thresholds can be specified by repeating the option: for example
+    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
+    /// base option and a default for all other bases with:
+    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
+    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
+    #[arg(
+        long,
+        group = "thresholds",
+        action = clap::ArgAction::Append,
+        alias = "pass_threshold"
+    )]
+    filter_threshold: Option<Vec<String>>,
+    /// Specify a passing threshold to use for a base modification, independent of the
+    /// threshold for the primary sequence base or the default. For example, to set
+    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
+    /// threshold will still be estimated as usual and used for canonical cytosine and
+    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// See the online documentation for more details.
+    #[arg(
+        long,
+        alias = "mod-threshold",
+        action = clap::ArgAction::Append,
+        hide_short_help = true
+    )]
+    mod_thresholds: Option<Vec<String>>,
+    /// Do not perform any filtering, include all mod base calls in output. See
+    /// filtering.md for details on filtering.
+    #[arg(
+        conflicts_with_all = ["mod_thresholds", "filter_threshold"],
+        long,
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    no_filtering: bool,
+    /// Interval chunk size in base pairs to process concurrently when estimating the threshold
+    /// probability.
+    #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
+    sampling_interval_size: u32,
+    /// Sample this fraction of the reads when estimating the pass-threshold.
+    /// In practice, 10-100 thousand reads is sufficient to estimate the model output
+    /// distribution and determine the filtering threshold. See filtering.md for
+    /// details on filtering.
+    #[arg(
+        group = "sampling_options",
+        short = 'f',
+        long,
+        hide_short_help = true
+    )]
+    sampling_frac: Option<f64>,
+    /// Sample this many reads when estimating the filtering threshold. If a sorted, indexed modBAM
+    /// is provided reads will be sampled evenly across aligned genome. If a region is specified,
+    /// with the --region, then reads will be sampled evenly across the region given.
+    /// This option is useful for large BAM files. In practice, 10-50 thousand reads is sufficient
+    /// to estimate the model output distribution and determine the filtering threshold.
+    #[arg(
+        group = "sampling_options",
+        short = 'n',
+        long,
+        default_value_t = 10_042
+    )]
+    sample_num_reads: usize,
+    /// Set a random seed for deterministic running, the default is non-deterministic.
+    #[arg(
+        long,
+        conflicts_with = "num_reads",
+        requires = "sampling_frac",
+        hide_short_help = true
+    )]
+    seed: Option<u64>,
+    /// Filter out modified base calls where the probability of the predicted
+    /// variant is below this confidence percentile. For example, 0.1 will filter
+    /// out the 10% lowest confidence modification calls.
+    #[arg(
+        group = "thresholds",
+        short = 'p',
+        long,
+        default_value_t = 0.1,
+        hide_short_help = true
+    )]
+    filter_percentile: f32,
 
     /// Discard base modification calls that are this many bases from the start or the end
     /// of the read. Two comma-separated values may be provided to asymmetrically filter out
@@ -438,6 +525,14 @@ impl ExtractMods {
             .map(|raw_region| Region::parse_str(raw_region, &header))
             .transpose()?;
 
+        let per_mod_thresholds = self
+            .mod_thresholds
+            .as_ref()
+            .map(|raw_per_mod_thresholds| {
+                parse_per_mod_thresholds(raw_per_mod_thresholds)
+            })
+            .transpose()?;
+
         let (references_and_intervals, reference_position_filter) = self
             .load_regions(
                 &name_to_tid,
@@ -446,6 +541,55 @@ impl ExtractMods {
                 &multi_prog,
                 &pool,
             )?;
+
+        let caller = if self.read_calls_path.is_some()
+            || self.read_pileup_path.is_some()
+        {
+            if self.no_filtering {
+                // need this here because input can be stdin
+                MultipleThresholdModCaller::new_passthrough()
+            } else {
+                // stdin input and want a threshold, not allowed
+                if self.using_stdin() && self.filter_threshold.is_none() {
+                    bail!("\
+                        cannot use stdin and estimate a filter threshold, set the threshold on the \
+                        command line with --filter-threshold and/or --mod-threshold (or set \
+                        --no-filtering).")
+                }
+                if let Some(raw_threshold) = &self.filter_threshold {
+                    parse_thresholds(raw_threshold, per_mod_thresholds)?
+                } else {
+                    let in_bam = Path::new(&self.in_bam).to_path_buf();
+                    if !in_bam.exists() {
+                        bail!(
+                            "failed to find input modBAM file at {}",
+                            self.in_bam
+                        );
+                    }
+                    pool.install(|| {
+                        get_threshold_from_options(
+                            &in_bam,
+                            self.threads,
+                            self.sampling_interval_size,
+                            self.sampling_frac,
+                            self.sample_num_reads,
+                            false,
+                            self.filter_percentile,
+                            self.seed,
+                            region.as_ref(),
+                            per_mod_thresholds,
+                            edge_filter.as_ref(),
+                            collapse_method.as_ref(),
+                            reference_position_filter.include_pos.as_ref(),
+                            !reference_position_filter.include_unmapped,
+                            self.suppress_progress,
+                        )
+                    })?
+                }
+            }
+        } else {
+            MultipleThresholdModCaller::new_passthrough()
+        };
 
         // allowed to use the sampling schedule if there is an index, if
         // asked for num_reads with no index, scan first N reads
@@ -490,7 +634,7 @@ impl ExtractMods {
                 if let Some(reference_and_intervals) = references_and_intervals {
                     drop(reader);
                     // should make this a method on this struct?
-                    let bam_fp = std::path::Path::new(&in_bam).to_path_buf();
+                    let bam_fp = Path::new(&in_bam).to_path_buf();
 
                     // if using unmapped add 1 to total chrms to traverse
                     let prog_length = if reference_position_filter.include_unmapped &&
@@ -644,8 +788,6 @@ impl ExtractMods {
         } else {
             None
         };
-
-        let caller = MultipleThresholdModCaller::new_passthrough();
 
         let mut writer: Box<dyn OutwriterWithMemory<ReadsBaseModProfile>> =
             match self.out_path.as_str() {

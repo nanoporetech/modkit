@@ -3,7 +3,6 @@ use crate::read_ids_to_base_mod_probs::ReadsBaseModProfile;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::writers::TsvWriter;
 use derive_new::new;
-use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;

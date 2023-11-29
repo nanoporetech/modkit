@@ -97,8 +97,8 @@ pub struct ModBamPileup {
         default_value_t = 10_042
     )]
     num_reads: usize,
-    /// Sample this fraction of the reads when estimating the filter-percentile.
-    /// In practice, 50-100 thousand reads is sufficient to estimate the model output
+    /// Sample this fraction of the reads when estimating the pass-threshold.
+    /// In practice, 10-100 thousand reads is sufficient to estimate the model output
     /// distribution and determine the filtering threshold. See filtering.md for
     /// details on filtering.
     #[arg(
