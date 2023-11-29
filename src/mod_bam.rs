@@ -902,7 +902,7 @@ impl SeqPosBaseModProbs {
     pub(crate) fn add_implicit_mod_calls(
         self,
         forward_sequence: &str,
-        primary_base: char,
+        raw_primary_base: char,
         codes_to_remove: &HashSet<ModCodeRepr>,
         edge_filter: Option<&EdgeFilter>,
     ) -> Self {
@@ -914,7 +914,7 @@ impl SeqPosBaseModProbs {
                 .chars()
                 .enumerate()
                 .filter(|(pos, base)| {
-                    let base_matches = *base == primary_base;
+                    let base_matches = *base == raw_primary_base;
                     let keep_position = if let Some(ef) = edge_filter {
                         ef.keep_position(*pos, forward_sequence.len())
                             .unwrap_or(false)

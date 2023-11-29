@@ -1,9 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
 use std::path::{Path, PathBuf};
 
-use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use derive_new::new;
 use histo_fp::Histogram;
@@ -13,16 +12,11 @@ use prettytable::format::FormatBuilder;
 use prettytable::{cell, row, Table};
 use rustc_hash::FxHashMap;
 
+use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::pileup::duplex::DuplexModBasePileup;
 use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
-use crate::read_ids_to_base_mod_probs::ReadsBaseModProfile;
 use crate::summarize::ModSummary;
 use crate::thresholds::Percentiles;
-
-pub trait OutwriterWithMemory<T> {
-    fn write(&mut self, item: T, kmer_size: usize) -> AnyhowResult<u64>;
-    fn num_reads(&self) -> usize;
-}
 
 pub trait PileupWriter<T> {
     fn write(&mut self, item: T, motif_labels: &[String]) -> AnyhowResult<u64>;
@@ -482,6 +476,12 @@ pub struct TsvWriter<W: Write> {
     buf_writer: BufWriter<W>,
 }
 
+impl<T: Write> TsvWriter<T> {
+    pub fn write(&mut self, raw: &[u8]) -> std::io::Result<usize> {
+        self.buf_writer.write(raw)
+    }
+}
+
 impl TsvWriter<Stdout> {
     pub fn new_stdout(header: Option<String>) -> Self {
         let out = BufWriter::new(std::io::stdout());
@@ -746,54 +746,6 @@ impl OutWriter<SampledProbs> for TsvWriter<Stdout> {
         }
 
         Ok(rows_written)
-    }
-}
-
-#[derive(new)]
-pub struct TsvWriterWithContigNames<W: Write> {
-    tsv_writer: TsvWriter<W>,
-    tid_to_name: HashMap<u32, String>,
-    name_to_seq: HashMap<String, Vec<u8>>,
-    written_reads: HashSet<String>,
-}
-
-impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
-    for TsvWriterWithContigNames<W>
-{
-    fn write(
-        &mut self,
-        item: ReadsBaseModProfile,
-        kmer_size: usize,
-    ) -> AnyhowResult<u64> {
-        let missing_chrom = ".".to_string();
-        let mut rows_written = 0u64;
-        for profile in item.profiles.iter() {
-            if self.written_reads.contains(&profile.record_name) {
-                continue;
-            } else {
-                let chrom_name = if let Some(chrom_id) = profile.chrom_id {
-                    self.tid_to_name.get(&chrom_id)
-                } else {
-                    None
-                };
-                for mod_profile in profile.profile.iter() {
-                    let row = mod_profile.to_row(
-                        &profile.record_name,
-                        chrom_name.unwrap_or(&missing_chrom),
-                        &self.name_to_seq,
-                        kmer_size,
-                    );
-                    self.tsv_writer.buf_writer.write(row.as_bytes())?;
-                    rows_written += 1;
-                }
-                self.written_reads.insert(profile.record_name.to_owned());
-            }
-        }
-        Ok(rows_written)
-    }
-
-    fn num_reads(&self) -> usize {
-        self.written_reads.len()
     }
 }
 

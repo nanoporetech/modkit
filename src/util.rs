@@ -595,10 +595,14 @@ pub(crate) fn reader_is_bam(reader: &bam::IndexedReader) -> bool {
 #[derive(Copy, Clone)]
 pub(crate) struct Kmer {
     inner: [u8; 12],
-    size: usize,
+    pub(crate) size: usize,
 }
 
 impl Kmer {
+    pub(crate) fn from_seq(seq: &[u8], pos: usize, kmer_size: usize) -> Kmer {
+        Kmer::new(seq, pos, kmer_size)
+    }
+
     // kinda risky, size needs to be < 12
     pub(crate) fn new(seq: &[u8], position: usize, size: usize) -> Self {
         if size > 12 {

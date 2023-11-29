@@ -355,19 +355,19 @@ impl WithRecords for ReadIdsToBaseModProbs {
 
 #[derive(new, Debug)]
 pub(crate) struct ModProfile {
-    query_position: usize,
+    pub(crate) query_position: usize,
     pub(crate) ref_position: Option<i64>,
-    num_soft_clipped_start: usize,
-    num_soft_clipped_end: usize,
-    read_length: usize,
-    q_mod: f32,
-    raw_mod_code: ModCodeRepr,
-    q_base: u8,
-    query_kmer: Kmer,
+    pub(crate) num_soft_clipped_start: usize,
+    pub(crate) num_soft_clipped_end: usize,
+    pub(crate) read_length: usize,
+    pub(crate) q_mod: f32,
+    pub(crate) raw_mod_code: ModCodeRepr,
+    pub(crate) q_base: u8,
+    pub(crate) query_kmer: Kmer,
     pub(crate) mod_strand: Strand,
     pub(crate) alignment_strand: Option<Strand>,
-    canonical_base: char,
-    inferred: bool,
+    pub(crate) canonical_base: DnaBase,
+    pub(crate) inferred: bool,
 }
 
 impl ModProfile {
@@ -411,12 +411,8 @@ impl ModProfile {
                 reference_seqs
                     .get(chrom_name)
                     .map(|s| {
-                        ReadsBaseModProfile::get_kmer_from_seq(
-                            s,
-                            ref_pos as usize,
-                            kmer_size,
-                        )
-                        .to_string()
+                        Kmer::from_seq(s, ref_pos as usize, kmer_size)
+                            .to_string()
                     })
                     .unwrap_or(".".to_string())
             }
@@ -424,15 +420,11 @@ impl ModProfile {
             ".".to_string()
         };
         let sep = '\t';
-        let modified_primary_base = DnaBase::parse(self.canonical_base)
-            .map(|b| {
-                if self.mod_strand == Strand::Negative {
-                    b.complement().char()
-                } else {
-                    b.char()
-                }
-            })
-            .unwrap_or('?');
+        let modified_primary_base = if self.mod_strand == Strand::Negative {
+            self.canonical_base.complement().char()
+        } else {
+            self.canonical_base.char()
+        };
 
         format!(
             "\
@@ -469,7 +461,7 @@ impl ModProfile {
             self.q_base,
             ref_kmer,
             query_kmer,
-            self.canonical_base,
+            self.canonical_base.char(),
             modified_primary_base,
             self.inferred,
         )
@@ -501,7 +493,7 @@ impl ReadBaseModProfile {
     #[inline]
     fn base_mod_probs_to_mod_profile(
         query_pos_forward: usize,
-        primary_base: char,
+        primary_base: DnaBase,
         mod_strand: Strand,
         base_mod_probs: BaseModProbs,
         base_qual: u8,
@@ -641,12 +633,14 @@ impl ReadBaseModProfile {
                 } else {
                     Some(probs)
                 };
-                filtered.map(|probs| (base, strand, probs))
+                filtered.and_then(|probs| {
+                    DnaBase::parse(base).map(|dna_base| (dna_base, strand, probs)).ok()
+                })
             })
             .map(|(base, strand, probs)| {
                 let mut probs = probs.add_implicit_mod_calls(
                     &read_sequence,
-                    base,
+                    base.char(),
                     &codes_to_remove,
                     edge_filter,
                 );
@@ -718,11 +712,6 @@ pub(crate) struct ReadsBaseModProfile {
 }
 
 impl ReadsBaseModProfile {
-    // todo(arand) need to make these safe subtractions
-    fn get_kmer_from_seq(seq: &[u8], pos: usize, kmer_size: usize) -> Kmer {
-        Kmer::new(seq, pos, kmer_size)
-    }
-
     fn get_soft_clipped(cigar: &[Cigar]) -> anyhow::Result<(usize, usize)> {
         let mut sc_start = None;
         let mut sc_end = None;
