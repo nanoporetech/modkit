@@ -165,11 +165,13 @@ pub(super) fn get_modification_counts(
     control_bedmethyl: &PathBuf,
     exp_bedmethyl: &PathBuf,
     dmr_batch: DmrBatch,
+    min_valid_coverage: u64,
     position_filter: &StrandedPositionFilter<DnaBase>,
 ) -> anyhow::Result<Vec<anyhow::Result<ModificationCounts>>> {
     let control_bedmethyl_lines =
         read_bedmethyl(control_bedmethyl, &dmr_batch.get_control_chunks())?
             .into_iter()
+            .filter(|bm| bm.valid_coverage >= min_valid_coverage)
             .fold(FxHashMap::default(), |mut acc, bm_line| {
                 acc.entry(bm_line.chrom.clone())
                     .or_insert(Vec::new())
@@ -179,6 +181,7 @@ pub(super) fn get_modification_counts(
     let exp_bedmethyl_lines =
         read_bedmethyl(exp_bedmethyl, &dmr_batch.get_exp_chunks())?
             .into_iter()
+            .filter(|bm| bm.valid_coverage >= min_valid_coverage)
             .fold(FxHashMap::default(), |mut acc, bm_line| {
                 acc.entry(bm_line.chrom.clone())
                     .or_insert(Vec::new())
@@ -244,6 +247,7 @@ pub(super) fn run_pairwise_dmr(
     position_filter: StrandedPositionFilter<DnaBase>,
     mut writer: Box<dyn std::io::Write>,
     pb: ProgressBar,
+    min_valid_coverage: u64,
     failure_counter: ProgressBar,
 ) -> anyhow::Result<usize> {
     let (snd, rcv) = crossbeam_channel::bounded(1000);
@@ -256,6 +260,7 @@ pub(super) fn run_pairwise_dmr(
                 &control_bedmethyl_fp,
                 &exp_bedmethyl_fp,
                 batch,
+                min_valid_coverage,
                 &position_filter,
             ) {
                 Ok(results) => match snd.send(results) {

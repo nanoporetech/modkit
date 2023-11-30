@@ -124,6 +124,10 @@ pub struct PairwiseDmr {
     /// fatal => log (error) and exit the program when a region is missing.
     #[arg(long="missing", requires = "regions_bed", default_value_t=HandleMissing::warn)]
     handle_missing: HandleMissing,
+    /// Minimum valid coverage required to use an entry from a bedMethyl. See the help for
+    /// pileup for the specification and description of valid coverage.
+    #[arg(long, alias = "min-coverage", default_value_t = 0)]
+    min_valid_coverage: u64,
 }
 
 impl PairwiseDmr {
@@ -391,6 +395,7 @@ impl PairwiseDmr {
             position_filter,
             writer,
             pb,
+            self.min_valid_coverage,
             failures.clone(),
         )?;
 
@@ -455,6 +460,10 @@ pub struct MultiSampleDmr {
     /// fatal => log (error) and exit the program when a region is missing.
     #[arg(long="missing", requires = "regions_bed", default_value_t=HandleMissing::warn)]
     handle_missing: HandleMissing,
+    /// Minimum valid coverage required to use an entry from a bedMethyl. See the help for
+    /// pileup for the specification and description of valid coverage.
+    #[arg(long, alias = "min-coverage", default_value_t = 0)]
+    min_valid_coverage: u64,
 }
 
 impl MultiSampleDmr {
@@ -697,6 +706,7 @@ impl MultiSampleDmr {
                 position_filter,
                 writer,
                 pb,
+                self.min_valid_coverage,
                 failures.clone(),
             )?;
             debug!(
