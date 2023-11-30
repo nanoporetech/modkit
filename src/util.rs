@@ -680,8 +680,12 @@ pub fn within_alignment(
     num_soft_clipped_end: usize,
     read_length: usize,
 ) -> bool {
-    query_position >= num_soft_clipped_start
-        && query_position < (read_length - num_soft_clipped_end)
+    read_length.checked_sub(num_soft_clipped_end)
+        .map(|x| query_position >= num_soft_clipped_start && query_position < x)
+        .unwrap_or_else(|| {
+            debug!("read_length ({read_length}) is less than num_soft_clipped_end ({num_soft_clipped_end})");
+            false
+        })
 }
 
 #[cfg(test)]

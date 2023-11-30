@@ -5,12 +5,14 @@ use std::path::PathBuf;
 
 use derive_new::new;
 use itertools::Itertools;
-use log::error;
+use log::debug;
 use rustc_hash::FxHashMap;
 
 use crate::mod_bam::{BaseModCall, BaseModProbs};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
-use crate::read_ids_to_base_mod_probs::{ModProfile, ReadsBaseModProfile};
+use crate::read_ids_to_base_mod_probs::{
+    ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
+};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util;
 use crate::util::{
@@ -62,29 +64,29 @@ impl PositionModCalls {
     }
 
     pub(crate) fn from_profile(
-        read_id: &str,
-        profile: &[ModProfile],
+        read_base_mod_profile: &ReadBaseModProfile,
     ) -> Vec<Self> {
+        let read_id = &read_base_mod_profile.record_name;
         type Key = (usize, Strand, DnaBase);
-        let mod_codes = profile
-            .iter()
-            .map(|x| x.raw_mod_code)
-            .collect::<HashSet<ModCodeRepr>>()
-            .into_iter()
-            .collect::<Vec<ModCodeRepr>>();
-
-        profile.iter()
-            .fold(HashMap::<Key, Vec<&ModProfile>>::new(), |mut acc, x| {
+        let (grouped, mod_codes): (
+            HashMap<Key, Vec<&ModProfile>>,
+            HashSet<ModCodeRepr>,
+        ) = read_base_mod_profile.profile.iter().fold(
+            (HashMap::new(), HashSet::new()),
+            |(mut acc, mut codes), x| {
                 let k = (x.query_position, x.mod_strand, x.canonical_base);
                 acc.entry(k).or_insert(Vec::new()).push(x);
-                acc
-            })
-            .into_iter()
+                codes.insert(x.raw_mod_code);
+                (acc, codes)
+            },
+        );
+        let mod_codes = mod_codes.into_iter().collect::<Vec<ModCodeRepr>>();
+
+        grouped.into_iter()
             .fold(Vec::<Self>::new(), |mut acc, ((query_pos, strand, base), mod_profile)| {
                 let base_mod_probs = if mod_profile.iter().any(|x| x.inferred) {
                     if mod_profile.len() != 1 {
-                        // todo come back and make this debug after testing
-                        error!("should have only 1 when position is inferred? read: {read_id} pos: {query_pos}.");
+                        debug!("should have only 1 when line when mod is inferred, got {}. read: {read_id} pos: {query_pos}.", mod_profile.len());
                     }
                     BaseModProbs::new_inferred_canonical(&mod_codes)
                 } else {
@@ -108,7 +110,6 @@ impl PositionModCalls {
                 let q_base = template.q_base;
                 let kmer = template.query_kmer;
                 let alignment_strand = template.alignment_strand;
-
 
                 let pos_mod_calls = PositionModCalls::new(
                     query_pos,
@@ -180,23 +181,17 @@ impl PositionModCalls {
         let query_kmer = format!("{}", self.query_kmer);
         let ref_kmer = if let Some(ref_pos) = self.ref_position {
             if ref_pos < 0 {
-                ".".to_string()
+                None
             } else {
-                reference_seqs
-                    .get(&chrom_name)
-                    .map(|s| {
-                        Kmer::from_seq(
-                            s,
-                            ref_pos as usize,
-                            self.query_kmer.size,
-                        )
+                reference_seqs.get(&chrom_name).map(|s| {
+                    Kmer::from_seq(s, ref_pos as usize, self.query_kmer.size)
                         .to_string()
-                    })
-                    .unwrap_or(".".to_string())
+                })
             }
         } else {
-            ".".to_string()
+            None
         };
+        let ref_kmer_rep = ref_kmer.as_ref().unwrap_or(&missing);
         let canonical_base = self.canonical_base.char();
         let modified_primary_base = if self.mod_strand == Strand::Negative {
             self.canonical_base.complement().char()
@@ -223,7 +218,7 @@ impl PositionModCalls {
             {mod_call_prob}{tab}\
             {mod_call_code}{tab}\
             {base_qual}{tab}\
-            {ref_kmer}{tab}\
+            {ref_kmer_rep}{tab}\
             {query_kmer}{tab}\
             {canonical_base}{tab}\
             {modified_primary_base}{tab}\
@@ -239,7 +234,6 @@ pub trait OutwriterWithMemory<T> {
     fn num_reads(&self) -> usize;
 }
 
-// #[derive(new)]
 pub struct TsvWriterWithContigNames<W: Write> {
     tsv_writer: TsvWriter<W>,
     tid_to_name: HashMap<u32, String>,
@@ -289,11 +283,9 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
             if self.written_reads.contains(&profile.record_name) {
                 continue;
             } else {
-                let chrom_name = if let Some(chrom_id) = profile.chrom_id {
-                    self.tid_to_name.get(&chrom_id)
-                } else {
-                    None
-                };
+                let chrom_name = profile
+                    .chrom_id
+                    .and_then(|chrom_id| self.tid_to_name.get(&chrom_id));
                 for mod_profile in profile.profile.iter() {
                     let row = mod_profile.to_row(
                         &profile.record_name,
@@ -307,10 +299,8 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
                 self.written_reads.insert(profile.record_name.to_owned());
                 if let Some(read_calls_writer) = self.read_calls_writer.as_mut()
                 {
-                    let position_calls = PositionModCalls::from_profile(
-                        profile.record_name.as_str(),
-                        &profile.profile,
-                    );
+                    let position_calls =
+                        PositionModCalls::from_profile(&profile);
                     for call in position_calls {
                         read_calls_writer.write(
                             call.to_row(
