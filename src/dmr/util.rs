@@ -7,10 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
+use clap::ValueEnum;
 use derive_new::new;
 use indicatif::ProgressBar;
 
 use log::{debug, error};
+use log_once::debug_once;
 use nom::character::complete::one_of;
 use nom::multi::many0;
 use nom::IResult;
@@ -22,6 +24,24 @@ use crate::parsing_utils::{
     consume_digit, consume_string, consume_string_spaces,
 };
 use crate::position_filter::Iv;
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[allow(non_camel_case_types)]
+pub(super) enum HandleMissing {
+    quiet,
+    warn,
+    fail,
+}
+
+impl Display for HandleMissing {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HandleMissing::quiet => write!(f, "quiet"),
+            HandleMissing::warn => write!(f, "warn"),
+            HandleMissing::fail => write!(f, "fail"),
+        }
+    }
+}
 
 #[derive(new, Clone, Debug, Eq, PartialEq)]
 pub(super) struct DmrInterval {
@@ -115,19 +135,38 @@ impl Display for DmrInterval {
     }
 }
 
-#[derive(new)]
+#[derive(new, Debug, Eq, PartialEq, PartialOrd)]
 pub(super) struct DmrChunk {
     pub(super) chrom_id: u32,
-    // pub(super) control_chunks: Vec<IndexChunk>,
-    // pub(super) exp_chunks: Vec<IndexChunk>,
     pub(super) dmr_interval: DmrInterval,
+}
+
+impl Ord for DmrChunk {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.chrom_id.cmp(&other.chrom_id) {
+            Ordering::Equal => self.dmr_interval.cmp(&other.dmr_interval),
+            o @ _ => o,
+        }
+    }
+}
+
+impl Display for DmrChunk {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}-{}",
+            self.dmr_interval.chrom,
+            self.dmr_interval.start(),
+            self.dmr_interval.stop()
+        )
+    }
 }
 
 pub(super) struct DmrIntervalIter {
     control_fn: String,
     exp_fn: String,
-    control_contig_lookup: Arc<HashMap<String, usize>>,
-    exp_contig_lookup: HashMap<String, usize>,
+    control_contig_lookup: Arc<ContigLookup>,
+    exp_contig_lookup: ContigLookup,
     control_index: CsiIndex,
     exp_index: CsiIndex,
     regions_of_interest: VecDeque<DmrInterval>,
@@ -139,14 +178,15 @@ impl DmrIntervalIter {
     pub(super) fn new(
         control_path: &PathBuf,
         exp_path: &PathBuf,
-        control_contig_lookup: Arc<HashMap<String, usize>>,
-        exp_contig_lookup: HashMap<String, usize>,
+        control_contig_lookup: Arc<ContigLookup>,
+        exp_contig_lookup: ContigLookup,
         control_index: CsiIndex,
         exp_index: CsiIndex,
         rois: VecDeque<DmrInterval>,
         chunk_size: usize,
         failure_counter: ProgressBar,
-    ) -> Self {
+        handle_missing: HandleMissing,
+    ) -> anyhow::Result<Self> {
         let control_fn = control_path
             .to_str()
             .map(|s| s.to_owned())
@@ -155,18 +195,62 @@ impl DmrIntervalIter {
             .to_str()
             .map(|s| s.to_owned())
             .unwrap_or_else(|| format!("'a' failed path decode"));
+        let regions_of_interest = rois.into_iter()
+            .try_fold(Vec::new(), |mut acc, roi| {
+                let a_found = control_contig_lookup.inner.contains_key(&roi.chrom);
+                let b_found = exp_contig_lookup.inner.contains_key(&roi.chrom);
+                if a_found && b_found {
+                    acc.push(roi);
+                    Ok(acc)
+                } else {
+                    let which = if b_found {
+                        if let Some(a_name) = control_contig_lookup.sample_name.as_ref() {
+                            format!("'{a_name}'")
+                        } else {
+                            format!("{:?}", &control_contig_lookup.file_path)
+                        }
+                    } else {
+                        match (control_contig_lookup.sample_name.as_ref(), exp_contig_lookup.sample_name.as_ref()) {
+                            (Some(a_name), Some(b_name)) => {
+                                format!("'{a_name}' and '{b_name}'")
+                            }
+                            _ => {
+                                format!("{:?} and {:?}", &control_contig_lookup.file_path, &exp_contig_lookup.file_path)
+                            }
+                        }
+                    };
+                    match handle_missing {
+                        HandleMissing::quiet => {
+                            Ok(acc)
+                        },
+                        HandleMissing::warn => {
+                            debug_once!("chrom {} is missing from {which} bedMethyl index, discarding", &roi.chrom);
+                            Ok(acc)
+                        },
+                        HandleMissing::fail => {
+                            let message = format!("chrom {} is missing from {which} bedMethyl index, fatal error", &roi.chrom);
+                            error!("{message}");
+                            bail!(message)
+                        }
+                    }
+                }
+            })?;
 
-        Self {
+        if regions_of_interest.is_empty() {
+            bail!("no valid regions in input")
+        }
+
+        Ok(Self {
             control_fn,
             exp_fn,
             control_contig_lookup,
             exp_contig_lookup,
             control_index,
             exp_index,
-            regions_of_interest: rois,
+            regions_of_interest: regions_of_interest.into_iter().collect(),
             chunk_size,
             failures: failure_counter,
-        }
+        })
     }
 }
 
@@ -252,27 +336,6 @@ impl DmrBatch {
     }
 }
 
-// #[derive(Default)]
-// pub(super) struct DmrBatch {
-//     pub(super) batches: FxHashMap<u32, ContigBatch>
-// }
-//
-// impl DmrBatch {
-//     fn append(&mut self, dmr_chunk: DmrChunk, control_index_chunks: Vec<IndexChunk>, experiment_index_chunks: Vec<IndexChunk>) {
-//         self.batches.entry(dmr_chunk.chrom_id).or_insert(ContigBatch::default()).append(
-//             dmr_chunk, control_index_chunks, experiment_index_chunks
-//         );
-//     }
-//
-//     fn size(&self) -> usize {
-//         self.batches.values().map(|x| x.size()).max().unwrap_or(0)
-//     }
-//
-//     fn is_empty(&self) -> bool {
-//         self.batches.values().all(|x| x.is_empty())
-//     }
-// }
-
 impl Iterator for DmrIntervalIter {
     type Item = DmrBatch;
 
@@ -282,8 +345,8 @@ impl Iterator for DmrIntervalIter {
         loop {
             if let Some(dmr_interval) = self.regions_of_interest.pop_front() {
                 let (control_chr_id, exp_chr_id) = match (
-                    self.control_contig_lookup.get(&dmr_interval.chrom),
-                    self.exp_contig_lookup.get(&dmr_interval.chrom),
+                    self.control_contig_lookup.inner.get(&dmr_interval.chrom),
+                    self.exp_contig_lookup.inner.get(&dmr_interval.chrom),
                 ) {
                     (Some(control_chr_id), Some(exp_chr_id)) => {
                         (*control_chr_id, *exp_chr_id)
@@ -378,6 +441,35 @@ pub(super) fn parse_roi_bed<P: AsRef<Path>>(
         bail!("didn't parse any regions")
     } else {
         Ok(intervals)
+    }
+}
+
+pub(super) struct ContigLookup {
+    pub(super) sample_name: Option<String>,
+    pub(super) file_path: PathBuf,
+    pub(super) inner: HashMap<String, usize>,
+}
+
+impl ContigLookup {
+    pub(super) fn new(
+        index: &CsiIndex,
+        index_fp: &PathBuf,
+        sample_name: Option<&String>,
+    ) -> anyhow::Result<Self> {
+        let inner = index
+            .header()
+            .ok_or_else(|| anyhow!("failed to get control tabix header"))?
+            .reference_sequence_names()
+            .iter()
+            .enumerate()
+            .map(|(idx, r)| (r.to_owned(), idx))
+            .collect::<HashMap<String, usize>>();
+
+        Ok(Self {
+            sample_name: sample_name.map(|x| x.to_owned()),
+            file_path: index_fp.to_owned(),
+            inner,
+        })
     }
 }
 

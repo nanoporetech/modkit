@@ -165,11 +165,13 @@ pub(super) fn get_modification_counts(
     control_bedmethyl: &PathBuf,
     exp_bedmethyl: &PathBuf,
     dmr_batch: DmrBatch,
+    min_valid_coverage: u64,
     position_filter: &StrandedPositionFilter<DnaBase>,
 ) -> anyhow::Result<Vec<anyhow::Result<ModificationCounts>>> {
     let control_bedmethyl_lines =
         read_bedmethyl(control_bedmethyl, &dmr_batch.get_control_chunks())?
             .into_iter()
+            .filter(|bm| bm.valid_coverage >= min_valid_coverage)
             .fold(FxHashMap::default(), |mut acc, bm_line| {
                 acc.entry(bm_line.chrom.clone())
                     .or_insert(Vec::new())
@@ -179,6 +181,7 @@ pub(super) fn get_modification_counts(
     let exp_bedmethyl_lines =
         read_bedmethyl(exp_bedmethyl, &dmr_batch.get_exp_chunks())?
             .into_iter()
+            .filter(|bm| bm.valid_coverage >= min_valid_coverage)
             .fold(FxHashMap::default(), |mut acc, bm_line| {
                 acc.entry(bm_line.chrom.clone())
                     .or_insert(Vec::new())
@@ -244,46 +247,87 @@ pub(super) fn run_pairwise_dmr(
     position_filter: StrandedPositionFilter<DnaBase>,
     mut writer: Box<dyn std::io::Write>,
     pb: ProgressBar,
+    min_valid_coverage: u64,
     failure_counter: ProgressBar,
 ) -> anyhow::Result<usize> {
     let (snd, rcv) = crossbeam_channel::bounded(1000);
     let control_bedmethyl_fp = control_bed_fp.clone();
     let exp_bedmethyl_fp = exp_bed_fp.clone();
 
+    enum BatchResult {
+        Results(Vec<anyhow::Result<ModificationCounts>>),
+        BatchError(String, anyhow::Error, usize),
+    }
+
     std::thread::spawn(move || {
         for batch in dmr_interval_iter {
+            let batch_size = batch.dmr_chunks.len();
+            let range_message = {
+                let from = batch.dmr_chunks.iter().min_by(|a, b| a.cmp(&b));
+                let to = batch.dmr_chunks.iter().max_by(|a, b| a.cmp(&b));
+                match (from, to) {
+                    (Some(s), Some(t)) => {
+                        format!("{batch_size} intervals, from {} to {}", s, t)
+                    }
+                    _ => {
+                        format!("{batch_size} intervals")
+                    }
+                }
+            };
             match get_modification_counts(
                 &control_bedmethyl_fp,
                 &exp_bedmethyl_fp,
                 batch,
+                min_valid_coverage,
                 &position_filter,
             ) {
-                Ok(results) => match snd.send(results) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("failed to send results, {}", e.to_string())
+                Ok(results) => {
+                    let results = BatchResult::Results(results);
+                    match snd.send(results) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("failed to send results, {}", e.to_string())
+                        }
                     }
-                },
+                }
                 Err(e) => {
-                    debug!("failed entire dmr batch, {}", e.to_string())
+                    let batch_error =
+                        BatchResult::BatchError(range_message, e, batch_size);
+                    match snd.send(batch_error) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("failed to batch error, {}", e.to_string())
+                        }
+                    }
                 }
             }
         }
     });
 
     let mut success_count = 0;
-    for results in rcv {
-        for result in results {
-            match result {
-                Ok(counts) => {
-                    writer.write(counts.to_row()?.as_bytes())?;
-                    success_count += 1;
-                    pb.inc(1);
+    for batch_result in rcv {
+        match batch_result {
+            BatchResult::Results(results) => {
+                for result in results {
+                    match result {
+                        Ok(counts) => {
+                            writer.write(counts.to_row()?.as_bytes())?;
+                            success_count += 1;
+                            pb.inc(1);
+                        }
+                        Err(e) => {
+                            debug!("region failed, error: {}", e.to_string());
+                            failure_counter.inc(1);
+                        }
+                    }
                 }
-                Err(e) => {
-                    debug!("unexpected error, {}", e.to_string());
-                    failure_counter.inc(1);
-                }
+            }
+            BatchResult::BatchError(message, error, batch_size) => {
+                debug!(
+                    "failed entire dmr batch, {message}, {}",
+                    error.to_string()
+                );
+                failure_counter.inc(batch_size as u64);
             }
         }
     }
