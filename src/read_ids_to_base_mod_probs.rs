@@ -23,8 +23,9 @@ use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
-    get_aligned_pairs_forward, get_forward_sequence, get_master_progress_bar,
-    get_query_name_string, get_reference_mod_strand, get_spinner, Kmer, Strand,
+    self, get_aligned_pairs_forward, get_forward_sequence,
+    get_master_progress_bar, get_query_name_string, get_reference_mod_strand,
+    get_spinner, Kmer, Strand,
 };
 
 /// Read IDs mapped to their base modification probabilities, organized
@@ -397,6 +398,15 @@ impl ModProfile {
         )
     }
 
+    fn within_alignment(&self) -> bool {
+        util::within_alignment(
+            self.query_position,
+            self.num_soft_clipped_start,
+            self.num_soft_clipped_end,
+            self.read_length,
+        )
+    }
+
     pub(crate) fn to_row(
         &self,
         read_id: &str,
@@ -427,6 +437,7 @@ impl ModProfile {
             self.canonical_base.char()
         };
 
+        let _within_alignment = self.within_alignment();
         format!(
             "\
             {read_id}{sep}\
@@ -538,9 +549,7 @@ impl ReadBaseModProfile {
     ) -> Result<Self, RunError> {
         let read_length = record.seq_len();
         let (num_clip_start, num_clip_end) =
-            match ReadsBaseModProfile::get_soft_clipped(
-                record.cigar().as_slice(),
-            ) {
+            match ReadsBaseModProfile::get_soft_clipped(&record) {
                 Ok((sc_start, sc_end)) => {
                     if record.is_reverse() {
                         (sc_end, sc_start)
@@ -558,6 +567,7 @@ impl ReadBaseModProfile {
                     ));
                 }
             };
+
         let (alignment_strand, chrom_tid) = if record.is_unmapped() {
             (None, None)
         } else {
@@ -713,7 +723,13 @@ pub(crate) struct ReadsBaseModProfile {
 }
 
 impl ReadsBaseModProfile {
-    fn get_soft_clipped(cigar: &[Cigar]) -> anyhow::Result<(usize, usize)> {
+    fn get_soft_clipped(
+        record: &bam::Record,
+    ) -> anyhow::Result<(usize, usize)> {
+        if record.is_unmapped() {
+            return Ok((0, 0));
+        }
+        let cigar = &record.cigar().0;
         let sc_start = cigar.iter().try_fold(0, |acc, op| match op {
             Cigar::SoftClip(l) => ControlFlow::Continue(acc + *l),
             _ => ControlFlow::Break(acc),
@@ -729,28 +745,6 @@ impl ReadsBaseModProfile {
             }
             _ => bail!("illegal cigar, entirely soft clip ops {cigar:?}"),
         }
-        //
-        //
-        // for op in cigar {
-        //     match op {
-        //         Cigar::SoftClip(l) => match (sc_start, sc_end) {
-        //             (None, None) => sc_start = Some(*l as usize),
-        //             (Some(_), None) => {
-        //                 sc_end = Some(*l as usize);
-        //             }
-        //             (Some(_), Some(_)) => {
-        //                 return Err(anyhow!(
-        //                     "encountered softclip operation more than twice"
-        //                 ));
-        //             }
-        //             (None, Some(_)) => unreachable!("logic error"),
-        //         },
-        //         Cigar::Match(_) => match (sc_start, sc_end) {
-        //             (Some(_), )
-        //         }
-        //     }
-        // }
-        // Ok((sc_start.unwrap_or(0), sc_end.unwrap_or(0)))
     }
 
     pub(crate) fn remove_inferred(self) -> Self {
@@ -901,13 +895,5 @@ impl WithRecords for ReadsBaseModProfile {
 
     fn num_reads(&self) -> usize {
         self.profiles.len()
-    }
-}
-
-#[cfg(test)]
-mod read_ids_to_base_mod_probs_tests {
-    #[test]
-    fn test_cigar_finds_softclips() {
-        // todo
     }
 }

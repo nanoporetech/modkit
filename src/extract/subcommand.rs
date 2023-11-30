@@ -781,6 +781,18 @@ impl ExtractMods {
                     )?;
                     Box::new(writer)
                 }
+                "null" => {
+                    let tsv_writer = TsvWriter::new_null();
+                    let writer = TsvWriterWithContigNames::new(
+                        tsv_writer,
+                        tid_to_name,
+                        chrom_to_seq,
+                        self.read_calls_path.as_ref(),
+                        caller,
+                        self.force,
+                    )?;
+                    Box::new(writer)
+                }
                 _ => {
                     let tsv_writer = TsvWriter::new_file(
                         &self.out_path,

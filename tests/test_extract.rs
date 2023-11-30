@@ -205,7 +205,7 @@ fn test_extract_include_sites_duplex_regression() {
     .unwrap();
     check_against_expected_text_file(
         out_fp.to_str().unwrap(),
-        "tests/resources/test_extract_include_sites_duplex_regression_expected.bed",
+        "tests/resources/test_extract_include_sites_duplex_regression_expected.tsv",
     );
 }
 
@@ -411,7 +411,22 @@ fn test_extract_cpg_motif() {
 }
 
 #[test]
-fn test_extract_calls_regression() {}
-
-#[test]
-fn test_extract_calls_and_pileup_consistent() {}
+fn test_extract_calls_regression() {
+    let extract_tsv =
+        std::env::temp_dir().join("test_extract_calls_regression.tsv");
+    run_modkit(&[
+        "extract",
+        "tests/resources/2_reads_all_context.bam",
+        "null",
+        "--read-calls",
+        extract_tsv.to_str().unwrap(),
+        "--ref",
+        "tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--force",
+    ])
+    .unwrap();
+    check_against_expected_text_file(
+        extract_tsv.to_str().unwrap(),
+        "tests/resources/test_read_calls_estimate_thresh.tsv",
+    );
+}

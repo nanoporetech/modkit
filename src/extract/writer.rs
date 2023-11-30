@@ -12,6 +12,7 @@ use crate::mod_bam::{BaseModCall, BaseModProbs};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::read_ids_to_base_mod_probs::{ModProfile, ReadsBaseModProfile};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
+use crate::util;
 use crate::util::{
     create_out_directory, get_reference_mod_strand, Kmer, Strand,
 };
@@ -55,7 +56,8 @@ impl PositionModCalls {
             canonical_base{tab}\
             modified_primary_base{tab}\
             fail{tab}\
-            inferred"
+            inferred{tab}\
+            within_alignment"
         )
     }
 
@@ -135,6 +137,15 @@ impl PositionModCalls {
             }).collect()
     }
 
+    fn within_alignment(&self) -> bool {
+        util::within_alignment(
+            self.query_position,
+            self.num_soft_clipped_start,
+            self.num_soft_clipped_end,
+            self.read_length,
+        )
+    }
+
     pub(crate) fn to_row(
         &self,
         read_id: &str,
@@ -195,6 +206,7 @@ impl PositionModCalls {
         let filtered = caller.call(&self.canonical_base, &self.base_mod_probs)
             == BaseModCall::Filtered;
         let inferred = self.base_mod_probs.inferred;
+        let within_alignment = self.within_alignment();
 
         format!(
             "\
@@ -216,7 +228,8 @@ impl PositionModCalls {
             {canonical_base}{tab}\
             {modified_primary_base}{tab}\
             {filtered}{tab}\
-            {inferred}\n"
+            {inferred}{tab}\
+            {within_alignment}\n"
         )
     }
 }

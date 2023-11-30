@@ -672,6 +672,18 @@ impl Display for Kmer {
         write!(f, "{:?}", self)
     }
 }
+
+#[inline]
+pub fn within_alignment(
+    query_position: usize,
+    num_soft_clipped_start: usize,
+    num_soft_clipped_end: usize,
+    read_length: usize,
+) -> bool {
+    query_position >= num_soft_clipped_start
+        && query_position < (read_length - num_soft_clipped_end)
+}
+
 #[cfg(test)]
 mod utils_tests {
     use anyhow::Context;
