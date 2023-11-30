@@ -373,7 +373,7 @@ impl PairwiseDmr {
         let pb = mpb.add(get_master_progress_bar(regions_of_interest.len()));
         pb.set_message(format!("{what} processed"));
         let failures = mpb.add(get_ticker());
-        failures.set_message("regions failed to process");
+        failures.set_message("{what} failed to process");
 
         let dmr_interval_iter = DmrIntervalIter::new(
             &self.control_bed_methyl,
@@ -644,28 +644,29 @@ impl MultiSampleDmr {
             let b = pair[1];
             sample_pb
                 .set_message(format!("comparing {} and {}", a.name, b.name));
-            let (regions, pb) = if let Some(rois) = regions_of_interest.as_ref()
-            {
-                let pb = mpb.add(get_subroutine_progress_bar(rois.len()));
-                pb.set_message("regions processed");
-                (rois.clone(), pb)
-            } else {
-                let a_sites = load_regions_from_bedmethyl(&a.bedmethyl_fp)?;
-                let b_sites = load_regions_from_bedmethyl(&b.bedmethyl_fp)?;
-                let sites = a_sites
-                    .into_iter()
-                    .chain(b_sites.into_iter())
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .sorted()
-                    .collect::<VecDeque<DmrInterval>>();
-                let pb = mpb.add(get_subroutine_progress_bar(sites.len()));
-                pb.set_message("sites processed");
-                (sites, pb)
-            };
-
-            let failures = mpb.add(get_ticker());
-            failures.set_message("regions failed to process");
+            let (regions, pb, failures) =
+                if let Some(rois) = regions_of_interest.as_ref() {
+                    let pb = mpb.add(get_subroutine_progress_bar(rois.len()));
+                    pb.set_message("regions processed");
+                    let failures = mpb.add(get_ticker());
+                    failures.set_message("regions failed to process");
+                    (rois.clone(), pb, failures)
+                } else {
+                    let a_sites = load_regions_from_bedmethyl(&a.bedmethyl_fp)?;
+                    let b_sites = load_regions_from_bedmethyl(&b.bedmethyl_fp)?;
+                    let sites = a_sites
+                        .into_iter()
+                        .chain(b_sites.into_iter())
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .sorted()
+                        .collect::<VecDeque<DmrInterval>>();
+                    let pb = mpb.add(get_subroutine_progress_bar(sites.len()));
+                    pb.set_message("sites processed");
+                    let failures = mpb.add(get_ticker());
+                    failures.set_message("sites failed to process");
+                    (sites, pb, failures)
+                };
 
             let (a_index, a_index_fp) =
                 PairwiseDmr::load_index(&a.bedmethyl_fp, Some(&a.index))?;
@@ -685,7 +686,7 @@ impl MultiSampleDmr {
                 a_contig_lookup.clone(),
             )?;
 
-            let dmr_interval_iter = DmrIntervalIter::new(
+            match DmrIntervalIter::new(
                 &a.bedmethyl_fp,
                 &b.bedmethyl_fp,
                 a_contig_lookup.clone(),
@@ -696,25 +697,38 @@ impl MultiSampleDmr {
                 chunk_size,
                 failures.clone(),
                 self.handle_missing,
-            )?;
-
-            let writer = self.get_writer(&a.name, &b.name)?;
-            let success_count = run_pairwise_dmr(
-                &a.bedmethyl_fp,
-                &b.bedmethyl_fp,
-                dmr_interval_iter,
-                position_filter,
-                writer,
-                pb,
-                self.min_valid_coverage,
-                failures.clone(),
-            )?;
-            debug!(
-                "{} regions processed successfully and {} regions failed for pair {} {}",
-                success_count,
-                failures.position(),
-                &a.name, &b.name,
-            );
+            ) {
+                Ok(dmr_interval_iter) => {
+                    let writer = self.get_writer(&a.name, &b.name)?;
+                    let success_count = run_pairwise_dmr(
+                        &a.bedmethyl_fp,
+                        &b.bedmethyl_fp,
+                        dmr_interval_iter,
+                        position_filter,
+                        writer,
+                        pb,
+                        self.min_valid_coverage,
+                        failures.clone(),
+                    )?;
+                    debug!(
+                        "{} regions processed successfully and {} regions failed for pair {} {}",
+                        success_count,
+                        failures.position(),
+                        &a.name, &b.name,
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        "pair {} {} failed to process, {}",
+                        &a.name,
+                        &b.name,
+                        e.to_string()
+                    );
+                    if self.handle_missing == HandleMissing::fail {
+                        return Err(e);
+                    }
+                }
+            }
         }
 
         Ok(())

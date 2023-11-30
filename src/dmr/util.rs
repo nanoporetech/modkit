@@ -135,10 +135,31 @@ impl Display for DmrInterval {
     }
 }
 
-#[derive(new)]
+#[derive(new, Debug, Eq, PartialEq, PartialOrd)]
 pub(super) struct DmrChunk {
     pub(super) chrom_id: u32,
     pub(super) dmr_interval: DmrInterval,
+}
+
+impl Ord for DmrChunk {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.chrom_id.cmp(&other.chrom_id) {
+            Ordering::Equal => self.dmr_interval.cmp(&other.dmr_interval),
+            o @ _ => o,
+        }
+    }
+}
+
+impl Display for DmrChunk {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}-{}",
+            self.dmr_interval.chrom,
+            self.dmr_interval.start(),
+            self.dmr_interval.stop()
+        )
+    }
 }
 
 pub(super) struct DmrIntervalIter {
