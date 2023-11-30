@@ -1,28 +1,27 @@
-use std::collections::{BTreeSet, HashMap};
-use std::fmt::{Display, Formatter};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs::File;
-use std::io::{BufRead, BufWriter, Write};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::dmr::bedmethyl::BedMethylLine;
 use anyhow::{anyhow, bail, Context};
 use bio::io::fasta::Reader as FastaReader;
-use clap::{Args, Subcommand, ValueEnum};
+use clap::{Args, Subcommand};
 use indicatif::{MultiProgress, ProgressIterator};
 use itertools::Itertools;
 use log::{debug, error, info};
-use log_once::debug_once;
-use noodles::bgzf;
 use noodles::csi::Index as CsiIndex;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::dmr::bedmethyl::load_regions_from_bedmethyl;
 use crate::dmr::multi_sample::{
     get_reference_modified_base_positions, n_choose_2, DmrSample,
 };
 use crate::dmr::pairwise::run_pairwise_dmr;
-use crate::dmr::util::{parse_roi_bed, DmrInterval, DmrIntervalIter};
+use crate::dmr::util::{
+    parse_roi_bed, ContigLookup, DmrInterval, DmrIntervalIter, HandleMissing,
+};
 use crate::logging::init_logging;
 use crate::mod_base_code::{DnaBase, ParseChar};
 use crate::position_filter::{BaseIv, GenomeLapper, StrandedPositionFilter};
@@ -55,24 +54,6 @@ impl BedMethylDmr {
         match self {
             Self::Pair(x) => x.run(),
             Self::Multi(x) => x.run(),
-        }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-#[allow(non_camel_case_types)]
-enum HandleMissing {
-    quiet,
-    warn,
-    fail,
-}
-
-impl Display for HandleMissing {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HandleMissing::quiet => write!(f, "quiet"),
-            HandleMissing::warn => write!(f, "warn"),
-            HandleMissing::fail => write!(f, "fail"),
         }
     }
 }
@@ -148,7 +129,7 @@ pub struct PairwiseDmr {
 impl PairwiseDmr {
     fn get_stranded_position_filter(
         &self,
-        name_to_id: Arc<HashMap<String, usize>>,
+        name_to_id: Arc<ContigLookup>,
         multi_pb: &MultiProgress,
         modified_bases: &[DnaBase],
     ) -> anyhow::Result<StrandedPositionFilter<DnaBase>> {
@@ -167,7 +148,7 @@ impl PairwiseDmr {
                 .progress_with(reader_pb)
                 .filter_map(|res| res.ok())
                 .filter_map(|record| {
-                    name_to_id.get(record.id()).map(|tid| (record, *tid))
+                    name_to_id.inner.get(record.id()).map(|tid| (record, *tid))
                 })
                 .filter_map(|(record, tid)| {
                     String::from_utf8(record.seq().to_vec())
@@ -296,30 +277,11 @@ impl PairwiseDmr {
     }
 
     fn load_regions_from_bedmethyl(&self) -> anyhow::Result<Vec<DmrInterval>> {
-        let reader = if self.use_b {
-            File::open(&self.exp_bed_methyl).map(bgzf::Reader::new)
+        if self.use_b {
+            load_regions_from_bedmethyl(&self.exp_bed_methyl)
         } else {
-            File::open(&self.control_bed_methyl).map(bgzf::Reader::new)
-        }?;
-
-        let regions = reader
-            .lines()
-            .filter_map(|l| l.ok())
-            .map(|l| {
-                BedMethylLine::parse(&l).map(|bm| {
-                    let interval = bm.interval;
-                    let name = format!(
-                        "{}:{}-{}",
-                        &bm.chrom, interval.start, interval.stop
-                    );
-                    let chrom = bm.chrom;
-                    DmrInterval::new(interval, chrom, name)
-                })
-            })
-            .collect::<anyhow::Result<BTreeSet<DmrInterval>>>()?
-            .into_iter()
-            .collect_vec();
-        Ok(regions)
+            load_regions_from_bedmethyl(&self.control_bed_methyl)
+        }
     }
 
     pub fn run(&self) -> anyhow::Result<()> {
@@ -345,9 +307,9 @@ impl PairwiseDmr {
         }
 
         // initial checks
-        let (control_index, _) =
+        let (control_index, control_index_fp) =
             Self::load_index(&self.control_bed_methyl, self.index_a.as_ref())?;
-        let (exp_index, _) =
+        let (exp_index, exp_index_fp) =
             Self::load_index(&self.exp_bed_methyl, self.index_b.as_ref())?;
 
         let writer: Box<dyn Write> = {
@@ -372,24 +334,12 @@ impl PairwiseDmr {
             .map(|c| DnaBase::parse(*c))
             .collect::<anyhow::Result<Vec<DnaBase>>>()?;
 
-        let control_contig_lookup = control_index
-            .header()
-            .ok_or_else(|| anyhow!("failed to get control tabix header"))?
-            .reference_sequence_names()
-            .iter()
-            .enumerate()
-            .map(|(idx, r)| (r.to_owned(), idx))
-            .collect::<HashMap<String, usize>>();
+        let control_contig_lookup =
+            ContigLookup::new(&control_index, &control_index_fp, None)?;
         let control_contig_lookup = Arc::new(control_contig_lookup);
 
-        let exp_contig_lookup = exp_index
-            .header()
-            .ok_or_else(|| anyhow!("failed to get exp tabix header"))?
-            .reference_sequence_names()
-            .iter()
-            .enumerate()
-            .map(|(idx, r)| (r.to_owned(), idx))
-            .collect::<HashMap<String, usize>>();
+        let exp_contig_lookup =
+            ContigLookup::new(&exp_index, &exp_index_fp, None)?;
 
         let position_filter = self.get_stranded_position_filter(
             control_contig_lookup.clone(),
@@ -409,41 +359,6 @@ impl PairwiseDmr {
                 info!("loaded {} sites", regions.len());
                 (regions, "sites")
             };
-
-        let handle_missing = self.handle_missing;
-        let regions_of_interest = regions_of_interest.into_iter()
-            .try_fold(Vec::new(), |mut acc, roi| {
-                let a_found = control_contig_lookup.contains_key(&roi.chrom);
-                let b_found = exp_contig_lookup.contains_key(&roi.chrom);
-                if a_found && b_found {
-                    acc.push(roi);
-                    Ok(acc)
-                } else {
-                    let which = if b_found {
-                        format!("'a'")
-                    } else {
-                        format!("'a' and 'b'")
-                    };
-                    match handle_missing {
-                        HandleMissing::quiet => {
-                            Ok(acc)
-                        },
-                        HandleMissing::warn => {
-                            debug_once!("chrom {} is missing from {which} bedMethyl index, discarding", &roi.chrom);
-                            Ok(acc)
-                        },
-                        HandleMissing::fail => {
-                            let message = format!("chrom {} is missing from {which} bedMethyl index, fatal error", &roi.chrom);
-                            error!("{message}");
-                            bail!(message)
-                        }
-                    }
-                }
-            })?;
-
-        if regions_of_interest.is_empty() {
-            bail!("no valid regions in input")
-        }
 
         let batch_size =
             self.batch_size.as_ref().map(|x| *x).unwrap_or_else(|| {
@@ -466,7 +381,8 @@ impl PairwiseDmr {
             regions_of_interest.into_iter().collect(),
             batch_size,
             failures.clone(),
-        );
+            self.handle_missing,
+        )?;
 
         let success_count = run_pairwise_dmr(
             &self.control_bed_methyl,
@@ -499,11 +415,12 @@ pub struct MultiSampleDmr {
     /// given to the -s/--sample argument.
     #[arg(short = 'i', long = "index", num_args = 2)]
     indices: Vec<String>,
-    /// Regions BED file over which to compare methylation levels. Should be tab-separated (spaces
+    /// BED file of regions over which to compare methylation levels. Should be tab-separated (spaces
     /// allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name column is
-    /// optional. Strand is currently ignored.
-    #[arg(long, short = 'r')]
-    regions_bed: PathBuf,
+    /// optional. Strand is currently ignored. When omitted, methylation levels are compared at
+    /// each site in common between the two bedMethyl files being compared.
+    #[arg(long, short = 'r', alias = "regions")]
+    regions_bed: Option<PathBuf>,
     /// Directory to place output DMR results in BED format.
     #[arg(short = 'o', long)]
     out_dir: PathBuf,
@@ -532,6 +449,12 @@ pub struct MultiSampleDmr {
     /// Force overwrite of output file, if it already exists.
     #[arg(short = 'f', long, default_value_t = false)]
     force: bool,
+    /// How to handle regions found in the `--regions` BED file.
+    /// quiet => ignore regions that are not found in the tabix header
+    /// warn => log (debug) regions that are missing
+    /// fatal => log (error) and exit the program when a region is missing.
+    #[arg(long="missing", requires = "regions_bed", default_value_t=HandleMissing::warn)]
+    handle_missing: HandleMissing,
 }
 
 impl MultiSampleDmr {
@@ -552,7 +475,9 @@ impl MultiSampleDmr {
                 fp.to_str().unwrap_or("failed decode")
             )
         } else {
-            let fh = File::create(fp)?;
+            let fh = File::create(fp.clone()).with_context(|| {
+                format!("failed to make output file at {fp:?}")
+            })?;
             Ok(Box::new(BufWriter::new(fh)))
         }
     }
@@ -561,12 +486,12 @@ impl MultiSampleDmr {
         &self,
         pos_positions: &HashMap<String, Vec<(DnaBase, u64)>>,
         neg_positions: &HashMap<String, Vec<(DnaBase, u64)>>,
-        name_to_tid: Arc<HashMap<String, usize>>,
+        name_to_tid: Arc<ContigLookup>,
     ) -> anyhow::Result<StrandedPositionFilter<DnaBase>> {
         let pos_lps = pos_positions
             .iter()
             .filter_map(|(name, positions)| {
-                name_to_tid.get(name).map(|tid| {
+                name_to_tid.inner.get(name).map(|tid| {
                     let ivs = positions
                         .iter()
                         .map(|(base, pos)| BaseIv {
@@ -584,7 +509,7 @@ impl MultiSampleDmr {
         let neg_lps = neg_positions
             .iter()
             .filter_map(|(name, positions)| {
-                name_to_tid.get(name).map(|&tid| {
+                name_to_tid.inner.get(name).map(|&tid| {
                     let ivs = positions
                         .iter()
                         .map(|(base, pos)| BaseIv {
@@ -610,7 +535,10 @@ impl MultiSampleDmr {
         let _pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build_global()?;
-        create_out_directory(&self.out_dir)?;
+        if !self.out_dir.exists() {
+            info!("creating directory at {:?}", &self.out_dir);
+            std::fs::create_dir_all(&self.out_dir)?;
+        }
 
         PairwiseDmr::validate_modified_bases(&self.modified_bases)?;
         let indices = self.indices
@@ -666,16 +594,30 @@ impl MultiSampleDmr {
             .collect::<anyhow::Result<Vec<DnaBase>>>()
             .context("failed to parse modified base")?;
 
-        let regions_of_interest = parse_roi_bed(&self.regions_bed)?;
-        info!("loaded {} regions", regions_of_interest.len());
+        let regions_of_interest = self
+            .regions_bed
+            .as_ref()
+            .map(|fp| {
+                info!("loading regions from {fp:?}");
+                parse_roi_bed(fp)
+                    .map(|x| x.into_iter().collect::<VecDeque<DmrInterval>>())
+            })
+            .transpose()?;
+        if let Some(rois) = regions_of_interest.as_ref() {
+            info!("loaded {} regions", rois.len());
+        }
 
         let chunk_size = (self.threads as f32 * 1.5f32).floor() as usize;
-        info!("processing {chunk_size} regions concurrently");
+        let what = if regions_of_interest.is_some() {
+            "regions"
+        } else {
+            "sites"
+        };
+        info!("processing {chunk_size} {what} concurrently");
 
         let mpb = MultiProgress::new();
         let sample_pb =
             mpb.add(get_master_progress_bar(n_choose_2(samples.len())?));
-        let n_regions = regions_of_interest.len();
         let (positive_positions, negative_positions) =
             get_reference_modified_base_positions(
                 &self.reference_fasta,
@@ -693,55 +635,59 @@ impl MultiSampleDmr {
             let b = pair[1];
             sample_pb
                 .set_message(format!("comparing {} and {}", a.name, b.name));
-            let pb = mpb.add(get_subroutine_progress_bar(n_regions));
-            pb.set_message("regions processed");
+            let (regions, pb) = if let Some(rois) = regions_of_interest.as_ref()
+            {
+                let pb = mpb.add(get_subroutine_progress_bar(rois.len()));
+                pb.set_message("regions processed");
+                (rois.clone(), pb)
+            } else {
+                let a_sites = load_regions_from_bedmethyl(&a.bedmethyl_fp)?;
+                let b_sites = load_regions_from_bedmethyl(&b.bedmethyl_fp)?;
+                let sites = a_sites
+                    .into_iter()
+                    .chain(b_sites.into_iter())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .sorted()
+                    .collect::<VecDeque<DmrInterval>>();
+                let pb = mpb.add(get_subroutine_progress_bar(sites.len()));
+                pb.set_message("sites processed");
+                (sites, pb)
+            };
+
             let failures = mpb.add(get_ticker());
             failures.set_message("regions failed to process");
 
-            let (a_index, _) =
+            let (a_index, a_index_fp) =
                 PairwiseDmr::load_index(&a.bedmethyl_fp, Some(&a.index))?;
-            let (b_index, _) =
+            let (b_index, b_index_fp) =
                 PairwiseDmr::load_index(&b.bedmethyl_fp, Some(&b.index))?;
-            let control_contig_lookup = a_index
-                .header()
-                .ok_or_else(|| {
-                    anyhow!("failed to get {} tabix header", &a.name)
-                })?
-                .reference_sequence_names()
-                .iter()
-                .enumerate()
-                .map(|(idx, r)| (r.to_owned(), idx))
-                .collect::<HashMap<String, usize>>();
-            let control_contig_lookup = Arc::new(control_contig_lookup);
 
-            let exp_contig_lookup = b_index
-                .header()
-                .ok_or_else(|| {
-                    anyhow!("failed to get {} tabix header", b.name)
-                })?
-                .reference_sequence_names()
-                .iter()
-                .enumerate()
-                .map(|(idx, r)| (r.to_owned(), idx))
-                .collect::<HashMap<String, usize>>();
+            let a_contig_lookup =
+                ContigLookup::new(&a_index, &a_index_fp, Some(&a.name))?;
+            let a_contig_lookup = Arc::new(a_contig_lookup);
+
+            let b_contig_lookup =
+                ContigLookup::new(&b_index, &b_index_fp, Some(&b.name))?;
 
             let position_filter = self.get_stranded_position_filter(
                 &positive_positions,
                 &negative_positions,
-                control_contig_lookup.clone(),
+                a_contig_lookup.clone(),
             )?;
 
             let dmr_interval_iter = DmrIntervalIter::new(
                 &a.bedmethyl_fp,
                 &b.bedmethyl_fp,
-                control_contig_lookup.clone(),
-                exp_contig_lookup,
+                a_contig_lookup.clone(),
+                b_contig_lookup,
                 a_index,
                 b_index,
-                regions_of_interest.clone().into_iter().collect(),
+                regions,
                 chunk_size,
                 failures.clone(),
-            );
+                self.handle_missing,
+            )?;
 
             let writer = self.get_writer(&a.name, &b.name)?;
             let success_count = run_pairwise_dmr(

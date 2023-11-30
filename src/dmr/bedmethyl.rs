@@ -1,10 +1,16 @@
+use crate::dmr::util::DmrInterval;
 use anyhow::{anyhow, Context};
 use derive_new::new;
+use itertools::Itertools;
 use nom::character::complete::{multispace1, none_of};
 use nom::combinator::map_res;
 use nom::multi::many1;
 use nom::IResult;
-use std::collections::HashMap;
+use noodles::bgzf;
+use std::collections::{BTreeSet, HashMap};
+use std::fs::File;
+use std::io::BufRead;
+use std::path::PathBuf;
 
 use crate::mod_base_code::{DnaBase, ModCodeRepr, SUPPORTED_CODES};
 use crate::parsing_utils::{
@@ -106,6 +112,30 @@ impl BedMethylLine {
             }
         }
     }
+}
+
+pub(super) fn load_regions_from_bedmethyl(
+    bedmethyl_fp: &PathBuf,
+) -> anyhow::Result<Vec<DmrInterval>> {
+    let reader = File::open(bedmethyl_fp).map(bgzf::Reader::new)?;
+    let regions = reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .map(|l| {
+            BedMethylLine::parse(&l).map(|bm| {
+                let interval = bm.interval;
+                let name = format!(
+                    "{}:{}-{}",
+                    &bm.chrom, interval.start, interval.stop
+                );
+                let chrom = bm.chrom;
+                DmrInterval::new(interval, chrom, name)
+            })
+        })
+        .collect::<anyhow::Result<BTreeSet<DmrInterval>>>()?
+        .into_iter()
+        .collect_vec();
+    Ok(regions)
 }
 
 #[cfg(test)]
