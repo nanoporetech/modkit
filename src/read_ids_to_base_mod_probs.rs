@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::ops::ControlFlow;
 
-use anyhow::anyhow;
+use anyhow::bail;
 use bio::alphabets::dna::revcomp;
 use derive_new::new;
 use indicatif::ParallelProgressIterator;
@@ -713,26 +714,43 @@ pub(crate) struct ReadsBaseModProfile {
 
 impl ReadsBaseModProfile {
     fn get_soft_clipped(cigar: &[Cigar]) -> anyhow::Result<(usize, usize)> {
-        let mut sc_start = None;
-        let mut sc_end = None;
-        for op in cigar {
-            match op {
-                Cigar::SoftClip(l) => match (sc_start, sc_end) {
-                    (None, None) => sc_start = Some(*l as usize),
-                    (Some(_), None) => {
-                        sc_end = Some(*l as usize);
-                    }
-                    (Some(_), Some(_)) => {
-                        return Err(anyhow!(
-                            "encountered softclip operation more than twice"
-                        ));
-                    }
-                    (None, Some(_)) => unreachable!("logic error"),
-                },
-                _ => {}
+        let sc_start = cigar.iter().try_fold(0, |acc, op| match op {
+            Cigar::SoftClip(l) => ControlFlow::Continue(acc + *l),
+            _ => ControlFlow::Break(acc),
+        });
+        let sc_end = cigar.iter().rev().try_fold(0, |acc, op| match op {
+            Cigar::SoftClip(l) => ControlFlow::Continue(acc + *l),
+            _ => ControlFlow::Break(acc),
+        });
+
+        match (sc_start, sc_end) {
+            (ControlFlow::Break(s), ControlFlow::Break(e)) => {
+                Ok((s as usize, e as usize))
             }
+            _ => bail!("illegal cigar, entirely soft clip ops {cigar:?}"),
         }
-        Ok((sc_start.unwrap_or(0), sc_end.unwrap_or(0)))
+        //
+        //
+        // for op in cigar {
+        //     match op {
+        //         Cigar::SoftClip(l) => match (sc_start, sc_end) {
+        //             (None, None) => sc_start = Some(*l as usize),
+        //             (Some(_), None) => {
+        //                 sc_end = Some(*l as usize);
+        //             }
+        //             (Some(_), Some(_)) => {
+        //                 return Err(anyhow!(
+        //                     "encountered softclip operation more than twice"
+        //                 ));
+        //             }
+        //             (None, Some(_)) => unreachable!("logic error"),
+        //         },
+        //         Cigar::Match(_) => match (sc_start, sc_end) {
+        //             (Some(_), )
+        //         }
+        //     }
+        // }
+        // Ok((sc_start.unwrap_or(0), sc_end.unwrap_or(0)))
     }
 
     pub(crate) fn remove_inferred(self) -> Self {

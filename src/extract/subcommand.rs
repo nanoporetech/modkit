@@ -1,14 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::thread;
 
-use anyhow::{anyhow, bail};
+use anyhow::bail;
 use bio::io::fasta::Reader as FastaReader;
 use clap::Args;
 use crossbeam_channel::{bounded, Sender};
 use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
-use itertools::Itertools;
 use log::{debug, error, info};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -37,9 +36,9 @@ use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
-    create_out_directory, get_master_progress_bar, get_reference_mod_strand,
-    get_spinner, get_subroutine_progress_bar, get_targets, get_ticker,
-    ReferenceRecord, Region, Strand,
+    get_master_progress_bar, get_reference_mod_strand, get_spinner,
+    get_subroutine_progress_bar, get_targets, get_ticker, ReferenceRecord,
+    Region, Strand,
 };
 use crate::writers::TsvWriter;
 
@@ -86,10 +85,6 @@ pub struct ExtractMods {
     ignore_index: bool,
     #[arg(long, alias = "read-calls", hide_short_help = true)]
     read_calls_path: Option<PathBuf>,
-    #[arg(long, alias = "position-pileup", hide_short_help = true)]
-    read_pileup_path: Option<PathBuf>,
-    #[arg(long, requires = "read_pileup_path", hide_short_help = true)]
-    use_alignment_offset: bool,
 
     /// Path to reference FASTA to extract reference context information from.
     /// If no reference is provided, `ref_kmer` column will be "." in the output.
@@ -541,9 +536,7 @@ impl ExtractMods {
                 &pool,
             )?;
 
-        let caller = if self.read_calls_path.is_some()
-            || self.read_pileup_path.is_some()
-        {
+        let caller = if self.read_calls_path.is_some() {
             if self.no_filtering {
                 // need this here because input can be stdin
                 MultipleThresholdModCaller::new_passthrough()
@@ -783,10 +776,8 @@ impl ExtractMods {
                         tid_to_name,
                         chrom_to_seq,
                         self.read_calls_path.as_ref(),
-                        self.read_pileup_path.as_ref(),
                         caller,
                         self.force,
-                        self.use_alignment_offset,
                     )?;
                     Box::new(writer)
                 }
@@ -801,10 +792,8 @@ impl ExtractMods {
                         tid_to_name,
                         chrom_to_seq,
                         self.read_calls_path.as_ref(),
-                        self.read_pileup_path.as_ref(),
                         caller,
                         self.force,
-                        self.use_alignment_offset,
                     )?;
                     Box::new(writer)
                 }
@@ -837,7 +826,6 @@ impl ExtractMods {
                 }
             }
         }
-        writer.complete()?;
 
         n_failed.finish_and_clear();
         n_skipped.finish_and_clear();

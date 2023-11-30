@@ -409,3 +409,9 @@ fn test_extract_cpg_motif() {
         }
     }
 }
+
+#[test]
+fn test_extract_calls_regression() {}
+
+#[test]
+fn test_extract_calls_and_pileup_consistent() {}
