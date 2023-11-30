@@ -84,8 +84,10 @@ where
             let mut reader = bam::IndexedReader::from_path(bam_fp)?;
             reader.set_threads(reader_threads)?;
             reader.fetch(bam::FetchDefinition::Unmapped)?;
-            let num_reads_unmapped =
-                num_reads.map(|nr| nr - read_ids_to_base_mod_calls.len());
+            let num_reads_unmapped = num_reads.map(|nr| {
+                nr.checked_sub(read_ids_to_base_mod_calls.len())
+                    .unwrap_or(0)
+            });
             let record_sampler = RecordSampler::new_from_options(
                 sample_frac,
                 num_reads_unmapped,
