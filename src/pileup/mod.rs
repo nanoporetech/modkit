@@ -1271,7 +1271,7 @@ mod mod_pileup_tests {
             None,
             None,
         );
-        dbg!(&counts);
+        // dbg!(&counts);
         assert_eq!(counts.len(), 2); // h and m, negative strand should not be there
         for pileup_counts in counts {
             assert_eq!(pileup_counts.filtered_coverage, 3);

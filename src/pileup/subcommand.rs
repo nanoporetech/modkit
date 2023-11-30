@@ -6,7 +6,6 @@ use anyhow::{anyhow, bail, Context};
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{MultiProgress, ParallelProgressIterator};
-use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
@@ -98,8 +97,8 @@ pub struct ModBamPileup {
         default_value_t = 10_042
     )]
     num_reads: usize,
-    /// Sample this fraction of the reads when estimating the filter-percentile.
-    /// In practice, 50-100 thousand reads is sufficient to estimate the model output
+    /// Sample this fraction of the reads when estimating the pass-threshold.
+    /// In practice, 10-100 thousand reads is sufficient to estimate the model output
     /// distribution and determine the filtering threshold. See filtering.md for
     /// details on filtering.
     #[arg(
@@ -460,49 +459,7 @@ impl ModBamPileup {
             if raw_motif_parts.len() % 2 != 0 {
                 bail!("illegal number of parts for motif")
             }
-            if raw_motif_parts
-                .chunks(2)
-                .map(|chunk| (&chunk[0], &chunk[1]))
-                .counts()
-                .values()
-                .max()
-                .unwrap_or(&1)
-                > &1
-            {
-                bail!("cannot have the same motif more than once")
-            }
-            let mut raw_motif_parts = raw_motif_parts.clone();
-            if self.cpg {
-                if raw_motif_parts.chunks(2).any(|motif| motif == ["CG", "0"]) {
-                    info!("CG 0 motif already, don't need --cpg and --motif CG 0, ignoring --cpg");
-                } else {
-                    info!("--cpg flag received, adding CG, 0 to motifs");
-                    raw_motif_parts.extend_from_slice(&[
-                        "CG".to_string(),
-                        "0".to_string(),
-                    ]);
-                }
-            }
-
-            let motifs = raw_motif_parts
-                .chunks(2)
-                .map(|c| {
-                    let motif = &c[0];
-                    let focus_base = &c[1];
-                    focus_base
-                        .parse::<usize>()
-                        .map_err(|e| {
-                            anyhow!(
-                                "couldn't parse focus base, {}",
-                                e.to_string()
-                            )
-                        })
-                        .and_then(|focus_base| {
-                            RegexMotif::parse_string(motif.as_str(), focus_base)
-                        })
-                })
-                .collect::<Result<Vec<RegexMotif>, anyhow::Error>>()?;
-            Some(motifs)
+            Some(RegexMotif::from_raw_parts(raw_motif_parts, self.cpg)?)
         } else if self.preset == Some(Presets::traditional) || self.cpg {
             info!("filtering to only CpG motifs");
             Some(vec![RegexMotif::parse_string("CG", 0).unwrap()])

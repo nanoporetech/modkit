@@ -1,11 +1,8 @@
-use anyhow::bail;
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::thread;
 
-use crate::command_utils::{
-    get_serial_reader, parse_edge_filter_input, using_stream,
-};
+use anyhow::bail;
 use bio::io::fasta::Reader as FastaReader;
 use clap::Args;
 use crossbeam_channel::{bounded, Sender};
@@ -13,15 +10,23 @@ use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
 use log::{debug, error, info};
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use rust_htslib::bam::{self, FetchDefinition, Read};
+use rustc_hash::FxHashMap;
 
+use crate::command_utils::{
+    get_serial_reader, get_threshold_from_options, parse_edge_filter_input,
+    parse_per_mod_thresholds, parse_thresholds, using_stream,
+};
 use crate::errs::RunError;
+use crate::extract::writer::{OutwriterWithMemory, TsvWriterWithContigNames};
 use crate::interval_chunks::IntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCodeRepr;
-use crate::position_filter::StrandedPositionFilter;
+use crate::monoid::Moniod;
+use crate::motif_bed::{find_motif_hits, RegexMotif};
+use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
 };
@@ -29,14 +34,13 @@ use crate::reads_sampler::record_sampler::RecordSampler;
 use crate::reads_sampler::sample_reads_from_interval;
 use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
+use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
     get_master_progress_bar, get_reference_mod_strand, get_spinner,
     get_subroutine_progress_bar, get_targets, get_ticker, ReferenceRecord,
     Region, Strand,
 };
-use crate::writers::{
-    OutwriterWithMemory, TsvWriter, TsvWriterWithContigNames,
-};
+use crate::writers::TsvWriter;
 
 #[derive(Args)]
 pub struct ExtractMods {
@@ -55,7 +59,11 @@ pub struct ExtractMods {
     /// Include only mapped bases in output (alias: mapped).
     #[arg(long, alias = "mapped", default_value_t = false)]
     mapped_only: bool,
-    /// Number of reads to use
+    /// Number of reads to use. Note that when using a sorted, indexed modBAM that
+    /// the sampling algorithm will attempt to sample records evenly over the length
+    /// of the reference sequence. The result is the final number of records used
+    /// may be slightly more or less than the requested number. When piping from stdin
+    /// or using a modBAM without an index, the requested number of reads will be exact.
     #[arg(long)]
     num_reads: Option<usize>,
     /// Process only reads that are aligned to a specified region of the BAM.
@@ -68,8 +76,15 @@ pub struct ExtractMods {
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
+    /// Set the query and reference k-mer size (if a reference is provided). Maxumum number
+    /// for this value is 12.
     #[arg(long, default_value_t = 5)]
     kmer_size: usize,
+    /// Ignore the BAM index (if it exists) and default to a serial scan of the BAM.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    ignore_index: bool,
+    #[arg(long, alias = "read-calls", hide_short_help = true)]
+    read_calls_path: Option<PathBuf>,
 
     /// Path to reference FASTA to extract reference context information from.
     /// If no reference is provided, `ref_kmer` column will be "." in the output.
@@ -84,6 +99,115 @@ pub struct ExtractMods {
     /// BED file with regions to _exclude_ (alias: exclude).
     #[arg(long, alias = "exclude", short = 'v')]
     exclude_bed: Option<PathBuf>,
+    /// Output read-level base modification probabilities restricted to the reference sequence
+    /// motifs provided. The first argument should be the sequence motif and the second argument
+    /// is the 0-based offset to the base to pileup base modification counts for.
+    /// For example: --motif CGCG 0 indicates include base modifications for which the read is
+    /// aligned to the first C on the top strand and the last C (complement to G) on
+    /// the bottom strand. The --cpg argument is short hand for --motif CG 0.
+    /// This argument can be passed multiple times.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference")]
+    motif: Option<Vec<String>>,
+    /// Only output counts at CpG motifs. Requires a reference sequence to be
+    /// provided.
+    #[arg(long, requires = "reference", default_value_t = false)]
+    cpg: bool,
+    /// When using motifs, respect soft masking in the reference sequence.
+    #[arg(
+        long,
+        short = 'k',
+        requires = "motif",
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    mask: bool,
+
+    // sampling and filtering
+    /// Specify the filter threshold globally or per-base. Global filter threshold
+    /// can be specified with by a decimal number (e.g. 0.75). Per-base thresholds
+    /// can be specified by colon-separated values, for example C:0.75 specifies a
+    /// threshold value of 0.75 for cytosine modification calls. Additional
+    /// per-base thresholds can be specified by repeating the option: for example
+    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
+    /// base option and a default for all other bases with:
+    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
+    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
+    #[arg(
+        long,
+        group = "thresholds",
+        action = clap::ArgAction::Append,
+        alias = "pass_threshold"
+    )]
+    filter_threshold: Option<Vec<String>>,
+    /// Specify a passing threshold to use for a base modification, independent of the
+    /// threshold for the primary sequence base or the default. For example, to set
+    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
+    /// threshold will still be estimated as usual and used for canonical cytosine and
+    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// See the online documentation for more details.
+    #[arg(
+        long,
+        alias = "mod-threshold",
+        action = clap::ArgAction::Append,
+        hide_short_help = true
+    )]
+    mod_thresholds: Option<Vec<String>>,
+    /// Do not perform any filtering, include all mod base calls in output. See
+    /// filtering.md for details on filtering.
+    #[arg(
+        conflicts_with_all = ["mod_thresholds", "filter_threshold"],
+        long,
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    no_filtering: bool,
+    /// Interval chunk size in base pairs to process concurrently when estimating the threshold
+    /// probability.
+    #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
+    sampling_interval_size: u32,
+    /// Sample this fraction of the reads when estimating the pass-threshold.
+    /// In practice, 10-100 thousand reads is sufficient to estimate the model output
+    /// distribution and determine the filtering threshold. See filtering.md for
+    /// details on filtering.
+    #[arg(
+        group = "sampling_options",
+        short = 'f',
+        long,
+        hide_short_help = true
+    )]
+    sampling_frac: Option<f64>,
+    /// Sample this many reads when estimating the filtering threshold. If a sorted, indexed modBAM
+    /// is provided reads will be sampled evenly across aligned genome. If a region is specified,
+    /// with the --region, then reads will be sampled evenly across the region given.
+    /// This option is useful for large BAM files. In practice, 10-50 thousand reads is sufficient
+    /// to estimate the model output distribution and determine the filtering threshold.
+    #[arg(
+        group = "sampling_options",
+        short = 'n',
+        long,
+        default_value_t = 10_042
+    )]
+    sample_num_reads: usize,
+    /// Set a random seed for deterministic running, the default is non-deterministic.
+    #[arg(
+        long,
+        conflicts_with = "num_reads",
+        requires = "sampling_frac",
+        hide_short_help = true
+    )]
+    seed: Option<u64>,
+    /// Filter out modified base calls where the probability of the predicted
+    /// variant is below this confidence percentile. For example, 0.1 will filter
+    /// out the 10% lowest confidence modification calls.
+    #[arg(
+        group = "thresholds",
+        short = 'p',
+        long,
+        default_value_t = 0.1,
+        hide_short_help = true
+    )]
+    filter_percentile: f32,
+
     /// Discard base modification calls that are this many bases from the start or the end
     /// of the read. Two comma-separated values may be provided to asymmetrically filter out
     /// base modification calls from the start and end of the reads. For example, 4,8 will
@@ -137,13 +261,27 @@ impl ExtractMods {
         &self,
         name_to_tid: &HashMap<&str, u32>,
         region: Option<&Region>,
+        contigs: &HashMap<String, Vec<u8>>,
+        master_progress_bar: &MultiProgress,
+        thread_pool: &ThreadPool,
     ) -> anyhow::Result<(Option<ReferenceAndIntervals>, ReferencePositionFilter)>
     {
         let include_unmapped = if self.include_bed.is_some() {
             info!("specifying include-only BED outputs only mapped sites");
             false
+        } else if self.motif.is_some() || self.cpg {
+            info!("specifying a motif (including --cpg) outputs only mapped sites");
+            false
         } else {
             !self.mapped_only
+        };
+
+        let motifs = if let Some(raw_motif_parts) = &self.motif {
+            Some(RegexMotif::from_raw_parts(&raw_motif_parts, self.cpg)?)
+        } else if self.cpg {
+            Some(vec![RegexMotif::parse_string("CG", 0).unwrap()])
+        } else {
+            None
         };
 
         let include_positions = self
@@ -157,6 +295,7 @@ impl ExtractMods {
                 )
             })
             .transpose()?;
+
         let exclude_positions = self
             .exclude_bed
             .as_ref()
@@ -169,7 +308,101 @@ impl ExtractMods {
             })
             .transpose()?;
 
-        let reference_and_intervals = if !self.using_stdin() {
+        // intersect the motif positions with the include positions from the BED file
+        let include_positions = if let Some(motifs) = motifs {
+            let pb = master_progress_bar
+                .add(get_subroutine_progress_bar(contigs.len()));
+            pb.set_message("contigs searched");
+            let tid_to_positions = thread_pool.install(|| {
+                contigs
+                    .into_par_iter()
+                    .progress_with(pb)
+                    .filter_map(|(name, raw_seq)| {
+                        name_to_tid
+                            .get(name.as_str())
+                            .map(|tid| (*tid, raw_seq))
+                    })
+                    .map(|(tid, raw_seq)| {
+                        let seq = raw_seq
+                            .iter()
+                            .map(|&b| b as char)
+                            .collect::<String>();
+                        let seq = if self.mask {
+                            seq
+                        } else {
+                            seq.to_ascii_uppercase()
+                        };
+                        motifs
+                            .par_iter()
+                            .map(|motif| {
+                                let positions = find_motif_hits(&seq, motif);
+                                let positions = if let Some(filter) =
+                                    include_positions.as_ref()
+                                {
+                                    positions
+                                        .into_iter()
+                                        .filter(|(pos, strand)| {
+                                            filter.contains(
+                                                tid as i32,
+                                                *pos as u64,
+                                                *strand,
+                                            )
+                                        })
+                                        .collect::<Vec<(usize, Strand)>>()
+                                } else {
+                                    positions
+                                };
+                                (tid, positions)
+                            })
+                            .collect::<HashMap<u32, Vec<(usize, Strand)>>>()
+                    })
+                    .reduce(|| HashMap::zero(), |a, b| a.op(b))
+            });
+            let (pos_lappers, neg_lappers) = tid_to_positions.into_iter().fold(
+                (FxHashMap::default(), FxHashMap::default()),
+                |(mut pos, mut neg), (tid, positions)| {
+                    let to_lapper =
+                        |intervals: Vec<(Iv, Strand)>| -> GenomeLapper<()> {
+                            let intervals = intervals
+                                .into_iter()
+                                .map(|(iv, _)| iv)
+                                .collect();
+                            GenomeLapper::new(intervals)
+                        };
+
+                    let (pos_positions, neg_positions): (
+                        Vec<(Iv, Strand)>,
+                        Vec<(Iv, Strand)>,
+                    ) = positions
+                        .into_iter()
+                        .map(|(position, strand)| {
+                            let iv = Iv {
+                                start: position as u64,
+                                stop: (position + 1) as u64,
+                                val: (),
+                            };
+                            (iv, strand)
+                        })
+                        .partition(|(_iv, strand)| *strand == Strand::Positive);
+                    let pos_lapper = to_lapper(pos_positions);
+                    let neg_lapper = to_lapper(neg_positions);
+                    pos.insert(tid, pos_lapper);
+                    neg.insert(tid, neg_lapper);
+                    (pos, neg)
+                },
+            );
+
+            Some(StrandedPositionFilter {
+                pos_positions: pos_lappers,
+                neg_positions: neg_lappers,
+            })
+        } else {
+            include_positions
+        };
+
+        let reference_and_intervals = if !self.using_stdin()
+            && !self.ignore_index
+        {
             match bam::IndexedReader::from_path(&self.in_bam) {
                 Ok(reader) => {
                     info!("found BAM index, processing reads in {} base pair chunks", self.interval_size);
@@ -275,14 +508,80 @@ impl ExtractMods {
             None => HashMap::new(),
         };
 
+        let multi_prog = MultiProgress::new();
+        if self.suppress_progress {
+            multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
+
         let region = self
             .region
             .as_ref()
             .map(|raw_region| Region::parse_str(raw_region, &header))
             .transpose()?;
 
-        let (references_and_intervals, reference_position_filter) =
-            self.load_regions(&name_to_tid, region.as_ref())?;
+        let per_mod_thresholds = self
+            .mod_thresholds
+            .as_ref()
+            .map(|raw_per_mod_thresholds| {
+                parse_per_mod_thresholds(raw_per_mod_thresholds)
+            })
+            .transpose()?;
+
+        let (references_and_intervals, reference_position_filter) = self
+            .load_regions(
+                &name_to_tid,
+                region.as_ref(),
+                &chrom_to_seq,
+                &multi_prog,
+                &pool,
+            )?;
+
+        let caller = if self.read_calls_path.is_some() {
+            if self.no_filtering {
+                // need this here because input can be stdin
+                MultipleThresholdModCaller::new_passthrough()
+            } else {
+                // stdin input and want a threshold, not allowed
+                if self.using_stdin() && self.filter_threshold.is_none() {
+                    bail!("\
+                        cannot use stdin and estimate a filter threshold, set the threshold on the \
+                        command line with --filter-threshold and/or --mod-threshold (or set \
+                        --no-filtering).")
+                }
+                if let Some(raw_threshold) = &self.filter_threshold {
+                    parse_thresholds(raw_threshold, per_mod_thresholds)?
+                } else {
+                    let in_bam = Path::new(&self.in_bam).to_path_buf();
+                    if !in_bam.exists() {
+                        bail!(
+                            "failed to find input modBAM file at {}",
+                            self.in_bam
+                        );
+                    }
+                    pool.install(|| {
+                        get_threshold_from_options(
+                            &in_bam,
+                            self.threads,
+                            self.sampling_interval_size,
+                            self.sampling_frac,
+                            self.sample_num_reads,
+                            false,
+                            self.filter_percentile,
+                            self.seed,
+                            region.as_ref(),
+                            per_mod_thresholds,
+                            edge_filter.as_ref(),
+                            collapse_method.as_ref(),
+                            reference_position_filter.include_pos.as_ref(),
+                            !reference_position_filter.include_unmapped,
+                            self.suppress_progress,
+                        )
+                    })?
+                }
+            }
+        } else {
+            MultipleThresholdModCaller::new_passthrough()
+        };
 
         // allowed to use the sampling schedule if there is an index, if
         // asked for num_reads with no index, scan first N reads
@@ -306,10 +605,6 @@ impl ExtractMods {
             (None, false) => None,
         };
 
-        let multi_prog = MultiProgress::new();
-        if self.suppress_progress {
-            multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
-        }
         let n_failed = multi_prog.add(get_ticker());
         n_failed.set_message("~records failed");
         let n_skipped = multi_prog.add(get_ticker());
@@ -331,7 +626,7 @@ impl ExtractMods {
                 if let Some(reference_and_intervals) = references_and_intervals {
                     drop(reader);
                     // should make this a method on this struct?
-                    let bam_fp = std::path::Path::new(&in_bam).to_path_buf();
+                    let bam_fp = Path::new(&in_bam).to_path_buf();
 
                     // if using unmapped add 1 to total chrms to traverse
                     let prog_length = if reference_position_filter.include_unmapped &&
@@ -480,8 +775,22 @@ impl ExtractMods {
                         tsv_writer,
                         tid_to_name,
                         chrom_to_seq,
-                        HashSet::new(),
-                    );
+                        self.read_calls_path.as_ref(),
+                        caller,
+                        self.force,
+                    )?;
+                    Box::new(writer)
+                }
+                "null" => {
+                    let tsv_writer = TsvWriter::new_null();
+                    let writer = TsvWriterWithContigNames::new(
+                        tsv_writer,
+                        tid_to_name,
+                        chrom_to_seq,
+                        self.read_calls_path.as_ref(),
+                        caller,
+                        self.force,
+                    )?;
                     Box::new(writer)
                 }
                 _ => {
@@ -494,8 +803,10 @@ impl ExtractMods {
                         tsv_writer,
                         tid_to_name,
                         chrom_to_seq,
-                        HashSet::new(),
-                    );
+                        self.read_calls_path.as_ref(),
+                        caller,
+                        self.force,
+                    )?;
                     Box::new(writer)
                 }
             };
@@ -527,6 +838,7 @@ impl ExtractMods {
                 }
             }
         }
+
         n_failed.finish_and_clear();
         n_skipped.finish_and_clear();
         n_used.finish_and_clear();

@@ -1,6 +1,7 @@
 pub mod adjust;
 pub mod commands;
 pub mod errs;
+pub mod extract;
 pub mod interval_chunks;
 pub mod logging;
 pub mod mod_bam;
@@ -16,7 +17,6 @@ pub mod writers;
 
 pub(crate) mod command_utils;
 pub mod dmr;
-mod extract_mods;
 pub(crate) mod parsing_utils;
 mod read_cache;
 mod read_ids_to_base_mod_probs;

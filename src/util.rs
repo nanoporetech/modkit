@@ -595,10 +595,14 @@ pub(crate) fn reader_is_bam(reader: &bam::IndexedReader) -> bool {
 #[derive(Copy, Clone)]
 pub(crate) struct Kmer {
     inner: [u8; 12],
-    size: usize,
+    pub(crate) size: usize,
 }
 
 impl Kmer {
+    pub(crate) fn from_seq(seq: &[u8], pos: usize, kmer_size: usize) -> Kmer {
+        Kmer::new(seq, pos, kmer_size)
+    }
+
     // kinda risky, size needs to be < 12
     pub(crate) fn new(seq: &[u8], position: usize, size: usize) -> Self {
         if size > 12 {
@@ -668,6 +672,22 @@ impl Display for Kmer {
         write!(f, "{:?}", self)
     }
 }
+
+#[inline]
+pub fn within_alignment(
+    query_position: usize,
+    num_soft_clipped_start: usize,
+    num_soft_clipped_end: usize,
+    read_length: usize,
+) -> bool {
+    read_length.checked_sub(num_soft_clipped_end)
+        .map(|x| query_position >= num_soft_clipped_start && query_position < x)
+        .unwrap_or_else(|| {
+            debug!("read_length ({read_length}) is less than num_soft_clipped_end ({num_soft_clipped_end})");
+            false
+        })
+}
+
 #[cfg(test)]
 mod utils_tests {
     use anyhow::Context;

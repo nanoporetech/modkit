@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result as AnyhowResult};
+use anyhow::{anyhow, bail, Context, Result as AnyhowResult};
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
-use log::debug;
+use itertools::Itertools;
+use log::{debug, info};
 use rayon::prelude::*;
 use regex::{Match, Regex};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -122,6 +123,48 @@ pub struct RegexMotif {
 }
 
 impl RegexMotif {
+    pub fn from_raw_parts(
+        raw_motif_parts: &Vec<String>,
+        cpg: bool,
+    ) -> AnyhowResult<Vec<Self>> {
+        if raw_motif_parts
+            .chunks(2)
+            .map(|chunk| (&chunk[0], &chunk[1]))
+            .counts()
+            .values()
+            .max()
+            .unwrap_or(&1)
+            > &1
+        {
+            bail!("cannot have the same motif more than once")
+        }
+        let mut raw_motif_parts = raw_motif_parts.to_owned();
+        if cpg {
+            if raw_motif_parts.chunks(2).any(|motif| motif == ["CG", "0"]) {
+                info!("CG 0 motif already, don't need --cpg and --motif CG 0, ignoring --cpg");
+            } else {
+                info!("--cpg flag received, adding CG, 0 to motifs");
+                raw_motif_parts
+                    .extend_from_slice(&["CG".to_string(), "0".to_string()]);
+            }
+        }
+        raw_motif_parts
+            .chunks(2)
+            .map(|c| {
+                let motif = &c[0];
+                let focus_base = &c[1];
+                focus_base
+                    .parse::<usize>()
+                    .map_err(|e| {
+                        anyhow!("couldn't parse focus base, {}", e.to_string())
+                    })
+                    .and_then(|focus_base| {
+                        RegexMotif::parse_string(motif.as_str(), focus_base)
+                    })
+            })
+            .collect::<Result<Vec<RegexMotif>, anyhow::Error>>()
+    }
+
     pub fn parse_string(raw_motif: &str, offset: usize) -> AnyhowResult<Self> {
         let length = raw_motif.len();
         let motif = iupac_to_regex(raw_motif);

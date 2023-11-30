@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::ops::ControlFlow;
 
-use anyhow::anyhow;
+use anyhow::bail;
 use bio::alphabets::dna::revcomp;
 use derive_new::new;
 use indicatif::ParallelProgressIterator;
@@ -22,8 +23,9 @@ use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
-    get_aligned_pairs_forward, get_forward_sequence, get_master_progress_bar,
-    get_query_name_string, get_reference_mod_strand, get_spinner, Kmer, Strand,
+    self, get_aligned_pairs_forward, get_forward_sequence,
+    get_master_progress_bar, get_query_name_string, get_reference_mod_strand,
+    get_spinner, Kmer, Strand,
 };
 
 /// Read IDs mapped to their base modification probabilities, organized
@@ -355,19 +357,19 @@ impl WithRecords for ReadIdsToBaseModProbs {
 
 #[derive(new, Debug)]
 pub(crate) struct ModProfile {
-    query_position: usize,
+    pub(crate) query_position: usize,
     pub(crate) ref_position: Option<i64>,
-    num_soft_clipped_start: usize,
-    num_soft_clipped_end: usize,
-    read_length: usize,
-    q_mod: f32,
-    raw_mod_code: ModCodeRepr,
-    q_base: u8,
-    query_kmer: Kmer,
+    pub(crate) num_soft_clipped_start: usize,
+    pub(crate) num_soft_clipped_end: usize,
+    pub(crate) read_length: usize,
+    pub(crate) q_mod: f32,
+    pub(crate) raw_mod_code: ModCodeRepr,
+    pub(crate) q_base: u8,
+    pub(crate) query_kmer: Kmer,
     pub(crate) mod_strand: Strand,
     pub(crate) alignment_strand: Option<Strand>,
-    canonical_base: char,
-    inferred: bool,
+    pub(crate) canonical_base: DnaBase,
+    pub(crate) inferred: bool,
 }
 
 impl ModProfile {
@@ -396,6 +398,15 @@ impl ModProfile {
         )
     }
 
+    fn within_alignment(&self) -> bool {
+        util::within_alignment(
+            self.query_position,
+            self.num_soft_clipped_start,
+            self.num_soft_clipped_end,
+            self.read_length,
+        )
+    }
+
     pub(crate) fn to_row(
         &self,
         read_id: &str,
@@ -411,12 +422,8 @@ impl ModProfile {
                 reference_seqs
                     .get(chrom_name)
                     .map(|s| {
-                        ReadsBaseModProfile::get_kmer_from_seq(
-                            s,
-                            ref_pos as usize,
-                            kmer_size,
-                        )
-                        .to_string()
+                        Kmer::from_seq(s, ref_pos as usize, kmer_size)
+                            .to_string()
                     })
                     .unwrap_or(".".to_string())
             }
@@ -424,16 +431,13 @@ impl ModProfile {
             ".".to_string()
         };
         let sep = '\t';
-        let modified_primary_base = DnaBase::parse(self.canonical_base)
-            .map(|b| {
-                if self.mod_strand == Strand::Negative {
-                    b.complement().char()
-                } else {
-                    b.char()
-                }
-            })
-            .unwrap_or('?');
+        let modified_primary_base = if self.mod_strand == Strand::Negative {
+            self.canonical_base.complement().char()
+        } else {
+            self.canonical_base.char()
+        };
 
+        let _within_alignment = self.within_alignment();
         format!(
             "\
             {read_id}{sep}\
@@ -469,7 +473,7 @@ impl ModProfile {
             self.q_base,
             ref_kmer,
             query_kmer,
-            self.canonical_base,
+            self.canonical_base.char(),
             modified_primary_base,
             self.inferred,
         )
@@ -501,7 +505,7 @@ impl ReadBaseModProfile {
     #[inline]
     fn base_mod_probs_to_mod_profile(
         query_pos_forward: usize,
-        primary_base: char,
+        primary_base: DnaBase,
         mod_strand: Strand,
         base_mod_probs: BaseModProbs,
         base_qual: u8,
@@ -545,9 +549,7 @@ impl ReadBaseModProfile {
     ) -> Result<Self, RunError> {
         let read_length = record.seq_len();
         let (num_clip_start, num_clip_end) =
-            match ReadsBaseModProfile::get_soft_clipped(
-                record.cigar().as_slice(),
-            ) {
+            match ReadsBaseModProfile::get_soft_clipped(&record) {
                 Ok((sc_start, sc_end)) => {
                     if record.is_reverse() {
                         (sc_end, sc_start)
@@ -565,6 +567,7 @@ impl ReadBaseModProfile {
                     ));
                 }
             };
+
         let (alignment_strand, chrom_tid) = if record.is_unmapped() {
             (None, None)
         } else {
@@ -641,12 +644,14 @@ impl ReadBaseModProfile {
                 } else {
                     Some(probs)
                 };
-                filtered.map(|probs| (base, strand, probs))
+                filtered.and_then(|probs| {
+                    DnaBase::parse(base).map(|dna_base| (dna_base, strand, probs)).ok()
+                })
             })
             .map(|(base, strand, probs)| {
                 let mut probs = probs.add_implicit_mod_calls(
                     &read_sequence,
-                    base,
+                    base.char(),
                     &codes_to_remove,
                     edge_filter,
                 );
@@ -718,32 +723,28 @@ pub(crate) struct ReadsBaseModProfile {
 }
 
 impl ReadsBaseModProfile {
-    // todo(arand) need to make these safe subtractions
-    fn get_kmer_from_seq(seq: &[u8], pos: usize, kmer_size: usize) -> Kmer {
-        Kmer::new(seq, pos, kmer_size)
-    }
-
-    fn get_soft_clipped(cigar: &[Cigar]) -> anyhow::Result<(usize, usize)> {
-        let mut sc_start = None;
-        let mut sc_end = None;
-        for op in cigar {
-            match op {
-                Cigar::SoftClip(l) => match (sc_start, sc_end) {
-                    (None, None) => sc_start = Some(*l as usize),
-                    (Some(_), None) => {
-                        sc_end = Some(*l as usize);
-                    }
-                    (Some(_), Some(_)) => {
-                        return Err(anyhow!(
-                            "encountered softclip operation more than twice"
-                        ));
-                    }
-                    (None, Some(_)) => unreachable!("logic error"),
-                },
-                _ => {}
-            }
+    fn get_soft_clipped(
+        record: &bam::Record,
+    ) -> anyhow::Result<(usize, usize)> {
+        if record.is_unmapped() {
+            return Ok((0, 0));
         }
-        Ok((sc_start.unwrap_or(0), sc_end.unwrap_or(0)))
+        let cigar = &record.cigar().0;
+        let sc_start = cigar.iter().try_fold(0, |acc, op| match op {
+            Cigar::SoftClip(l) => ControlFlow::Continue(acc + *l),
+            _ => ControlFlow::Break(acc),
+        });
+        let sc_end = cigar.iter().rev().try_fold(0, |acc, op| match op {
+            Cigar::SoftClip(l) => ControlFlow::Continue(acc + *l),
+            _ => ControlFlow::Break(acc),
+        });
+
+        match (sc_start, sc_end) {
+            (ControlFlow::Break(s), ControlFlow::Break(e)) => {
+                Ok((s as usize, e as usize))
+            }
+            _ => bail!("illegal cigar, entirely soft clip ops {cigar:?}"),
+        }
     }
 
     pub(crate) fn remove_inferred(self) -> Self {
@@ -894,13 +895,5 @@ impl WithRecords for ReadsBaseModProfile {
 
     fn num_reads(&self) -> usize {
         self.profiles.len()
-    }
-}
-
-#[cfg(test)]
-mod read_ids_to_base_mod_probs_tests {
-    #[test]
-    fn test_cigar_finds_softclips() {
-        // todo
     }
 }

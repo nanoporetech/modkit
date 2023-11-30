@@ -19,7 +19,7 @@ use crate::command_utils::{
 };
 use crate::dmr::subcommands::BedMethylDmr;
 use crate::errs::{InputError, RunError};
-use crate::extract_mods::ExtractMods;
+use crate::extract::subcommand::ExtractMods;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS,

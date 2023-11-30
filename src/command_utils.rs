@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context};
+use itertools::Itertools;
 use log::{debug, info};
 use rust_htslib::bam::{self, Header};
 
@@ -48,6 +49,15 @@ pub(crate) fn parse_thresholds(
 ) -> anyhow::Result<MultipleThresholdModCaller> {
     let (default, per_base_thresholds) =
         parse_per_base_thresholds(raw_base_thresholds)?;
+    if default.is_none() {
+        let bases_with_thresholds = per_base_thresholds
+            .keys()
+            .map(|x| format!("{}", x.char()))
+            .join(",");
+        info!("no default pass threshold was provided, so base modifications at \
+        primary sequence bases other than {bases_with_thresholds} will not be filtered");
+    }
+
     Ok(MultipleThresholdModCaller::new(
         per_base_thresholds,
         per_mod_thresholds.unwrap_or(HashMap::new()),
