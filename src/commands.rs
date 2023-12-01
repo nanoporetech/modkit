@@ -540,7 +540,10 @@ impl SampleModBaseProbs {
 
             let mut writer: Box<dyn OutWriter<SampledProbs>> =
                 if let Some(p) = &self.out_dir {
-                    create_out_directory(p)?;
+                    if !p.exists() {
+                        info!("creating directory at {p:?}");
+                        std::fs::create_dir_all(p)?;
+                    }
                     sampled_probs.check_path(p, self.force)?;
                     Box::new(MultiTableWriter::new(p.clone()))
                 } else {
