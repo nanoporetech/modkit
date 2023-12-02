@@ -193,7 +193,7 @@ always be appropriate input for <code>modkit</code>. For example, the CpG Island
 1065    chr20   63004819        63007703        CpG: 272   2884    272     1869    18.9    64.8    0.9
 1065    chr20   63009128        63009816        CpG: 48    688     48      432     14      62.8    0.71
 </code></pre>
-<p>Therefore we'd need to transform the data with <code>awk</code> or similar, such as:</p>
+<p>Therefore, we need to transform the data with <code>awk</code> or similar, such as:</p>
 <pre><code class="language-bash">awk 'BEGIN{FS=&quot;\t&quot;; OFS=&quot;\t&quot;} NR&gt;1 {print $2, $3, $4, $5}' cpg_islands_ucsc.bed \
   | bedtools sort -i - &gt;  cpg_islands_ucsc_cleaned.bed
 </code></pre>
@@ -218,6 +218,22 @@ modkit dmr pair \
   --threads ${threads} \
   --log-filepath dmr.log
 </code></pre>
+<h2 id="scoring-differentially-methylated-bases-as-opposed-to-regions"><a class="header" href="#scoring-differentially-methylated-bases-as-opposed-to-regions">Scoring differentially methylated bases (as opposed to regions)</a></h2>
+<p>To score individual bases (e.g. differentially methylated CpGs), simply omit the <code>--regions</code> (<code>-r</code>) option
+when running <code>modkit dmr [pair|multi]</code>. For example the above command becomes:</p>
+<pre><code class="language-bash">dmr_result=cpg_islands_tumor_normal.bed
+
+modkit dmr pair \
+  -a ${norm_pileup}.gz \
+  --index-a ${norm_pileup}.gz.tbi \ # optional
+  -b ${tumor_pileup}.gz \
+  --index-b ${tumor_pileup}.gz.tbi \ # optional
+  -o ${dmr_result} \ # output to stdout if not present
+  --ref ${ref} \
+  --base C \  # may be repeated if multiple modifications are being used
+  --threads ${threads} \
+  --log-filepath dmr.log
+</code></pre>
 <h3 id="running-multiple-samples"><a class="header" href="#running-multiple-samples">Running multiple samples</a></h3>
 <p>The <code>modkit dmr multi</code> command runs all pairwise comparisons for more than two samples.
 The preparation of the data is identical to that for <code>dmr pair</code> (for each sample, of course). 
@@ -228,14 +244,17 @@ An example command could be:</p>
   -s ${norm_pileup_2}.gz norm2 \
   -s ${tumor_pileup_2}.gz tumor2 \
   -o ${dmr_dir} \ # required for multi
-  -r ${cpg_islands} \
+  -r ${cpg_islands} \ # skip this option to perform base-level DMR
   --ref ${ref} \
   --base C \
   -t 10 \
   -f \
   --log-filepath dmr_multi.log
 </code></pre>
-<p>For example the samples could be haplotype-partitioned bedMethyl tables or biological replicates.</p>
+<p>For example the samples could be haplotype-partitioned bedMethyl tables or biological replicates.
+Unlike for <code>modkit dmr pair</code> a sample name (e.g. <code>norm1</code> and <code>tumor1</code> above) must be provided for each input
+sample. You can also use <code>--index &lt;filepath&gt; &lt;sample_name&gt;</code> to specify where the tabix index file is for each
+sample.</p>
 <h2 id="differential-methylation-output-format"><a class="header" href="#differential-methylation-output-format">Differential methylation output format</a></h2>
 <p>The output from <code>modkit dmr pair</code> (and for each pairwise comparison with <code>modkit dmr multi</code>) is (roughly)
 a BED file with the following schema:</p>

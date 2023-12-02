@@ -48,7 +48,9 @@ pub struct ExtractMods {
     /// `stdin` to specify a stream from standard input. If a file is used it may
     /// be sorted and have associated index.
     in_bam: String,
-    /// Path to output file, "stdout" or "-" will direct output to standard out.
+    /// Path to output file, "stdout" or "-" will direct output to standard out. Specifying
+    /// "null" will not output the extract table (useful if all you need is the `--read-calls`
+    /// output table).
     out_path: String,
     /// Number of threads to use
     #[arg(short = 't', long, default_value_t = 4)]
@@ -83,6 +85,11 @@ pub struct ExtractMods {
     /// Ignore the BAM index (if it exists) and default to a serial scan of the BAM.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     ignore_index: bool,
+    /// Produce a table of read-level base modification calls. This table has, for each read,
+    /// one row for each base modification call in that read using the same thresholding algorithm
+    /// as in pileup, or summary (see online documentation for details on thresholds). Passing
+    /// this option will cause `modkit` to estimate the pass thresholds from the data unless
+    /// a `--filter-threshold` value is passed to the command.
     #[arg(long, alias = "read-calls", hide_short_help = true)]
     read_calls_path: Option<PathBuf>,
 

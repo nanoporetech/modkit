@@ -156,7 +156,7 @@ impl PositionModCalls {
     ) -> String {
         let tab = '\t';
         let missing = ".".to_string();
-        let chrom_name = chrom_name.unwrap_or(&missing).to_owned();
+        let chrom_name_label = chrom_name.unwrap_or(&missing).to_owned();
         let forward_read_position = self.query_position;
         let ref_position = self.ref_position.unwrap_or(-1);
         let mod_strand = self.mod_strand.to_char();
@@ -183,7 +183,7 @@ impl PositionModCalls {
             if ref_pos < 0 {
                 None
             } else {
-                reference_seqs.get(&chrom_name).map(|s| {
+                reference_seqs.get(&chrom_name_label).map(|s| {
                     Kmer::from_seq(s, ref_pos as usize, self.query_kmer.size)
                         .to_string()
                 })
@@ -201,14 +201,14 @@ impl PositionModCalls {
         let filtered = caller.call(&self.canonical_base, &self.base_mod_probs)
             == BaseModCall::Filtered;
         let inferred = self.base_mod_probs.inferred;
-        let within_alignment = self.within_alignment();
+        let within_alignment = chrom_name.is_some() && self.within_alignment();
 
         format!(
             "\
             {read_id}{tab}\
             {forward_read_position}{tab}\
             {ref_position}{tab}\
-            {chrom_name}{tab}\
+            {chrom_name_label}{tab}\
             {mod_strand}{tab}\
             {ref_strand}{tab}\
             {ref_mod_strand}{tab}\

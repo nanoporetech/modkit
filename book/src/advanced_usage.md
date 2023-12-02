@@ -113,9 +113,9 @@ Options:
           [default: 10042]
 
   -f, --sampling-frac <SAMPLING_FRAC>
-          Sample this fraction of the reads when estimating the filter-percentile. In practice,
-          50-100 thousand reads is sufficient to estimate the model output distribution and
-          determine the filtering threshold. See filtering.md for details on filtering.
+          Sample this fraction of the reads when estimating the pass-threshold. In practice, 10-100
+          thousand reads is sufficient to estimate the model output distribution and determine the
+          filtering threshold. See filtering.md for details on filtering.
 
       --seed <SEED>
           Set a random seed for deterministic running, the default is non-deterministic.
@@ -716,7 +716,9 @@ Arguments:
           associated index.
 
   <OUT_PATH>
-          Path to output file, "stdout" or "-" will direct output to standard out.
+          Path to output file, "stdout" or "-" will direct output to standard out. Specifying "null"
+          will not output the extract table (useful if all you need is the `--read-calls` output
+          table).
 
 Options:
   -t, --threads <THREADS>
@@ -731,7 +733,11 @@ Options:
           Include only mapped bases in output. (alias: mapped)
 
       --num-reads <NUM_READS>
-          Number of reads to use.
+          Number of reads to use. Note that when using a sorted, indexed modBAM that the sampling
+          algorithm will attempt to sample records evenly over the length of the reference sequence.
+          The result is the final number of records used may be slightly more or less than the
+          requested number. When piping from stdin or using a modBAM without an index, the requested
+          number of reads will be exact.
 
       --region <REGION>
           Process only reads that are aligned to a specified region of the BAM. Format should be
@@ -744,7 +750,20 @@ Options:
           Hide the progress bar.
 
       --kmer-size <KMER_SIZE>
+          Set the query and reference k-mer size (if a reference is provided). Maxumum number for
+          this value is 12.
+          
           [default: 5]
+
+      --ignore-index
+          Ignore the BAM index (if it exists) and default to a serial scan of the BAM.
+
+      --read-calls-path <READ_CALLS_PATH>
+          Produce a table of read-level base modification calls. This table has, for each read, one
+          row for each base modification call in that read using the same thresholding algorithm as
+          in pileup, or summary (see online documentation for details on thresholds). Passing this
+          option will cause `modkit` to estimate the pass thresholds from the data unless a
+          `--filter-threshold` value is passed to the command. (alias: --read-calls)
 
       --reference <REFERENCE>
           Path to reference FASTA to extract reference context information from. If no reference is
@@ -755,7 +774,72 @@ Options:
           mapped sites
 
   -v, --exclude-bed <EXCLUDE_BED>
-          BED file with regions to _exclude_. (alias: exclude)
+          BED file with regions to _exclude_ (alias: exclude).
+
+      --motif <MOTIF> <MOTIF>
+          Output read-level base modification probabilities restricted to the reference sequence
+          motifs provided. The first argument should be the sequence motif and the second argument
+          is the 0-based offset to the base to pileup base modification counts for. For example:
+          --motif CGCG 0 indicates include base modifications for which the read is aligned to the
+          first C on the top strand and the last C (complement to G) on the bottom strand. The --cpg
+          argument is short hand for --motif CG 0. This argument can be passed multiple times.
+
+      --cpg
+          Only output counts at CpG motifs. Requires a reference sequence to be provided.
+
+  -k, --mask
+          When using motifs, respect soft masking in the reference sequence.
+
+      --filter-threshold <FILTER_THRESHOLD>
+          Specify the filter threshold globally or per-base. Global filter threshold can be
+          specified with by a decimal number (e.g. 0.75). Per-base thresholds can be specified by
+          colon-separated values, for example C:0.75 specifies a threshold value of 0.75 for
+          cytosine modification calls. Additional per-base thresholds can be specified by repeating
+          the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
+          single base option and a default for all other bases with: --filter-threshold A:0.70
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenine and 0.9 for all
+          other base modification calls.
+
+      --mod-thresholds <MOD_THRESHOLDS>
+          Specify a passing threshold to use for a base modification, independent of the threshold
+          for the primary sequence base or the default. For example, to set the pass threshold for
+          5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
+          usual and used for canonical cytosine and other modifications unless the
+          `--filter-threshold` option is also passed. See the online documentation for more details.
+
+      --no-filtering
+          Do not perform any filtering, include all mod base calls in output. See filtering.md for
+          details on filtering.
+
+      --sampling-interval-size <SAMPLING_INTERVAL_SIZE>
+          Interval chunk size in base pairs to process concurrently when estimating the threshold
+          probability.
+          
+          [default: 1000000]
+
+  -f, --sampling-frac <SAMPLING_FRAC>
+          Sample this fraction of the reads when estimating the pass-threshold. In practice, 10-100
+          thousand reads is sufficient to estimate the model output distribution and determine the
+          filtering threshold. See filtering.md for details on filtering.
+
+  -n, --sample-num-reads <SAMPLE_NUM_READS>
+          Sample this many reads when estimating the filtering threshold. If a sorted, indexed
+          modBAM is provided reads will be sampled evenly across aligned genome. If a region is
+          specified, with the --region, then reads will be sampled evenly across the region given.
+          This option is useful for large BAM files. In practice, 10-50 thousand reads is sufficient
+          to estimate the model output distribution and determine the filtering threshold.
+          
+          [default: 10042]
+
+      --seed <SEED>
+          Set a random seed for deterministic running, the default is non-deterministic.
+
+  -p, --filter-percentile <FILTER_PERCENTILE>
+          Filter out modified base calls where the probability of the predicted variant is below
+          this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
+          modification calls.
+          
+          [default: 0.1]
 
       --edge-filter <EDGE_FILTER>
           Discard base modification calls that are this many bases from the start or the end of the
@@ -995,35 +1079,62 @@ sample is input as a bgzip pileup bedMethyl (produced by pileup, for example) th
 tabix index. Output is a BED file with the score column indicating the magnitude of the difference
 in methylation between the two samples. See the online documentation for additional details.
 
-Usage: modkit dmr pair [OPTIONS] -a <CONTROL_BED_METHYL> -b <EXP_BED_METHYL> --regions-bed <REGIONS_BED> --ref <REFERENCE_FASTA>
+Usage: modkit dmr pair [OPTIONS] -a <CONTROL_BED_METHYL> -b <EXP_BED_METHYL> --ref <REFERENCE_FASTA>
 
 Options:
-  -a <CONTROL_BED_METHYL>            Bgzipped bedMethyl file for the first (usually control) sample.
-                                     There should be a tabix index with the same name and .tbi next
-                                     to this file or the --index-a option must be provided.
-  -b <EXP_BED_METHYL>                Bgzipped bedMethyl file for the second (usually experimental)
-                                     sample. There should be a tabix index with the same name and
-                                     .tbi next to this file or the --index-b option must be provided.
-  -o, --out-path <OUT_PATH>          Path to file to direct output, optional, no argument will
-                                     direct output to stdout.
-  -r, --regions-bed <REGIONS_BED>    Regions BED file over which to compare methylation levels.
-                                     Should be tab-separated (spaces allowed in the "name" column).
-                                     Requires chrom, chromStart and chromEnd. The Name column is
-                                     optional. Strand is currently ignored.
-      --ref <REFERENCE_FASTA>        Path to reference fasta for the pileup.
-  -m <MODIFIED_BASES>                Bases to use to calculate DMR, may be multiple. For example, to
-                                     calculate differentially methylated regions using only cytosine
-                                     modifications use --base C. (alias "base").
-      --log-filepath <LOG_FILEPATH>  File to write logs to, it's recommended to use this option.
-  -t, --threads <THREADS>            Number of threads to use. [default: 4]
-  -k, --mask                         Respect soft masking in the reference FASTA.
-      --suppress-progress            Don't show progress bars.
-  -f, --force                        Force overwrite of output file, if it already exists.
-      --index-a <INDEX_A>            Path to tabix index associated with -a (--control-bed-methyl)
-                                     bedMethyl file.
-      --index-b <INDEX_B>            Path to tabix index associated with -b (--exp-bed-methyl)
-                                     bedMethyl file.
-  -h, --help                         Print help information
+  -a <CONTROL_BED_METHYL>
+          Bgzipped bedMethyl file for the first (usually control) sample. There should be a tabix
+          index with the same name and .tbi next to this file or the --index-a option must be
+          provided.
+  -b <EXP_BED_METHYL>
+          Bgzipped bedMethyl file for the second (usually experimental) sample. There should be a
+          tabix index with the same name and .tbi next to this file or the --index-b option must be
+          provided.
+  -o, --out-path <OUT_PATH>
+          Path to file to direct output, optional, no argument will direct output to stdout.
+  -r, --regions-bed <REGIONS_BED>
+          BED file of regions over which to compare methylation levels. Should be tab-separated
+          (spaces allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name
+          column is optional. Strand is currently ignored. When omitted, methylation levels are
+          compared at each site in the `-a`/`control_bed_methyl` BED file (or optionally, the
+          `-b`/`exp_bed_methyl` file with the `--use-b` flag.
+      --use-b
+          When performing site-level DMR, use the bedMethyl indicated by the -b/exp_bed_methyl
+          argument to collect bases to score.
+      --ref <REFERENCE_FASTA>
+          Path to reference fasta for the pileup.
+  -m <MODIFIED_BASES>
+          Bases to use to calculate DMR, may be multiple. For example, to calculate differentially
+          methylated regions using only cytosine modifications use --base C.
+      --log-filepath <LOG_FILEPATH>
+          File to write logs to, it's recommended to use this option.
+  -t, --threads <THREADS>
+          Number of threads to use [default: 4]
+      --batch-size <BATCH_SIZE>
+          Control the  batch size. The batch size is the number of regions to load at a time. Each
+          region will be processed concurrently. Loading more regions at a time will decrease IO to
+          load data, but will use more memory. Default will be 50% more than the number of threads
+          assigned.
+  -k, --mask
+          Respect soft masking in the reference FASTA.
+      --suppress-progress
+          Don't show progress bars.
+  -f, --force
+          Force overwrite of output file, if it already exists.
+      --index-a <INDEX_A>
+          Path to tabix index associated with -a (--control-bed-methyl) bedMethyl file.
+      --index-b <INDEX_B>
+          Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl file.
+      --missing <HANDLE_MISSING>
+          How to handle regions found in the `--regions` BED file. quiet => ignore regions that are
+          not found in the tabix header warn => log (debug) regions that are missing fatal => log
+          (error) and exit the program when a region is missing. [default: warn] [possible values:
+          quiet, warn, fail]
+      --min-valid-coverage <MIN_VALID_COVERAGE>
+          Minimum valid coverage required to use an entry from a bedMethyl. See the help for pileup
+          for the specification and description of valid coverage. [default: 0]
+  -h, --help
+          Print help information.
 ```
 
 ## pileup-hemi
@@ -1034,30 +1145,48 @@ tabix indices. Each sample must be assigned a name. Output is a directory of BED
 score column indicating the magnitude of the difference in methylation between the two samples
 indicated in the file name. See the online documentation for additional details.
 
-Usage: modkit dmr multi [OPTIONS] --regions-bed <REGIONS_BED> --out-dir <OUT_DIR> --ref <REFERENCE_FASTA>
+Usage: modkit dmr multi [OPTIONS] --out-dir <OUT_DIR> --ref <REFERENCE_FASTA>
 
 Options:
-  -s, --sample <SAMPLES> <SAMPLES>   Two or more named samples to compare. Two arguments are
-                                     required <path> <name>. This option should be repeated at least
-                                     two times.
-  -i, --index <INDICES> <INDICES>    Optional, paths to tabix indices associated with named samples.
-                                     Two arguments are required <path> <name> where <name>
-                                     corresponds to the name of the sample given to the -s/--sample
-                                     argument.
-  -r, --regions-bed <REGIONS_BED>    Regions BED file over which to compare methylation levels.
-                                     Should be tab-separated (spaces allowed in the "name" column).
-                                     Requires chrom, chromStart and chromEnd. The Name column is
-                                     optional. Strand is currently ignored.
-  -o, --out-dir <OUT_DIR>            Directory to place output DMR results in BED format.
-  -p, --prefix <PREFIX>              Prefix files in directory with this label.
-      --ref <REFERENCE_FASTA>        Path to reference fasta for the pileup.
-  -m <MODIFIED_BASES>                Bases to use to calculate DMR, may be multiple. For example, to
-                                     calculate differentially methylated regions using only cytosine
-                                     modifications use --base C. (alias "base")
-      --log-filepath <LOG_FILEPATH>  File to write logs to, it's recommended to use this option.
-  -t, --threads <THREADS>            Number of threads to use. [default: 4]
-  -k, --mask                         Respect soft masking in the reference FASTA
-      --suppress-progress            Don't show progress bars.
-  -f, --force                        Force overwrite of output file, if it already exists.
-  -h, --help                         Print help information.
+  -s, --sample <SAMPLES> <SAMPLES>
+          Two or more named samples to compare. Two arguments are required <path> <name>. This
+          option should be repeated at least two times.
+  -i, --index <INDICES> <INDICES>
+          Optional, paths to tabix indices associated with named samples. Two arguments are required
+          <path> <name> where <name> corresponds to the name of the sample given to the -s/--sample
+          argument.
+  -r, --regions-bed <REGIONS_BED>
+          BED file of regions over which to compare methylation levels. Should be tab-separated
+          (spaces allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name
+          column is optional. Strand is currently ignored. When omitted, methylation levels are
+          compared at each site in common between the two bedMethyl files being compared.
+  -o, --out-dir <OUT_DIR>
+          Directory to place output DMR results in BED format.
+  -p, --prefix <PREFIX>
+          Prefix files in directory with this label.
+      --ref <REFERENCE_FASTA>
+          Path to reference fasta for the pileup.
+  -m <MODIFIED_BASES>
+          Bases to use to calculate DMR, may be multiple. For example, to calculate differentially
+          methylated regions using only cytosine modifications use --base C.
+      --log-filepath <LOG_FILEPATH>
+          File to write logs to, it's recommended to use this option.
+  -t, --threads <THREADS>
+          Number of threads to use. [default: 4]
+  -k, --mask
+          Respect soft masking in the reference FASTA.
+      --suppress-progress
+          Don't show progress bars.
+  -f, --force
+          Force overwrite of output file, if it already exists
+      --missing <HANDLE_MISSING>
+          How to handle regions found in the `--regions` BED file. quiet => ignore regions that are
+          not found in the tabix header warn => log (debug) regions that are missing fatal => log
+          (error) and exit the program when a region is missing. [default: warn] [possible values:
+          quiet, warn, fail]
+      --min-valid-coverage <MIN_VALID_COVERAGE>
+          Minimum valid coverage required to use an entry from a bedMethyl. See the help for pileup
+          for the specification and description of valid coverage. [default: 0]
+  -h, --help
+          Print help information
 ```

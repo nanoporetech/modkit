@@ -52,7 +52,7 @@ always be appropriate input for `modkit`. For example, the CpG Islands track has
 1065    chr20   63009128        63009816        CpG: 48    688     48      432     14      62.8    0.71
 ```
 
-Therefore we'd need to transform the data with `awk` or similar, such as:
+Therefore, we need to transform the data with `awk` or similar, such as:
 ```bash 
 awk 'BEGIN{FS="\t"; OFS="\t"} NR>1 {print $2, $3, $4, $5}' cpg_islands_ucsc.bed \
   | bedtools sort -i - >  cpg_islands_ucsc_cleaned.bed
@@ -82,6 +82,26 @@ modkit dmr pair \
   --log-filepath dmr.log
 ```
 
+## Scoring differentially methylated bases (as opposed to regions)
+To score individual bases (e.g. differentially methylated CpGs), simply omit the `--regions` (`-r`) option
+when running `modkit dmr [pair|multi]`. For example the above command becomes:
+
+```bash
+dmr_result=cpg_islands_tumor_normal.bed
+
+modkit dmr pair \
+  -a ${norm_pileup}.gz \
+  --index-a ${norm_pileup}.gz.tbi \ # optional
+  -b ${tumor_pileup}.gz \
+  --index-b ${tumor_pileup}.gz.tbi \ # optional
+  -o ${dmr_result} \ # output to stdout if not present
+  --ref ${ref} \
+  --base C \  # may be repeated if multiple modifications are being used
+  --threads ${threads} \
+  --log-filepath dmr.log
+```
+
+
 ### Running multiple samples
 The `modkit dmr multi` command runs all pairwise comparisons for more than two samples.
 The preparation of the data is identical to that for `dmr pair` (for each sample, of course). 
@@ -93,7 +113,7 @@ modkit dmr multi \
   -s ${norm_pileup_2}.gz norm2 \
   -s ${tumor_pileup_2}.gz tumor2 \
   -o ${dmr_dir} \ # required for multi
-  -r ${cpg_islands} \
+  -r ${cpg_islands} \ # skip this option to perform base-level DMR
   --ref ${ref} \
   --base C \
   -t 10 \
@@ -102,6 +122,9 @@ modkit dmr multi \
 ```
 
 For example the samples could be haplotype-partitioned bedMethyl tables or biological replicates.
+Unlike for `modkit dmr pair` a sample name (e.g. `norm1` and `tumor1` above) must be provided for each input
+sample. You can also use `--index <filepath> <sample_name>` to specify where the tabix index file is for each
+sample.
 
 ## Differential methylation output format
 The output from `modkit dmr pair` (and for each pairwise comparison with `modkit dmr multi`) is (roughly)
