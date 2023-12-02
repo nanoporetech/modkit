@@ -148,11 +148,24 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="calling-mods-in-a-modbam"><a class="header" href="#calling-mods-in-a-modbam">Calling mods in a modBAM</a></h1>
-<p>The <code>call-mods</code> subcommand in <code>modkit</code> transforms one modBAM into another modBAM where the base modification probabilities have been clamped to 100% and 0%.
-If the <code>--filter-threshold</code> and/or <code>--mod-threshold</code> <a href="./advanced_usage.html#call-mods">options</a> are provided, base modification calls failing the threshold will be removed prior to changing the probabilities.
-The output modBAM can be used for visualization, <code>pileup</code>, or other applications. </p>
-<p>A modBAM that has been transformed with <code>call-mods</code> using <code>--filter-threshold</code> and/or <code>--mod-threshold</code> cannot be re-transformed with different thresholds.</p>
-<p>Note on <code>pileup</code> with clamped probabilities: <code>modkit pileup</code> will attempt to estimate the threshold probability by default, but it is unnecessary if the modBAM is the result of <code>call-mods</code>. The threshold probabilities will be artificially high (i.e. not representative of the model's output probabilities). Similarly, specifying <code>--filter-threshold</code> and <code>--mod-threshold</code> is not useful because all the ML probabilities have been set to 0 and 100%.</p>
+<p>The <code>call-mods</code> subcommand in <code>modkit</code> transforms one modBAM into another
+modBAM where the base modification probabilities have been clamped to 100% and
+0%. If the <code>--filter-threshold</code> and/or <code>--mod-threshold</code>
+<a href="./advanced_usage.html#call-mods">options</a> are provided, base modification calls
+failing the threshold will be removed prior to changing the probabilities. The
+output modBAM can be used for visualization, <code>pileup</code>, or other applications.
+If alignment information is present, only the <strong>primary alignment</strong> is used,
+and supplementary alignments will not be in the output (see 
+<a href="./limitations.html">limitations</a>).</p>
+<p>A modBAM that has been transformed with <code>call-mods</code> using <code>--filter-threshold</code>
+and/or <code>--mod-threshold</code> cannot be re-transformed with different thresholds.</p>
+<p>Note on <code>pileup</code> with clamped probabilities: <code>modkit pileup</code> will attempt to
+estimate the threshold probability by default, but it is unnecessary if the
+modBAM is the result of <code>call-mods</code>. The threshold probabilities will be
+artificially high (i.e. not representative of the model's output
+probabilities). Similarly, specifying <code>--filter-threshold</code> and
+<code>--mod-threshold</code> is not useful because all the ML probabilities have been set
+to 0 and 100%.</p>
 <h2 id="example-usages"><a class="header" href="#example-usages">Example usages</a></h2>
 <h3 id="estimate-the-threshold-on-the-fly-apply-to-modbam-and-clamp-the-modification-calls-to-certainty"><a class="header" href="#estimate-the-threshold-on-the-fly-apply-to-modbam-and-clamp-the-modification-calls-to-certainty">Estimate the threshold on the fly, apply to modBAM and clamp the modification calls to certainty.</a></h3>
 <pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt;

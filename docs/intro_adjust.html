@@ -150,7 +150,8 @@
                         <h1 id="updating-and-adjusting-mm-tags"><a class="header" href="#updating-and-adjusting-mm-tags">Updating and Adjusting MM tags.</a></h1>
 <p>The <code>adjust-mods</code> subcommand can be used to manipulate MM (and corresponding ML) tags in a
 modBam. In general, these simple commands are run prior to <code>pileup</code>, visualization, or
-other analysis.</p>
+other analysis. If alignment information is present, only the <strong>primary alignment</strong> is used, 
+and supplementary alignments will not be in the output (see <a href="./limitations.html">limitations</a>).</p>
 <h2 id="ignoring-a-modification-class"><a class="header" href="#ignoring-a-modification-class">Ignoring a modification class.</a></h2>
 <p>To remove a base modification class from a modBAM and produce a new modBAM, use the
 <code>--ignore</code> option for <code>adjust-mods</code>.</p>
@@ -170,9 +171,6 @@ example, the command below will convert probabilities associated with <code>h</c
 <a href="./intro_adjust.html#changing-the-base-modification-code">changing the modification code</a>,
 if the second base modification code doesn't exist, the probabilities are left unchanged.</p>
 <pre><code>modkit adjust-mods input.bam output.convert.bam --convert h m
-</code></pre>
-<p>This would be equivalent to setting <code>--combine-mods</code> flag, for example.</p>
-<pre><code>modkit pileup path/to/reads.bam output/path/pileup.bed --combine-mods
 </code></pre>
 <h2 id="updating-the-flag--and-"><a class="header" href="#updating-the-flag--and-">Updating the flag (<code>?</code> and <code>.</code>).</a></h2>
 <p>The <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a> (Section 1.7) allows

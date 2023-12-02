@@ -163,7 +163,7 @@ or <code>stdout</code> and filter the columns before writing to disk.</p>
 <tr><td>1</td><td>read_id</td><td>name of the read</td><td>str</td></tr>
 <tr><td>2</td><td>forward_read_position</td><td>0-based position on the forward-oriented read sequence</td><td>int</td></tr>
 <tr><td>3</td><td>ref_position</td><td>aligned 0-based reference sequence position, -1 means unmapped</td><td>int</td></tr>
-<tr><td>4</td><td>chrom</td><td>name of aligned contig, or '.' if unmapped</td><td>str</td></tr>
+<tr><td>4</td><td>chrom</td><td>name of aligned contig, or '.' if the read is Gunmapped</td><td>str</td></tr>
 <tr><td>5</td><td>mod_strand</td><td>strand of the molecule the base modification is on</td><td>str</td></tr>
 <tr><td>6</td><td>ref_strand</td><td>strand of the reference the read is aligned to, or '.' if unmapped</td><td>str</td></tr>
 <tr><td>7</td><td>ref_mod_strand</td><td>strand of the reference with the base modification, or '.' if unmapped</td><td>str</td></tr>
@@ -177,7 +177,35 @@ or <code>stdout</code> and filter the columns before writing to disk.</p>
 <tr><td>15</td><td>query_kmer</td><td>read 5-mer sequence context (center base is aligned base)</td><td>str</td></tr>
 <tr><td>16</td><td>canonical_base</td><td>canonical base from the query sequence, from the MM tag</td><td>str</td></tr>
 <tr><td>17</td><td>modified_primary_base</td><td>primary sequence base with the modification</td><td>str</td></tr>
-<tr><td>17</td><td>inferred</td><td>whether the base modification call is implicit canonical</td><td>str</td></tr>
+<tr><td>18</td><td>inferred</td><td>whether the base modification call is implicit canonical</td><td>str</td></tr>
+</tbody></table>
+</div>
+<h1 id="tabulating-base-modification-calls-for-each-read-position"><a class="header" href="#tabulating-base-modification-calls-for-each-read-position">Tabulating base modification <em>calls</em> for each read position</a></h1>
+<p>Passing <code>--read-calls &lt;file-path&gt;</code> option will generate a table of read-level base modification calls using the 
+same <a href="./filtering.html">thresholding</a> algorithm employed by <code>modkit pileup</code>. The resultant table has, for each read,
+one row for each base modification call in that read. If a base is called as modified then <code>call_code</code> will be the 
+code in the <code>MM</code> tag. If the base is called as canonical the <code>call_code</code> will be <code>-</code> (<code>A</code>, <code>C</code>, <code>G</code>, and <code>T</code> are
+reserved for &quot;any modification&quot;). The full schema of the table is below:</p>
+<div class="table-wrapper"><table><thead><tr><th>column</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
+<tr><td>1</td><td>read_id</td><td>name of the read</td><td>str</td></tr>
+<tr><td>2</td><td>forward_read_position</td><td>0-based position on the forward-oriented read sequence</td><td>int</td></tr>
+<tr><td>3</td><td>ref_position</td><td>aligned 0-based reference sequence position, -1 means unmapped</td><td>int</td></tr>
+<tr><td>4</td><td>chrom</td><td>name of aligned contig, or '.' if unmapped</td><td>str</td></tr>
+<tr><td>5</td><td>mod_strand</td><td>strand of the molecule the base modification is on</td><td>str</td></tr>
+<tr><td>6</td><td>ref_strand</td><td>strand of the reference the read is aligned to, or '.' if unmapped</td><td>str</td></tr>
+<tr><td>7</td><td>ref_mod_strand</td><td>strand of the reference with the base modification, or '.' if unmapped</td><td>str</td></tr>
+<tr><td>8</td><td>fw_soft_clipped_start</td><td>number of bases soft clipped from the start of the forward-oriented read</td><td>int</td></tr>
+<tr><td>9</td><td>fw_soft_clipped_end</td><td>number of bases soft clipped from the end of the forward-oriented read</td><td>int</td></tr>
+<tr><td>10</td><td>read_length</td><td>total length of the read</td><td>int</td></tr>
+<tr><td>11</td><td>call_prob</td><td>probability of the base modification call in the next column</td><td>int</td></tr>
+<tr><td>12</td><td>call_code</td><td>base modification call, <code>-</code> indicates a canonical call</td><td>str</td></tr>
+<tr><td>13</td><td>base_qual</td><td>basecall quality score (phred)</td><td>int</td></tr>
+<tr><td>14</td><td>ref_kmer</td><td>reference 5-mer sequence context (center base is aligned base), '.' if unmapped</td><td>str</td></tr>
+<tr><td>15</td><td>query_kmer</td><td>read 5-mer sequence context (center base is aligned base)</td><td>str</td></tr>
+<tr><td>16</td><td>canonical_base</td><td>canonical base from the query sequence, from the MM tag</td><td>str</td></tr>
+<tr><td>17</td><td>modified_primary_base</td><td>primary sequence base with the modification</td><td>str</td></tr>
+<tr><td>18</td><td>inferred</td><td>whether the base modification call is implicit canonical</td><td>str</td></tr>
+<tr><td>19</td><td>within_alignment</td><td>when alignment information is present, is this base aligned to the reference</td><td>str</td></tr>
 </tbody></table>
 </div>
 <h2 id="note-on-implicit-base-modification-calls"><a class="header" href="#note-on-implicit-base-modification-calls">Note on implicit base modification calls.</a></h2>
@@ -203,6 +231,13 @@ modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-
 </code></pre>
 <h3 id="extract-only-sites-that-are-at-least-50-bases-from-the-ends-of-the-reads"><a class="header" href="#extract-only-sites-that-are-at-least-50-bases-from-the-ends-of-the-reads">Extract only sites that are at least 50 bases from the ends of the reads</a></h3>
 <pre><code>modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --edge-filter 50
+</code></pre>
+<h3 id="extract-read-level-base-modification-calls"><a class="header" href="#extract-read-level-base-modification-calls">Extract read-level base modification calls</a></h3>
+<pre><code>modkit extract &lt;input.bam&gt; null --read-calls &lt;calls.tsv&gt;
+</code></pre>
+<p>Using &quot;null&quot; in the place of the normal output will direct the normal extract output
+to /dev/null, to keep this output specify a file or <code>-</code> for standard out.</p>
+<pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt; --read-calls &lt;calls.tsv&gt;
 </code></pre>
 <p>See the help string and/or <a href="./advanced_usage.html">advanced_usage</a> for more details.</p>
 

@@ -38,10 +38,7 @@ use crate::summarize::{sampled_reads_to_summary, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{calc_thresholds_per_base, Percentiles};
 use crate::util;
-use crate::util::{
-    add_modkit_pg_records, get_targets, get_ticker,
-    Region,
-};
+use crate::util::{add_modkit_pg_records, get_targets, get_ticker, Region};
 use crate::writers::{
     MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
 };
