@@ -39,7 +39,7 @@ use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{calc_thresholds_per_base, Percentiles};
 use crate::util;
 use crate::util::{
-    add_modkit_pg_records, create_out_directory, get_targets, get_ticker,
+    add_modkit_pg_records, get_targets, get_ticker,
     Region,
 };
 use crate::writers::{
