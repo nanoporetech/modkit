@@ -2,7 +2,8 @@
 
 The `adjust-mods` subcommand can be used to manipulate MM (and corresponding ML) tags in a
 modBam. In general, these simple commands are run prior to `pileup`, visualization, or
-other analysis.
+other analysis. If alignment information is present, only the **primary alignment** is used, 
+and supplementary alignments will not be in the output (see [limitations](./limitations.md)).
 
 
 ## Ignoring a modification class.
@@ -35,10 +36,6 @@ if the second base modification code doesn't exist, the probabilities are left u
 modkit adjust-mods input.bam output.convert.bam --convert h m
 ```
 
-This would be equivalent to setting `--combine-mods` flag, for example.
-```
-modkit pileup path/to/reads.bam output/path/pileup.bed --combine-mods
-```
 
 ## Updating the flag (`?` and `.`).
 The [specification](https://samtools.github.io/hts-specs/SAMtags.pdf) (Section 1.7) allows

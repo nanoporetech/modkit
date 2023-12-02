@@ -19,7 +19,7 @@ or `stdout` and filter the columns before writing to disk.
 | 1      | read_id               | name of the read                                                                | str  |
 | 2      | forward_read_position | 0-based position on the forward-oriented read sequence                          | int  |
 | 3      | ref_position          | aligned 0-based reference sequence position, -1 means unmapped                  | int  |
-| 4      | chrom                 | name of aligned contig, or '.' if unmapped                                      | str  |
+| 4      | chrom                 | name of aligned contig, or '.' if the read is Gunmapped                         | str  |
 | 5      | mod_strand            | strand of the molecule the base modification is on                              | str  |
 | 6      | ref_strand            | strand of the reference the read is aligned to, or '.' if unmapped              | str  |
 | 7      | ref_mod_strand        | strand of the reference with the base modification, or '.' if unmapped          | str  |
@@ -33,7 +33,37 @@ or `stdout` and filter the columns before writing to disk.
 | 15     | query_kmer            | read 5-mer sequence context (center base is aligned base)                       | str  |
 | 16     | canonical_base        | canonical base from the query sequence, from the MM tag                         | str  |
 | 17     | modified_primary_base | primary sequence base with the modification                                     | str  |
-| 17     | inferred              | whether the base modification call is implicit canonical                        | str  |
+| 18     | inferred              | whether the base modification call is implicit canonical                        | str  |
+
+
+# Tabulating base modification _calls_ for each read position
+Passing `--read-calls <file-path>` option will generate a table of read-level base modification calls using the 
+same [thresholding](./filtering.md) algorithm employed by `modkit pileup`. The resultant table has, for each read,
+one row for each base modification call in that read. If a base is called as modified then `call_code` will be the 
+code in the `MM` tag. If the base is called as canonical the `call_code` will be `-` (`A`, `C`, `G`, and `T` are
+reserved for "any modification"). The full schema of the table is below:
+
+| column | name                  | description                                                                     | type |
+|--------|-----------------------|---------------------------------------------------------------------------------|------|
+| 1      | read_id               | name of the read                                                                | str  |
+| 2      | forward_read_position | 0-based position on the forward-oriented read sequence                          | int  |
+| 3      | ref_position          | aligned 0-based reference sequence position, -1 means unmapped                  | int  |
+| 4      | chrom                 | name of aligned contig, or '.' if unmapped                                      | str  |
+| 5      | mod_strand            | strand of the molecule the base modification is on                              | str  |
+| 6      | ref_strand            | strand of the reference the read is aligned to, or '.' if unmapped              | str  |
+| 7      | ref_mod_strand        | strand of the reference with the base modification, or '.' if unmapped          | str  |
+| 8      | fw_soft_clipped_start | number of bases soft clipped from the start of the forward-oriented read        | int  |
+| 9      | fw_soft_clipped_end   | number of bases soft clipped from the end of the forward-oriented read          | int  |
+| 10     | read_length           | total length of the read                                                        | int  |
+| 11     | call_prob             | probability of the base modification call in the next column                    | int  |
+| 12     | call_code             | base modification call, `-` indicates a canonical call                          | str  |
+| 13     | base_qual             | basecall quality score (phred)                                                  | int  |
+| 14     | ref_kmer              | reference 5-mer sequence context (center base is aligned base), '.' if unmapped | str  |
+| 15     | query_kmer            | read 5-mer sequence context (center base is aligned base)                       | str  |
+| 16     | canonical_base        | canonical base from the query sequence, from the MM tag                         | str  |
+| 17     | modified_primary_base | primary sequence base with the modification                                     | str  |
+| 18     | inferred              | whether the base modification call is implicit canonical                        | str  |
+| 19     | within_alignment      | when alignment information is present, is this base aligned to the reference    | str  |
 
 
 ## Note on implicit base modification calls.
@@ -68,6 +98,17 @@ modkit extract <in.bam> <out.tsv> --ref <ref.fasta> --include-bed CG_motifs.bed
 ### Extract only sites that are at least 50 bases from the ends of the reads
 ```
 modkit extract <in.bam> <out.tsv> --edge-filter 50
+```
+
+### Extract read-level base modification calls
+```
+modkit extract <input.bam> null --read-calls <calls.tsv>
+```
+Using "null" in the place of the normal output will direct the normal extract output
+to /dev/null, to keep this output specify a file or `-` for standard out.
+
+```
+modkit extract <input.bam> <output.tsv> --read-calls <calls.tsv>
 ```
 
 See the help string and/or [advanced_usage](./advanced_usage.md) for more details.

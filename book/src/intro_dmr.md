@@ -102,6 +102,9 @@ modkit dmr multi \
 ```
 
 For example the samples could be haplotype-partitioned bedMethyl tables or biological replicates.
+Unlike for `modkit dmr pair` a sample name (e.g. `norm1` and `tumor1` above) must be provided for each input
+sample. You can also use `--index <filepath> <sample_name>` to specify where the tabix index file is for each
+sample.
 
 ## Differential methylation output format
 The output from `modkit dmr pair` (and for each pairwise comparison with `modkit dmr multi`) is (roughly)
