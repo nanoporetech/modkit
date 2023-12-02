@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.3]
+### Adds
+- [dmr, multi] Allow site-level scoring by omitting the `--regions` argument. Sites will be collected from the input bedMethyl files.
+- [dmr] Friendlier handling of missing files and when regions aren't found in the bedMethyl input files.
+- [dmr] allow filtering on valid coverage without changing input
+- [extract] output "read calls" extract table, a TSV with the base modification calls for every modified position in every read using the same thresholding algorithm as pileup
+- [extract] allow filtering of calls by reference motif (like in pileup) as well as BED regions (and exclude regions)
+### Fixes
+- [extract] Improve performance, especially on longer reads.
+- [extract] Improve performance with long reads (actually a bug fix)
+- [extract] num_soft_clipped_start and num_soft_clipped_end were incorrect on some reverse-mapped reads
+
+
 ## [v0.2.3-rc1]
 ### Adds
 - [dmr, pair] Allow site-level scoring by omitting the `--regions` argument. Sites will be collected from the input bedMethyl files.
