@@ -184,6 +184,6 @@ and \\(\alpha \\) in the general case). The `score` reported is the result of a 
 \\]
 
 Where \\(\theta_a\\) and \\(\theta_b\\) are the MAP parameters of the model with the two
-conditions modeled separately, and \\(\theta_{a+b}\\) are the MLE parameters when the two
+conditions modeled separately, and \\(\theta_{a+b}\\) are the MAP parameters when the two
 conditions are modeled together. For all cases, we use [Jeffrey's prior](https://en.wikipedia.org/wiki/Jeffreys_prior) 
 as the prior distribution.
