@@ -500,8 +500,9 @@ reserved for &quot;any modification&quot;). The full schema of the table is belo
 <tr><td>15</td><td>query_kmer</td><td>read 5-mer sequence context (center base is aligned base)</td><td>str</td></tr>
 <tr><td>16</td><td>canonical_base</td><td>canonical base from the query sequence, from the MM tag</td><td>str</td></tr>
 <tr><td>17</td><td>modified_primary_base</td><td>primary sequence base with the modification</td><td>str</td></tr>
-<tr><td>18</td><td>inferred</td><td>whether the base modification call is implicit canonical</td><td>str</td></tr>
-<tr><td>19</td><td>within_alignment</td><td>when alignment information is present, is this base aligned to the reference</td><td>str</td></tr>
+<tr><td>18</td><td>fail</td><td>true if the base modification call fell below the pass threshold</td><td>str</td></tr>
+<tr><td>19</td><td>inferred</td><td>whether the base modification call is implicit canonical</td><td>str</td></tr>
+<tr><td>20</td><td>within_alignment</td><td>when alignment information is present, is this base aligned to the reference</td><td>str</td></tr>
 </tbody></table>
 </div>
 <h2 id="note-on-implicit-base-modification-calls"><a class="header" href="#note-on-implicit-base-modification-calls">Note on implicit base modification calls.</a></h2>
