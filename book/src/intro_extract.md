@@ -62,8 +62,9 @@ reserved for "any modification"). The full schema of the table is below:
 | 15     | query_kmer            | read 5-mer sequence context (center base is aligned base)                       | str  |
 | 16     | canonical_base        | canonical base from the query sequence, from the MM tag                         | str  |
 | 17     | modified_primary_base | primary sequence base with the modification                                     | str  |
-| 18     | inferred              | whether the base modification call is implicit canonical                        | str  |
-| 19     | within_alignment      | when alignment information is present, is this base aligned to the reference    | str  |
+| 18     | fail                  | true if the base modification call fell below the pass threshold                | str  |
+| 19     | inferred              | whether the base modification call is implicit canonical                        | str  |
+| 20     | within_alignment      | when alignment information is present, is this base aligned to the reference    | str  |
 
 
 ## Note on implicit base modification calls.
