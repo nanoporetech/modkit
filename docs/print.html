@@ -862,7 +862,8 @@ chr10   76139   76313   chr10:76139-76313       1.334274110255592       h:6,m:46
 scoring methylation differences is intended to be simple and interpretable. For every region provided, within a sample, 
 we model each potentially methylated base as arising from the same distribution. In other words, we discard the relative 
 ordering of the base modification calls within a region. We then define a model for the frequency of observing each base 
-modification state. In the case of methylated versus unmodified (5mC vs C, or 6mA vs A), we use the binomial distribution: </p>
+modification state. In the case of methylated versus unmodified (5mC vs C, or 6mA vs A), we use the binomial distribution
+and model the probability of methylation \(p\) as a beta-distributed random variable: </p>
 <p>\[
 \mathbf{X}|p \sim \text{Bin}(n, p)
 \]
@@ -870,23 +871,25 @@ modification state. In the case of methylated versus unmodified (5mC vs C, or 6m
 p \sim \text{Beta}(\alpha, \beta)
 \]</p>
 <p>where \(n\) is the number of potentially methylated bases reported on in the 
-region and \(\mathbf{X}\) is the vector of counts (canonical and methylated). In the case where there are more than two
-states (for example, 5hmC, 5mC, and unmodified C) we use a multinomial distribution: 
+region and \(\mathbf{X}\) is the vector of counts (canonical and methylated). </p>
+<p>In the case where there are more than two states (for example, 5hmC, 5mC, and unmodified C) we use a multinomial 
+distribution and a Dirichlet as the base distribution: 
 \[
 \mathbf{X}|\pi \sim \text{Mult}(n, \pi)
 \]</p>
 <p>\[
 \pi \sim \text{Dir}(\alpha)
 \]</p>
-<p>Let \(\theta\) be the maximum a posteriori (MAP) parameters of the model ( \( \alpha, \beta \) for the binary case, 
-and \(\alpha \) in the general case). The <code>score</code> reported is the result of a likelihood ratio test:</p>
+<p>Let \(\theta\) be the parameters describing the posterior distribution ( \( \alpha, \beta \) for the binary case, 
+and \(\alpha \) in the general case). The <code>score</code> reported is the result of the following log marginal likelihood 
+ratio :</p>
 <p>\[
-\text{score} = \text{log}(\frac{l( \mathbf{X_a} | \theta_{a}) l(\mathbf{X_b} | \theta_{b})}{l(\mathbf{X_{a+b}} | \theta_{a+b})})
+\text{score} = \text{log}(\frac{l_{\theta_{a}}( \mathbf{X_a} ) l_{\theta_{b}} ( \mathbf{X_b} )}{l_{\theta_{a+b}} (\mathbf{X_{a+b}} )})
 \]</p>
-<p>Where \(\theta_a\) and \(\theta_b\) are the MAP parameters of the model with the two
-conditions modeled separately, and \(\theta_{a+b}\) are the MAP parameters when the two
-conditions are modeled together. For all cases, we use <a href="https://en.wikipedia.org/wiki/Jeffreys_prior">Jeffrey's prior</a> 
-as the prior distribution.</p>
+<p>Where \(\theta_a\) and \(\theta_b\) are the posterior distributions with the two conditions modeled separately, 
+and \(\theta_{a+b}\) is the posterior when the two conditions are modeled together. The function \(l_{\theta}(\mathbf{X}) \) is 
+the log marginal likelihood of the counts under the parameters of the model \(\theta\).
+For all cases, we use <a href="https://en.wikipedia.org/wiki/Jeffreys_prior">Jeffrey's prior</a> as the prior distribution.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="modkit-subcommand-documentation"><a class="header" href="#modkit-subcommand-documentation">modkit, subcommand documentation</a></h1>
 <p>The goal of <code>modkit</code> is to enable best-practices manipulation of BAM files containing
 modified base information (modBAMs). The various sub-commands and tools available in
