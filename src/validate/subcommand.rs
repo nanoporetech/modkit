@@ -1,18 +1,16 @@
 use anyhow::bail;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::path::PathBuf;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 
-use clap::{Args};
-use log::{info};
+use clap::Args;
+use log::info;
 use rust_htslib::bam::{self, Read};
 
 use crate::logging::init_logging;
 use crate::mod_base_code::ModCodeRepr;
-use crate::util::{
-    get_targets, reader_is_bam, Region
-};
+use crate::util::{get_targets, reader_is_bam, Region};
 
 #[derive(Args)]
 pub struct ValidateFromModbam {
@@ -40,8 +38,8 @@ pub struct ValidateFromModbam {
 impl ValidateFromModbam {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-	for bam_and_bed in self.bam_and_bed.chunks(2) {
-	    let bam = &bam_and_bed[0];
+        for bam_and_bed in self.bam_and_bed.chunks(2) {
+            let bam = &bam_and_bed[0];
             let bed = &bam_and_bed[1];
 
             let header = bam::IndexedReader::from_path(&bam)
@@ -55,16 +53,13 @@ impl ValidateFromModbam {
 		})?;
             let tids = get_targets(&header, Option::<&Region>::None);
             let chrom_to_tid = tids
-		.iter()
-		.map(|reference_record| {
+                .iter()
+                .map(|reference_record| {
                     (reference_record.name.as_str(), reference_record.tid)
-		})
-		.collect::<HashMap<&str, u32>>();
-            let _mod_positions = Self::parse_mods_from_bed(
-		bed,
-		&chrom_to_tid,
-            );
-	}
+                })
+                .collect::<HashMap<&str, u32>>();
+            let _mod_positions = Self::parse_mods_from_bed(bed, &chrom_to_tid);
+        }
         Ok(())
     }
 
@@ -116,24 +111,12 @@ impl ValidateFromModbam {
                 }
             };
             if let Some(chrom_id) = chrom_to_target_id.get(chrom_name) {
-		if fwd_strand {
-		    mod_positions.push((
-			*chrom_id,
-			true,
-                        start,
-                        end,
-                        mod_code,
-		    ))
-		}
-		if rev_strand {
-		    mod_positions.push((
-			*chrom_id,
-			false,
-                        start,
-                        end,
-                        mod_code,
-		    ))
-		}
+                if fwd_strand {
+                    mod_positions.push((*chrom_id, true, start, end, mod_code))
+                }
+                if rev_strand {
+                    mod_positions.push((*chrom_id, false, start, end, mod_code))
+                }
             } else {
                 info!("skipping chrom {chrom_name}, not present in BAM header");
                 warned.insert(chrom_name.to_owned());
@@ -143,6 +126,6 @@ impl ValidateFromModbam {
         if mod_positions.is_empty() {
             bail!("zero valid positions parsed from BED file")
         }
-	Ok(mod_positions)
+        Ok(mod_positions)
     }
 }

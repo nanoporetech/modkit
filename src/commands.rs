@@ -28,7 +28,6 @@ use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
 use crate::motif_bed::motif_bed;
 use crate::pileup::subcommand::{DuplexModBamPileup, ModBamPileup};
-use crate::validate::subcommand::{ValidateFromModbam};
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
@@ -40,6 +39,7 @@ use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{calc_thresholds_per_base, Percentiles};
 use crate::util;
 use crate::util::{add_modkit_pg_records, get_targets, get_ticker, Region};
+use crate::validate::subcommand::ValidateFromModbam;
 use crate::writers::{
     MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
 };
