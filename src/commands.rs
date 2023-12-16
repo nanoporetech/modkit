@@ -28,6 +28,7 @@ use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
 use crate::motif_bed::motif_bed;
 use crate::pileup::subcommand::{DuplexModBamPileup, ModBamPileup};
+use crate::validate::subcommand::{ValidateFromModbam};
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
@@ -89,6 +90,9 @@ pub enum Commands {
     /// genomic motif positions. This command produces a bedMethyl file, the schema can be
     /// found in the online documentation.
     PileupHemi(DuplexModBamPileup),
+    /// Validate results from a set of mod-BAM files and associated BED files
+    /// containing the ground truth modified base status at reference positions.
+    Validate(ValidateFromModbam),
 }
 
 impl Commands {
@@ -105,6 +109,7 @@ impl Commands {
             Self::Repair(x) => x.run(),
             Self::Dmr(x) => x.run(),
             Self::PileupHemi(x) => x.run(),
+            Self::Validate(x) => x.run(),
         }
     }
 }
