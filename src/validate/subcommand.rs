@@ -10,7 +10,7 @@ use rust_htslib::bam::{self, Read};
 
 use crate::logging::init_logging;
 use crate::mod_base_code::ModCodeRepr;
-use crate::util::{get_targets, reader_is_bam, Region};
+use crate::util::{get_targets, get_ticker, reader_is_bam, Region};
 
 #[derive(Args)]
 pub struct ValidateFromModbam {
@@ -29,6 +29,9 @@ pub struct ValidateFromModbam {
 	value_names = ["BAM", "BED"]
     )]
     bam_and_bed: Vec<PathBuf>,
+    /// Hide the progress bar.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
     #[arg(long, alias = "log")]
@@ -43,14 +46,10 @@ impl ValidateFromModbam {
             let bed = &bam_and_bed[1];
 
             let header = bam::IndexedReader::from_path(&bam)
-		.map(|reader| {
-                    if !reader_is_bam(&reader) {
-			info!("\
-			    detected non-BAM input format, please consider using BAM, CRAM may be unstable\
-			    ");
-                    }
-                    reader.header().to_owned()
-		})?;
+		.map(|reader| {if !reader_is_bam(&reader) {info!(
+		    "detected non-BAM input format, please consider using \
+		     BAM, CRAM may be unstable"
+		);} reader.header().to_owned()})?;
             let tids = get_targets(&header, Option::<&Region>::None);
             let chrom_to_tid = tids
                 .iter()
@@ -58,7 +57,9 @@ impl ValidateFromModbam {
                     (reference_record.name.as_str(), reference_record.tid)
                 })
                 .collect::<HashMap<&str, u32>>();
-            let _mod_positions = Self::parse_mods_from_bed(bed, &chrom_to_tid);
+            let _mod_positions = Self::parse_mods_from_bed(
+		bed, &chrom_to_tid, self.suppress_progress,
+	    );
         }
         Ok(())
     }
@@ -66,6 +67,7 @@ impl ValidateFromModbam {
     pub fn parse_mods_from_bed(
         bed_fp: &PathBuf,
         chrom_to_target_id: &HashMap<&str, u32>,
+        suppress_pb: bool,
     ) -> anyhow::Result<Vec<(u32, bool, u64, u64, ModCodeRepr)>> {
         info!(
             "parsing BED at {}",
@@ -74,6 +76,12 @@ impl ValidateFromModbam {
 
         let fh = File::open(bed_fp)?;
         let mut mod_positions = Vec::new();
+        let lines_processed = get_ticker();
+        if suppress_pb {
+            lines_processed
+                .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
+        lines_processed.set_message("rows processed");
         let mut warned = HashSet::new();
 
         let reader = BufReader::new(fh);
@@ -122,10 +130,14 @@ impl ValidateFromModbam {
                 warned.insert(chrom_name.to_owned());
                 continue;
             }
+            lines_processed.inc(1);
         }
         if mod_positions.is_empty() {
             bail!("zero valid positions parsed from BED file")
         }
+        lines_processed.finish_and_clear();
+        info!("processed {} BED lines", lines_processed.position());
+
         Ok(mod_positions)
     }
 }
