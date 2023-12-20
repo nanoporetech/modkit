@@ -1,16 +1,103 @@
-use anyhow::bail;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use clap::Args;
 use log::info;
-use rust_htslib::bam::{self, Read};
+use rust_htslib::bam;
 
 use crate::logging::init_logging;
 use crate::mod_base_code::ModCodeRepr;
-use crate::util::{get_targets, get_ticker, reader_is_bam, Region};
+use crate::util::get_ticker;
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct ChromosomeStrand {
+    chromosome: String,
+    fwd_strand: bool,
+}
+
+fn parse_mod_bed_line(
+    line: &str,
+) -> Result<(ChromosomeStrand, ModCodeRepr, Vec<u32>), String> {
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    if fields.len() >= 6 {
+        let chromosome = fields[0].to_string();
+        let strand = fields[5].to_string();
+        let mod_code = fields[3].to_string();
+        let start: u32 = fields[1]
+            .parse()
+            .map_err(|e| format!("Error parsing start: {}", e))?;
+        let end: u32 = fields[2]
+            .parse()
+            .map_err(|e| format!("Error parsing end: {}", e))?;
+        let fwd_strand = match strand.as_str() {
+            "+" => true,
+            "-" => false,
+            _ => {
+                return Err(format!("Strand must be + or -. Found: {}", strand))
+            }
+        };
+        let positions = (start..end + 1).collect();
+        Ok((
+            ChromosomeStrand { chromosome, fwd_strand },
+            ModCodeRepr::parse(&mod_code).expect(concat!(
+                "Bad modified base code: ",
+                stringify!(mod_code)
+            )),
+            positions,
+        ))
+    } else {
+        Err("Invalid number of fields in BED line".to_string())
+    }
+}
+
+type ChromStrandNamePositions =
+    HashMap<ChromosomeStrand, HashMap<ModCodeRepr, Vec<u32>>>;
+
+fn parse_bed_file(
+    file_path: &PathBuf,
+    suppress_pb: bool,
+) -> Result<ChromStrandNamePositions, String> {
+    info!("parsing BED at {}", file_path.to_str().unwrap_or("invalid-UTF-8"));
+    let mut result = HashMap::new();
+    let lines_processed = get_ticker();
+    if suppress_pb {
+        lines_processed
+            .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+    }
+    lines_processed.set_message("rows processed");
+
+    if let Ok(file) = File::open(file_path) {
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            if let Ok((chrom_strand, mod_code, positions)) =
+                parse_mod_bed_line(&line.as_ref().unwrap())
+            {
+                result
+                    .entry(chrom_strand)
+                    .or_insert_with(HashMap::new)
+                    .entry(mod_code)
+                    .or_insert_with(Vec::new)
+                    .extend(positions);
+                lines_processed.inc(1);
+            } else {
+                return Err(format!(
+                    "Error parsing BED line: {:?}",
+                    line.unwrap()
+                ));
+            }
+        }
+        if result.is_empty() {
+            return Err("zero valid positions parsed from BED file".to_string());
+        }
+        lines_processed.finish_and_clear();
+        info!("processed {} BED lines", lines_processed.position());
+        return Ok(result);
+    } else {
+        return Err(format!("Error opening BED file: {:?}", file_path));
+    }
+}
 
 #[derive(Args)]
 pub struct ValidateFromModbam {
@@ -29,6 +116,9 @@ pub struct ValidateFromModbam {
 	value_names = ["BAM", "BED"]
     )]
     bam_and_bed: Vec<PathBuf>,
+    /// Number of threads to use
+    #[arg(short = 't', long, default_value_t = 4)]
+    threads: usize,
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
@@ -41,104 +131,43 @@ pub struct ValidateFromModbam {
 impl ValidateFromModbam {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+
         for bam_and_bed in self.bam_and_bed.chunks(2) {
             let bam = &bam_and_bed[0];
             let bed = &bam_and_bed[1];
 
-            let header = bam::IndexedReader::from_path(&bam).map(|reader| {
-                if !reader_is_bam(&reader) {
-                    info!(
-                        "detected non-BAM input format, please consider using \
-                         BAM, CRAM may be unstable"
-                    );
+            match parse_bed_file(bed, self.suppress_progress) {
+                Ok(mod_positions) => {
+                    // Print the result for demonstration
+                    for (chrom_strand, mod_positions) in &mod_positions {
+                        for (mod_code, positions) in mod_positions {
+                            println!(
+                                "{:?} - {:?}: {:?}",
+                                chrom_strand, mod_code, positions
+                            );
+                        }
+                    }
                 }
-                reader.header().to_owned()
-            })?;
-            let tids = get_targets(&header, Option::<&Region>::None);
-            let chrom_to_tid = tids
-                .iter()
-                .map(|reference_record| {
-                    (reference_record.name.as_str(), reference_record.tid)
-                })
-                .collect::<HashMap<&str, u32>>();
-            let _mod_positions = Self::parse_mods_from_bed(
-                bed,
-                &chrom_to_tid,
-                self.suppress_progress,
-            );
+                Err(error) => eprintln!("Error: {}", error),
+            }
+            let mut _bam_reader =
+                bam::Reader::from_path(&bam).expect("Failed to load BAM");
+            // loop over records
+            //for record in bam_reader.records() {
+            //    process_bam_record(
+            //        &record.expect("Error reading BAM record"),
+            //        mod_positions,
+            //    );
+            //}
         }
         Ok(())
     }
 
-    pub fn parse_mods_from_bed(
-        bed_fp: &PathBuf,
-        chrom_to_target_id: &HashMap<&str, u32>,
-        suppress_pb: bool,
-    ) -> anyhow::Result<Vec<(u32, bool, u64, u64, ModCodeRepr)>> {
-        info!("parsing BED at {}", bed_fp.to_str().unwrap_or("invalid-UTF-8"));
-
-        let fh = File::open(bed_fp)?;
-        let mut mod_positions = Vec::new();
-        let lines_processed = get_ticker();
-        if suppress_pb {
-            lines_processed
-                .set_draw_target(indicatif::ProgressDrawTarget::hidden());
-        }
-        lines_processed.set_message("rows processed");
-        let mut warned = HashSet::new();
-
-        let reader = BufReader::new(fh);
-        for line in
-            reader.lines().filter_map(|l| l.ok()).filter(|l| !l.is_empty())
-        {
-            let parts = line.split_ascii_whitespace().collect::<Vec<&str>>();
-            let chrom_name = parts[0];
-            if warned.contains(chrom_name) {
-                continue;
-            }
-            if parts.len() < 6 {
-                info!("improperly formatted BED line {line}");
-                continue;
-            }
-            let raw_start = &parts[1].parse::<u64>();
-            let raw_end = &parts[2].parse::<u64>();
-            let (start, end) = match (raw_start, raw_end) {
-                (Ok(start), Ok(end)) => (*start, *end),
-                _ => {
-                    info!("improperly formatted BED line {line}");
-                    continue;
-                }
-            };
-            let mod_code = ModCodeRepr::parse(parts[3])?;
-            let (fwd_strand, rev_strand) = match parts[5] {
-                "+" => (true, false),
-                "-" => (false, true),
-                "." => (true, true),
-                _ => {
-                    info!("improperly formatted strand field {}", &parts[5]);
-                    continue;
-                }
-            };
-            if let Some(chrom_id) = chrom_to_target_id.get(chrom_name) {
-                if fwd_strand {
-                    mod_positions.push((*chrom_id, true, start, end, mod_code))
-                }
-                if rev_strand {
-                    mod_positions.push((*chrom_id, false, start, end, mod_code))
-                }
-            } else {
-                info!("skipping chrom {chrom_name}, not present in BAM header");
-                warned.insert(chrom_name.to_owned());
-                continue;
-            }
-            lines_processed.inc(1);
-        }
-        if mod_positions.is_empty() {
-            bail!("zero valid positions parsed from BED file")
-        }
-        lines_processed.finish_and_clear();
-        info!("processed {} BED lines", lines_processed.position());
-
-        Ok(mod_positions)
-    }
+    /*pub fn process_bam_record(
+        record: &bam::Record,
+        mod_positions: ChromStrandNamePositions,
+    ) {
+        //mbi = ModBaseInfo::;
+        //ReadModBaseProfile;
+    }*/
 }
