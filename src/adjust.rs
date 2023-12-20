@@ -65,8 +65,10 @@ pub fn adjust_mod_probs(
                 }) {
                 Some(x) => Some(x),
                 None => {
-                    debug!("all base mod positions for record {record_name} and canonical \
-                        base {base} were filtered out");
+                    debug!(
+                        "all base mod positions for record {record_name} and \
+                         canonical base {base} were filtered out"
+                    );
                     None
                 }
             }

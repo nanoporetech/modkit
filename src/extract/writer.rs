@@ -82,60 +82,73 @@ impl PositionModCalls {
         );
         let mod_codes = mod_codes.into_iter().collect::<Vec<ModCodeRepr>>();
 
-        grouped.into_iter()
-            .fold(Vec::<Self>::new(), |mut acc, ((query_pos, strand, base), mod_profile)| {
-                let base_mod_probs = if mod_profile.iter().any(|x| x.inferred) {
-                    if mod_profile.len() != 1 {
-                        debug!("should have only 1 when line when mod is inferred, got {}. read: {read_id} pos: {query_pos}.", mod_profile.len());
-                    }
-                    BaseModProbs::new_inferred_canonical(&mod_codes)
-                } else {
-                    let mut probs = mod_profile
-                        .iter()
-                        .map(|x| {
-                            (x.raw_mod_code, x.q_mod)
-                        }).collect::<FxHashMap<ModCodeRepr, f32>>();
-                    for code in mod_codes.iter() {
-                        if !probs.contains_key(&code) {
-                            probs.insert(*code, 0f32);
-                        }
-                    }
+        grouped
+            .into_iter()
+            .fold(
+                Vec::<Self>::new(),
+                |mut acc, ((query_pos, strand, base), mod_profile)| {
+                    let base_mod_probs =
+                        if mod_profile.iter().any(|x| x.inferred) {
+                            if mod_profile.len() != 1 {
+                                debug!(
+                                    "should have only 1 when line when mod is \
+                                     inferred, got {}. read: {read_id} pos: \
+                                     {query_pos}.",
+                                    mod_profile.len()
+                                );
+                            }
+                            BaseModProbs::new_inferred_canonical(&mod_codes)
+                        } else {
+                            let mut probs = mod_profile
+                                .iter()
+                                .map(|x| (x.raw_mod_code, x.q_mod))
+                                .collect::<FxHashMap<ModCodeRepr, f32>>();
+                            for code in mod_codes.iter() {
+                                if !probs.contains_key(&code) {
+                                    probs.insert(*code, 0f32);
+                                }
+                            }
 
-                    BaseModProbs::new(probs, false)
-                };
-                let template = &mod_profile[0];
-                let ref_position = template.ref_position;
-                let num_clip_start = template.num_soft_clipped_start;
-                let num_clip_end = template.num_soft_clipped_end;
-                let q_base = template.q_base;
-                let kmer = template.query_kmer;
-                let alignment_strand = template.alignment_strand;
+                            BaseModProbs::new(probs, false)
+                        };
+                    let template = &mod_profile[0];
+                    let ref_position = template.ref_position;
+                    let num_clip_start = template.num_soft_clipped_start;
+                    let num_clip_end = template.num_soft_clipped_end;
+                    let q_base = template.q_base;
+                    let kmer = template.query_kmer;
+                    let alignment_strand = template.alignment_strand;
 
-                let pos_mod_calls = PositionModCalls::new(
-                    query_pos,
-                    ref_position,
-                    num_clip_start,
-                    num_clip_end,
-                    template.read_length,
-                    base_mod_probs,
-                    q_base,
-                    kmer,
-                    strand,
-                    alignment_strand,
-                    base
-                );
-                acc.push(pos_mod_calls);
+                    let pos_mod_calls = PositionModCalls::new(
+                        query_pos,
+                        ref_position,
+                        num_clip_start,
+                        num_clip_end,
+                        template.read_length,
+                        base_mod_probs,
+                        q_base,
+                        kmer,
+                        strand,
+                        alignment_strand,
+                        base,
+                    );
+                    acc.push(pos_mod_calls);
 
-                acc
-            })
+                    acc
+                },
+            )
             .into_iter()
             .sorted_by(|a, b| {
-                if a.alignment_strand.map(|s| s == Strand::Negative).unwrap_or(false) {
+                if a.alignment_strand
+                    .map(|s| s == Strand::Negative)
+                    .unwrap_or(false)
+                {
                     b.query_position.cmp(&a.query_position)
                 } else {
                     a.query_position.cmp(&b.query_position)
                 }
-            }).collect()
+            })
+            .collect()
     }
 
     fn within_alignment(&self) -> bool {

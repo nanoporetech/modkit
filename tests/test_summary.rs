@@ -43,10 +43,7 @@ fn test_summary_ignore() {
         .mod_call_counts
         .values()
         .flat_map(|mod_code_counts| {
-            mod_code_counts
-                .keys()
-                .map(|mc| *mc)
-                .collect::<Vec<BaseState>>()
+            mod_code_counts.keys().map(|mc| *mc).collect::<Vec<BaseState>>()
         })
         .collect::<HashSet<BaseState>>();
     let expected = HashSet::from([
@@ -60,10 +57,7 @@ fn test_summary_ignore() {
         .mod_call_counts
         .values()
         .flat_map(|mod_code_counts| {
-            mod_code_counts
-                .keys()
-                .map(|mc| *mc)
-                .collect::<Vec<BaseState>>()
+            mod_code_counts.keys().map(|mc| *mc).collect::<Vec<BaseState>>()
         })
         .collect::<HashSet<BaseState>>();
     let expected = HashSet::from([
@@ -92,14 +86,8 @@ fn test_summary_edge_filter() {
     .context("test_summary_edge_filter failed to make summary with edge filter")
     .unwrap();
     assert_eq!(
-        summary_w_edge_filter
-            .reads_with_mod_calls
-            .get(&DnaBase::C)
-            .unwrap(),
-        summary_wo_edge_filter
-            .reads_with_mod_calls
-            .get(&DnaBase::C)
-            .unwrap()
+        summary_w_edge_filter.reads_with_mod_calls.get(&DnaBase::C).unwrap(),
+        summary_wo_edge_filter.reads_with_mod_calls.get(&DnaBase::C).unwrap()
     );
     assert_eq!(
         summary_w_edge_filter.total_reads_used,
@@ -131,12 +119,13 @@ fn test_summary_edge_filter() {
     ])
     .context("test_summary_edge_filter failed to run adjust-mods")
     .unwrap();
-    let summary_on_adjusted = run_simple_summary(
-        adjusted_bam.to_str().unwrap(),
-        25,
-    )
-    .context("test_summary_edge_filter failed to make summary on adjusted bam")
-    .unwrap();
+    let summary_on_adjusted =
+        run_simple_summary(adjusted_bam.to_str().unwrap(), 25)
+            .context(
+                "test_summary_edge_filter failed to make summary on adjusted \
+                 bam",
+            )
+            .unwrap();
     assert_eq!(summary_w_edge_filter, summary_on_adjusted);
 }
 

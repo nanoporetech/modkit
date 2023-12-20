@@ -33,10 +33,7 @@ pub struct BedMethylWriter<T: Write> {
 
 impl<T: Write + Sized> BedMethylWriter<T> {
     pub fn new(buf_writer: BufWriter<T>, tabs_and_spaces: bool) -> Self {
-        Self {
-            buf_writer,
-            tabs_and_spaces,
-        }
+        Self { buf_writer, tabs_and_spaces }
     }
 
     #[inline]
@@ -319,11 +316,7 @@ impl PileupWriter<ModBasePileup> for BedGraphWriter {
                     let fh =
                         self.get_writer_for_modstrand(key, key_name, label);
                     let row = format!(
-                        "{}{tab}\
-                             {}{tab}\
-                             {}{tab}\
-                             {}{tab}\
-                             {}\n",
+                        "{}{tab}{}{tab}{}{tab}{}{tab}{}\n",
                         item.chrom_name,
                         pos,
                         pos + 1,
@@ -531,8 +524,10 @@ impl TsvWriter<File> {
 
 impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
     fn write(&mut self, item: ModSummary) -> AnyhowResult<u64> {
-        warn!("this output format will not be default in the next version, the table output \
-            (set with --table) will become default and this format will require the --tsv option"
+        warn!(
+            "this output format will not be default in the next version, the \
+             table output (set with --table) will become default and this \
+             format will require the --tsv option"
         );
         let mut report = String::new();
         let mod_called_bases = item.mod_bases();
@@ -787,12 +782,7 @@ impl PartitioningBedMethylWriter {
         let out_dir = dir_path.to_path_buf();
         let prefix = prefix.cloned();
         let router = FxHashMap::default();
-        Ok(Self {
-            out_dir,
-            prefix,
-            router,
-            tabs_and_spaces: !only_tabs,
-        })
+        Ok(Self { out_dir, prefix, router, tabs_and_spaces: !only_tabs })
     }
 
     fn get_writer_for_key(&mut self, key_name: &str) -> &mut BufWriter<File> {

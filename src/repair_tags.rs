@@ -26,15 +26,15 @@ pub struct RepairTags {
     /// Donor modBAM with original MM/ML tags. Must be sorted by read name.
     #[arg(long, short = 'd', alias = "donor")]
     donor_bam: PathBuf,
-    /// Acceptor modBAM with reads to have MM/ML base modification data projected
-    /// on to. Must be sorted by read name.
+    /// Acceptor modBAM with reads to have MM/ML base modification data
+    /// projected on to. Must be sorted by read name.
     #[arg(long, short = 'a', alias = "acceptor")]
     acceptor_bam: PathBuf,
     /// output modBAM location.
     #[arg(long, short = 'o', alias = "output")]
     output_bam: PathBuf,
-    /// File to write logs to, it is recommended to use this option as some reads
-    /// may be rejected and logged here.
+    /// File to write logs to, it is recommended to use this option as some
+    /// reads may be rejected and logged here.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
     /// The number of threads to use.
@@ -53,7 +53,10 @@ impl RepairTags {
         let threads_per_reader = std::cmp::max(reader_threads / 2, 1);
         let pool_threads =
             self.threads.checked_sub(reader_threads).unwrap_or(1);
-        debug!("assigning {threads_per_reader} to each reader and using {pool_threads} to process records");
+        debug!(
+            "assigning {threads_per_reader} to each reader and using \
+             {pool_threads} to process records"
+        );
 
         let (pair_snd, pair_rcv) = std::sync::mpsc::sync_channel(1000);
         let mut donor_records = bam::Reader::from_path(&self.donor_bam)?;
@@ -80,9 +83,8 @@ impl RepairTags {
         acceptor_ticker.set_message("~acceptor records processed");
         let repaired_ticker = master_progress.add(get_ticker());
         repaired_ticker.set_message("~records repaired");
-        let written_ticker = master_progress
-            .add(get_ticker())
-            .with_message("~records written");
+        let written_ticker =
+            master_progress.add(get_ticker()).with_message("~records written");
 
         std::thread::spawn(move || {
             let pair_iter = ZipRecordsIter::new(
@@ -252,7 +254,8 @@ impl<'a, T: Read> Iterator for ZipRecordsIter<'a, T> {
                 (Some(donor), Some(acceptor)) => {
                     match donor.qname().eq(acceptor.qname()) {
                         true => {
-                            // unwrap are safe because of the above match, advances acceptor on next
+                            // unwrap are safe because of the above match,
+                            // advances acceptor on next
                             // call to .next
                             let acceptor_record = std::mem::replace(
                                 &mut self.cur_acceptor_record,
@@ -266,7 +269,8 @@ impl<'a, T: Read> Iterator for ZipRecordsIter<'a, T> {
                             ));
                         }
                         false => {
-                            // advance donor record in attempt to find this acceptor
+                            // advance donor record in attempt to find this
+                            // acceptor
                             // todo consider logging?
                             let _ = std::mem::replace(
                                 &mut self.cur_donor_record,
@@ -302,16 +306,14 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
 
     let donor_seq = get_forward_sequence(&record_pair.donor).map_err(|e| {
         anyhow!(
-            "donor sequence for \
-        record {read_name} failed, {}",
+            "donor sequence for record {read_name} failed, {}",
             e.to_string()
         )
     })?;
     let acceptor_seq =
         get_forward_sequence(&record_pair.acceptor).map_err(|e| {
             anyhow!(
-                "acceptor sequence for \
-        record {read_name} failed, {}",
+                "acceptor sequence for record {read_name} failed, {}",
                 e.to_string()
             )
         })?;
@@ -321,10 +323,8 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
     }
     let matches = donor_seq.match_indices(&acceptor_seq);
 
-    let starts = matches
-        .into_iter()
-        .map(|(start, _)| start)
-        .collect::<Vec<usize>>();
+    let starts =
+        matches.into_iter().map(|(start, _)| start).collect::<Vec<usize>>();
     if starts.len() > 1 {
         bail!("multiple potential corrections found for {read_name}")
     } else if starts.is_empty() {
@@ -379,22 +379,18 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
         for tag in MM_TAGS.iter().chain(ML_TAGS.iter()) {
             let _ = repaired_record.remove_aux(tag.as_bytes());
         }
-        repaired_record
-            .push_aux(mm_style.as_bytes(), mm)
-            .map_err(|e| {
-                RunError::new_failed(format!(
-                    "failed to add MM tag, {}",
-                    e.to_string()
-                ))
-            })?;
-        repaired_record
-            .push_aux(ml_style.as_bytes(), ml)
-            .map_err(|e| {
-                RunError::new_failed(format!(
-                    "failed to add ML tag, {}",
-                    e.to_string()
-                ))
-            })?;
+        repaired_record.push_aux(mm_style.as_bytes(), mm).map_err(|e| {
+            RunError::new_failed(format!(
+                "failed to add MM tag, {}",
+                e.to_string()
+            ))
+        })?;
+        repaired_record.push_aux(ml_style.as_bytes(), ml).map_err(|e| {
+            RunError::new_failed(format!(
+                "failed to add ML tag, {}",
+                e.to_string()
+            ))
+        })?;
         Ok(repaired_record)
     }
 }

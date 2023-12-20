@@ -74,10 +74,8 @@ pub(super) fn get_reference_modified_base_positions(
                 }
             });
     });
-    let pos_bases = modified_bases
-        .iter()
-        .map(|b| b.char())
-        .collect::<FxHashSet<char>>();
+    let pos_bases =
+        modified_bases.iter().map(|b| b.char()).collect::<FxHashSet<char>>();
     let neg_bases = modified_bases
         .iter()
         .map(|b| b.complement().char())

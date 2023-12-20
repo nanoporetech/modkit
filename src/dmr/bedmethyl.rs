@@ -52,11 +52,7 @@ fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
     let (rest, _pct_methyl) = consume_float(rest)?;
     let (_rest, count_methylated) = consume_digit(rest)?;
 
-    let interval = Iv {
-        start,
-        stop,
-        val: (),
-    };
+    let interval = Iv { start, stop, val: () };
     Ok((
         rest,
         BedMethylLine::new(
@@ -72,14 +68,9 @@ fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
 
 impl BedMethylLine {
     pub fn parse(line: &str) -> anyhow::Result<Self> {
-        parse_bedmethyl_line(line)
-            .map(|(_, this)| this)
-            .map_err(|e| {
-                anyhow!(
-                    "failed to parse bedmethyl line {line}, {}",
-                    e.to_string()
-                )
-            })
+        parse_bedmethyl_line(line).map(|(_, this)| this).map_err(|e| {
+            anyhow!("failed to parse bedmethyl line {line}, {}", e.to_string())
+        })
     }
 
     pub fn start(&self) -> u64 {
@@ -144,17 +135,14 @@ mod bedmethylline_tests {
     use crate::position_filter::Iv;
 
     #[test]
+    #[rustfmt::skip]
     fn test_parse_bedmethyl_line() {
         for sep in ['\t', ' '] {
             let line = format!("chr20\t10034963\t10034964\tm,CG,0\t19\t-\t10034963\t10034964\t255,0,0\t19{sep}94.74{sep}18{sep}1{sep}0{sep}0{sep}1{sep}0{sep}2");
             let bm_line = BedMethylLine::parse(&line).unwrap();
             let start = 10034963;
             let stop = 10034964;
-            let iv = Iv {
-                start,
-                stop,
-                val: (),
-            };
+            let iv = Iv { start, stop, val: () };
             let expected = BedMethylLine::new(
                 "chr20".to_string(),
                 iv,
@@ -172,11 +160,7 @@ mod bedmethylline_tests {
             let bm_line = BedMethylLine::parse(&line).unwrap();
             let expected = BedMethylLine::new(
                 "oligo_1512_adapters".to_string(),
-                Iv {
-                    start: 9,
-                    stop: 10,
-                    val: (),
-                },
+                Iv { start: 9, stop: 10, val: () },
                 'h'.into(),
                 '+'.try_into().unwrap(),
                 2,
@@ -187,24 +171,21 @@ mod bedmethylline_tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn test_parse_bedmethyl_line_chebi_code() {
         for sep in ['\t', ' '] {
-            let line = format!("oligo_1512_adapters\t9\t10\t76792\t4\t+\t9\t10\t255,0,0\t4{sep}50.00{sep}2{sep}1{sep}1{sep}0{sep}0{sep}2{sep}0 ");
+            let line = format!("oligo_1512_adapters\t9\t10\t76792\t4\t+\t9\t10\t255,0,0\t4{sep}50.00{sep}2{sep}1{sep}1{sep}0{sep}0{sep}2{sep}0");
             let bm_line = BedMethylLine::parse(&line).unwrap();
             let expected = BedMethylLine::new(
                 "oligo_1512_adapters".to_string(),
-                Iv {
-                    start: 9,
-                    stop: 10,
-                    val: (),
-                },
+                Iv { start: 9, stop: 10, val: () },
                 76792u32.into(),
                 '+'.try_into().unwrap(),
                 2,
                 4,
             );
             assert_eq!(bm_line, expected);
-            let line = format!("oligo_1512_adapters\t9\t10\t76792,CG,0\t4\t+\t9\t10\t255,0,0\t4{sep}50.00{sep}2{sep}1{sep}1{sep}0{sep}0{sep}2{sep}0 ");
+            let line = format!("oligo_1512_adapters\t9\t10\t76792,CG,0\t4\t+\t9\t10\t255,0,0\t4{sep}50.00{sep}2{sep}1{sep}1{sep}0{sep}0{sep}2{sep}0");
             let bm_line = BedMethylLine::parse(&line).unwrap();
             assert_eq!(bm_line, expected);
         }

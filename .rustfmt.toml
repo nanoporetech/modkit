@@ -1,1 +1,7 @@
 max_width = 80
+comment_width = 80
+wrap_comments = true
+use_small_heuristics = "Max"
+format_strings = true
+# ideally use this, but requires some larger refactors
+#error_on_line_overflow = truemax_width = 80

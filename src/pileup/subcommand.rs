@@ -40,21 +40,22 @@ pub struct ModBamPileup {
     // running args
     /// Input BAM, should be sorted and have associated index available.
     in_bam: PathBuf,
-    /// Output file (or directory with --bedgraph option) to write results into.
-    /// Specify "-" or "stdout" to direct output to stdout.
+    /// Output file (or directory with --bedgraph option) to write results
+    /// into. Specify "-" or "stdout" to direct output to stdout.
     out_bed: String,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Process only the specified region of the BAM when performing pileup.
-    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas are allowed.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas are
+    /// allowed.
     #[arg(long)]
     region: Option<String>,
-    /// Maximum number of records to use when calculating pileup. This argument is
-    /// passed to the pileup engine. If you have high depth data, consider
-    /// increasing this value substantially. Must be less than 2147483647 or
-    /// an error will be raised.
+    /// Maximum number of records to use when calculating pileup. This argument
+    /// is passed to the pileup engine. If you have high depth data,
+    /// consider increasing this value substantially. Must be less than
+    /// 2147483647 or an error will be raised.
     #[arg(long, default_value_t = 8000, hide_short_help = true)]
     max_depth: u32,
 
@@ -72,11 +73,13 @@ pub struct ModBamPileup {
     )]
     interval_size: u32,
 
-    /// Break contigs into chunks containing this many intervals (see `interval_size`).
-    /// This option can be used to help prevent excessive memory usage, usually with
-    /// no performance penalty. By default, modkit will set this value to 1.5x the number
-    /// of threads specified, so if 4 threads are specified the chunk_size will be 6.
-    /// A warning will be shown if this option is less than the number of threads specified.
+    /// Break contigs into chunks containing this many intervals (see
+    /// `interval_size`). This option can be used to help prevent excessive
+    /// memory usage, usually with no performance penalty. By default,
+    /// modkit will set this value to 1.5x the number of threads specified,
+    /// so if 4 threads are specified the chunk_size will be 6.
+    /// A warning will be shown if this option is less than the number of
+    /// threads specified.
     #[arg(long, hide_short_help = true)]
     chunk_size: Option<usize>,
     /// Hide the progress bar.
@@ -84,11 +87,12 @@ pub struct ModBamPileup {
     suppress_progress: bool,
 
     // sampling args
-    /// Sample this many reads when estimating the filtering threshold. Reads will
-    /// be sampled evenly across aligned genome. If a region is specified, either with
-    /// the --region option or the --sample-region option, then reads will be sampled
-    /// evenly across the region given. This option is useful for large BAM files.
-    /// In practice, 10-50 thousand reads is sufficient to estimate the model output
+    /// Sample this many reads when estimating the filtering threshold. Reads
+    /// will be sampled evenly across aligned genome. If a region is
+    /// specified, either with the --region option or the --sample-region
+    /// option, then reads will be sampled evenly across the region given.
+    /// This option is useful for large BAM files. In practice, 10-50
+    /// thousand reads is sufficient to estimate the model output
     /// distribution and determine the filtering threshold.
     #[arg(
         group = "sampling_options",
@@ -98,9 +102,9 @@ pub struct ModBamPileup {
     )]
     num_reads: usize,
     /// Sample this fraction of the reads when estimating the pass-threshold.
-    /// In practice, 10-100 thousand reads is sufficient to estimate the model output
-    /// distribution and determine the filtering threshold. See filtering.md for
-    /// details on filtering.
+    /// In practice, 10-100 thousand reads is sufficient to estimate the model
+    /// output distribution and determine the filtering threshold. See
+    /// filtering.md for details on filtering.
     #[arg(
         group = "sampling_options",
         short = 'f',
@@ -108,7 +112,8 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     sampling_frac: Option<f64>,
-    /// Set a random seed for deterministic running, the default is non-deterministic.
+    /// Set a random seed for deterministic running, the default is
+    /// non-deterministic.
     #[arg(
         long,
         conflicts_with = "num_reads",
@@ -121,8 +126,8 @@ pub struct ModBamPileup {
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
     /// Filter out modified base calls where the probability of the predicted
-    /// variant is below this confidence percentile. For example, 0.1 will filter
-    /// out the 10% lowest confidence modification calls.
+    /// variant is below this confidence percentile. For example, 0.1 will
+    /// filter out the 10% lowest confidence modification calls.
     #[arg(
         group = "thresholds",
         short = 'p',
@@ -131,15 +136,16 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     filter_percentile: f32,
-    /// Specify the filter threshold globally or per-base. Global filter threshold
-    /// can be specified with by a decimal number (e.g. 0.75). Per-base thresholds
-    /// can be specified by colon-separated values, for example C:0.75 specifies a
-    /// threshold value of 0.75 for cytosine modification calls. Additional
-    /// per-base thresholds can be specified by repeating the option: for example
-    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
-    /// base option and a default for all other bases with:
-    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
-    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
+    /// Specify the filter threshold globally or per-base. Global filter
+    /// threshold can be specified with by a decimal number (e.g. 0.75).
+    /// Per-base thresholds can be specified by colon-separated values, for
+    /// example C:0.75 specifies a threshold value of 0.75 for cytosine
+    /// modification calls. Additional per-base thresholds can be specified
+    /// by repeating the option: for example --filter-threshold C:0.75
+    /// --filter-threshold A:0.70 or specify a single base option and a
+    /// default for all other bases with: --filter-threshold A:0.70
+    /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
+    /// adenine and 0.9 for all other base modification calls.
     #[arg(
     long,
     group = "thresholds",
@@ -147,11 +153,12 @@ pub struct ModBamPileup {
     alias = "pass_threshold"
     )]
     filter_threshold: Option<Vec<String>>,
-    /// Specify a passing threshold to use for a base modification, independent of the
-    /// threshold for the primary sequence base or the default. For example, to set
-    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
-    /// threshold will still be estimated as usual and used for canonical cytosine and
-    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// Specify a passing threshold to use for a base modification, independent
+    /// of the threshold for the primary sequence base or the default. For
+    /// example, to set the pass threshold for 5hmC to 0.8 use
+    /// `--mod-threshold h:0.8`. The pass threshold will still be estimated
+    /// as usual and used for canonical cytosine and other modifications
+    /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
     #[arg(
     long,
@@ -159,14 +166,15 @@ pub struct ModBamPileup {
     action = clap::ArgAction::Append
     )]
     mod_thresholds: Option<Vec<String>>,
-    /// Specify a region for sampling reads from when estimating the threshold probability.
-    /// If this option is not provided, but --region is provided, the genomic interval
-    /// passed to --region will be used.
+    /// Specify a region for sampling reads from when estimating the threshold
+    /// probability. If this option is not provided, but --region is
+    /// provided, the genomic interval passed to --region will be used.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     sample_region: Option<String>,
-    /// Interval chunk size in base pairs to process concurrently when estimating the threshold
-    /// probability, can be larger than the pileup processing interval.
+    /// Interval chunk size in base pairs to process concurrently when
+    /// estimating the threshold probability, can be larger than the pileup
+    /// processing interval.
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
     /// BED file that will restrict threshold estimation and pileup results to
@@ -183,18 +191,19 @@ pub struct ModBamPileup {
     include_unmapped: bool,
 
     // collapsing and combining args
-    /// Ignore a modified base class  _in_situ_ by redistributing base modification
-    /// probability equally across other options. For example, if collapsing 'h',
-    /// with 'm' and canonical options, half of the probability of 'h' will be added to
-    /// both 'm' and 'C'. A full description of the methods can be found in
-    /// collapse.md.
+    /// Ignore a modified base class  _in_situ_ by redistributing base
+    /// modification probability equally across other options. For example,
+    /// if collapsing 'h', with 'm' and canonical options, half of the
+    /// probability of 'h' will be added to both 'm' and 'C'. A full
+    /// description of the methods can be found in collapse.md.
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<String>,
     /// Force allow implicit-canonical mode. By default modkit does not allow
-    /// pileup with the implicit mode (e.g. C+m, no '.' or '?'). The `update-tags`
-    /// subcommand is provided to update tags to the new mode. This option allows
-    /// the interpretation of implicit mode tags: residues without modified
-    /// base probability will be interpreted as being the non-modified base.
+    /// pileup with the implicit mode (e.g. C+m, no '.' or '?'). The
+    /// `update-tags` subcommand is provided to update tags to the new
+    /// mode. This option allows the interpretation of implicit mode tags:
+    /// residues without modified base probability will be interpreted as
+    /// being the non-modified base.
     #[arg(
         long,
         hide_short_help = true,
@@ -203,17 +212,19 @@ pub struct ModBamPileup {
     )]
     force_allow_implicit: bool,
 
-    /// Output pileup counts for only sequence motifs provided. The first argument should be the
-    /// sequence motif and the second argument is the 0-based offset to the base to pileup
-    /// base modification counts for. For example: --motif CGCG 0 indicates to pileup counts
-    /// for the first C on the top strand and the last C (complement to G) on
+    /// Output pileup counts for only sequence motifs provided. The first
+    /// argument should be the sequence motif and the second argument is
+    /// the 0-based offset to the base to pileup base modification counts
+    /// for. For example: --motif CGCG 0 indicates to pileup counts for the
+    /// first C on the top strand and the last C (complement to G) on
     /// the bottom strand. The --cpg argument is short hand for --motif CG 0.
     ///
-    /// This argument can be passed multiple times. When more than one motif is used,
-    /// the resulting output BED file will indicate the motif in the "name"
-    /// field as <mod_code>,<motif>,<offset>. For example, given `--motif CGCG 2 --motif CG 0`
-    /// there will be output lines with name fields such as "m,CG,0" and "m,CGCG,2". To
-    /// use this option with `--combine-strands`, all motifs must be reverse-complement
+    /// This argument can be passed multiple times. When more than one motif is
+    /// used, the resulting output BED file will indicate the motif in the
+    /// "name" field as <mod_code>,<motif>,<offset>. For example, given
+    /// `--motif CGCG 2 --motif CG 0` there will be output lines with name
+    /// fields such as "m,CG,0" and "m,CGCG,2". To use this option with
+    /// `--combine-strands`, all motifs must be reverse-complement
     /// palindromic or an error will be raised.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
     motif: Option<Vec<String>>,
@@ -234,17 +245,17 @@ pub struct ModBamPileup {
     )]
     mask: bool,
     /// Optional preset options for specific applications.
-    /// traditional: Prepares bedMethyl analogous to that generated from other technologies
-    /// for the analysis of 5mC modified bases. Shorthand for --cpg --combine-strands
-    /// --ignore h.
+    /// traditional: Prepares bedMethyl analogous to that generated from other
+    /// technologies for the analysis of 5mC modified bases. Shorthand for
+    /// --cpg --combine-strands --ignore h.
     #[arg(
     long,
     requires = "reference_fasta",
     conflicts_with_all = ["combine_mods", "cpg", "combine_strands", "ignore", "motif"],
     )]
     preset: Option<Presets>,
-    /// Combine base modification calls, all counts of modified bases are summed together. See
-    /// collapse.md for details.
+    /// Combine base modification calls, all counts of modified bases are
+    /// summed together. See collapse.md for details.
     #[arg(
         long,
         default_value_t = false,
@@ -252,21 +263,24 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     combine_mods: bool,
-    /// When performing motif analysis (such as CpG), sum the counts from the positive and
-    /// negative strands into the counts for the positive strand position.
+    /// When performing motif analysis (such as CpG), sum the counts from the
+    /// positive and negative strands into the counts for the positive
+    /// strand position.
     #[arg(long, default_value_t = false)]
     combine_strands: bool,
-    /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
-    /// base modification calls from the start and end of the reads. For example, 4,8 will
-    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    /// Discard base modification calls that are this many bases from the start
+    /// or the end of the read. Two comma-separated values may be provided
+    /// to asymmetrically filter out base modification calls from the start
+    /// and end of the reads. For example, 4,8 will filter out base
+    /// modification calls in the first 4 and last 8 bases of the read.
     #[arg(long, hide_short_help = true)]
     edge_filter: Option<String>,
-    /// Invert the edge filter, instead of filtering out base modification calls at the ends
-    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
-    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
-    /// bases of the read, using this flag will keep only base modification calls in the first
-    /// 4 and last 8 bases.
+    /// Invert the edge filter, instead of filtering out base modification
+    /// calls at the ends of reads, only _keep_ base modification calls at
+    /// the ends of reads. E.g. if usually, "4,8" would remove (i.e. filter
+    /// out) base modification calls in the first 4 and last 8 bases of the
+    /// read, using this flag will keep only base modification calls in the
+    /// first 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
 
@@ -285,9 +299,9 @@ pub struct ModBamPileup {
     only_tabs: bool,
     /// Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html.
     /// For this setting, specify a directory for output files to be make in.
-    /// Two files for each modification will be produced, one for the positive strand
-    /// and one for the negative strand. So for 5mC (m) and 5hmC (h) there will be 4 files
-    /// produced.
+    /// Two files for each modification will be produced, one for the positive
+    /// strand and one for the negative strand. So for 5mC (m) and 5hmC (h)
+    /// there will be 4 files produced.
     #[arg(
         long,
         conflicts_with = "only_tabs",
@@ -295,14 +309,14 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     bedgraph: bool,
-    /// Prefix to prepend on bedgraph output file names. Without this option the files
-    /// will be <mod_code>_<strand>.bedgraph
+    /// Prefix to prepend on bedgraph output file names. Without this option
+    /// the files will be <mod_code>_<strand>.bedgraph
     #[arg(long)]
     prefix: Option<String>,
-    /// Partition output into multiple bedMethyl files based on tag-value pairs. The output
-    /// will be multiple bedMethyl files with the format
-    /// `<prefix>_<tag_value_1>_<tag_value_2>_<tag_value_n>.bed` prefix is optional and set
-    /// with the `--prefix` flag.
+    /// Partition output into multiple bedMethyl files based on tag-value
+    /// pairs. The output will be multiple bedMethyl files with the format
+    /// `<prefix>_<tag_value_1>_<tag_value_2>_<tag_value_n>.bed` prefix is
+    /// optional and set with the `--prefix` flag.
     #[arg(long)]
     partition_tag: Option<Vec<String>>,
 }
@@ -311,12 +325,14 @@ impl ModBamPileup {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         // do this first so we fail when the file isn't readable
-        let header = bam::IndexedReader::from_path(&self.in_bam)
-            .map(|reader| {
+        let header =
+            bam::IndexedReader::from_path(&self.in_bam).map(|reader| {
                 if !reader_is_bam(&reader) {
-                    info!("\
-                    detected non-BAM input format, please consider using BAM, CRAM may be unstable\
-                    ");
+                    info!(
+                        "\
+                    detected non-BAM input format, please consider using BAM, \
+                         CRAM may be unstable"
+                    );
                 }
                 reader.header().to_owned()
             })?;
@@ -375,8 +391,8 @@ impl ModBamPileup {
                 )
             })
             .transpose()?;
-        // use the path here instead of passing the reader directly to avoid potentially
-        // changing mutable internal state of the reader.
+        // use the path here instead of passing the reader directly to avoid
+        // potentially changing mutable internal state of the reader.
         IdxStats::check_any_mapped_reads(
             &self.in_bam,
             region.as_ref(),
@@ -385,19 +401,22 @@ impl ModBamPileup {
         .context(
             "\
             did not find any mapped reads, perform alignment first or use \
-            modkit extract and/or modkit summary to inspect unaligned modBAMs",
+             modkit extract and/or modkit summary to inspect unaligned modBAMs",
         )?;
         let chunk_size = if let Some(chunk_size) = self.chunk_size {
             if chunk_size < self.threads {
-                warn!("chunk size {chunk_size} is less than number of threads ({}), \
-                this will limit parallelism", self.threads);
+                warn!(
+                    "chunk size {chunk_size} is less than number of threads \
+                     ({}), this will limit parallelism",
+                    self.threads
+                );
             }
             chunk_size
         } else {
             let cs = (self.threads as f32 * 1.5).floor() as usize;
             info!(
-                "calculated chunk size: {cs}, interval size {}, \
-            processing {} positions concurrently",
+                "calculated chunk size: {cs}, interval size {}, processing {} \
+                 positions concurrently",
                 self.interval_size,
                 cs * self.interval_size as usize
             );
@@ -467,7 +486,8 @@ impl ModBamPileup {
             None
         };
 
-        // setup the writer here so we fail before doing any work (if there are problems).
+        // setup the writer here so we fail before doing any work (if there are
+        // problems).
         let out_fp_str = self.out_bed.clone();
         let motif_labels = regex_motifs
             .as_ref()
@@ -510,13 +530,16 @@ impl ModBamPileup {
             .build()
             .with_context(|| "failed to make threadpool")?;
         let (motif_locations, tids) = if let Some(regex_motifs) = regex_motifs {
-            let fasta_fp = self
-                .reference_fasta
-                .as_ref()
-                .ok_or(anyhow!("reference fasta is required for using --motif or --cpg options"))?;
+            let fasta_fp = self.reference_fasta.as_ref().ok_or(anyhow!(
+                "reference fasta is required for using --motif or --cpg \
+                 options"
+            ))?;
             if combine_strands {
                 if regex_motifs.iter().any(|rm| !rm.is_palendrome()) {
-                    bail!("cannot combine strands with a motif that is not a palindrome")
+                    bail!(
+                        "cannot combine strands with a motif that is not a \
+                         palindrome"
+                    )
                 }
                 debug!("combining + and - strand counts");
             }
@@ -596,25 +619,37 @@ impl ModBamPileup {
                 let base = base.char();
                 match (threshold * 100f32).ceil() as usize {
                     0..=60 => error!(
-                "Threshold of {threshold} for base {base} is very low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."),
+                        "Threshold of {threshold} for base {base} is very \
+                         low. Consider increasing the filter-percentile or \
+                         specifying a higher threshold."
+                    ),
                     61..=70 => warn!(
-                "Threshold of {threshold} for base {base} is low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."
-            ),
-                    _ => info!("Using filter threshold {} for {base}.", threshold),
+                        "Threshold of {threshold} for base {base} is low. \
+                         Consider increasing the filter-percentile or \
+                         specifying a higher threshold."
+                    ),
+                    _ => info!(
+                        "Using filter threshold {} for {base}.",
+                        threshold
+                    ),
                 }
             }
             for (base, threshold) in threshold_caller.iter_mod_thresholds() {
                 match (threshold * 100f32).ceil() as usize {
                     0..=60 => error!(
-                "Threshold of {threshold} for mod code {base} is very low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."),
+                        "Threshold of {threshold} for mod code {base} is very \
+                         low. Consider increasing the filter-percentile or \
+                         specifying a higher threshold."
+                    ),
                     61..=70 => warn!(
-                "Threshold of {threshold} for mod code {base} is low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."
-            ),
-                    _ => info!("Using filter threshold {} for mod code {base}.", threshold),
+                        "Threshold of {threshold} for mod code {base} is low. \
+                         Consider increasing the filter-percentile or \
+                         specifying a higher threshold."
+                    ),
+                    _ => info!(
+                        "Using filter threshold {} for mod code {base}.",
+                        threshold
+                    ),
                 }
             }
         }
@@ -755,8 +790,10 @@ impl ModBamPileup {
         write_progress.finish_and_clear();
         processed_reads.finish_and_clear();
         skipped_reads.finish_and_clear();
-        info!("Done, processed {rows_processed} rows. Processed ~{n_processed_reads} reads and \
-            skipped {n_skipped_message}.");
+        info!(
+            "Done, processed {rows_processed} rows. Processed \
+             ~{n_processed_reads} reads and skipped {n_skipped_message}."
+        );
         Ok(())
     }
 }
@@ -772,21 +809,23 @@ pub struct DuplexModBamPileup {
     // running args
     /// Input BAM, should be sorted and have associated index available.
     in_bam: PathBuf,
-    /// Output file to write results into. Will write to stdout if not provided.
+    /// Output file to write results into. Will write to stdout if not
+    /// provided.
     #[arg(short = 'o', long)]
     out_bed: Option<PathBuf>,
-    /// Aggregate double-stranded base modifications for CpG dinucleotides. This flag is short-hand
-    /// for --motif CG 0.
+    /// Aggregate double-stranded base modifications for CpG dinucleotides.
+    /// This flag is short-hand for --motif CG 0.
     #[arg(long, group = "motif_options", default_value_t = false)]
     cpg: bool,
 
-    /// Specify the sequence motif to pileup double-stranded base modification pattern counts for.
-    /// The first argument should be the sequence motif and the second argument is the 0-based
-    /// offset to the base to pileup base modification counts for. For example:
-    /// --motif CG 0 indicates to generate pattern counts for the C on the top strand
-    /// and the following C (opposite to G) on the negative strand. The motif must be
-    /// reverse-complement palindromic or an error will be raised. See the documentation for
-    /// more examples and details.
+    /// Specify the sequence motif to pileup double-stranded base modification
+    /// pattern counts for. The first argument should be the sequence motif
+    /// and the second argument is the 0-based offset to the base to pileup
+    /// base modification counts for. For example: --motif CG 0 indicates
+    /// to generate pattern counts for the C on the top strand
+    /// and the following C (opposite to G) on the negative strand. The motif
+    /// must be reverse-complement palindromic or an error will be raised.
+    /// See the documentation for more examples and details.
     #[arg(long, group = "motif_options", num_args = 2)]
     motif: Option<Vec<String>>,
     /// Reference sequence in FASTA format.
@@ -797,13 +836,14 @@ pub struct DuplexModBamPileup {
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Process only the specified region of the BAM when performing pileup.
-    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas are allowed.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas are
+    /// allowed.
     #[arg(long)]
     region: Option<String>,
-    /// Maximum number of records to use when calculating pileup. This argument is
-    /// passed to the pileup engine. If you have high depth data, consider
-    /// increasing this value substantially. Must be less than 2147483647 or
-    /// an error will be raised.
+    /// Maximum number of records to use when calculating pileup. This argument
+    /// is passed to the pileup engine. If you have high depth data,
+    /// consider increasing this value substantially. Must be less than
+    /// 2147483647 or an error will be raised.
     #[arg(long, default_value_t = 8000, hide_short_help = true)]
     max_depth: u32,
 
@@ -821,11 +861,13 @@ pub struct DuplexModBamPileup {
     )]
     interval_size: u32,
 
-    /// Break contigs into chunks containing this many intervals (see `interval_size`).
-    /// This option can be used to help prevent excessive memory usage, usually with
-    /// no performance penalty. By default, modkit will set this value to 1.5x the number
-    /// of threads specified, so if 4 threads are specified the chunk_size will be 6.
-    /// A warning will be shown if this option is less than the number of threads specified.
+    /// Break contigs into chunks containing this many intervals (see
+    /// `interval_size`). This option can be used to help prevent excessive
+    /// memory usage, usually with no performance penalty. By default,
+    /// modkit will set this value to 1.5x the number of threads specified,
+    /// so if 4 threads are specified the chunk_size will be 6.
+    /// A warning will be shown if this option is less than the number of
+    /// threads specified.
     #[arg(long, hide_short_help = true)]
     chunk_size: Option<usize>,
     /// Hide the progress bar.
@@ -833,11 +875,12 @@ pub struct DuplexModBamPileup {
     suppress_progress: bool,
 
     // sampling args
-    /// Sample this many reads when estimating the filtering threshold. Reads will
-    /// be sampled evenly across aligned genome. If a region is specified, either with
-    /// the --region option or the --sample-region option, then reads will be sampled
-    /// evenly across the region given. This option is useful for large BAM files.
-    /// In practice, 10-50 thousand reads is sufficient to estimate the model output
+    /// Sample this many reads when estimating the filtering threshold. Reads
+    /// will be sampled evenly across aligned genome. If a region is
+    /// specified, either with the --region option or the --sample-region
+    /// option, then reads will be sampled evenly across the region given.
+    /// This option is useful for large BAM files. In practice, 10-50
+    /// thousand reads is sufficient to estimate the model output
     /// distribution and determine the filtering threshold.
     #[arg(
         group = "sampling_options",
@@ -846,10 +889,10 @@ pub struct DuplexModBamPileup {
         default_value_t = 10_042
     )]
     num_reads: usize,
-    /// Sample this fraction of the reads when estimating the filter-percentile.
-    /// In practice, 50-100 thousand reads is sufficient to estimate the model output
-    /// distribution and determine the filtering threshold. See filtering.md for
-    /// details on filtering.
+    /// Sample this fraction of the reads when estimating the
+    /// filter-percentile. In practice, 50-100 thousand reads is sufficient
+    /// to estimate the model output distribution and determine the
+    /// filtering threshold. See filtering.md for details on filtering.
     #[arg(
         group = "sampling_options",
         short = 'f',
@@ -857,7 +900,8 @@ pub struct DuplexModBamPileup {
         hide_short_help = true
     )]
     sampling_frac: Option<f64>,
-    /// Set a random seed for deterministic running, the default is non-deterministic.
+    /// Set a random seed for deterministic running, the default is
+    /// non-deterministic.
     #[arg(
         long,
         conflicts_with = "num_reads",
@@ -870,8 +914,8 @@ pub struct DuplexModBamPileup {
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
     /// Filter out modified base calls where the probability of the predicted
-    /// variant is below this confidence percentile. For example, 0.1 will filter
-    /// out the 10% lowest confidence modification calls.
+    /// variant is below this confidence percentile. For example, 0.1 will
+    /// filter out the 10% lowest confidence modification calls.
     #[arg(
         group = "thresholds",
         short = 'p',
@@ -880,15 +924,16 @@ pub struct DuplexModBamPileup {
         hide_short_help = true
     )]
     filter_percentile: f32,
-    /// Specify the filter threshold globally or per-base. Global filter threshold
-    /// can be specified with by a decimal number (e.g. 0.75). Per-base thresholds
-    /// can be specified by colon-separated values, for example C:0.75 specifies a
-    /// threshold value of 0.75 for cytosine modification calls. Additional
-    /// per-base thresholds can be specified by repeating the option: for example
-    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
-    /// base option and a default for all other bases with:
-    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
-    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
+    /// Specify the filter threshold globally or per-base. Global filter
+    /// threshold can be specified with by a decimal number (e.g. 0.75).
+    /// Per-base thresholds can be specified by colon-separated values, for
+    /// example C:0.75 specifies a threshold value of 0.75 for cytosine
+    /// modification calls. Additional per-base thresholds can be specified
+    /// by repeating the option: for example --filter-threshold C:0.75
+    /// --filter-threshold A:0.70 or specify a single base option and a
+    /// default for all other bases with: --filter-threshold A:0.70
+    /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
+    /// adenine and 0.9 for all other base modification calls.
     #[arg(
     long,
     group = "thresholds",
@@ -896,11 +941,12 @@ pub struct DuplexModBamPileup {
     alias = "pass_threshold"
     )]
     filter_threshold: Option<Vec<String>>,
-    /// Specify a passing threshold to use for a base modification, independent of the
-    /// threshold for the primary sequence base or the default. For example, to set
-    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
-    /// threshold will still be estimated as usual and used for canonical cytosine and
-    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// Specify a passing threshold to use for a base modification, independent
+    /// of the threshold for the primary sequence base or the default. For
+    /// example, to set the pass threshold for 5hmC to 0.8 use
+    /// `--mod-threshold h:0.8`. The pass threshold will still be estimated
+    /// as usual and used for canonical cytosine and other modifications
+    /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
     #[arg(
     long,
@@ -908,14 +954,15 @@ pub struct DuplexModBamPileup {
     action = clap::ArgAction::Append
     )]
     mod_thresholds: Option<Vec<String>>,
-    /// Specify a region for sampling reads from when estimating the threshold probability.
-    /// If this option is not provided, but --region is provided, the genomic interval
-    /// passed to --region will be used.
+    /// Specify a region for sampling reads from when estimating the threshold
+    /// probability. If this option is not provided, but --region is
+    /// provided, the genomic interval passed to --region will be used.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     sample_region: Option<String>,
-    /// Interval chunk size in base pairs to process concurrently when estimating the threshold
-    /// probability, can be larger than the pileup processing interval.
+    /// Interval chunk size in base pairs to process concurrently when
+    /// estimating the threshold probability, can be larger than the pileup
+    /// processing interval.
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
     /// BED file that will restrict threshold estimation and pileup results to
@@ -932,18 +979,19 @@ pub struct DuplexModBamPileup {
     include_unmapped: bool,
 
     // collapsing and combining args
-    /// Ignore a modified base class  _in_situ_ by redistributing base modification
-    /// probability equally across other options. For example, if collapsing 'h',
-    /// with 'm' and canonical options, half of the probability of 'h' will be added to
-    /// both 'm' and 'C'. A full description of the methods can be found in
-    /// collapse.md.
+    /// Ignore a modified base class  _in_situ_ by redistributing base
+    /// modification probability equally across other options. For example,
+    /// if collapsing 'h', with 'm' and canonical options, half of the
+    /// probability of 'h' will be added to both 'm' and 'C'. A full
+    /// description of the methods can be found in collapse.md.
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<String>,
     /// Force allow implicit-canonical mode. By default modkit does not allow
-    /// pileup with the implicit mode (e.g. C+m, no '.' or '?'). The `update-tags`
-    /// subcommand is provided to update tags to the new mode. This option allows
-    /// the interpretation of implicit mode tags: residues without modified
-    /// base probability will be interpreted as being the non-modified base.
+    /// pileup with the implicit mode (e.g. C+m, no '.' or '?'). The
+    /// `update-tags` subcommand is provided to update tags to the new
+    /// mode. This option allows the interpretation of implicit mode tags:
+    /// residues without modified base probability will be interpreted as
+    /// being the non-modified base.
     #[arg(
         long,
         hide_short_help = true,
@@ -961,8 +1009,8 @@ pub struct DuplexModBamPileup {
         hide_short_help = true
     )]
     mask: bool,
-    /// Combine base modification calls, all counts of modified bases are summed together. See
-    /// collapse.md for details.
+    /// Combine base modification calls, all counts of modified bases are
+    /// summed together. See collapse.md for details.
     #[arg(
         long,
         default_value_t = false,
@@ -970,17 +1018,19 @@ pub struct DuplexModBamPileup {
         hide_short_help = true
     )]
     combine_mods: bool,
-    /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
-    /// base modification calls from the start and end of the reads. For example, 4,8 will
-    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    /// Discard base modification calls that are this many bases from the start
+    /// or the end of the read. Two comma-separated values may be provided
+    /// to asymmetrically filter out base modification calls from the start
+    /// and end of the reads. For example, 4,8 will filter out base
+    /// modification calls in the first 4 and last 8 bases of the read.
     #[arg(long, hide_short_help = true)]
     edge_filter: Option<String>,
-    /// Invert the edge filter, instead of filtering out base modification calls at the ends
-    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
-    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
-    /// bases of the read, using this flag will keep only base modification calls in the first
-    /// 4 and last 8 bases.
+    /// Invert the edge filter, instead of filtering out base modification
+    /// calls at the ends of reads, only _keep_ base modification calls at
+    /// the ends of reads. E.g. if usually, "4,8" would remove (i.e. filter
+    /// out) base modification calls in the first 4 and last 8 bases of the
+    /// read, using this flag will keep only base modification calls in the
+    /// first 4 and last 8 bases.
     #[arg(
         long,
         requires = "edge_filter",
@@ -1003,12 +1053,14 @@ impl DuplexModBamPileup {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         // do this first so we fail when the file isn't readable
-        let header = bam::IndexedReader::from_path(&self.in_bam)
-            .map(|reader| {
+        let header =
+            bam::IndexedReader::from_path(&self.in_bam).map(|reader| {
                 if !reader_is_bam(&reader) {
-                    info!("\
-                    detected non-BAM input format, please consider using BAM, CRAM may be unstable\
-                    ");
+                    info!(
+                        "\
+                    detected non-BAM input format, please consider using BAM, \
+                         CRAM may be unstable"
+                    );
                 }
                 reader.header().to_owned()
             })?;
@@ -1060,8 +1112,8 @@ impl DuplexModBamPileup {
                 )
             })
             .transpose()?;
-        // use the path here instead of passing the reader directly to avoid potentially
-        // changing mutable internal state of the reader.
+        // use the path here instead of passing the reader directly to avoid
+        // potentially changing mutable internal state of the reader.
         IdxStats::check_any_mapped_reads(
             &self.in_bam,
             region.as_ref(),
@@ -1070,19 +1122,22 @@ impl DuplexModBamPileup {
         .context(
             "\
             did not find any mapped reads, perform alignment first or use \
-            modkit extract and/or modkit summary to inspect unaligned modBAMs",
+             modkit extract and/or modkit summary to inspect unaligned modBAMs",
         )?;
         let chunk_size = if let Some(chunk_size) = self.chunk_size {
             if chunk_size < self.threads {
-                warn!("chunk size {chunk_size} is less than number of threads ({}), \
-                this will limit parallelism", self.threads);
+                warn!(
+                    "chunk size {chunk_size} is less than number of threads \
+                     ({}), this will limit parallelism",
+                    self.threads
+                );
             }
             chunk_size
         } else {
             let cs = (self.threads as f32 * 1.5).floor() as usize;
             info!(
-                "calculated chunk size: {cs}, interval size {}, \
-            processing {} positions concurrently",
+                "calculated chunk size: {cs}, interval size {}, processing {} \
+                 positions concurrently",
                 self.interval_size,
                 cs * self.interval_size as usize
             );
@@ -1113,7 +1168,10 @@ impl DuplexModBamPileup {
                 RegexMotif::parse_string("CG", 0)?
             } else {
                 if self.motif.is_none() {
-                    bail!("either --cpg or a --motif must be provided for pileup-hemi")
+                    bail!(
+                        "either --cpg or a --motif must be provided for \
+                         pileup-hemi"
+                    )
                 }
                 let raw_motif = self.motif.as_ref().unwrap();
                 if raw_motif.len() != 2 {
@@ -1155,10 +1213,10 @@ impl DuplexModBamPileup {
 
         // put this into it's own function
         let (motif_locations, tids) = {
-            let fasta_fp = self
-                .reference_fasta
-                .as_ref()
-                .ok_or(anyhow!("reference fasta is required for using --motif or --cpg options"))?;
+            let fasta_fp = self.reference_fasta.as_ref().ok_or(anyhow!(
+                "reference fasta is required for using --motif or --cpg \
+                 options"
+            ))?;
             let names_to_tid = tids
                 .iter()
                 .map(|target| (target.name.as_str(), target.tid))
@@ -1224,13 +1282,19 @@ impl DuplexModBamPileup {
                 let base = base.char();
                 match (threshold * 100f32).ceil() as usize {
                     0..=60 => error!(
-                "Threshold of {threshold} for base {base} is very low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."),
+                        "Threshold of {threshold} for base {base} is very \
+                         low. Consider increasing the filter-percentile or \
+                         specifying a higher threshold."
+                    ),
                     61..=70 => warn!(
-                "Threshold of {threshold} for base {base} is low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."
-            ),
-                    _ => info!("Using filter threshold {} for {base}.", threshold),
+                        "Threshold of {threshold} for base {base} is low. \
+                         Consider increasing the filter-percentile or \
+                         specifying a higher threshold."
+                    ),
+                    _ => info!(
+                        "Using filter threshold {} for {base}.",
+                        threshold
+                    ),
                 }
             }
             for (mod_code_repr, threshold) in
@@ -1238,13 +1302,20 @@ impl DuplexModBamPileup {
             {
                 match (threshold * 100f32).ceil() as usize {
                     0..=60 => error!(
-                "Threshold of {threshold} for mod code {mod_code_repr} is very low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."),
+                        "Threshold of {threshold} for mod code \
+                         {mod_code_repr} is very low. Consider increasing the \
+                         filter-percentile or specifying a higher threshold."
+                    ),
                     61..=70 => warn!(
-                "Threshold of {threshold} for mod code {mod_code_repr} is low. Consider increasing the \
-                filter-percentile or specifying a higher threshold."
-            ),
-                    _ => info!("Using filter threshold {} for mod code {mod_code_repr}.", threshold),
+                        "Threshold of {threshold} for mod code \
+                         {mod_code_repr} is low. Consider increasing the \
+                         filter-percentile or specifying a higher threshold."
+                    ),
+                    _ => info!(
+                        "Using filter threshold {} for mod code \
+                         {mod_code_repr}.",
+                        threshold
+                    ),
                 }
             }
         }
@@ -1383,8 +1454,10 @@ impl DuplexModBamPileup {
         write_progress.finish_and_clear();
         processed_reads.finish_and_clear();
         skipped_reads.finish_and_clear();
-        info!("Done, processed {rows_processed} rows. Processed ~{n_processed_reads} reads and \
-            skipped {n_skipped_message}.");
+        info!(
+            "Done, processed {rows_processed} rows. Processed \
+             ~{n_processed_reads} reads and skipped {n_skipped_message}."
+        );
         Ok(())
     }
 }

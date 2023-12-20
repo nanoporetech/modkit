@@ -38,7 +38,10 @@ where
 {
     let use_regions = bam::IndexedReader::from_path(&bam_fp).is_ok();
     if use_regions {
-        debug!("found BAM index, sampling reads in {interval_size} base pair chunks");
+        debug!(
+            "found BAM index, sampling reads in {interval_size} base pair \
+             chunks"
+        );
         let schedule = match (sample_frac, num_reads) {
             (_, Some(num_reads)) => SamplingSchedule::from_num_reads(
                 bam_fp,
@@ -85,8 +88,7 @@ where
             reader.set_threads(reader_threads)?;
             reader.fetch(bam::FetchDefinition::Unmapped)?;
             let num_reads_unmapped = num_reads.map(|nr| {
-                nr.checked_sub(read_ids_to_base_mod_calls.len())
-                    .unwrap_or(0)
+                nr.checked_sub(read_ids_to_base_mod_calls.len()).unwrap_or(0)
             });
             let record_sampler = RecordSampler::new_from_options(
                 sample_frac,
@@ -119,7 +121,10 @@ where
             return Err(anyhow!("cannot use region without indexed BAM"));
         }
         if position_filter.is_some() {
-            debug!("using include-bed with an indexed bam would improve performance");
+            debug!(
+                "using include-bed with an indexed bam would improve \
+                 performance"
+            );
         }
         let mut reader = bam::Reader::from_path(bam_fp)?;
         reader.set_threads(reader_threads)?;

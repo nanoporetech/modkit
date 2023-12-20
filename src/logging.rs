@@ -20,10 +20,8 @@ pub fn init_logging(log_fp: Option<&PathBuf>) -> Handle {
         .build();
 
     let config = if let Some(fp) = log_fp {
-        let logfile = FileAppender::builder()
-            .encoder(file_endcoder)
-            .build(fp)
-            .unwrap();
+        let logfile =
+            FileAppender::builder().encoder(file_endcoder).build(fp).unwrap();
         Config::builder()
             .appender(
                 Appender::builder()
