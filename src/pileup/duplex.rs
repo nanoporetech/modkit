@@ -243,8 +243,8 @@ pub fn process_region_duplex<T: AsRef<Path>>(
         tmp_pileup.set_max_depth(max_depth);
         tmp_pileup
     };
-    // filter motif positions to only positive strand. We get the negative strand
-    // calls in the read cache when getting a duplex mod call
+    // filter motif positions to only positive strand. We get the negative
+    // strand calls in the read cache when getting a duplex mod call
     let motif_positions = get_motif_locations_for_region(
         motif_locations,
         chrom_tid,

@@ -79,7 +79,9 @@ format:
   <<: *rust_image
   stage: format
   script:
-    - cargo fmt --check
+    - rustup install nightly-2023-12-19
+    - rustup component add rustfmt --toolchain nightly-2023-12-19-x86_64-unknown-linux-gnu
+    - cargo +nightly-2023-12-19 fmt --check
 
 test:
   <<: *rust_image

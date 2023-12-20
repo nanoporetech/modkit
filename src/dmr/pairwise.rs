@@ -51,20 +51,17 @@ fn aggregate_counts(
                     // this will eventually change when user-input is accepted
                     if !bm_line.check_mod_code_supported() {
                         debug_once!(
-                            "encountered modification code {} in bedMethyl record, \
-                             not currently supported",
-                        bm_line.raw_mod_code
-                    );
-
+                            "encountered modification code {} in bedMethyl \
+                             record, not currently supported",
+                            bm_line.raw_mod_code
+                        );
                     }
                     None
                 }
             })
         })
         .fold(FxHashMap::default(), |mut acc, bm_line| {
-            acc.entry(bm_line.start())
-                .or_insert(Vec::new())
-                .push(bm_line);
+            acc.entry(bm_line.start()).or_insert(Vec::new()).push(bm_line);
             acc
         });
     let (counts_per_code, total) = grouped_by_position.into_iter().try_fold(
@@ -80,13 +77,18 @@ fn aggregate_counts(
                 .collect::<FxHashSet<&String>>();
             let valid_coverage = grouped[0].valid_coverage as usize;
             if valid_covs.len() != 1 {
-                let mut message = format!("invalid data found, should not have more than 1 score per position for a \
-                    base.");
-                match grouped.iter().minmax_by(|a, b| a.start().cmp(&b.start())) {
-                    MinMaxResult::NoElements => {},
-                    MinMaxResult::MinMax(s, t) => {
-                        message.push_str(&format!("starting at {}, ending at {}", s.start(), t.stop()))
-                    }
+                let mut message = format!(
+                    "invalid data found, should not have more than 1 score \
+                     per position for a base."
+                );
+                match grouped.iter().minmax_by(|a, b| a.start().cmp(&b.start()))
+                {
+                    MinMaxResult::NoElements => {}
+                    MinMaxResult::MinMax(s, t) => message.push_str(&format!(
+                        "starting at {}, ending at {}",
+                        s.start(),
+                        t.stop()
+                    )),
                     MinMaxResult::OneElement(s) => {
                         message.push_str(&format!("starting at {}", s.start()))
                     }
@@ -95,7 +97,10 @@ fn aggregate_counts(
             }
 
             if chroms.len() != 1 {
-                bail!(format!("should only get one chrom, got {}", chroms.len()))
+                bail!(format!(
+                    "should only get one chrom, got {}",
+                    chroms.len()
+                ))
             }
             for x in grouped {
                 *acc.entry(x.raw_mod_code).or_insert(0) +=
@@ -189,7 +194,8 @@ pub(super) fn get_modification_counts(
                 acc
             });
 
-    let modification_counts_results = dmr_batch.dmr_chunks
+    let modification_counts_results = dmr_batch
+        .dmr_chunks
         .into_par_iter()
         .map(|dmr_chunk| {
             let control = control_bedmethyl_lines
@@ -197,7 +203,12 @@ pub(super) fn get_modification_counts(
                 .map(|lines| {
                     lines
                         .iter()
-                        .filter(|l| dmr_chunk.dmr_interval.interval.overlap(l.start(), l.stop()))
+                        .filter(|l| {
+                            dmr_chunk
+                                .dmr_interval
+                                .interval
+                                .overlap(l.start(), l.stop())
+                        })
                         .collect::<Vec<&BedMethylLine>>()
                 })
                 .unwrap_or_else(|| Vec::new());
@@ -206,12 +217,22 @@ pub(super) fn get_modification_counts(
                 .map(|lines| {
                     lines
                         .iter()
-                        .filter(|l| dmr_chunk.dmr_interval.interval.overlap(l.start(), l.stop()))
+                        .filter(|l| {
+                            dmr_chunk
+                                .dmr_interval
+                                .interval
+                                .overlap(l.start(), l.stop())
+                        })
                         .collect::<Vec<&BedMethylLine>>()
                 })
                 .unwrap_or_else(|| Vec::new());
-            let control_counts = aggregate_counts(&control, dmr_chunk.chrom_id, &position_filter);
-            let exp_counts = aggregate_counts(&exp, dmr_chunk.chrom_id, &position_filter);
+            let control_counts = aggregate_counts(
+                &control,
+                dmr_chunk.chrom_id,
+                &position_filter,
+            );
+            let exp_counts =
+                aggregate_counts(&exp, dmr_chunk.chrom_id, &position_filter);
             match (control_counts, exp_counts) {
                 (Ok(control_counts), Ok(exp_counts)) => {
                     ModificationCounts::new(
@@ -219,23 +240,32 @@ pub(super) fn get_modification_counts(
                         dmr_chunk.dmr_interval.stop(),
                         control_counts,
                         exp_counts,
-                        dmr_chunk.dmr_interval.clone())
-                },
+                        dmr_chunk.dmr_interval.clone(),
+                    )
+                }
                 (Err(e), Err(f)) => {
-                    bail!("failed to aggregate control counts, {} and experimental counts, {}",
-                        e.to_string(), f.to_string())
+                    bail!(
+                        "failed to aggregate control counts, {} and \
+                         experimental counts, {}",
+                        e.to_string(),
+                        f.to_string()
+                    )
                 }
                 (Err(e), _) => {
-                    bail!("failed to aggregate control counts, {}",
-                        e.to_string())
+                    bail!(
+                        "failed to aggregate control counts, {}",
+                        e.to_string()
+                    )
                 }
                 (_, Err(e)) => {
-                    bail!("failed to aggregate experiment counts, {}",
-                        e.to_string())
+                    bail!(
+                        "failed to aggregate experiment counts, {}",
+                        e.to_string()
+                    )
                 }
             }
-
-        }).collect::<Vec<Result<ModificationCounts, _>>>();
+        })
+        .collect::<Vec<Result<ModificationCounts, _>>>();
 
     Ok(modification_counts_results)
 }

@@ -15,19 +15,21 @@ use crate::motif_bed::MotifLocations;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{self, Strand};
 
-/// Mapping of _reference position_ to base mod calls as determined by the aligned pairs for the
-/// read
+/// Mapping of _reference position_ to base mod calls as determined by the
+/// aligned pairs for the read
 type RefPosBaseModCalls = FxHashMap<u64, BaseModCall>;
 type PrimaryBaseToModCodes = FxHashMap<DnaBase, HashSet<ModCodeRepr>>;
 
 pub(crate) struct ReadCache<'a> {
-    /// Mapping of read_id to reference position <> base mod calls for that read
-    /// organized by the canonical base (the 'char') todo: should use DnaBase here
+    /// Mapping of read_id to reference position <> base mod calls for that
+    /// read organized by the canonical base (the 'char') todo: should use
+    /// DnaBase here
     pos_reads:
         FxHashMap<String, FxHashMap<char, (RefPosBaseModCalls, SkipMode)>>,
     neg_reads:
         FxHashMap<String, FxHashMap<char, (RefPosBaseModCalls, SkipMode)>>,
-    /// these reads don't have mod tags or should be skipped for some other reason
+    /// these reads don't have mod tags or should be skipped for some other
+    /// reason
     skip_set: HashSet<String>,
     /// mapping of read_id (query_name) to the mod codes contained in that read
     pos_mod_codes: FxHashMap<String, PrimaryBaseToModCodes>,
@@ -129,16 +131,18 @@ impl<'a> ReadCache<'a> {
             {
                 let msg = format!(
                     "record {} has un-allowed mode ({:?}), use \
-                '--force-allow-implicit' or 'modkit update-tags --mode ambiguous'",
+                     '--force-allow-implicit' or 'modkit update-tags --mode \
+                     ambiguous'",
                     &record_name, seq_pos_probs.skip_mode
                 );
                 return Err(RunError::Skipped(msg));
             }
         }
 
-        // need a flag here, change to true iff we add probs for at least a single canonical
-        // base if they are all filtered out (due to edge filter), return an Err so that we
-        // don't re-process this read.
+        // need a flag here, change to true iff we add probs for at least a
+        // single canonical base if they are all filtered out (due to
+        // edge filter), return an Err so that we don't re-process this
+        // read.
         let mut added_base_mod_probs = false;
         let (_, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
         for (base, mod_strand, seq_base_mod_probs) in mod_prob_iter {
@@ -160,8 +164,10 @@ impl<'a> ReadCache<'a> {
                         };
                     // not idiomatic, but fights rightward drift..?
                     if seq_base_mod_probs.is_none() {
-                        debug!("all base mod positions were removed by edge filter \
-                                for {record_name} and base {base}");
+                        debug!(
+                            "all base mod positions were removed by edge \
+                             filter for {record_name} and base {base}"
+                        );
                         continue;
                     }
                     let mut seq_base_mod_probs = seq_base_mod_probs.unwrap();
@@ -212,7 +218,9 @@ impl<'a> ReadCache<'a> {
                 }
                 Err(e) => {
                     let message = format!(
-                        "record {record_name} has unallowed DNA base {base}, {}", e.to_string()
+                        "record {record_name} has unallowed DNA base {base}, \
+                         {}",
+                        e.to_string()
                     );
                     debug!("{}", &message);
                     // short circuit
@@ -314,7 +322,10 @@ impl<'a> ReadCache<'a> {
                         || self.pos_reads.contains_key(&read_id)
                         || self.neg_reads.contains_key(&read_id))
                     {
-                        error!("didn't add failed read id to skip sets, likely a bug");
+                        error!(
+                            "didn't add failed read id to skip sets, likely a \
+                             bug"
+                        );
                     }
                     assert!(
                         self.skip_set.contains(&read_id)
@@ -365,7 +376,10 @@ impl<'a> ReadCache<'a> {
                         || self.pos_reads.contains_key(&read_id)
                         || self.neg_reads.contains_key(&read_id))
                     {
-                        error!("didn't add failed read id to skip sets, likely a bug");
+                        error!(
+                            "didn't add failed read id to skip sets, likely a \
+                             bug"
+                        );
                     }
                     assert!(
                         self.skip_set.contains(&read_id)
@@ -490,9 +504,7 @@ impl<'a> DuplexReadCache<'a> {
                 neg,
                 read_base.char(),
             )),
-            _ => Some(DuplexModCall::NoCall {
-                primary_base: read_base.char(),
-            }),
+            _ => Some(DuplexModCall::NoCall { primary_base: read_base.char() }),
         }
     }
 

@@ -39,11 +39,8 @@ fn test_repair_regression() {
         .records()
         .map(|r| r.unwrap())
         .map(|record| {
-            let qname = record
-                .qname()
-                .iter()
-                .map(|&b| b as char)
-                .collect::<String>();
+            let qname =
+                record.qname().iter().map(|&b| b as char).collect::<String>();
             (qname, record)
         })
         .collect::<HashMap<_, _>>();
@@ -52,11 +49,8 @@ fn test_repair_regression() {
         .records()
         .map(|r| r.unwrap())
         .map(|record| {
-            let qname = record
-                .qname()
-                .iter()
-                .map(|&b| b as char)
-                .collect::<String>();
+            let qname =
+                record.qname().iter().map(|&b| b as char).collect::<String>();
             (qname, record)
         })
         .collect::<HashMap<_, _>>();

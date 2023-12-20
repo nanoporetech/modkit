@@ -44,13 +44,13 @@ use crate::writers::TsvWriter;
 
 #[derive(Args)]
 pub struct ExtractMods {
-    /// Path to modBAM file to extract read-level information from, or one of `-` or
-    /// `stdin` to specify a stream from standard input. If a file is used it may
-    /// be sorted and have associated index.
+    /// Path to modBAM file to extract read-level information from, or one of
+    /// `-` or `stdin` to specify a stream from standard input. If a file
+    /// is used it may be sorted and have associated index.
     in_bam: String,
-    /// Path to output file, "stdout" or "-" will direct output to standard out. Specifying
-    /// "null" will not output the extract table (useful if all you need is the `--read-calls`
-    /// output table).
+    /// Path to output file, "stdout" or "-" will direct output to standard
+    /// out. Specifying "null" will not output the extract table (useful if
+    /// all you need is the `--read-calls` output table).
     out_path: String,
     /// Number of threads to use
     #[arg(short = 't', long, default_value_t = 4)]
@@ -61,11 +61,12 @@ pub struct ExtractMods {
     /// Include only mapped bases in output (alias: mapped).
     #[arg(long, alias = "mapped", default_value_t = false)]
     mapped_only: bool,
-    /// Number of reads to use. Note that when using a sorted, indexed modBAM that
-    /// the sampling algorithm will attempt to sample records evenly over the length
-    /// of the reference sequence. The result is the final number of records used
-    /// may be slightly more or less than the requested number. When piping from stdin
-    /// or using a modBAM without an index, the requested number of reads will be exact.
+    /// Number of reads to use. Note that when using a sorted, indexed modBAM
+    /// that the sampling algorithm will attempt to sample records evenly
+    /// over the length of the reference sequence. The result is the final
+    /// number of records used may be slightly more or less than the
+    /// requested number. When piping from stdin or using a modBAM without
+    /// an index, the requested number of reads will be exact.
     #[arg(long)]
     num_reads: Option<usize>,
     /// Process only reads that are aligned to a specified region of the BAM.
@@ -78,24 +79,27 @@ pub struct ExtractMods {
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
-    /// Set the query and reference k-mer size (if a reference is provided). Maxumum number
-    /// for this value is 12.
+    /// Set the query and reference k-mer size (if a reference is provided).
+    /// Maxumum number for this value is 12.
     #[arg(long, default_value_t = 5)]
     kmer_size: usize,
-    /// Ignore the BAM index (if it exists) and default to a serial scan of the BAM.
+    /// Ignore the BAM index (if it exists) and default to a serial scan of the
+    /// BAM.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     ignore_index: bool,
-    /// Produce a table of read-level base modification calls. This table has, for each read,
-    /// one row for each base modification call in that read using the same thresholding algorithm
-    /// as in pileup, or summary (see online documentation for details on thresholds). Passing
-    /// this option will cause `modkit` to estimate the pass thresholds from the data unless
-    /// a `--filter-threshold` value is passed to the command.
+    /// Produce a table of read-level base modification calls. This table has,
+    /// for each read, one row for each base modification call in that read
+    /// using the same thresholding algorithm as in pileup, or summary (see
+    /// online documentation for details on thresholds). Passing
+    /// this option will cause `modkit` to estimate the pass thresholds from
+    /// the data unless a `--filter-threshold` value is passed to the
+    /// command.
     #[arg(long, alias = "read-calls", hide_short_help = true)]
     read_calls_path: Option<PathBuf>,
 
     /// Path to reference FASTA to extract reference context information from.
-    /// If no reference is provided, `ref_kmer` column will be "." in the output.
-    /// (alias: ref)
+    /// If no reference is provided, `ref_kmer` column will be "." in the
+    /// output. (alias: ref)
     #[arg(long, alias = "ref")]
     reference: Option<PathBuf>,
 
@@ -106,13 +110,14 @@ pub struct ExtractMods {
     /// BED file with regions to _exclude_ (alias: exclude).
     #[arg(long, alias = "exclude", short = 'v')]
     exclude_bed: Option<PathBuf>,
-    /// Output read-level base modification probabilities restricted to the reference sequence
-    /// motifs provided. The first argument should be the sequence motif and the second argument
-    /// is the 0-based offset to the base to pileup base modification counts for.
-    /// For example: --motif CGCG 0 indicates include base modifications for which the read is
-    /// aligned to the first C on the top strand and the last C (complement to G) on
-    /// the bottom strand. The --cpg argument is short hand for --motif CG 0.
-    /// This argument can be passed multiple times.
+    /// Output read-level base modification probabilities restricted to the
+    /// reference sequence motifs provided. The first argument should be
+    /// the sequence motif and the second argument is the 0-based offset to
+    /// the base to pileup base modification counts for. For example:
+    /// --motif CGCG 0 indicates include base modifications for which the read
+    /// is aligned to the first C on the top strand and the last C
+    /// (complement to G) on the bottom strand. The --cpg argument is short
+    /// hand for --motif CG 0. This argument can be passed multiple times.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference")]
     motif: Option<Vec<String>>,
     /// Only output counts at CpG motifs. Requires a reference sequence to be
@@ -130,15 +135,16 @@ pub struct ExtractMods {
     mask: bool,
 
     // sampling and filtering
-    /// Specify the filter threshold globally or per-base. Global filter threshold
-    /// can be specified with by a decimal number (e.g. 0.75). Per-base thresholds
-    /// can be specified by colon-separated values, for example C:0.75 specifies a
-    /// threshold value of 0.75 for cytosine modification calls. Additional
-    /// per-base thresholds can be specified by repeating the option: for example
-    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
-    /// base option and a default for all other bases with:
-    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
-    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
+    /// Specify the filter threshold globally or per-base. Global filter
+    /// threshold can be specified with by a decimal number (e.g. 0.75).
+    /// Per-base thresholds can be specified by colon-separated values, for
+    /// example C:0.75 specifies a threshold value of 0.75 for cytosine
+    /// modification calls. Additional per-base thresholds can be specified
+    /// by repeating the option: for example --filter-threshold C:0.75
+    /// --filter-threshold A:0.70 or specify a single base option and a
+    /// default for all other bases with: --filter-threshold A:0.70
+    /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
+    /// adenine and 0.9 for all other base modification calls.
     #[arg(
         long,
         group = "thresholds",
@@ -146,11 +152,12 @@ pub struct ExtractMods {
         alias = "pass_threshold"
     )]
     filter_threshold: Option<Vec<String>>,
-    /// Specify a passing threshold to use for a base modification, independent of the
-    /// threshold for the primary sequence base or the default. For example, to set
-    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
-    /// threshold will still be estimated as usual and used for canonical cytosine and
-    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// Specify a passing threshold to use for a base modification, independent
+    /// of the threshold for the primary sequence base or the default. For
+    /// example, to set the pass threshold for 5hmC to 0.8 use
+    /// `--mod-threshold h:0.8`. The pass threshold will still be estimated
+    /// as usual and used for canonical cytosine and other modifications
+    /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
     #[arg(
         long,
@@ -168,14 +175,14 @@ pub struct ExtractMods {
         hide_short_help = true
     )]
     no_filtering: bool,
-    /// Interval chunk size in base pairs to process concurrently when estimating the threshold
-    /// probability.
+    /// Interval chunk size in base pairs to process concurrently when
+    /// estimating the threshold probability.
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
     /// Sample this fraction of the reads when estimating the pass-threshold.
-    /// In practice, 10-100 thousand reads is sufficient to estimate the model output
-    /// distribution and determine the filtering threshold. See filtering.md for
-    /// details on filtering.
+    /// In practice, 10-100 thousand reads is sufficient to estimate the model
+    /// output distribution and determine the filtering threshold. See
+    /// filtering.md for details on filtering.
     #[arg(
         group = "sampling_options",
         short = 'f',
@@ -183,11 +190,13 @@ pub struct ExtractMods {
         hide_short_help = true
     )]
     sampling_frac: Option<f64>,
-    /// Sample this many reads when estimating the filtering threshold. If a sorted, indexed modBAM
-    /// is provided reads will be sampled evenly across aligned genome. If a region is specified,
-    /// with the --region, then reads will be sampled evenly across the region given.
-    /// This option is useful for large BAM files. In practice, 10-50 thousand reads is sufficient
-    /// to estimate the model output distribution and determine the filtering threshold.
+    /// Sample this many reads when estimating the filtering threshold. If a
+    /// sorted, indexed modBAM is provided reads will be sampled evenly
+    /// across aligned genome. If a region is specified, with the --region,
+    /// then reads will be sampled evenly across the region given.
+    /// This option is useful for large BAM files. In practice, 10-50 thousand
+    /// reads is sufficient to estimate the model output distribution and
+    /// determine the filtering threshold.
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -195,7 +204,8 @@ pub struct ExtractMods {
         default_value_t = 10_042
     )]
     sample_num_reads: usize,
-    /// Set a random seed for deterministic running, the default is non-deterministic.
+    /// Set a random seed for deterministic running, the default is
+    /// non-deterministic.
     #[arg(
         long,
         conflicts_with = "num_reads",
@@ -204,8 +214,8 @@ pub struct ExtractMods {
     )]
     seed: Option<u64>,
     /// Filter out modified base calls where the probability of the predicted
-    /// variant is below this confidence percentile. For example, 0.1 will filter
-    /// out the 10% lowest confidence modification calls.
+    /// variant is below this confidence percentile. For example, 0.1 will
+    /// filter out the 10% lowest confidence modification calls.
     #[arg(
         group = "thresholds",
         short = 'p',
@@ -215,31 +225,33 @@ pub struct ExtractMods {
     )]
     filter_percentile: f32,
 
-    /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
-    /// base modification calls from the start and end of the reads. For example, 4,8 will
-    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    /// Discard base modification calls that are this many bases from the start
+    /// or the end of the read. Two comma-separated values may be provided
+    /// to asymmetrically filter out base modification calls from the start
+    /// and end of the reads. For example, 4,8 will filter out base
+    /// modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter, instead of filtering out base modification calls at the ends
-    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
-    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
-    /// bases of the read, using this flag will keep only base modification calls in the first
-    /// 4 and last 8 bases.
+    /// Invert the edge filter, instead of filtering out base modification
+    /// calls at the ends of reads, only _keep_ base modification calls at
+    /// the ends of reads. E.g. if usually, "4,8" would remove (i.e. filter
+    /// out) base modification calls in the first 4 and last 8 bases of the
+    /// read, using this flag will keep only base modification calls in the
+    /// first 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
 
-    /// Ignore a modified base class  _in_situ_ by redistributing base modification
-    /// probability equally across other options. For example, if collapsing 'h',
-    /// with 'm' and canonical options, half of the probability of 'h' will be added to
-    /// both 'm' and 'C'. A full description of the methods can be found in
-    /// collapse.md.
+    /// Ignore a modified base class  _in_situ_ by redistributing base
+    /// modification probability equally across other options. For example,
+    /// if collapsing 'h', with 'm' and canonical options, half of the
+    /// probability of 'h' will be added to both 'm' and 'C'. A full
+    /// description of the methods can be found in collapse.md.
     #[arg(long, hide_short_help = true)]
     ignore: Option<String>,
 
-    /// Interval chunk size in base pairs to process concurrently. Smaller interval
-    /// chunk sizes will use less memory but incur more overhead. Only used when an
-    /// indexed modBAM is provided.
+    /// Interval chunk size in base pairs to process concurrently. Smaller
+    /// interval chunk sizes will use less memory but incur more overhead.
+    /// Only used when an indexed modBAM is provided.
     #[arg(
         short = 'i',
         long,
@@ -277,7 +289,10 @@ impl ExtractMods {
             info!("specifying include-only BED outputs only mapped sites");
             false
         } else if self.motif.is_some() || self.cpg {
-            info!("specifying a motif (including --cpg) outputs only mapped sites");
+            info!(
+                "specifying a motif (including --cpg) outputs only mapped \
+                 sites"
+            );
             false
         } else {
             !self.mapped_only
@@ -315,7 +330,8 @@ impl ExtractMods {
             })
             .transpose()?;
 
-        // intersect the motif positions with the include positions from the BED file
+        // intersect the motif positions with the include positions from the BED
+        // file
         let include_positions = if let Some(motifs) = motifs {
             let pb = master_progress_bar
                 .add(get_subroutine_progress_bar(contigs.len()));
@@ -407,39 +423,43 @@ impl ExtractMods {
             include_positions
         };
 
-        let reference_and_intervals = if !self.using_stdin()
-            && !self.ignore_index
-        {
-            match bam::IndexedReader::from_path(&self.in_bam) {
-                Ok(reader) => {
-                    info!("found BAM index, processing reads in {} base pair chunks", self.interval_size);
-                    let reference_records =
-                        get_targets(reader.header(), region);
-                    let reference_and_intervals = reference_records
-                        .into_iter()
-                        .map(|reference_record| {
-                            let interval_chunks =
-                                IntervalChunks::new_without_motifs(
-                                    reference_record.start,
-                                    reference_record.length,
-                                    self.interval_size,
-                                    reference_record.tid,
-                                );
-                            (reference_record, interval_chunks)
-                        })
-                        .collect::<ReferenceAndIntervals>();
-                    Some(reference_and_intervals)
+        let reference_and_intervals =
+            if !self.using_stdin() && !self.ignore_index {
+                match bam::IndexedReader::from_path(&self.in_bam) {
+                    Ok(reader) => {
+                        info!(
+                            "found BAM index, processing reads in {} base \
+                             pair chunks",
+                            self.interval_size
+                        );
+                        let reference_records =
+                            get_targets(reader.header(), region);
+                        let reference_and_intervals = reference_records
+                            .into_iter()
+                            .map(|reference_record| {
+                                let interval_chunks =
+                                    IntervalChunks::new_without_motifs(
+                                        reference_record.start,
+                                        reference_record.length,
+                                        self.interval_size,
+                                        reference_record.tid,
+                                    );
+                                (reference_record, interval_chunks)
+                            })
+                            .collect::<ReferenceAndIntervals>();
+                        Some(reference_and_intervals)
+                    }
+                    Err(_) => {
+                        info!(
+                            "did not find index to modBAM, defaulting to \
+                             serial scan"
+                        );
+                        None
+                    }
                 }
-                Err(_) => {
-                    info!(
-                    "did not find index to modBAM, defaulting to serial scan"
-                );
-                    None
-                }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         let reference_position_filter = ReferencePositionFilter::new(
             include_positions,
@@ -550,10 +570,13 @@ impl ExtractMods {
             } else {
                 // stdin input and want a threshold, not allowed
                 if self.using_stdin() && self.filter_threshold.is_none() {
-                    bail!("\
-                        cannot use stdin and estimate a filter threshold, set the threshold on the \
-                        command line with --filter-threshold and/or --mod-threshold (or set \
-                        --no-filtering).")
+                    bail!(
+                        "\
+                        cannot use stdin and estimate a filter threshold, set \
+                         the threshold on the command line with \
+                         --filter-threshold and/or --mod-threshold (or set \
+                         --no-filtering)."
+                    )
                 }
                 if let Some(raw_threshold) = &self.filter_threshold {
                     parse_thresholds(raw_threshold, per_mod_thresholds)?
@@ -604,7 +627,10 @@ impl ExtractMods {
                         reference_position_filter.include_unmapped,
                     )?),
                     Err(_) => {
-                        debug!("cannot use sampling schedule without index, keeping first {num_reads} reads");
+                        debug!(
+                            "cannot use sampling schedule without index, \
+                             keeping first {num_reads} reads"
+                        );
                         None
                     }
                 }
@@ -630,42 +656,53 @@ impl ExtractMods {
         thread::spawn(move || {
             pool.install(|| {
                 // references_and_intervals is only some when we have an index
-                if let Some(reference_and_intervals) = references_and_intervals {
+                if let Some(reference_and_intervals) = references_and_intervals
+                {
                     drop(reader);
                     // should make this a method on this struct?
                     let bam_fp = Path::new(&in_bam).to_path_buf();
 
                     // if using unmapped add 1 to total chrms to traverse
-                    let prog_length = if reference_position_filter.include_unmapped &&
-                        schedule.as_ref().map(|s| s.has_unmapped()).unwrap_or(true) {
+                    let prog_length = if reference_position_filter
+                        .include_unmapped
+                        && schedule
+                            .as_ref()
+                            .map(|s| s.has_unmapped())
+                            .unwrap_or(true)
+                    {
                         reference_and_intervals.len() + 1
                     } else {
                         reference_and_intervals.len()
                     };
-                    let master_progress = multi_prog.add(get_master_progress_bar(prog_length));
+                    let master_progress =
+                        multi_prog.add(get_master_progress_bar(prog_length));
                     master_progress.set_message("contigs");
 
                     let mut num_aligned_reads_used = 0usize;
-                    for (reference_record, interval_chunks) in reference_and_intervals {
-                        let interval_chunks =
-                            interval_chunks
-                                .filter(|(start, end)| {
-                                    reference_position_filter.include_pos
-                                        .as_ref()
-                                        .map(|pf| {
-                                            pf.overlaps_not_stranded(
-                                                reference_record.tid,
-                                                *start as u64,
-                                                *end as u64
-                                            )
-                                        })
-                                        .unwrap_or(true)
-                                })
-                                .collect::<Vec<(u32, u32)>>();
+                    for (reference_record, interval_chunks) in
+                        reference_and_intervals
+                    {
+                        let interval_chunks = interval_chunks
+                            .filter(|(start, end)| {
+                                reference_position_filter
+                                    .include_pos
+                                    .as_ref()
+                                    .map(|pf| {
+                                        pf.overlaps_not_stranded(
+                                            reference_record.tid,
+                                            *start as u64,
+                                            *end as u64,
+                                        )
+                                    })
+                                    .unwrap_or(true)
+                            })
+                            .collect::<Vec<(u32, u32)>>();
 
                         let total_interval_length = interval_chunks
                             .iter()
-                            .map(|(start, end)| end.checked_sub(*start).unwrap_or(0))
+                            .map(|(start, end)| {
+                                end.checked_sub(*start).unwrap_or(0)
+                            })
                             .sum::<u32>();
 
                         // skip this contig if there aren't any reads
@@ -675,49 +712,75 @@ impl ExtractMods {
                             .unwrap_or(true);
                         if !ref_has_reads {
                             master_progress.inc(1);
-                            continue
+                            continue;
                         }
 
-                        let interval_pb = multi_prog.add(get_subroutine_progress_bar(interval_chunks.len()));
-                        interval_pb.set_message(format!("processing {}", &reference_record.name));
-                        let n_reads_used = interval_chunks.into_par_iter()
-                            .progress_with(interval_pb)
-                            .map(
-                                |(start, end)| {
-                                    let record_sampler = schedule.as_ref()
+                        let interval_pb = multi_prog.add(
+                            get_subroutine_progress_bar(interval_chunks.len()),
+                        );
+                        interval_pb.set_message(format!(
+                            "processing {}",
+                            &reference_record.name
+                        ));
+                        let n_reads_used =
+                            interval_chunks
+                                .into_par_iter()
+                                .progress_with(interval_pb)
+                                .map(|(start, end)| {
+                                    let record_sampler = schedule
+                                        .as_ref()
                                         .map(|sampling_schedule| {
-                                            sampling_schedule.get_record_sampler(&reference_record, total_interval_length, start, end)
-                                    }).unwrap_or(RecordSampler::new_passthrough());
+                                            sampling_schedule
+                                                .get_record_sampler(
+                                                    &reference_record,
+                                                    total_interval_length,
+                                                    start,
+                                                    end,
+                                                )
+                                        })
+                                        .unwrap_or(
+                                            RecordSampler::new_passthrough(),
+                                        );
 
-                                    let batch_result = sample_reads_from_interval::<
-                                        ReadsBaseModProfile,
-                                    >(
-                                        &bam_fp,
-                                        reference_record.tid,
-                                        start,
-                                        end,
-                                        record_sampler,
-                                        collapse_method.as_ref(),
-                                        edge_filter.as_ref(),
-                                        None,
-                                        false,
-                                        Some(kmer_size),
-                                    ).map(|reads_base_mod_profile| {
-                                        reference_position_filter.filter_read_base_mod_probs(reads_base_mod_profile)
-                                    });
-                                    let num_reads_success = batch_result.as_ref().map(|batch| batch.num_reads()).unwrap_or(0);
+                                    let batch_result =
+                                        sample_reads_from_interval::<
+                                            ReadsBaseModProfile,
+                                        >(
+                                            &bam_fp,
+                                            reference_record.tid,
+                                            start,
+                                            end,
+                                            record_sampler,
+                                            collapse_method.as_ref(),
+                                            edge_filter.as_ref(),
+                                            None,
+                                            false,
+                                            Some(kmer_size),
+                                        )
+                                        .map(|reads_base_mod_profile| {
+                                            reference_position_filter
+                                                .filter_read_base_mod_probs(
+                                                    reads_base_mod_profile,
+                                                )
+                                        });
+                                    let num_reads_success = batch_result
+                                        .as_ref()
+                                        .map(|batch| batch.num_reads())
+                                        .unwrap_or(0);
 
                                     match snd.send(batch_result) {
-                                        Ok(_) => {
-                                            num_reads_success
-                                        }
+                                        Ok(_) => num_reads_success,
                                         Err(e) => {
-                                            error!( "failed to send result to writer, {}", e.to_string() );
+                                            error!(
+                                                "failed to send result to \
+                                                 writer, {}",
+                                                e.to_string()
+                                            );
                                             0
                                         }
                                     }
-                                }
-                            ).sum::<usize>();
+                                })
+                                .sum::<usize>();
                         num_aligned_reads_used += n_reads_used;
                         master_progress.inc(1);
                     }
@@ -732,26 +795,41 @@ impl ExtractMods {
                             debug!("processing unmapped reads");
                         }
                         let reader = bam::IndexedReader::from_path(&bam_fp)
-                            .and_then(|mut reader| reader.fetch(FetchDefinition::Unmapped).map(|_| reader))
-                            .and_then(|mut reader| reader.set_threads(threads).map(|_| reader));
+                            .and_then(|mut reader| {
+                                reader
+                                    .fetch(FetchDefinition::Unmapped)
+                                    .map(|_| reader)
+                            })
+                            .and_then(|mut reader| {
+                                reader.set_threads(threads).map(|_| reader)
+                            });
                         match reader {
                             Ok(mut reader) => {
-                                let (skip, fail) = Self::process_records_to_chan(
-                                    reader.records(),
-                                    &multi_prog,
-                                    &reference_position_filter,
-                                    snd.clone(),
-                                    n_unmapped_reads,
-                                    collapse_method.as_ref(),
-                                    edge_filter.as_ref(),
-                                    false,
-                                    "unmapped ",
+                                let (skip, fail) =
+                                    Self::process_records_to_chan(
+                                        reader.records(),
+                                        &multi_prog,
+                                        &reference_position_filter,
+                                        snd.clone(),
+                                        n_unmapped_reads,
+                                        collapse_method.as_ref(),
+                                        edge_filter.as_ref(),
+                                        false,
+                                        "unmapped ",
                                         kmer_size,
-                                );
-                                let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
-                            },
+                                    );
+                                let _ = snd.send(Ok(ReadsBaseModProfile::new(
+                                    Vec::new(),
+                                    skip,
+                                    fail,
+                                )));
+                            }
                             Err(e) => {
-                                error!("failed to get indexed reader for unmapped read processing, {}", e.to_string());
+                                error!(
+                                    "failed to get indexed reader for \
+                                     unmapped read processing, {}",
+                                    e.to_string()
+                                );
                             }
                         }
                     }
@@ -763,12 +841,16 @@ impl ExtractMods {
                         snd.clone(),
                         n_reads,
                         collapse_method.as_ref(),
-                            edge_filter.as_ref(),
-                            mapped_only,
-                            "",
+                        edge_filter.as_ref(),
+                        mapped_only,
+                        "",
                         kmer_size,
                     );
-                    let _ = snd.send(Ok(ReadsBaseModProfile::new(Vec::new(), skip, fail)));
+                    let _ = snd.send(Ok(ReadsBaseModProfile::new(
+                        Vec::new(),
+                        skip,
+                        fail,
+                    )));
                 }
             })
         });
@@ -912,9 +994,8 @@ impl ExtractMods {
                     );
                 }
             }
-            let done = n_reads
-                .map(|nr| pb.position() as usize >= nr)
-                .unwrap_or(false);
+            let done =
+                n_reads.map(|nr| pb.position() as usize >= nr).unwrap_or(false);
             if done {
                 debug!("stopping after processing {} reads", pb.position());
                 break;

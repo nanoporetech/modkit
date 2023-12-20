@@ -87,9 +87,7 @@ pub(crate) fn get_aligned_pairs_forward(
     record.aligned_pairs().map(move |pair| {
         let q_pos = pair[0] as usize;
         let q_pos = if record.is_reverse() {
-            read_length
-                .checked_sub(q_pos)
-                .and_then(|x| x.checked_sub(1))
+            read_length.checked_sub(q_pos).and_then(|x| x.checked_sub(1))
         } else {
             Some(q_pos)
         };
@@ -278,11 +276,17 @@ pub(crate) fn get_targets(
                 }
             } else {
                 match header.target_len(tid) {
-                    Some(size) => {
-                        Some(ReferenceRecord::new(tid, 0, size as u32, chrom_name))
-                    }
+                    Some(size) => Some(ReferenceRecord::new(
+                        tid,
+                        0,
+                        size as u32,
+                        chrom_name,
+                    )),
                     None => {
-                        debug!("> no size information for {chrom_name} (tid: {tid})");
+                        debug!(
+                            "> no size information for {chrom_name} (tid: \
+                             {tid})"
+                        );
                         None
                     }
                 }
@@ -344,11 +348,7 @@ impl Region {
                         "failed to parse region {raw}, end must be after start"
                     )));
                 }
-                Ok(Self {
-                    name: chrom_name.to_owned(),
-                    start,
-                    end,
-                })
+                Ok(Self { name: chrom_name.to_owned(), start, end })
             }
         }
     }
@@ -361,23 +361,18 @@ impl Region {
             Self::parse_raw_with_start_and_end(raw)
         } else {
             let target_id = (0..header.target_count()).find_map(|tid| {
-                String::from_utf8(header.tid2name(tid).to_vec())
-                    .ok()
-                    .and_then(
-                        |contig| if &contig == raw { Some(tid) } else { None },
-                    )
+                String::from_utf8(header.tid2name(tid).to_vec()).ok().and_then(
+                    |contig| if &contig == raw { Some(tid) } else { None },
+                )
             });
             let target_length =
                 target_id.and_then(|tid| header.target_len(tid));
             if let Some(len) = target_length {
-                Ok(Self {
-                    name: raw.to_owned(),
-                    start: 0,
-                    end: len as u32,
-                })
+                Ok(Self { name: raw.to_owned(), start: 0, end: len as u32 })
             } else {
                 Err(InputError::new(&format!(
-                    "failed to find matching reference sequence for {raw} in BAM header"
+                    "failed to find matching reference sequence for {raw} in \
+                     BAM header"
                 )))
             }
         }
@@ -389,15 +384,15 @@ impl Region {
     ) -> AnyhowResult<bam::FetchDefinition> {
         let tid = (0..header.target_count())
             .find_map(|tid| {
-                String::from_utf8(header.tid2name(tid).to_vec())
-                    .ok()
-                    .and_then(|chrom| {
+                String::from_utf8(header.tid2name(tid).to_vec()).ok().and_then(
+                    |chrom| {
                         if &chrom == &self.name {
                             Some(tid)
                         } else {
                             None
                         }
-                    })
+                    },
+                )
             })
             .ok_or(anyhow!(
                 "failed to find target ID for chrom {}",
@@ -416,7 +411,8 @@ impl Region {
     }
 }
 
-// shouldn't need this once it's fixed in rust-htslib or the repo moves to noodles..
+// shouldn't need this once it's fixed in rust-htslib or the repo moves to
+// noodles..
 fn header_to_hashmap(
     header: &bam::Header,
 ) -> anyhow::Result<HashMap<String, Vec<LinearMap<String, String>>>> {
@@ -468,7 +464,10 @@ pub fn add_modkit_pg_records(header: &mut bam::Header) {
     let header_map = match header_to_hashmap(&header) {
         Ok(hm) => hm,
         Err(_) => {
-            error!("failed to parse input BAM header, not adding PG header record for modkit");
+            error!(
+                "failed to parse input BAM header, not adding PG header \
+                 record for modkit"
+            );
             return;
         }
     };
@@ -520,9 +519,7 @@ pub struct SamTag {
 #[cfg(test)]
 impl SamTag {
     pub(crate) fn parse(chars: [char; 2]) -> Self {
-        Self {
-            inner: [chars[0] as u8, chars[1] as u8],
-        }
+        Self { inner: [chars[0] as u8, chars[1] as u8] }
     }
 }
 
@@ -609,15 +606,9 @@ impl Kmer {
             debug!("kmers greater that size 12 will be corrupted");
         }
         let get_back_base_safe = |i| -> Option<u8> {
-            position
-                .checked_sub(i)
-                .and_then(|idx| seq.get(idx).map(|b| *b))
+            position.checked_sub(i).and_then(|idx| seq.get(idx).map(|b| *b))
         };
-        let before = if size % 2 == 0 {
-            size / 2 - 1
-        } else {
-            size / 2
-        };
+        let before = if size % 2 == 0 { size / 2 - 1 } else { size / 2 };
 
         let after = size / 2;
         let mut buffer = [Some(45u8); 12];
@@ -648,21 +639,13 @@ impl Kmer {
             }
             inner[i] = b
         }
-        Self {
-            inner,
-            size: self.size,
-        }
+        Self { inner, size: self.size }
     }
 }
 
 impl Debug for Kmer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let s = self
-            .inner
-            .iter()
-            .take(self.size)
-            .map(|b| *b as char)
-            .join("");
+        let s = self.inner.iter().take(self.size).map(|b| *b as char).join("");
         write!(f, "{s}")
     }
 }
@@ -680,10 +663,14 @@ pub fn within_alignment(
     num_soft_clipped_end: usize,
     read_length: usize,
 ) -> bool {
-    read_length.checked_sub(num_soft_clipped_end)
+    read_length
+        .checked_sub(num_soft_clipped_end)
         .map(|x| query_position >= num_soft_clipped_start && query_position < x)
         .unwrap_or_else(|| {
-            debug!("read_length ({read_length}) is less than num_soft_clipped_end ({num_soft_clipped_end})");
+            debug!(
+                "read_length ({read_length}) is less than \
+                 num_soft_clipped_end ({num_soft_clipped_end})"
+            );
             false
         })
 }
@@ -710,7 +697,10 @@ mod utils_tests {
                     inner: [102, 98], // 'fb' not a tag that's there
                 };
                 assert!(get_stringable_aux(&record, &tag).is_none());
-                let expected_rg = "5598049b1b3264566b162bf035344e7ec610d608_dna_r10.4.1_e8.2_400bps_hac@v3.5.2".to_string();
+                let expected_rg =
+                    "5598049b1b3264566b162bf035344e7ec610d608_dna_r10.4.1_e8.\
+                     2_400bps_hac@v3.5.2"
+                        .to_string();
                 let tag = SamTag { inner: [82, 71] };
                 assert_eq!(
                     get_stringable_aux(&record, &tag),

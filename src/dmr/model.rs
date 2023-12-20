@@ -22,14 +22,11 @@ impl AggregatedCounts {
         let total_modification_counts = mod_code_counts.values().sum::<usize>();
         if total_modification_counts > total {
             bail!(
-                "total modification counts ({total_modification_counts}) cannot be greater \
-                than total counts ({total})"
+                "total modification counts ({total_modification_counts}) \
+                 cannot be greater than total counts ({total})"
             )
         }
-        Ok(Self {
-            mod_code_counts,
-            total,
-        })
+        Ok(Self { mod_code_counts, total })
     }
 
     fn get_canonical_counts(&self) -> usize {
@@ -45,10 +42,7 @@ impl AggregatedCounts {
             *counts.entry(*mod_code).or_insert(0) += *count;
         });
 
-        Self {
-            mod_code_counts: counts,
-            total,
-        }
+        Self { mod_code_counts: counts, total }
     }
 
     fn categorical_trials(
@@ -129,14 +123,7 @@ impl ModificationCounts {
         interval: DmrInterval,
     ) -> anyhow::Result<Self> {
         let score = llk_ratio(&control_counts, &exp_counts)?;
-        Ok(Self {
-            start,
-            stop,
-            control_counts,
-            exp_counts,
-            interval,
-            score,
-        })
+        Ok(Self { start, stop, control_counts, exp_counts, interval, score })
     }
 
     pub(super) fn to_row(&self) -> anyhow::Result<String> {
@@ -241,10 +228,8 @@ fn llk_beta(
     let raw_mod_code =
         all_mods.into_iter().take(1).collect::<Vec<ModCodeRepr>>()[0];
 
-    let control_methyls = *control_counts
-        .mod_code_counts
-        .get(&raw_mod_code)
-        .unwrap_or(&0);
+    let control_methyls =
+        *control_counts.mod_code_counts.get(&raw_mod_code).unwrap_or(&0);
     let control_canonicals = control_counts.get_canonical_counts();
 
     let llk_control = beta_llk(control_methyls, control_canonicals);

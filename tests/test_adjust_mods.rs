@@ -377,7 +377,8 @@ fn test_adjust_chebi_code() {
     ])
     .with_context(|| format!("failed to convert h"))
     .unwrap();
-    // then ignore it, now the output of this command and the first command should be the same
+    // then ignore it, now the output of this command and the first command
+    // should be the same
     run_modkit(&[
         "adjust-mods",
         preadjust_chebi.to_str().unwrap(),

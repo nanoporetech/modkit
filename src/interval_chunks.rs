@@ -94,13 +94,15 @@ impl Iterator for IntervalChunks {
 pub fn slice_dna_sequence(str_seq: &str, start: usize, end: usize) -> String {
     str_seq
         .char_indices()
-        .filter_map(|(pos, nt)| {
-            if pos >= start && pos <= end {
-                Some(nt)
-            } else {
-                None
-            }
-        })
+        .filter_map(
+            |(pos, nt)| {
+                if pos >= start && pos <= end {
+                    Some(nt)
+                } else {
+                    None
+                }
+            },
+        )
         .collect::<String>()
 }
 

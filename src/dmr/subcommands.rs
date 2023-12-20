@@ -40,12 +40,12 @@ pub enum BedMethylDmr {
     /// documentation for additional details.
     Pair(PairwiseDmr),
     /// Compare regions between all pairs of samples (for example a trio sample
-    /// set or haplotyped trio sample set). As with `pair` all inputs must be bgzip
-    /// compressed bedMethyl files with associated tabix indices. Each sample
-    /// must be assigned a name. Output is a directory of BED files with the score column
-    /// indicating the magnitude of the difference in methylation between the
-    /// two samples indicated in the file name. See the online documentation for
-    /// additional details.
+    /// set or haplotyped trio sample set). As with `pair` all inputs must be
+    /// bgzip compressed bedMethyl files with associated tabix indices.
+    /// Each sample must be assigned a name. Output is a directory of BED
+    /// files with the score column indicating the magnitude of the
+    /// difference in methylation between the two samples indicated in the
+    /// file name. See the online documentation for additional details.
     Multi(MultiSampleDmr),
 }
 
@@ -60,35 +60,38 @@ impl BedMethylDmr {
 
 #[derive(Args)]
 pub struct PairwiseDmr {
-    /// Bgzipped bedMethyl file for the first (usually control) sample. There should be
-    /// a tabix index with the same name and .tbi next to this file or the --index-a option
-    /// must be provided.
+    /// Bgzipped bedMethyl file for the first (usually control) sample. There
+    /// should be a tabix index with the same name and .tbi next to this
+    /// file or the --index-a option must be provided.
     #[arg(short = 'a')]
     control_bed_methyl: PathBuf,
-    /// Bgzipped bedMethyl file for the second (usually experimental) sample. There should be
-    /// a tabix index with the same name and .tbi next to this file or the --index-b option
-    /// must be provided.
+    /// Bgzipped bedMethyl file for the second (usually experimental) sample.
+    /// There should be a tabix index with the same name and .tbi next to
+    /// this file or the --index-b option must be provided.
     #[arg(short = 'b')]
     exp_bed_methyl: PathBuf,
-    /// Path to file to direct output, optional, no argument will direct output to stdout.
+    /// Path to file to direct output, optional, no argument will direct output
+    /// to stdout.
     #[arg(short = 'o', long)]
     out_path: Option<String>,
-    /// BED file of regions over which to compare methylation levels. Should be tab-separated (spaces
-    /// allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name column is
-    /// optional. Strand is currently ignored. When omitted, methylation levels are compared at
+    /// BED file of regions over which to compare methylation levels. Should be
+    /// tab-separated (spaces allowed in the "name" column). Requires
+    /// chrom, chromStart and chromEnd. The Name column is optional. Strand
+    /// is currently ignored. When omitted, methylation levels are compared at
     /// each site in the `-a`/`control_bed_methyl` BED file (or optionally, the
     /// `-b`/`exp_bed_methyl` file with the `--use-b` flag.
     #[arg(long, short = 'r', alias = "regions")]
     regions_bed: Option<PathBuf>,
-    /// When performing site-level DMR, use the bedMethyl indicated by the -b/exp_bed_methyl
-    /// argument to collect bases to score.
+    /// When performing site-level DMR, use the bedMethyl indicated by the
+    /// -b/exp_bed_methyl argument to collect bases to score.
     #[arg(long, default_value_t = false)]
     use_b: bool,
     /// Path to reference fasta for the pileup.
     #[arg(long = "ref")]
     reference_fasta: PathBuf,
-    /// Bases to use to calculate DMR, may be multiple. For example, to calculate
-    /// differentially methylated regions using only cytosine modifications use --base C.
+    /// Bases to use to calculate DMR, may be multiple. For example, to
+    /// calculate differentially methylated regions using only cytosine
+    /// modifications use --base C.
     #[arg(short, alias = "base")]
     modified_bases: Vec<char>,
     /// File to write logs to, it's recommended to use this option.
@@ -97,9 +100,10 @@ pub struct PairwiseDmr {
     /// Number of threads to use.
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
-    /// Control the  batch size. The batch size is the number of regions to load at a time. Each
-    /// region will be processed concurrently. Loading more regions at a time will decrease
-    /// IO to load data, but will use more memory. Default will be 50% more than the number of
+    /// Control the  batch size. The batch size is the number of regions to
+    /// load at a time. Each region will be processed concurrently. Loading
+    /// more regions at a time will decrease IO to load data, but will use
+    /// more memory. Default will be 50% more than the number of
     /// threads assigned.
     #[arg(long, alias = "batch")]
     batch_size: Option<usize>,
@@ -112,10 +116,12 @@ pub struct PairwiseDmr {
     /// Force overwrite of output file, if it already exists.
     #[arg(short = 'f', long, default_value_t = false)]
     force: bool,
-    /// Path to tabix index associated with -a (--control-bed-methyl) bedMethyl file.
+    /// Path to tabix index associated with -a (--control-bed-methyl) bedMethyl
+    /// file.
     #[arg(long)]
     index_a: Option<PathBuf>,
-    /// Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl file.
+    /// Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl
+    /// file.
     #[arg(long)]
     index_b: Option<PathBuf>,
     /// How to handle regions found in the `--regions` BED file.
@@ -124,8 +130,9 @@ pub struct PairwiseDmr {
     /// fatal => log (error) and exit the program when a region is missing.
     #[arg(long="missing", requires = "regions_bed", default_value_t=HandleMissing::warn)]
     handle_missing: HandleMissing,
-    /// Minimum valid coverage required to use an entry from a bedMethyl. See the help for
-    /// pileup for the specification and description of valid coverage.
+    /// Minimum valid coverage required to use an entry from a bedMethyl. See
+    /// the help for pileup for the specification and description of valid
+    /// coverage.
     #[arg(long, alias = "min-coverage", default_value_t = 0)]
     min_valid_coverage: u64,
 }
@@ -185,25 +192,32 @@ impl PairwiseDmr {
             .fold(
                 || (FxHashMap::default(), FxHashMap::default()),
                 |(mut pos_agg, mut neg_agg), (sequence, tid)| {
-                    let (pos_strand_intervals, neg_strand_intervals) = sequence.chars().enumerate()
-                        .fold((Vec::new(), Vec::new()), |(mut pos_agg, mut neg_agg), (pos, base)| {
-                            if pos_bases.contains(&base) {
-                                pos_agg.push(BaseIv {
-                                    start: pos as u64,
-                                    stop: (pos + 1) as u64,
-                                    val: DnaBase::parse_char(base).unwrap()
-                                })
-                            } else if neg_bases.contains(&base) {
-                                neg_agg.push(BaseIv {
-                                    start: pos as u64,
-                                    stop: (pos + 1) as u64,
-                                    val: DnaBase::parse_char(base).unwrap()
-                                })
-                            };
-                            (pos_agg, neg_agg)
-                        });
-                    debug!("found {} positive-strand and {} negative-strand positions on \
-                        {tid}", pos_strand_intervals.len(), neg_strand_intervals.len());
+                    let (pos_strand_intervals, neg_strand_intervals) =
+                        sequence.chars().enumerate().fold(
+                            (Vec::new(), Vec::new()),
+                            |(mut pos_agg, mut neg_agg), (pos, base)| {
+                                if pos_bases.contains(&base) {
+                                    pos_agg.push(BaseIv {
+                                        start: pos as u64,
+                                        stop: (pos + 1) as u64,
+                                        val: DnaBase::parse_char(base).unwrap(),
+                                    })
+                                } else if neg_bases.contains(&base) {
+                                    neg_agg.push(BaseIv {
+                                        start: pos as u64,
+                                        stop: (pos + 1) as u64,
+                                        val: DnaBase::parse_char(base).unwrap(),
+                                    })
+                                };
+                                (pos_agg, neg_agg)
+                            },
+                        );
+                    debug!(
+                        "found {} positive-strand and {} negative-strand \
+                         positions on {tid}",
+                        pos_strand_intervals.len(),
+                        neg_strand_intervals.len()
+                    );
                     let pos_lp = GenomeLapper::new(pos_strand_intervals);
                     let neg_lp = GenomeLapper::new(neg_strand_intervals);
                     pos_agg.insert(tid as u32, pos_lp);
@@ -217,19 +231,18 @@ impl PairwiseDmr {
                     let pos = a_pos
                         .into_iter()
                         .chain(b_pos.into_iter())
-                        .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
+                        .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>(
+                    );
                     let neg = a_neg
                         .into_iter()
                         .chain(b_neg.into_iter())
-                        .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>();
+                        .collect::<FxHashMap<u32, GenomeLapper<DnaBase>>>(
+                    );
                     (pos, neg)
                 },
             );
 
-        Ok(StrandedPositionFilter {
-            pos_positions,
-            neg_positions,
-        })
+        Ok(StrandedPositionFilter { pos_positions, neg_positions })
     }
 
     fn load_index(
@@ -258,7 +271,12 @@ impl PairwiseDmr {
             let index_path = Path::new(&index_fp).to_path_buf();
 
             noodles::tabix::read(&index_fp)
-                .with_context(|| format!("failed to read index inferred from bedMethyl file name at {index_fp}"))
+                .with_context(|| {
+                    format!(
+                        "failed to read index inferred from bedMethyl file \
+                         name at {index_fp}"
+                    )
+                })
                 .map(|idx| (idx, index_path))
         }
     }
@@ -411,18 +429,19 @@ impl PairwiseDmr {
 
 #[derive(Args)]
 pub struct MultiSampleDmr {
-    /// Two or more named samples to compare. Two arguments are required <path> <name>. This
-    /// option should be repeated at least two times.
+    /// Two or more named samples to compare. Two arguments are required <path>
+    /// <name>. This option should be repeated at least two times.
     #[arg(short = 's', long = "sample", num_args = 2)]
     samples: Vec<String>,
-    /// Optional, paths to tabix indices associated with named samples. Two arguments
-    /// are required <path> <name> where <name> corresponds to the name of the sample
-    /// given to the -s/--sample argument.
+    /// Optional, paths to tabix indices associated with named samples. Two
+    /// arguments are required <path> <name> where <name> corresponds to
+    /// the name of the sample given to the -s/--sample argument.
     #[arg(short = 'i', long = "index", num_args = 2)]
     indices: Vec<String>,
-    /// BED file of regions over which to compare methylation levels. Should be tab-separated (spaces
-    /// allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name column is
-    /// optional. Strand is currently ignored. When omitted, methylation levels are compared at
+    /// BED file of regions over which to compare methylation levels. Should be
+    /// tab-separated (spaces allowed in the "name" column). Requires
+    /// chrom, chromStart and chromEnd. The Name column is optional. Strand
+    /// is currently ignored. When omitted, methylation levels are compared at
     /// each site in common between the two bedMethyl files being compared.
     #[arg(long, short = 'r', alias = "regions")]
     regions_bed: Option<PathBuf>,
@@ -435,8 +454,9 @@ pub struct MultiSampleDmr {
     /// Path to reference fasta for the pileup.
     #[arg(long = "ref")]
     reference_fasta: PathBuf,
-    /// Bases to use to calculate DMR, may be multiple. For example, to calculate
-    /// differentially methylated regions using only cytosine modifications use --base C.
+    /// Bases to use to calculate DMR, may be multiple. For example, to
+    /// calculate differentially methylated regions using only cytosine
+    /// modifications use --base C.
     #[arg(short, alias = "base")]
     modified_bases: Vec<char>,
     /// File to write logs to, it's recommended to use this option.
@@ -460,8 +480,9 @@ pub struct MultiSampleDmr {
     /// fatal => log (error) and exit the program when a region is missing.
     #[arg(long="missing", requires = "regions_bed", default_value_t=HandleMissing::warn)]
     handle_missing: HandleMissing,
-    /// Minimum valid coverage required to use an entry from a bedMethyl. See the help for
-    /// pileup for the specification and description of valid coverage.
+    /// Minimum valid coverage required to use an entry from a bedMethyl. See
+    /// the help for pileup for the specification and description of valid
+    /// coverage.
     #[arg(long, alias = "min-coverage", default_value_t = 0)]
     min_valid_coverage: u64,
 }
@@ -473,8 +494,7 @@ impl MultiSampleDmr {
         b_name: &str,
     ) -> anyhow::Result<Box<BufWriter<File>>> {
         let fp = if let Some(p) = self.prefix.as_ref() {
-            self.out_dir
-                .join(format!("{}_{}_{}.bed", p, a_name, b_name))
+            self.out_dir.join(format!("{}_{}_{}.bed", p, a_name, b_name))
         } else {
             self.out_dir.join(format!("{}_{}.bed", a_name, b_name))
         };
@@ -550,11 +570,16 @@ impl MultiSampleDmr {
         }
 
         PairwiseDmr::validate_modified_bases(&self.modified_bases)?;
-        let indices = self.indices
+        let indices = self
+            .indices
             .chunks(2)
             .filter_map(|raw| {
                 if raw.len() != 2 {
-                    error!("illegal index pair {:?}, should be length 2 of the form <path> <name>", raw);
+                    error!(
+                        "illegal index pair {:?}, should be length 2 of the \
+                         form <path> <name>",
+                        raw
+                    );
                     None
                 } else {
                     let fp = Path::new(raw[0].as_str()).to_path_buf();
@@ -569,18 +594,25 @@ impl MultiSampleDmr {
             })
             .collect::<HashMap<String, PathBuf>>();
 
-        let samples = self.samples
+        let samples = self
+            .samples
             .chunks(2)
             .filter_map(|raw| {
                 if raw.len() != 2 {
-                    error!("illegal sample pair {:?}, should be length 2 of the form <path> <name>", raw);
+                    error!(
+                        "illegal sample pair {:?}, should be length 2 of the \
+                         form <path> <name>",
+                        raw
+                    );
                     None
                 } else {
                     let fp = Path::new(raw[0].as_str()).to_path_buf();
                     let name = raw[1].to_string();
                     if fp.exists() {
                         let specified_index = indices.get(&name);
-                        if let Ok((_, index_fp)) = PairwiseDmr::load_index(&fp, specified_index) {
+                        if let Ok((_, index_fp)) =
+                            PairwiseDmr::load_index(&fp, specified_index)
+                        {
                             Some(DmrSample::new(fp, index_fp, name))
                         } else {
                             error!("failed to load tabix index for {name}");
@@ -591,7 +623,8 @@ impl MultiSampleDmr {
                         None
                     }
                 }
-            }).collect::<Vec<DmrSample>>();
+            })
+            .collect::<Vec<DmrSample>>();
 
         if samples.len() < 2 {
             bail!("failed to collect at least 2 samples");
@@ -617,11 +650,8 @@ impl MultiSampleDmr {
         }
 
         let chunk_size = (self.threads as f32 * 1.5f32).floor() as usize;
-        let what = if regions_of_interest.is_some() {
-            "regions"
-        } else {
-            "sites"
-        };
+        let what =
+            if regions_of_interest.is_some() { "regions" } else { "sites" };
         info!("processing {chunk_size} {what} concurrently");
 
         let mpb = MultiProgress::new();
@@ -635,10 +665,8 @@ impl MultiSampleDmr {
                 mpb.clone(),
             )?;
 
-        for pair in samples
-            .iter()
-            .combinations(2)
-            .progress_with(sample_pb.clone())
+        for pair in
+            samples.iter().combinations(2).progress_with(sample_pb.clone())
         {
             let a = pair[0];
             let b = pair[1];
@@ -711,10 +739,12 @@ impl MultiSampleDmr {
                         failures.clone(),
                     )?;
                     debug!(
-                        "{} regions processed successfully and {} regions failed for pair {} {}",
+                        "{} regions processed successfully and {} regions \
+                         failed for pair {} {}",
                         success_count,
                         failures.position(),
-                        &a.name, &b.name,
+                        &a.name,
+                        &b.name,
                     );
                 }
                 Err(e) => {

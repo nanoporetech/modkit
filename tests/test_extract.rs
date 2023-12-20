@@ -24,9 +24,7 @@ fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {
             (contig, (pos, strand))
         })
         .fold(HashMap::new(), |mut acc, (contig, (pos, strand))| {
-            acc.entry(contig)
-                .or_insert(HashSet::new())
-                .insert((pos, strand));
+            acc.entry(contig).or_insert(HashSet::new()).insert((pos, strand));
             acc
         })
 }
@@ -56,8 +54,10 @@ fn check_mod_profiles_same(
             if let Some(obs) = output_profile.get(read) {
                 if obs != profile {
                     return Err(anyhow!(
-                        "read {read}'s profile is different expected, test fp: {:?}, expected fp {:?}",
-                        &output_fp, &expected_fp
+                        "read {read}'s profile is different expected, test \
+                         fp: {:?}, expected fp {:?}",
+                        &output_fp,
+                        &expected_fp
                     ));
                 }
             } else {
@@ -147,7 +147,10 @@ fn test_extract_duplex_correct_output() {
     .unwrap();
 
     check_mod_profiles_same(&out_fp, &out_fp_sorted)
-        .context("test_extract_duplex_correct_output, different outputs with and without index")
+        .context(
+            "test_extract_duplex_correct_output, different outputs with and \
+             without index",
+        )
         .unwrap();
 
     check_mod_profiles_same(
@@ -205,7 +208,8 @@ fn test_extract_include_sites_duplex_regression() {
     .unwrap();
     check_against_expected_text_file(
         out_fp.to_str().unwrap(),
-        "tests/resources/test_extract_include_sites_duplex_regression_expected.tsv",
+        "tests/resources/\
+         test_extract_include_sites_duplex_regression_expected.tsv",
     );
 }
 
@@ -335,12 +339,13 @@ fn test_extract_collapse_correct_output() {
     check_mod_profiles_same(
         &out_fp,
         &Path::new(
-            "tests/resources/bc_anchored_10_reads.sorted.methylprofile_ignoreh.tsv",
+            "tests/resources/bc_anchored_10_reads.sorted.\
+             methylprofile_ignoreh.tsv",
         )
-            .to_path_buf(),
+        .to_path_buf(),
     )
-        .context("test_extract_collapse_correct_output, output didn't match")
-        .unwrap();
+    .context("test_extract_collapse_correct_output, output didn't match")
+    .unwrap();
 }
 
 #[test]
