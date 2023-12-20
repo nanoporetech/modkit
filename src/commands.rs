@@ -97,7 +97,8 @@ pub enum Commands {
     /// documentation.
     PileupHemi(DuplexModBamPileup),
     /// Validate results from a set of mod-BAM files and associated BED files
-    /// containing the ground truth modified base status at reference positions.
+    /// containing the ground truth modified base status at reference
+    /// positions.
     Validate(ValidateFromModbam),
 }
 

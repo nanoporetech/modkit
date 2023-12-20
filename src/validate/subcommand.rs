@@ -17,11 +17,11 @@ pub struct ValidateFromModbam {
     // running args
     // convert to list of bam bed inputs
     /// Argument accepts 2 values. The first value is the BAM file path with
-    /// modified base tags. The second is a bed file with ground truth reference
-    /// positions. The name field in the ground truth bed file should be the
-    /// short name (single letter code or ChEBI ID) for a modified base or the
-    /// corresponding canonical base. This argument can be provided more than
-    /// once for multiple samples.
+    /// modified base tags. The second is a bed file with ground truth
+    /// reference positions. The name field in the ground truth bed file
+    /// should be the short name (single letter code or ChEBI ID) for a
+    /// modified base or the corresponding canonical base. This argument
+    /// can be provided more than once for multiple samples.
     #[arg(
 	long,
 	action = clap::ArgAction::Append,
@@ -45,11 +45,15 @@ impl ValidateFromModbam {
             let bam = &bam_and_bed[0];
             let bed = &bam_and_bed[1];
 
-            let header = bam::IndexedReader::from_path(&bam)
-		.map(|reader| {if !reader_is_bam(&reader) {info!(
-		    "detected non-BAM input format, please consider using \
-		     BAM, CRAM may be unstable"
-		);} reader.header().to_owned()})?;
+            let header = bam::IndexedReader::from_path(&bam).map(|reader| {
+                if !reader_is_bam(&reader) {
+                    info!(
+                        "detected non-BAM input format, please consider using \
+                         BAM, CRAM may be unstable"
+                    );
+                }
+                reader.header().to_owned()
+            })?;
             let tids = get_targets(&header, Option::<&Region>::None);
             let chrom_to_tid = tids
                 .iter()
@@ -58,8 +62,10 @@ impl ValidateFromModbam {
                 })
                 .collect::<HashMap<&str, u32>>();
             let _mod_positions = Self::parse_mods_from_bed(
-		bed, &chrom_to_tid, self.suppress_progress,
-	    );
+                bed,
+                &chrom_to_tid,
+                self.suppress_progress,
+            );
         }
         Ok(())
     }
@@ -69,10 +75,7 @@ impl ValidateFromModbam {
         chrom_to_target_id: &HashMap<&str, u32>,
         suppress_pb: bool,
     ) -> anyhow::Result<Vec<(u32, bool, u64, u64, ModCodeRepr)>> {
-        info!(
-            "parsing BED at {}",
-            bed_fp.to_str().unwrap_or("invalid-UTF-8")
-        );
+        info!("parsing BED at {}", bed_fp.to_str().unwrap_or("invalid-UTF-8"));
 
         let fh = File::open(bed_fp)?;
         let mut mod_positions = Vec::new();
@@ -85,10 +88,8 @@ impl ValidateFromModbam {
         let mut warned = HashSet::new();
 
         let reader = BufReader::new(fh);
-        for line in reader
-            .lines()
-            .filter_map(|l| l.ok())
-            .filter(|l| !l.is_empty())
+        for line in
+            reader.lines().filter_map(|l| l.ok()).filter(|l| !l.is_empty())
         {
             let parts = line.split_ascii_whitespace().collect::<Vec<&str>>();
             let chrom_name = parts[0];
