@@ -31,8 +31,9 @@ pub struct ModSummary<'a> {
     /// For each canonical base, how many of each base modification
     /// code were observed but filtered out.
     pub filtered_mod_call_counts: HashMap<DnaBase, HashMap<BaseState, u64>>,
-    /// Total number of reads used in the summary. Usually a summary is computed
-    /// on a sub-sample of the reads in a modBAM (or a sub-region).
+    /// Total number of reads used in the summary. Usually a summary is
+    /// computed on a sub-sample of the reads in a modBAM (or a
+    /// sub-region).
     pub total_reads_used: usize,
     /// Mapping of canonical base to the estimated base modification confidence
     /// threshold for base modification calls at that base.
@@ -149,10 +150,12 @@ pub(crate) fn sampled_reads_to_summary<'a>(
                 base_modification_probs
                     .iter()
                     .map(|bmp| {
-                        // need the argmax base_mod_call here too so that we can add to the correct
+                        // need the argmax base_mod_call here too so that we can
+                        // add to the correct
                         // filtered category
-                        // once the whole "ModCode" bits are refactored, this will no longer be
-                        // a necessary match
+                        // once the whole "ModCode" bits are refactored, this
+                        // will no longer be a necessary
+                        // match
                         let argmax_base_mod_call = bmp.argmax_base_mod_call();
                         let thresholded_call =
                             threshold_caller.call(&canonical_base, bmp);
@@ -163,26 +166,30 @@ pub(crate) fn sampled_reads_to_summary<'a>(
                         (thresholded_call, argmax_base_mod_call)
                         // match (thresholded_call, base_mod_call) {
                         //     (Ok(bmc), Ok(arg_max_base_mod_call)) => {
-                        //         // add the observed mod codes here so that we report on them even if they're
+                        //         // add the observed mod codes here so that we
+                        // report on them even if they're
                         //         // never called
-                        //         observed_mods.entry(canonical_base).or_insert(HashSet::new())
-                        //             .extend(bmp.iter_probs().map(|(code, _)| *code));
-                        //         Some((bmc, arg_max_base_mod_call))
-                        //     }
+                        //         observed_mods.entry(canonical_base).
+                        // or_insert(HashSet::new())
+                        //             .extend(bmp.iter_probs().map(|(code, _)|
+                        // *code));         Some((bmc,
+                        // arg_max_base_mod_call))     }
                         //     (Err(e), Err(_)) => {
                         //         debug!(
-                        //             "read {read_id} failed to make thresholded mod call {}",
+                        //             "read {read_id} failed to make
+                        // thresholded mod call {}",
                         //             e.to_string()
                         //         );
                         //         // expected failure
                         //         None
                         //     }
                         //     (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
-                        //         // logic error, until refactor the two errors here are the same
+                        //         // logic error, until refactor the two errors
+                        // here are the same
                         //         error!(
-                        //             "both should error or neither should! {}",
-                        //             e.to_string()
-                        //         );
+                        //             "both should error or neither should!
+                        // {}",
+                        // e.to_string()         );
                         //         None
                         //     }
                         // }
@@ -289,8 +296,7 @@ impl Moniod for ReadSummaryChunk {
     fn op_mut(&mut self, other: Self) {
         self.reads_with_mod_calls.op_mut(other.reads_with_mod_calls);
         self.mod_call_counts.op_mut(other.mod_call_counts);
-        self.filtered_mod_call_counts
-            .op_mut(other.filtered_mod_call_counts);
+        self.filtered_mod_call_counts.op_mut(other.filtered_mod_call_counts);
         self.observed_mods.op_mut(other.observed_mods);
     }
 

@@ -59,31 +59,16 @@ impl DmrInterval {
         let (rest, interval, name) = many0(one_of(" \t\r\n"))(rest)
             .and_then(|(rest, _)| consume_string_spaces(rest))
             .map(|(rest, name)| {
-                let interval = Iv {
-                    start,
-                    stop,
-                    val: (),
-                };
+                let interval = Iv { start, stop, val: () };
                 (rest, interval, name)
             })
             .unwrap_or_else(|_| {
-                let interval = Iv {
-                    start,
-                    stop,
-                    val: (),
-                };
+                let interval = Iv { start, stop, val: () };
                 let name = format!("{}:{}-{}", chrom, start, stop);
                 (rest, interval, name)
             });
 
-        Ok((
-            rest,
-            Self {
-                interval,
-                chrom,
-                name,
-            },
-        ))
+        Ok((rest, Self { interval, chrom, name }))
     }
 
     pub(super) fn parse_str(line: &str) -> anyhow::Result<Self> {
@@ -195,40 +180,56 @@ impl DmrIntervalIter {
             .to_str()
             .map(|s| s.to_owned())
             .unwrap_or_else(|| format!("'a' failed path decode"));
-        let regions_of_interest = rois.into_iter()
-            .try_fold(Vec::new(), |mut acc, roi| {
-                let a_found = control_contig_lookup.inner.contains_key(&roi.chrom);
+        let regions_of_interest =
+            rois.into_iter().try_fold(Vec::new(), |mut acc, roi| {
+                let a_found =
+                    control_contig_lookup.inner.contains_key(&roi.chrom);
                 let b_found = exp_contig_lookup.inner.contains_key(&roi.chrom);
                 if a_found && b_found {
                     acc.push(roi);
                     Ok(acc)
                 } else {
                     let which = if b_found {
-                        if let Some(a_name) = control_contig_lookup.sample_name.as_ref() {
+                        if let Some(a_name) =
+                            control_contig_lookup.sample_name.as_ref()
+                        {
                             format!("'{a_name}'")
                         } else {
                             format!("{:?}", &control_contig_lookup.file_path)
                         }
                     } else {
-                        match (control_contig_lookup.sample_name.as_ref(), exp_contig_lookup.sample_name.as_ref()) {
+                        match (
+                            control_contig_lookup.sample_name.as_ref(),
+                            exp_contig_lookup.sample_name.as_ref(),
+                        ) {
                             (Some(a_name), Some(b_name)) => {
                                 format!("'{a_name}' and '{b_name}'")
                             }
                             _ => {
-                                format!("{:?} and {:?}", &control_contig_lookup.file_path, &exp_contig_lookup.file_path)
+                                format!(
+                                    "{:?} and {:?}",
+                                    &control_contig_lookup.file_path,
+                                    &exp_contig_lookup.file_path
+                                )
                             }
                         }
                     };
                     match handle_missing {
-                        HandleMissing::quiet => {
-                            Ok(acc)
-                        },
+                        HandleMissing::quiet => Ok(acc),
                         HandleMissing::warn => {
-                            debug_once!("chrom {} is missing from {which} bedMethyl index, discarding", &roi.chrom);
+                            debug_once!(
+                                "chrom {} is missing from {which} bedMethyl \
+                                 index, discarding",
+                                &roi.chrom
+                            );
                             Ok(acc)
-                        },
+                        }
                         HandleMissing::fail => {
-                            let message = format!("chrom {} is missing from {which} bedMethyl index, fatal error", &roi.chrom);
+                            let message = format!(
+                                "chrom {} is missing from {which} bedMethyl \
+                                 index, fatal error",
+                                &roi.chrom
+                            );
                             error!("{message}");
                             bail!(message)
                         }
@@ -381,8 +382,8 @@ impl Iterator for DmrIntervalIter {
                     (Err(e), _) => {
                         self.failures.inc(1);
                         debug!(
-                            "failed to index into {} bedMethyl \
-                        for region {}, {}",
+                            "failed to index into {} bedMethyl for region {}, \
+                             {}",
                             &self.control_fn,
                             dmr_interval,
                             e.to_string()
@@ -392,8 +393,8 @@ impl Iterator for DmrIntervalIter {
                     (_, Err(e)) => {
                         self.failures.inc(1);
                         debug!(
-                            "failed to index into {} bedMethyl \
-                        for chrom id {}, {}",
+                            "failed to index into {} bedMethyl for chrom id \
+                             {}, {}",
                             &self.exp_fn,
                             exp_chr_id,
                             e.to_string()
@@ -482,39 +483,31 @@ mod dmr_util_tests {
     use std::collections::BTreeSet;
 
     #[test]
+    #[rustfmt::skip]
     fn test_parse_rois() {
         let obs = DmrInterval::parse_str(
             "chr20\t279148\t279507\tCpG: 39 359\t39\t260\t21.7\t72.4\t0.83",
         )
         .unwrap();
         let expected = DmrInterval::new(
-            Iv {
-                start: 279148,
-                stop: 279507,
-                val: (),
-            },
+            Iv { start: 279148, stop: 279507, val: () },
             "chr20".to_string(),
             "CpG: 39 359".to_string(),
         );
         assert_eq!(obs, expected);
-        let obs = DmrInterval::parse_str("chr20\t279148\t279507\tCpGby_any_other_name\t39\t260\t21.7\t72.4\t0.83").unwrap();
+        let obs = DmrInterval::parse_str(
+            "chr20\t279148\t279507\tCpGby_any_other_name\t39\t260\t21.7\t72.4\t0.83",
+        )
+        .unwrap();
         let expected = DmrInterval::new(
-            Iv {
-                start: 279148,
-                stop: 279507,
-                val: (),
-            },
+            Iv { start: 279148, stop: 279507, val: () },
             "chr20".to_string(),
             "CpGby_any_other_name".to_string(),
         );
         assert_eq!(obs, expected);
         let obs = DmrInterval::parse_str("chr20\t279148\t279507\t").unwrap();
         let expected = DmrInterval::new(
-            Iv {
-                start: 279148,
-                stop: 279507,
-                val: (),
-            },
+            Iv { start: 279148, stop: 279507, val: () },
             "chr20".to_string(),
             "chr20:279148-279507".to_string(),
         );
@@ -529,29 +522,17 @@ mod dmr_util_tests {
         let rois = parse_roi_bed(fp).unwrap();
         let expected = [
             DmrInterval {
-                interval: Iv {
-                    start: 10172120,
-                    stop: 10172545,
-                    val: (),
-                },
+                interval: Iv { start: 10172120, stop: 10172545, val: () },
                 chrom: "chr20".to_string(),
                 name: "r1".to_string(),
             },
             DmrInterval {
-                interval: Iv {
-                    start: 10217487,
-                    stop: 10218336,
-                    val: (),
-                },
+                interval: Iv { start: 10217487, stop: 10218336, val: () },
                 chrom: "chr20".to_string(),
                 name: "r2".to_string(),
             },
             DmrInterval {
-                interval: Iv {
-                    start: 10034963,
-                    stop: 10035266,
-                    val: (),
-                },
+                interval: Iv { start: 10034963, stop: 10035266, val: () },
                 chrom: "chr20".to_string(),
                 name: "r3".to_string(),
             },
@@ -566,29 +547,17 @@ mod dmr_util_tests {
         let rois = parse_roi_bed(fp).unwrap();
         let expected = [
             DmrInterval {
-                interval: Iv {
-                    start: 10172120,
-                    stop: 10172545,
-                    val: (),
-                },
+                interval: Iv { start: 10172120, stop: 10172545, val: () },
                 chrom: "chr20".to_string(),
                 name: "chr20:10172120-10172545".to_string(),
             },
             DmrInterval {
-                interval: Iv {
-                    start: 10217487,
-                    stop: 10218336,
-                    val: (),
-                },
+                interval: Iv { start: 10217487, stop: 10218336, val: () },
                 chrom: "chr20".to_string(),
                 name: "chr20:10217487-10218336".to_string(),
             },
             DmrInterval {
-                interval: Iv {
-                    start: 10034963,
-                    stop: 10035266,
-                    val: (),
-                },
+                interval: Iv { start: 10034963, stop: 10035266, val: () },
                 chrom: "chr20".to_string(),
                 name: "chr20:10034963-10035266".to_string(),
             },

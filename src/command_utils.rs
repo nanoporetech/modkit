@@ -21,24 +21,25 @@ pub(crate) fn parse_per_mod_thresholds(
         .map(|raw| {
             let parts = raw.split(":").collect::<Vec<&str>>();
             if parts.len() != 2 {
-                Err(anyhow!("encountered illegal per-mod threshold: {raw}. Should be mod_code:threshold \
-                e.g. h:0.8"))
+                Err(anyhow!(
+                    "encountered illegal per-mod threshold: {raw}. Should be \
+                     mod_code:threshold e.g. h:0.8"
+                ))
             } else {
-                ModCodeRepr::parse(parts[0])
-                    .and_then(|x| {
-                        parts[1].parse::<f32>().map(|t| (x, t))
-                            .map_err(|e|
-                                anyhow!("failed to parse per-mod threshold value {}, {}", &parts[1], e.to_string())
-                            )
+                ModCodeRepr::parse(parts[0]).and_then(|x| {
+                    parts[1].parse::<f32>().map(|t| (x, t)).map_err(|e| {
+                        anyhow!(
+                            "failed to parse per-mod threshold value {}, {}",
+                            &parts[1],
+                            e.to_string()
+                        )
                     })
+                })
             }
         })
         .collect::<anyhow::Result<HashMap<ModCodeRepr, f32>>>()?;
     per_mod_thresholds.iter().for_each(|(mod_code, thresh)| {
-        info!(
-            "parsed user-input threshold {thresh} for mod-code {}",
-            mod_code
-        );
+        info!("parsed user-input threshold {thresh} for mod-code {}", mod_code);
     });
     Ok(per_mod_thresholds)
 }
@@ -54,8 +55,11 @@ pub(crate) fn parse_thresholds(
             .keys()
             .map(|x| format!("{}", x.char()))
             .join(",");
-        info!("no default pass threshold was provided, so base modifications at \
-        primary sequence bases other than {bases_with_thresholds} will not be filtered");
+        info!(
+            "no default pass threshold was provided, so base modifications at \
+             primary sequence bases other than {bases_with_thresholds} will \
+             not be filtered"
+        );
     }
 
     Ok(MultipleThresholdModCaller::new(
@@ -131,8 +135,8 @@ fn parse_raw_threshold(raw: &str) -> anyhow::Result<(DnaBase, f32)> {
     let parts = raw.split(':').collect::<Vec<&str>>();
     if parts.len() != 2 {
         bail!(
-            "encountered illegal per-base threshold {raw}, should \
-                be <base>:<threshold>, e.g. C:0.75"
+            "encountered illegal per-base threshold {raw}, should be \
+             <base>:<threshold>, e.g. C:0.75"
         )
     }
     let raw_base = parts[0]
@@ -218,11 +222,7 @@ pub(crate) fn get_bam_writer(
     header: &Header,
     output_sam: bool,
 ) -> anyhow::Result<bam::Writer> {
-    let format = if output_sam {
-        bam::Format::Sam
-    } else {
-        bam::Format::Bam
-    };
+    let format = if output_sam { bam::Format::Sam } else { bam::Format::Bam };
     if using_stream(raw) {
         bam::Writer::from_stdout(&header, format).map_err(|e| {
             anyhow!(
@@ -245,7 +245,10 @@ pub(crate) fn parse_edge_filter_input(
     if raw.contains(',') {
         let parts = raw.split(',').collect::<Vec<&str>>();
         if parts.len() != 2 {
-            bail!("illegal edge filter input {raw}, should be start_trim,end_trim (e.g. 4,5)")
+            bail!(
+                "illegal edge filter input {raw}, should be \
+                 start_trim,end_trim (e.g. 4,5)"
+            )
         }
         let start_trim = parts[0].parse::<usize>().context(format!(
             "failed to parse edge filter start trim {raw}, should be a number"
@@ -255,7 +258,7 @@ pub(crate) fn parse_edge_filter_input(
         ))?;
         info!(
             "filtering out base modification calls {start_trim} bases from \
-        the start and {end_trim} bases from the end of each read"
+             the start and {end_trim} bases from the end of each read"
         );
         Ok(EdgeFilter::new(start_trim, end_trim, inverted))
     } else {
@@ -263,8 +266,10 @@ pub(crate) fn parse_edge_filter_input(
             "failed to parse edge filter input {raw}, should be a number"
         ))?;
 
-        info!("filtering out base modification calls {trim} bases from the start and \
-        end of each read");
+        info!(
+            "filtering out base modification calls {trim} bases from the \
+             start and end of each read"
+        );
         Ok(EdgeFilter::new(trim, trim, inverted))
     }
 }

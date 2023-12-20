@@ -91,8 +91,8 @@ impl PileupFeatureCounts {
     fn combine_counts_ignore_strand(self, other: Self) -> Self {
         if self.raw_mod_code != other.raw_mod_code {
             error!(
-                "shouldn't be combining counts with different mod codes!\
-            {} vs {}",
+                "shouldn't be combining counts with different mod codes!{} vs \
+                 {}",
                 self.raw_mod_code, other.raw_mod_code
             );
         }
@@ -101,7 +101,7 @@ impl PileupFeatureCounts {
         {
             error!(
                 "shouldn't be combining counts with different motif indices \
-            {:?} vs {:?}",
+                 {:?} vs {:?}",
                 self.motif_idx, other.motif_idx
             );
         }
@@ -268,16 +268,13 @@ impl FeatureVector {
         motif_idxs: Option<&Vec<usize>>,
     ) {
         let iter =
-            tally
-                .modcall_counts
-                .iter()
-                .map(|(primary_base, mod_calls)| {
-                    (
-                        primary_base,
-                        mod_calls,
-                        tally.basecall_counts.get(primary_base).unwrap_or(&0),
-                    )
-                });
+            tally.modcall_counts.iter().map(|(primary_base, mod_calls)| {
+                (
+                    primary_base,
+                    mod_calls,
+                    tally.basecall_counts.get(primary_base).unwrap_or(&0),
+                )
+            });
         for (primary_base, base_states, &n_nocall) in iter {
             let (n_canonical, mod_calls) = base_states.iter().fold(
                 (0, FxHashMap::default()),
@@ -547,8 +544,8 @@ fn combine_strand_features(
     target_id: u32,
 ) -> HashMap<u32, HashMap<PartitionKey, Vec<PileupFeatureCounts>>> {
     let mut result = HashMap::new();
-    // these are the positive stand positions that will contain the sum of the positive
-    // and negative counts
+    // these are the positive stand positions that will contain the sum of the
+    // positive and negative counts
     let positions_to_combine = motif_positions
         .iter()
         .filter_map(|(position, strand_rule)| match strand_rule {
@@ -581,8 +578,7 @@ fn combine_strand_features(
             // e.g. for CCGG, 0
             //   v
             // + CCGG
-            // - GGCC
-            //      ^ <- this position
+            // - GGCC ^ <- this position
             let negative_strand_pos =
                 motif.motif().negative_strand_position(positive_strand_pos);
             if negative_strand_pos.is_none() {
@@ -600,8 +596,8 @@ fn combine_strand_features(
                 .copied()
                 .collect::<HashSet<PartitionKey>>();
             for partition_key in partition_keys {
-                // gather the positive and negative strands PileupFeatureCounts that will be
-                // combined together
+                // gather the positive and negative strands PileupFeatureCounts
+                // that will be combined together
                 let positive_strand_features = select_pileup_feature_counts(
                     positive_feature_mappings,
                     partition_key,
@@ -614,8 +610,8 @@ fn combine_strand_features(
                     Strand::Negative,
                     idx,
                 );
-                // group them by mod code, use BTreeMap here so that the mod codes are in
-                // a consistent order
+                // group them by mod code, use BTreeMap here so that the mod
+                // codes are in a consistent order
                 let grouped_by_mod_code = positive_strand_features
                     .into_iter()
                     .chain(negative_strand_features)
@@ -630,7 +626,8 @@ fn combine_strand_features(
                     .into_iter()
                     .map(|(mod_code, feature_counts)| {
                         feature_counts.into_iter().fold(
-                            // use unknown/ambiguous strand because we're combining
+                            // use unknown/ambiguous strand because we're
+                            // combining
                             PileupFeatureCounts::new_empty(
                                 '.',
                                 mod_code,
@@ -852,9 +849,7 @@ impl ModBasePileup {
         &self,
     ) -> impl Iterator<Item = (&u32, &HashMap<PartitionKey, Vec<PileupFeatureCounts>>)>
     {
-        self.position_feature_counts
-            .iter()
-            .sorted_by(|(x, _), (y, _)| x.cmp(y))
+        self.position_feature_counts.iter().sorted_by(|(x, _), (y, _)| x.cmp(y))
     }
 }
 
@@ -945,7 +940,8 @@ pub fn process_region<T: AsRef<Path>>(
             FxHashMap<DnaBase, HashSet<ModCodeRepr>>,
         >::default();
 
-        // used for warning about dupes, could make this a bloom filter for better perf?
+        // used for warning about dupes, could make this a bloom filter for
+        // better perf?
         let mut observed_read_ids_to_pos = HashMap::new(); // optimize
 
         let alignment_iter =
@@ -1036,7 +1032,8 @@ pub fn process_region<T: AsRef<Path>>(
                     base
                 }
             } else {
-                // skip because read base failed, should this read be added to the skip list?
+                // skip because read base failed, should this read be added to
+                // the skip list?
                 continue;
             };
 
@@ -1178,9 +1175,9 @@ pub fn process_region<T: AsRef<Path>>(
         let avg_times =
             counts.iter().map(|c| *c as f32).sum::<f32>() / counts.len() as f32;
         debug!(
-            "read {read_id} was observed multiple times, \
-            avg {avg_times} at {} positions on contig {chrom_name}, \
-            between {start_pos} and {end_pos}",
+            "read {read_id} was observed multiple times, avg {avg_times} at \
+             {} positions on contig {chrom_name}, between {start_pos} and \
+             {end_pos}",
             counts.len()
         );
     }

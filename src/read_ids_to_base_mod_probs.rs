@@ -41,9 +41,7 @@ pub(crate) struct ReadIdsToBaseModProbs {
 
 impl ReadIdsToBaseModProbs {
     fn add_read_without_probs(&mut self, read_id: &str) {
-        self.inner
-            .entry(read_id.to_owned())
-            .or_insert(HashMap::new());
+        self.inner.entry(read_id.to_owned()).or_insert(HashMap::new());
     }
 
     fn add_mod_probs_for_read(
@@ -80,7 +78,8 @@ impl ReadIdsToBaseModProbs {
                                 BaseModCall::Canonical(f) => f,
                                 BaseModCall::Filtered => {
                                     unreachable!(
-                                        "argmax base mod call should not return Filtered"
+                                        "argmax base mod call should not \
+                                         return Filtered"
                                     )
                                 }
                             })
@@ -118,14 +117,17 @@ impl ReadIdsToBaseModProbs {
                                 }
                                 BaseModCall::Filtered => {
                                     unreachable!(
-                                        "argmax base mod call should not return Filtered"
+                                        "argmax base mod call should not \
+                                         return Filtered"
                                     )
                                 }
                             })
                             .fold(
                                 HashMap::<BaseState, Vec<f64>>::new(),
                                 |mut acc, (base, p)| {
-                                    acc.entry(base).or_insert(Vec::new()).push(p);
+                                    acc.entry(base)
+                                        .or_insert(Vec::new())
+                                        .push(p);
                                     acc
                                 },
                             )
@@ -143,9 +145,7 @@ impl ReadIdsToBaseModProbs {
 
 impl Moniod for ReadIdsToBaseModProbs {
     fn zero() -> Self {
-        Self {
-            inner: HashMap::new(),
-        }
+        Self { inner: HashMap::new() }
     }
 
     fn op(self, other: Self) -> Self {
@@ -225,14 +225,18 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                     let record_name = record_name.unwrap();
                     if read_ids_to_mod_base_probs.seen(&record_name) {
                         debug!(
-                            "record: {record_name}, already processed, consider de-duplicating alignments.");
+                            "record: {record_name}, already processed, \
+                             consider de-duplicating alignments."
+                        );
                         continue;
                     }
                     if mod_base_info.is_empty() {
-                        // the current iterator should filter these out, but leaving this check
+                        // the current iterator should filter these out, but
+                        // leaving this check
                         // here in case that changes..
                         // add count of unused/no calls
-                        // debug!("record {record_name} contains no mod-base information");
+                        // debug!("record {record_name} contains no mod-base
+                        // information");
                         read_ids_to_mod_base_probs
                             .add_read_without_probs(&record_name);
                         continue;
@@ -273,8 +277,12 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                             match seq_pos_base_mod_probs {
                                 Ok(p) => p,
                                 Err(e) => {
-                                    debug!("record {record_name} failed to add implicit calls, failed to get \
-                                forward sequence, {}", e.to_string());
+                                    debug!(
+                                        "record {record_name} failed to add \
+                                         implicit calls, failed to get \
+                                         forward sequence, {}",
+                                        e.to_string()
+                                    );
                                     continue;
                                 }
                             };
@@ -289,9 +297,10 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                                 &record,
                             );
 
-                        // must stay such that mod_probs will not be empty if seq_pos_base_mod_probs
-                        // is Some otherwise added_mod_probs_for_record should not be flipped to
-                        // true
+                        // must stay such that mod_probs will not be empty if
+                        // seq_pos_base_mod_probs
+                        // is Some otherwise added_mod_probs_for_record should
+                        // not be flipped to true
                         if let Some(seq_pos_base_mod_probs) =
                             seq_pos_base_mod_probs
                         {
@@ -313,8 +322,10 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                             );
                             added_probs_for_record = true;
                         } else {
-                            // trace!("all base mod positions were removed by filtering \
-                            //     for {record_name} and base {raw_canonical_base}");
+                            // trace!("all base mod positions were removed by
+                            // filtering \
+                            //     for {record_name} and base
+                            // {raw_canonical_base}");
                             continue;
                         }
                     }
@@ -592,12 +603,15 @@ impl ReadBaseModProfile {
                             } else {
                                 let qpos = qpos as usize;
                                 if record.is_reverse() {
-                                    // shouldn't _really_ need to perform this checked_sub
-                                    // but better to do it this way than to panic when there
+                                    // shouldn't _really_ need to perform this
+                                    // checked_sub
+                                    // but better to do it this way than to
+                                    // panic when there
                                     // is some bug/invalid CIGAR in a dependency
                                     read_length
                                         .checked_sub(qpos as usize + 1)
-                                        // todo make sure you dont need to check that r_pos is < 0
+                                        // todo make sure you dont need to check
+                                        // that r_pos is < 0
                                         .map(|qpos_adj| {
                                             (qpos_adj, (qpos, r_pos))
                                         })
@@ -633,11 +647,13 @@ impl ReadBaseModProfile {
             .into_iter()
             .filter_map(|(base, strand, probs)| {
                 let filtered = if let Some(edge_filter) = edge_filter {
-                    let x = probs.edge_filter_positions(edge_filter, record.seq_len());
+                    let x = probs
+                        .edge_filter_positions(edge_filter, record.seq_len());
                     if x.is_none() {
-                        debug!("\
-                        record: {record_name}, all positions for primary base {base} \
-                        were removed by edge filter."
+                        debug!(
+                            "\
+                        record: {record_name}, all positions for primary base \
+                             {base} were removed by edge filter."
                         )
                     }
                     x
@@ -645,7 +661,9 @@ impl ReadBaseModProfile {
                     Some(probs)
                 };
                 filtered.and_then(|probs| {
-                    DnaBase::parse(base).map(|dna_base| (dna_base, strand, probs)).ok()
+                    DnaBase::parse(base)
+                        .map(|dna_base| (dna_base, strand, probs))
+                        .ok()
                 })
             })
             .map(|(base, strand, probs)| {
@@ -670,11 +688,20 @@ impl ReadBaseModProfile {
                         let ref_pos = forward_query_pos_to_ref_pos
                             .get(&forward_pos)
                             .and_then(|(_query_aligned_pos, ref_pos)| *ref_pos);
-                        let seq_kmer =
-                            Self::get_kmer_from_sequence(&forward_sequence, forward_pos, mod_strand, kmer_size);
-                        let base_qual =
-                            quals.get(forward_pos).map(|q| *q).unwrap_or_else(|| {
-                                debug!("record: {record_name}, didn't find base quality for position {forward_pos}");
+                        let seq_kmer = Self::get_kmer_from_sequence(
+                            &forward_sequence,
+                            forward_pos,
+                            mod_strand,
+                            kmer_size,
+                        );
+                        let base_qual = quals
+                            .get(forward_pos)
+                            .map(|q| *q)
+                            .unwrap_or_else(|| {
+                                debug!(
+                                    "record: {record_name}, didn't find base \
+                                     quality for position {forward_pos}"
+                                );
                                 0u8
                             });
                         Self::base_mod_probs_to_mod_profile(
@@ -690,7 +717,8 @@ impl ReadBaseModProfile {
                             num_clip_start,
                             num_clip_end,
                         )
-                    }).collect::<Vec<ModProfile>>()
+                    })
+                    .collect::<Vec<ModProfile>>()
             })
             .collect::<Vec<ModProfile>>();
         mod_profiles.par_sort_by(|a, b| {
@@ -748,22 +776,15 @@ impl ReadsBaseModProfile {
     }
 
     pub(crate) fn remove_inferred(self) -> Self {
-        let profiles = self
-            .profiles
-            .into_iter()
-            .map(|p| p.remove_inferred())
-            .collect();
+        let profiles =
+            self.profiles.into_iter().map(|p| p.remove_inferred()).collect();
         Self::new(profiles, self.num_skips, self.num_fails)
     }
 }
 
 impl Moniod for ReadsBaseModProfile {
     fn zero() -> Self {
-        Self {
-            profiles: Vec::new(),
-            num_skips: 0,
-            num_fails: 0,
-        }
+        Self { profiles: Vec::new(), num_skips: 0, num_fails: 0 }
     }
 
     fn op(self, other: Self) -> Self {
@@ -783,11 +804,7 @@ impl Moniod for ReadsBaseModProfile {
 
         let num_skips = self.num_skips + other.num_skips;
         let num_fails = self.num_fails + other.num_fails;
-        Self {
-            profiles,
-            num_skips,
-            num_fails,
-        }
+        Self { profiles, num_skips, num_fails }
     }
 
     fn op_mut(&mut self, other: Self) {
@@ -829,11 +846,7 @@ impl RecordProcessor for ReadsBaseModProfile {
         let mut mod_iter = TrackingModRecordIter::new(records, false);
         let mut agg = Vec::new();
         let mut seen = HashSet::new();
-        let pb = if with_progress {
-            Some(get_spinner())
-        } else {
-            None
-        };
+        let pb = if with_progress { Some(get_spinner()) } else { None };
 
         let mut n_fails = 0usize;
         let mut n_skips = 0usize;
@@ -850,7 +863,10 @@ impl RecordProcessor for ReadsBaseModProfile {
                     ) {
                         Ok(read_base_mod_profile) => {
                             if seen.contains(&record_name) {
-                                debug!("record: {record_name}, added more than once");
+                                debug!(
+                                    "record: {record_name}, added more than \
+                                     once"
+                                );
                             } else {
                                 seen.insert(record_name);
                             }
@@ -887,10 +903,7 @@ impl RecordProcessor for ReadsBaseModProfile {
 
 impl WithRecords for ReadsBaseModProfile {
     fn size(&self) -> u64 {
-        self.profiles
-            .iter()
-            .map(|p| p.profile.len() as u64)
-            .sum::<u64>()
+        self.profiles.iter().map(|p| p.profile.len() as u64).sum::<u64>()
     }
 
     fn num_reads(&self) -> usize {

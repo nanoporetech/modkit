@@ -45,25 +45,27 @@ use crate::writers::{
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Tabulates base modification calls across genomic positions. This command
-    /// produces a bedMethyl formatted file. Schema and description of fields can
-    /// be found in the README.
+    /// Tabulates base modification calls across genomic positions. This
+    /// command produces a bedMethyl formatted file. Schema and description
+    /// of fields can be found in the README.
     Pileup(ModBamPileup),
     /// Performs various operations on BAM files containing base modification
     /// information, such as converting base modification codes and ignoring
     /// modification calls. Produces a BAM output file.
     AdjustMods(Adjust),
-    /// Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag from
-    /// silent '.' to explicitly '?' or '.'.
+    /// Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag
+    /// from silent '.' to explicitly '?' or '.'.
     UpdateTags(Update),
-    /// Calculate an estimate of the base modification probability distribution.
+    /// Calculate an estimate of the base modification probability
+    /// distribution.
     SampleProbs(SampleModBaseProbs),
-    /// Summarize the mod tags present in a BAM and get basic statistics. The default
-    /// output is a totals table (designated by '#' lines) and a modification calls
-    /// table. Descriptions of the columns can be found in the README.
+    /// Summarize the mod tags present in a BAM and get basic statistics. The
+    /// default output is a totals table (designated by '#' lines) and a
+    /// modification calls table. Descriptions of the columns can be found
+    /// in the README.
     Summary(ModSummarize),
-    /// Call mods from a modbam, creates a new modbam with probabilities set to 100%
-    /// if a base modification is called or 0% if called canonical.
+    /// Call mods from a modbam, creates a new modbam with probabilities set to
+    /// 100% if a base modification is called or 0% if called canonical.
     CallMods(CallMods),
     /// Create BED file with all locations of a sequence motif.
     /// Example: modkit motif-bed CG 0
@@ -71,23 +73,27 @@ pub enum Commands {
     /// Extract read-level base modification information from a modBAM into a
     /// tab-separated values table.
     Extract(ExtractMods),
-    /// Repair MM and ML tags in one bam with the correct tags from another. To use
-    /// this command, both modBAMs _must_ be sorted by read name. The "donor" modBAM's
-    /// reads must be a superset of the acceptor's reads. Extra reads in the donor are
-    /// allowed, and multiple reads with the same name (secondary, etc.) are allowed in
-    /// the acceptor. Reads with an empty SEQ field cannot be repaired and will be
-    /// rejected. Reads where there is an ambiguous alignment of the acceptor to the
-    /// donor will be rejected (and logged). See the full documentation for details.
+    /// Repair MM and ML tags in one bam with the correct tags from another. To
+    /// use this command, both modBAMs _must_ be sorted by read name. The
+    /// "donor" modBAM's reads must be a superset of the acceptor's reads.
+    /// Extra reads in the donor are allowed, and multiple reads with the
+    /// same name (secondary, etc.) are allowed in the acceptor. Reads with
+    /// an empty SEQ field cannot be repaired and will be rejected. Reads
+    /// where there is an ambiguous alignment of the acceptor to the
+    /// donor will be rejected (and logged). See the full documentation for
+    /// details.
     Repair(RepairTags),
     /// Perform DMR test on a set of regions. Output a BED file of regions
-    /// with the score column indicating the magnitude of the difference. Find the schema and
-    /// description of fields can in the README as well as a description of the model and method.
-    /// See subcommand help for additional details.
+    /// with the score column indicating the magnitude of the difference. Find
+    /// the schema and description of fields can in the README as well as a
+    /// description of the model and method. See subcommand help for
+    /// additional details.
     #[clap(subcommand)]
     Dmr(BedMethylDmr),
-    /// Tabulates double-stranded base modification patters (such as hemi-methylation) across
-    /// genomic motif positions. This command produces a bedMethyl file, the schema can be
-    /// found in the online documentation.
+    /// Tabulates double-stranded base modification patters (such as
+    /// hemi-methylation) across genomic motif positions. This command
+    /// produces a bedMethyl file, the schema can be found in the online
+    /// documentation.
     PileupHemi(DuplexModBamPileup),
 }
 
@@ -137,11 +143,11 @@ fn get_sampling_options(
 
 #[derive(Args)]
 pub struct Adjust {
-    /// BAM file to collapse mod call from. Can be a path to a file or one of `-` or
-    /// `stdin` to specify a stream from standard input.
+    /// BAM file to collapse mod call from. Can be a path to a file or one of
+    /// `-` or `stdin` to specify a stream from standard input.
     in_bam: String,
-    /// File path to new BAM file to be created. Can be a path to a file or one of `-` or
-    /// `stdin` to specify a stream from standard output.
+    /// File path to new BAM file to be created. Can be a path to a file or one
+    /// of `-` or `stdin` to specify a stream from standard output.
     out_bam: String,
     /// Output debug logs to file at this path.
     #[arg(long)]
@@ -154,25 +160,28 @@ pub struct Adjust {
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
-    /// Fast fail, stop processing at the first invalid sequence record. Default
-    /// behavior is to continue and report failed/skipped records at the end.
+    /// Fast fail, stop processing at the first invalid sequence record.
+    /// Default behavior is to continue and report failed/skipped records
+    /// at the end.
     #[arg(short, long = "ff", default_value_t = false)]
     fail_fast: bool,
     /// Convert one mod-tag to another, summing the probabilities together if
     /// the retained mod tag is already present.
     #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
     convert: Option<Vec<String>>,
-    /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
-    /// base modification calls from the start and end of the reads. For example, 4,8 will
-    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    /// Discard base modification calls that are this many bases from the start
+    /// or the end of the read. Two comma-separated values may be provided
+    /// to asymmetrically filter out base modification calls from the start
+    /// and end of the reads. For example, 4,8 will filter out base
+    /// modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter, instead of filtering out base modification calls at the ends
-    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
-    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
-    /// bases of the read, using this flag will keep only base modification calls in the first
-    /// 4 and last 8 bases.
+    /// Invert the edge filter, instead of filtering out base modification
+    /// calls at the ends of reads, only _keep_ base modification calls at
+    /// the ends of reads. E.g. if usually, "4,8" would remove (i.e. filter
+    /// out) base modification calls in the first 4 and last 8 bases of the
+    /// read, using this flag will keep only base modification calls in the
+    /// first 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
     /// Output SAM format instead of BAM.
@@ -259,8 +268,11 @@ impl Adjust {
             .transpose()?;
 
         let methods = if edge_filter.is_none() && methods.is_empty() {
-            bail!("no edge-filter, ignore, or convert was provided, no work to do. Provide \
-            --edge-filter, --ignore, or --convert option to use modkit adjust-mods")
+            bail!(
+                "no edge-filter, ignore, or convert was provided, no work to \
+                 do. Provide --edge-filter, --ignore, or --convert option to \
+                 use modkit adjust-mods"
+            )
         } else {
             methods
         };
@@ -285,10 +297,7 @@ fn parse_percentiles(
     if raw_percentiles.contains("..") {
         todo!("handle parsing ranges")
     } else {
-        raw_percentiles
-            .split(',')
-            .map(|x| x.parse::<f32>())
-            .collect()
+        raw_percentiles.split(',').map(|x| x.parse::<f32>()).collect()
     }
 }
 
@@ -313,9 +322,9 @@ pub struct SampleModBaseProbs {
     #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
     percentiles: String,
     /// Directory to deposit result tables into. Required for model probability
-    /// histogram output. Creates two files probabilities.tsv and probabilities.txt
-    /// The .txt contains ASCII-histograms and the .tsv contains tab-separated variable
-    /// data represented by the histograms.
+    /// histogram output. Creates two files probabilities.tsv and
+    /// probabilities.txt The .txt contains ASCII-histograms and the .tsv
+    /// contains tab-separated variable data represented by the histograms.
     #[arg(short = 'o', long)]
     out_dir: Option<PathBuf>,
     /// Label to prefix output files with. E.g. 'foo' will output
@@ -325,24 +334,26 @@ pub struct SampleModBaseProbs {
     /// Overwrite results if present.
     #[arg(long, requires = "out_dir", default_value_t = false)]
     force: bool,
-    /// Ignore a modified base class  _in_situ_ by redistributing base modification
-    /// probability equally across other options. For example, if collapsing 'h',
-    /// with 'm' and canonical options, half of the probability of 'h' will be added to
-    /// both 'm' and 'C'. A full description of the methods can be found in
-    /// collapse.md.
+    /// Ignore a modified base class  _in_situ_ by redistributing base
+    /// modification probability equally across other options. For example,
+    /// if collapsing 'h', with 'm' and canonical options, half of the
+    /// probability of 'h' will be added to both 'm' and 'C'. A full
+    /// description of the methods can be found in collapse.md.
     #[arg(long, hide_short_help = true)]
     ignore: Option<String>,
-    /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
-    /// base modification calls from the start and end of the reads. For example, 4,8 will
-    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    /// Discard base modification calls that are this many bases from the start
+    /// or the end of the read. Two comma-separated values may be provided
+    /// to asymmetrically filter out base modification calls from the start
+    /// and end of the reads. For example, 4,8 will filter out base
+    /// modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter, instead of filtering out base modification calls at the ends
-    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
-    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
-    /// bases of the read, using this flag will keep only base modification calls in the first
-    /// 4 and last 8 bases.
+    /// Invert the edge filter, instead of filtering out base modification
+    /// calls at the ends of reads, only _keep_ base modification calls at
+    /// the ends of reads. E.g. if usually, "4,8" would remove (i.e. filter
+    /// out) base modification calls in the first 4 and last 8 bases of the
+    /// read, using this flag will keep only base modification calls in the
+    /// first 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
 
@@ -357,9 +368,9 @@ pub struct SampleModBaseProbs {
     /// Approximate maximum number of reads to use, especially recommended when
     /// using a large BAM without an index. If an indexed BAM is provided, the
     /// reads will be sampled evenly over the length of the aligned reference.
-    /// If a region is passed with the --region option, they will be sampled over
-    /// the genomic region. Actual number of reads used may deviate slightly from
-    /// this number.
+    /// If a region is passed with the --region option, they will be sampled
+    /// over the genomic region. Actual number of reads used may deviate
+    /// slightly from this number.
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -374,26 +385,27 @@ pub struct SampleModBaseProbs {
     /// No sampling, use all of the reads to calculate the filter thresholds.
     #[arg(long, group = "sampling_options", default_value_t = false)]
     no_sampling: bool,
-    /// Random seed for deterministic running, the default is non-deterministic, only used
-    /// when no BAM index is provided.
+    /// Random seed for deterministic running, the default is
+    /// non-deterministic, only used when no BAM index is provided.
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
 
-    /// Process only the specified region of the BAM when collecting probabilities.
-    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    /// Process only the specified region of the BAM when collecting
+    /// probabilities. Format should be <chrom_name>:<start>-<end> or
+    /// <chrom_name>.
     #[arg(long)]
     region: Option<String>,
-    /// Interval chunk size in base pairs to process concurrently. Smaller interval
-    /// chunk sizes will use less memory but incur more overhead. Only used when
-    /// sampling probs from an indexed bam.
+    /// Interval chunk size in base pairs to process concurrently. Smaller
+    /// interval chunk sizes will use less memory but incur more overhead.
+    /// Only used when sampling probs from an indexed bam.
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
     /// Only sample base modification probabilities that are aligned
     /// to the positions in this BED file. (alias: include-positions)
     #[arg(long, alias = "include-positions")]
     include_bed: Option<PathBuf>,
-    /// Only use base modification probabilities that are aligned (i.e. ignore soft-clipped,
-    /// and inserted bases).
+    /// Only use base modification probabilities that are aligned (i.e. ignore
+    /// soft-clipped, and inserted bases).
     #[arg(long, default_value_t = false)]
     only_mapped: bool,
 }
@@ -577,9 +589,9 @@ pub struct ModSummarize {
     /// Approximate maximum number of reads to use, especially recommended when
     /// using a large BAM without an index. If an indexed BAM is provided, the
     /// reads will be sampled evenly over the length of the aligned reference.
-    /// If a region is passed with the --region option, they will be sampled over
-    /// the genomic region. Actual number of reads used may deviate slightly from
-    /// this number.
+    /// If a region is passed with the --region option, they will be sampled
+    /// over the genomic region. Actual number of reads used may deviate
+    /// slightly from this number.
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -592,87 +604,93 @@ pub struct ModSummarize {
     /// sample 1/10th of the reads.
     #[arg(group = "sampling_options", short = 'f', long)]
     sampling_frac: Option<f64>,
-    /// No sampling, use all of the reads to calculate the filter thresholds and
-    /// generating the summary.
+    /// No sampling, use all of the reads to calculate the filter thresholds
+    /// and generating the summary.
     #[arg(long, group = "sampling_options", default_value_t = false)]
     no_sampling: bool,
-    /// Sets a random seed for deterministic running (when using --sample-frac),
-    /// the default is non-deterministic, only used when no BAM index is provided.
+    /// Sets a random seed for deterministic running (when using
+    /// --sample-frac), the default is non-deterministic, only used when no
+    /// BAM index is provided.
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
 
     // threshold options
-    /// Do not perform any filtering, include all base modification calls in the
-    /// summary. See filtering.md for details on filtering.
+    /// Do not perform any filtering, include all base modification calls in
+    /// the summary. See filtering.md for details on filtering.
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
     /// Filter out modified base calls where the probability of the predicted
-    /// variant is below this confidence percentile. For example, 0.1 will filter
-    /// out the 10% lowest confidence base modification calls.
+    /// variant is below this confidence percentile. For example, 0.1 will
+    /// filter out the 10% lowest confidence base modification calls.
     #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
     filter_percentile: f32,
-    /// Specify the filter threshold globally or per-base. Global filter threshold
-    /// can be specified with by a decimal number (e.g. 0.75). Per-base thresholds
-    /// can be specified by colon-separated values, for example C:0.75 specifies a
-    /// threshold value of 0.75 for cytosine modification calls. Additional
-    /// per-base thresholds can be specified by repeating the option: for example
-    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
-    /// base option and a default for all other bases with:
-    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
-    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
+    /// Specify the filter threshold globally or per-base. Global filter
+    /// threshold can be specified with by a decimal number (e.g. 0.75).
+    /// Per-base thresholds can be specified by colon-separated values, for
+    /// example C:0.75 specifies a threshold value of 0.75 for cytosine
+    /// modification calls. Additional per-base thresholds can be specified
+    /// by repeating the option: for example --filter-threshold C:0.75
+    /// --filter-threshold A:0.70 or specify a single base option and a
+    /// default for all other bases with: --filter-threshold A:0.70
+    /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
+    /// adenine and 0.9 for all other base modification calls.
     #[arg(
         long,
         group = "thresholds",
         action = clap::ArgAction::Append
     )]
     filter_threshold: Option<Vec<String>>,
-    /// Specify a passing threshold to use for a base modification, independent of the
-    /// threshold for the primary sequence base or the default. For example, to set
-    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
-    /// threshold will still be estimated as usual and used for canonical cytosine and
-    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// Specify a passing threshold to use for a base modification, independent
+    /// of the threshold for the primary sequence base or the default. For
+    /// example, to set the pass threshold for 5hmC to 0.8 use
+    /// `--mod-threshold h:0.8`. The pass threshold will still be estimated
+    /// as usual and used for canonical cytosine and other modifications
+    /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
     #[arg(
     long,
     action = clap::ArgAction::Append
     )]
     mod_thresholds: Option<Vec<String>>,
-    /// Ignore a modified base class  _in_situ_ by redistributing base modification
-    /// probability equally across other options. For example, if collapsing 'h',
-    /// with 'm' and canonical options, half of the probability of 'h' will be added to
-    /// both 'm' and 'C'. A full description of the methods can be found in
-    /// collapse.md.
+    /// Ignore a modified base class  _in_situ_ by redistributing base
+    /// modification probability equally across other options. For example,
+    /// if collapsing 'h', with 'm' and canonical options, half of the
+    /// probability of 'h' will be added to both 'm' and 'C'. A full
+    /// description of the methods can be found in collapse.md.
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<String>,
-    /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
-    /// base modification calls from the start and end of the reads. For example, 4,8 will
-    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    /// Discard base modification calls that are this many bases from the start
+    /// or the end of the read. Two comma-separated values may be provided
+    /// to asymmetrically filter out base modification calls from the start
+    /// and end of the reads. For example, 4,8 will filter out base
+    /// modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter, instead of filtering out base modification calls at the ends
-    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
-    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
-    /// bases of the read, using this flag will keep only base modification calls in the first
-    /// 4 and last 8 bases.
+    /// Invert the edge filter, instead of filtering out base modification
+    /// calls at the ends of reads, only _keep_ base modification calls at
+    /// the ends of reads. E.g. if usually, "4,8" would remove (i.e. filter
+    /// out) base modification calls in the first 4 and last 8 bases of the
+    /// read, using this flag will keep only base modification calls in the
+    /// first 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
     /// Only summarize base modification probabilities that are aligned
     /// to the positions in this BED file. (alias: include-positions)
     #[arg(long, alias = "include-positions")]
     include_bed: Option<PathBuf>,
-    /// Only use base modification probabilities that are aligned (i.e. ignore soft-clipped,
-    /// and inserted bases).
+    /// Only use base modification probabilities that are aligned (i.e. ignore
+    /// soft-clipped, and inserted bases).
     #[arg(long, default_value_t = false)]
     only_mapped: bool,
 
-    /// Process only the specified region of the BAM when collecting probabilities.
-    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    /// Process only the specified region of the BAM when collecting
+    /// probabilities. Format should be <chrom_name>:<start>-<end> or
+    /// <chrom_name>.
     #[arg(long)]
     region: Option<String>,
-    /// When using regions, interval chunk size in base pairs to process concurrently.
-    /// Smaller interval chunk sizes will use less memory but incur more
-    /// overhead.
+    /// When using regions, interval chunk size in base pairs to process
+    /// concurrently. Smaller interval chunk sizes will use less memory but
+    /// incur more overhead.
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
 }
@@ -729,19 +747,17 @@ impl ModSummarize {
             })
             .transpose()?;
 
-        let filter_thresholds =
-            if let Some(raw_thresholds) = &self.filter_threshold {
-                info!("parsing user defined thresholds");
-                Some(parse_thresholds(
-                    raw_thresholds,
-                    per_mod_thresholds.clone(),
-                )?)
-            } else if self.no_filtering {
-                info!("not performing filtering");
-                Some(MultipleThresholdModCaller::new_passthrough())
-            } else {
-                None
-            };
+        let filter_thresholds = if let Some(raw_thresholds) =
+            &self.filter_threshold
+        {
+            info!("parsing user defined thresholds");
+            Some(parse_thresholds(raw_thresholds, per_mod_thresholds.clone())?)
+        } else if self.no_filtering {
+            info!("not performing filtering");
+            Some(MultipleThresholdModCaller::new_passthrough())
+        } else {
+            None
+        };
 
         let collapse_method =
             if let Some(raw_mod_code_to_ignore) = self.ignore.as_ref() {
@@ -861,8 +877,8 @@ impl ModMode {
 
 #[derive(Args)]
 pub struct Update {
-    /// BAM to update modified base tags in. Can be a path to a file or one of `-` or
-    /// `stdin` to specify a stream from standard input.
+    /// BAM to update modified base tags in. Can be a path to a file or one of
+    /// `-` or `stdin` to specify a stream from standard input.
     in_bam: String,
     /// File to new BAM file to be created or one of `-` or `stdin` to specify
     /// a stream from standard output.
@@ -909,24 +925,16 @@ fn update_mod_tags(
         mm_agg.push_str(&mm);
         ml_agg.extend_from_slice(&mut ml);
     }
-    record
-        .remove_aux(mm_style.as_bytes())
-        .expect("failed to remove MM tag");
-    record
-        .remove_aux(ml_style.as_bytes())
-        .expect("failed to remove ML tag");
+    record.remove_aux(mm_style.as_bytes()).expect("failed to remove MM tag");
+    record.remove_aux(ml_style.as_bytes()).expect("failed to remove ML tag");
     let mm = Aux::String(&mm_agg);
     let ml_arr: AuxArray<u8> = {
         let sl = &ml_agg;
         sl.into()
     };
     let ml = Aux::ArrayU8(ml_arr);
-    record
-        .push_aux(MM_TAGS[0].as_bytes(), mm)
-        .expect("failed to add MM tag");
-    record
-        .push_aux(ML_TAGS[0].as_bytes(), ml)
-        .expect("failed to add ML tag");
+    record.push_aux(MM_TAGS[0].as_bytes(), mm).expect("failed to add MM tag");
+    record.push_aux(ML_TAGS[0].as_bytes(), ml).expect("failed to add ML tag");
 
     Ok(record)
 }
@@ -993,8 +1001,9 @@ impl Update {
 #[derive(Args)]
 pub struct CallMods {
     // running args
-    /// Input BAM, may be sorted and have associated index available. Can be a path
-    /// to a file or one of `-` or `stdin` to specify a stream from standard input.
+    /// Input BAM, may be sorted and have associated index available. Can be a
+    /// path to a file or one of `-` or `stdin` to specify a stream from
+    /// standard input.
     in_bam: String,
     /// Output BAM, can be a path to a file or one of `-` or
     /// `stdin` to specify a stream from standard input.
@@ -1003,12 +1012,13 @@ pub struct CallMods {
     /// Setting a file is recommended.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
-    // /// Process only the specified region of the BAM when performing transformation.
-    // /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
-    // #[arg(long)] todo(arand)
+    // /// Process only the specified region of the BAM when performing
+    // transformation. /// Format should be <chrom_name>:<start>-<end> or
+    // <chrom_name>. #[arg(long)] todo(arand)
     // region: Option<String>,
-    /// Fast fail, stop processing at the first invalid sequence record. Default
-    /// behavior is to continue and report failed/skipped records at the end.
+    /// Fast fail, stop processing at the first invalid sequence record.
+    /// Default behavior is to continue and report failed/skipped records
+    /// at the end.
     #[arg(long = "ff", default_value_t = false)]
     fail_fast: bool,
     /// Hide the progress bar.
@@ -1031,12 +1041,14 @@ pub struct CallMods {
     // interval_size: u32,
 
     // sampling args
-    /// Sample approximately this many reads when estimating the filtering threshold.
-    /// If alignments are present reads will be sampled evenly across aligned genome.
-    /// If a region is specified, either with the --region option or the --sample-region
-    /// option, then reads will be sampled evenly across the region given. This option is
-    /// useful for large BAM files. In practice, 10-50 thousand reads is sufficient to
-    /// estimate the model output distribution and determine the filtering threshold.
+    /// Sample approximately this many reads when estimating the filtering
+    /// threshold. If alignments are present reads will be sampled evenly
+    /// across aligned genome. If a region is specified, either with the
+    /// --region option or the --sample-region option, then reads will be
+    /// sampled evenly across the region given. This option is useful for
+    /// large BAM files. In practice, 10-50 thousand reads is sufficient to
+    /// estimate the model output distribution and determine the filtering
+    /// threshold.
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -1044,10 +1056,10 @@ pub struct CallMods {
         default_value_t = 10_042
     )]
     num_reads: usize,
-    /// Sample this fraction of the reads when estimating the filter-percentile.
-    /// In practice, 50-100 thousand reads is sufficient to estimate the model output
-    /// distribution and determine the filtering threshold. See filtering.md for
-    /// details on filtering.
+    /// Sample this fraction of the reads when estimating the
+    /// filter-percentile. In practice, 50-100 thousand reads is sufficient
+    /// to estimate the model output distribution and determine the
+    /// filtering threshold. See filtering.md for details on filtering.
     #[arg(
         group = "sampling_options",
         short = 'f',
@@ -1055,8 +1067,8 @@ pub struct CallMods {
         hide_short_help = true
     )]
     sampling_frac: Option<f64>,
-    /// Set a random seed for deterministic running, the default is non-deterministic,
-    /// only used when no BAM index is provided.
+    /// Set a random seed for deterministic running, the default is
+    /// non-deterministic, only used when no BAM index is provided.
     #[arg(
         long,
         conflicts_with = "num_reads",
@@ -1064,20 +1076,21 @@ pub struct CallMods {
         hide_short_help = true
     )]
     seed: Option<u64>,
-    /// Specify a region for sampling reads from when estimating the threshold probability.
-    /// If this option is not provided, but --region is provided, the genomic interval
-    /// passed to --region will be used.
+    /// Specify a region for sampling reads from when estimating the threshold
+    /// probability. If this option is not provided, but --region is
+    /// provided, the genomic interval passed to --region will be used.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
     #[arg(long)]
     sample_region: Option<String>,
-    /// Interval chunk size to process concurrently when estimating the threshold
-    /// probability, can be larger than the pileup processing interval.
+    /// Interval chunk size to process concurrently when estimating the
+    /// threshold probability, can be larger than the pileup processing
+    /// interval.
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
 
     /// Filter out modified base calls where the probability of the predicted
-    /// variant is below this confidence percentile. For example, 0.1 will filter
-    /// out the 10% lowest confidence modification calls.
+    /// variant is below this confidence percentile. For example, 0.1 will
+    /// filter out the 10% lowest confidence modification calls.
     #[arg(
         group = "thresholds",
         short = 'p',
@@ -1086,15 +1099,16 @@ pub struct CallMods {
         hide_short_help = true
     )]
     filter_percentile: f32,
-    /// Specify the filter threshold globally or per primary base. A global filter
-    /// threshold can be specified with by a decimal number (e.g. 0.75). Per-base
-    /// thresholds can be specified by colon-separated values, for example C:0.75
-    /// specifies a threshold value of 0.75 for cytosine modification calls. Additional
-    /// per-base thresholds can be specified by repeating the option: for example
-    /// --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a single
-    /// base option and a default for all other bases with:
-    /// --filter-threshold A:0.70 --filter-threshold 0.9 will specify a threshold
-    /// value of 0.70 for adenine and 0.9 for all other base modification calls.
+    /// Specify the filter threshold globally or per primary base. A global
+    /// filter threshold can be specified with by a decimal number (e.g.
+    /// 0.75). Per-base thresholds can be specified by colon-separated
+    /// values, for example C:0.75 specifies a threshold value of 0.75 for
+    /// cytosine modification calls. Additional per-base thresholds can be
+    /// specified by repeating the option: for example --filter-threshold
+    /// C:0.75 --filter-threshold A:0.70 or specify a single base option
+    /// and a default for all other bases with: --filter-threshold A:0.70
+    /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
+    /// adenine and 0.9 for all other base modification calls.
     #[arg(
     long,
     group = "thresholds",
@@ -1102,32 +1116,35 @@ pub struct CallMods {
     alias = "pass_threshold"
     )]
     filter_threshold: Option<Vec<String>>,
-    /// Specify a passing threshold to use for a base modification, independent of the
-    /// threshold for the primary sequence base or the default. For example, to set
-    /// the pass threshold for 5hmC to 0.8 use `--mod-threshold h:0.8`. The pass
-    /// threshold will still be estimated as usual and used for canonical cytosine and
-    /// other modifications unless the `--filter-threshold` option is also passed.
+    /// Specify a passing threshold to use for a base modification, independent
+    /// of the threshold for the primary sequence base or the default. For
+    /// example, to set the pass threshold for 5hmC to 0.8 use
+    /// `--mod-threshold h:0.8`. The pass threshold will still be estimated
+    /// as usual and used for canonical cytosine and other modifications
+    /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
     #[arg(
     long = "mod-threshold",
     action = clap::ArgAction::Append
     )]
     mod_thresholds: Option<Vec<String>>,
-    /// Don't filter base modification calls, assign each base modification to the
-    /// highest probability prediction.
+    /// Don't filter base modification calls, assign each base modification to
+    /// the highest probability prediction.
     #[arg(long, default_value_t = false)]
     no_filtering: bool,
-    /// Discard base modification calls that are this many bases from the start or the end
-    /// of the read. Two comma-separated values may be provided to asymmetrically filter out
-    /// base modification calls from the start and end of the reads. For example, 4,8 will
-    /// filter out base modification calls in the first 4 and last 8 bases of the read.
+    /// Discard base modification calls that are this many bases from the start
+    /// or the end of the read. Two comma-separated values may be provided
+    /// to asymmetrically filter out base modification calls from the start
+    /// and end of the reads. For example, 4,8 will filter out base
+    /// modification calls in the first 4 and last 8 bases of the read.
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter, instead of filtering out base modification calls at the ends
-    /// of reads, only _keep_ base modification calls at the ends of reads. E.g. if usually,
-    /// "4,8" would remove (i.e. filter out) base modification calls in the first 4 and last 8
-    /// bases of the read, using this flag will keep only base modification calls in the first
-    /// 4 and last 8 bases.
+    /// Invert the edge filter, instead of filtering out base modification
+    /// calls at the ends of reads, only _keep_ base modification calls at
+    /// the ends of reads. E.g. if usually, "4,8" would remove (i.e. filter
+    /// out) base modification calls in the first 4 and last 8 bases of the
+    /// read, using this flag will keep only base modification calls in the
+    /// first 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
     /// Output SAM format instead of BAM.
@@ -1171,8 +1188,10 @@ impl CallMods {
             parse_thresholds(raw_threshold, per_mod_thresholds)?
         } else {
             if using_stream(&self.in_bam) {
-                bail!("must specify all thresholds with --filter-threshold and (optionally) --mod-threshold \
-                    when using stdin stream")
+                bail!(
+                    "must specify all thresholds with --filter-threshold and \
+                     (optionally) --mod-threshold when using stdin stream"
+                )
             }
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(self.threads)

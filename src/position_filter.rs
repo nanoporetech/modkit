@@ -32,8 +32,8 @@ impl<T: Send + Sync + Eq + Clone> StrandedPositionFilter<T> {
             Strand::Negative => &self.neg_positions,
         };
         positions
-            // todo(arand) chromId should really be an enum.. encoding things as missing by making them
-            //  negative numbers is so.. C
+            // todo(arand) chromId should really be an enum.. encoding things as
+            // missing by making them  negative numbers is so.. C
             .get(&(chrom_id as u32))
             .map(|lp| lp.find(position, position + 1).count() > 0)
             .unwrap_or(false)
@@ -45,8 +45,8 @@ impl<T: Send + Sync + Eq + Clone> StrandedPositionFilter<T> {
         start: u64,
         end: u64,
     ) -> bool {
-        // check pos positions first, if overlaps with positive positions eagerly return true
-        // otherwise check negative overlaps
+        // check pos positions first, if overlaps with positive positions
+        // eagerly return true otherwise check negative overlaps
         let pos_overlaps = self
             .pos_positions
             .get(&chrom_id)
@@ -108,10 +108,7 @@ impl StrandedPositionFilter<()> {
         chrom_to_target_id: &HashMap<&str, u32>,
         suppress_pb: bool,
     ) -> anyhow::Result<Self> {
-        info!(
-            "parsing BED at {}",
-            bed_fp.to_str().unwrap_or("invalid-UTF-8")
-        );
+        info!("parsing BED at {}", bed_fp.to_str().unwrap_or("invalid-UTF-8"));
 
         let fh = File::open(bed_fp)?;
         let mut pos_positions = FxHashMap::default();
@@ -125,10 +122,8 @@ impl StrandedPositionFilter<()> {
         let mut warned = HashSet::new();
 
         let reader = BufReader::new(fh);
-        for line in reader
-            .lines()
-            .filter_map(|l| l.ok())
-            .filter(|l| !l.is_empty())
+        for line in
+            reader.lines().filter_map(|l| l.ok()).filter(|l| !l.is_empty())
         {
             let parts = line.split_ascii_whitespace().collect::<Vec<&str>>();
             let chrom_name = parts[0];
@@ -159,22 +154,16 @@ impl StrandedPositionFilter<()> {
             };
             if let Some(chrom_id) = chrom_to_target_id.get(chrom_name) {
                 if pos_strand {
-                    pos_positions.entry(*chrom_id).or_insert(Vec::new()).push(
-                        Iv {
-                            start,
-                            stop,
-                            val: (),
-                        },
-                    )
+                    pos_positions
+                        .entry(*chrom_id)
+                        .or_insert(Vec::new())
+                        .push(Iv { start, stop, val: () })
                 }
                 if neg_strand {
-                    neg_positions.entry(*chrom_id).or_insert(Vec::new()).push(
-                        Iv {
-                            start,
-                            stop,
-                            val: (),
-                        },
-                    )
+                    neg_positions
+                        .entry(*chrom_id)
+                        .or_insert(Vec::new())
+                        .push(Iv { start, stop, val: () })
                 }
                 lines_processed.inc(1);
             } else {
@@ -208,10 +197,7 @@ impl StrandedPositionFilter<()> {
         lines_processed.finish_and_clear();
         info!("processed {} BED lines", lines_processed.position());
 
-        Ok(Self {
-            pos_positions: pos_lapper,
-            neg_positions: neg_lapper,
-        })
+        Ok(Self { pos_positions: pos_lapper, neg_positions: neg_lapper })
     }
 }
 
@@ -231,7 +217,7 @@ impl StrandedPositionFilter<DnaBase> {
         })
     }
 
-    // pub fn get_forward_base_at_position(&self, chrom_id: u32, position: u64) -> Option<DnaBase> {
-    //     unimplemented!()
+    // pub fn get_forward_base_at_position(&self, chrom_id: u32, position: u64)
+    // -> Option<DnaBase> {     unimplemented!()
     // }
 }

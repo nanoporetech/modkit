@@ -107,11 +107,7 @@ impl SamplingSchedule {
             debug!("using CRAM index, sampling schedule is approximate!");
         }
         let contigs_with_reads = counts_for_chroms.len();
-        let noun = if contigs_with_reads > 1 {
-            "contigs"
-        } else {
-            "contig"
-        };
+        let noun = if contigs_with_reads > 1 { "contigs" } else { "contig" };
         let total_to_sample = match total_to_sample {
             CountOrSample::Count(count) => format!("{}", count),
             CountOrSample::Sample(frac) => format!("{}% of", frac * 100f32),
@@ -124,8 +120,11 @@ impl SamplingSchedule {
             }
             None => format!("0"),
         };
-        debug!("derived sampling schedule, sampling total {total_to_sample} reads from \
-            {} {noun}, {} unmapped reads", contigs_with_reads, unmapped);
+        debug!(
+            "derived sampling schedule, sampling total {total_to_sample} \
+             reads from {} {noun}, {} unmapped reads",
+            contigs_with_reads, unmapped
+        );
 
         let report = counts_for_chroms
             .iter()
@@ -160,8 +159,8 @@ impl SamplingSchedule {
                     chrom_id >= 0 && counts_frac.counts > 0
                 })
                 .map(|(&chrom_id, counts_frac)| {
-                    // use ceil here so that if there is at least 1 read aligned to this
-                    // contig we sample it.
+                    // use ceil here so that if there is at least 1 read aligned
+                    // to this contig we sample it.
                     let num_reads_for_chrom = std::cmp::min(
                         (num_reads as f32 * counts_frac.frac).ceil() as usize,
                         counts_frac.counts,
@@ -190,13 +189,11 @@ impl SamplingSchedule {
                 CountOrSample::Count(total_to_sample),
             );
 
-            Ok(Self {
-                counts_for_chroms,
-                unmapped_count,
-            })
+            Ok(Self { counts_for_chroms, unmapped_count })
         } else {
-            // using CRAM distribute num_reads over the contigs that we found at least 1
-            // record for (N.B. that we assume the target IDs here are are >=0
+            // using CRAM distribute num_reads over the contigs that we found at
+            // least 1 record for (N.B. that we assume the target
+            // IDs here are are >=0
             let contigs_with_records = index_stats
                 .tid_to_mapped_read_count
                 .keys()
@@ -212,7 +209,8 @@ impl SamplingSchedule {
                 .iter()
                 .filter_map(|&target_id| {
                     header.target_len(target_id as u32).map(|length| {
-                        // get the proportion of the total length contributed by this contig
+                        // get the proportion of the total length contributed by
+                        // this contig
                         let weight = length as f32 / total_length;
                         let count = (num_reads as f32 * weight).ceil() as usize;
                         (target_id as u32, CountOrSample::Count(count))
@@ -235,10 +233,7 @@ impl SamplingSchedule {
                 unmapped_count.as_ref(),
                 CountOrSample::Count(num_reads),
             );
-            Ok(Self {
-                counts_for_chroms,
-                unmapped_count,
-            })
+            Ok(Self { counts_for_chroms, unmapped_count })
         }
     }
 
@@ -297,10 +292,7 @@ impl SamplingSchedule {
                 unmapped_count.as_ref(),
                 CountOrSample::Count(total_to_sample),
             );
-            Ok(Self {
-                counts_for_chroms,
-                unmapped_count,
-            })
+            Ok(Self { counts_for_chroms, unmapped_count })
         } else {
             let counts_for_chroms = index_stats
                 .tid_to_mapped_read_count
@@ -325,10 +317,7 @@ impl SamplingSchedule {
                 unmapped_count.as_ref(),
                 CountOrSample::Sample(sample_frac),
             );
-            Ok(Self {
-                counts_for_chroms,
-                unmapped_count,
-            })
+            Ok(Self { counts_for_chroms, unmapped_count })
         }
     }
 
@@ -459,7 +448,8 @@ impl IdxStats {
                 mapped_read_count,
             })
         } else {
-            // when using CRAM the semantics are that the target ids must have at least 1 found read
+            // when using CRAM the semantics are that the target ids must have
+            // at least 1 found read
             let tid_to_mapped_read_count = (0..header.target_count())
                 .filter(|&target_id| match (region_tid, position_filter) {
                     (Some(tid), _) => tid == target_id,
@@ -469,8 +459,13 @@ impl IdxStats {
                     (None, None) => true,
                 })
                 .filter_map(|target_id| {
-                    if let Err(e) = reader.fetch(FetchDefinition::CompleteTid(target_id as i32)) {
-                        debug!("failed to fetch contig {target_id}, {}", e.to_string());
+                    if let Err(e) = reader
+                        .fetch(FetchDefinition::CompleteTid(target_id as i32))
+                    {
+                        debug!(
+                            "failed to fetch contig {target_id}, {}",
+                            e.to_string()
+                        );
                         None
                     } else {
                         loop {
@@ -478,14 +473,19 @@ impl IdxStats {
                                 Some(Ok(_)) => break Some(target_id),
                                 None => break None,
                                 Some(Err(e)) => {
-                                    debug!("failed to parse record for target id {target_id}, {}", e.to_string());
-                                    break None
+                                    debug!(
+                                        "failed to parse record for target id \
+                                         {target_id}, {}",
+                                        e.to_string()
+                                    );
+                                    break None;
                                 }
                             }
                         }
                     }
                 })
-                .map(|target_id| (target_id as i64, 1u64)).collect::<FxHashMap<i64, u64>>();
+                .map(|target_id| (target_id as i64, 1u64))
+                .collect::<FxHashMap<i64, u64>>();
             reader
                 .fetch(FetchDefinition::Unmapped)
                 .context("failed to fetch unmapped reads")?;

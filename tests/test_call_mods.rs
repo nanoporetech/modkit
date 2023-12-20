@@ -37,7 +37,10 @@ pub fn check_two_bams_mod_probs_are_the_same(
                     String::from_utf8(test_record.qname().to_vec()).unwrap();
                 let expected_record_id =
                     String::from_utf8(ref_record.qname().to_vec()).unwrap();
-                return Err(anyhow!("difference at test record id {test_record_id} =/= {expected_record_id}"));
+                return Err(anyhow!(
+                    "difference at test record id {test_record_id} =/= \
+                     {expected_record_id}"
+                ));
             }
         }
 
@@ -51,9 +54,9 @@ pub fn check_two_bams_mod_probs_are_the_same(
 
 #[test]
 fn test_call_mods_basic_regression() {
-    // Tests BAM against one checked by eye. Canary test, there has been a change
-    // in the algorithm if this tests fails, but not necessarily because it's
-    // broken
+    // Tests BAM against one checked by eye. Canary test, there has been a
+    // change in the algorithm if this tests fails, but not necessarily
+    // because it's broken
     let mod_call_out_bam =
         std::env::temp_dir().join("test_call_mods_same_positions_mod_call.bam");
     run_modkit(&[

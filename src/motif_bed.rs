@@ -100,11 +100,7 @@ impl OverlappingRegex {
         &'a self,
         text: &'a str,
     ) -> OverlappingPatternIterator<'a> {
-        OverlappingPatternIterator {
-            text: &text,
-            re: &self.inner,
-            start: 0,
-        }
+        OverlappingPatternIterator { text: &text, re: &self.inner, start: 0 }
     }
 
     fn as_str(&self) -> &str {
@@ -141,7 +137,10 @@ impl RegexMotif {
         let mut raw_motif_parts = raw_motif_parts.to_owned();
         if cpg {
             if raw_motif_parts.chunks(2).any(|motif| motif == ["CG", "0"]) {
-                info!("CG 0 motif already, don't need --cpg and --motif CG 0, ignoring --cpg");
+                info!(
+                    "CG 0 motif already, don't need --cpg and --motif CG 0, \
+                     ignoring --cpg"
+                );
             } else {
                 info!("--cpg flag received, adding CG, 0 to motifs");
                 raw_motif_parts
@@ -357,8 +356,9 @@ pub fn motif_bed(
 
 pub struct MultipleMotifLocations {
     pub(crate) motif_locations: Vec<MotifLocations>,
-    /// mapping of target_id to mapping of sequence position to vector indices into
-    /// `self.motif_locations` that have a hit at that position and strand
+    /// mapping of target_id to mapping of sequence position to vector indices
+    /// into `self.motif_locations` that have a hit at that position and
+    /// strand
     position_lookup: FxHashMap<u32, FxHashMap<(u32, Strand), Vec<usize>>>,
 }
 
@@ -375,7 +375,8 @@ impl MultipleMotifLocations {
                             .entry(*target_id)
                             .or_insert(FxHashMap::default());
                         positions.iter().for_each(|(position, strand_rule)| {
-                            // add the idx (index into motif_locations) to the mapping
+                            // add the idx (index into motif_locations) to the
+                            // mapping
                             match strand_rule {
                                 StrandRule::Positive => {
                                     let k = (*position, Strand::Positive);
@@ -410,10 +411,7 @@ impl MultipleMotifLocations {
             },
         );
 
-        Self {
-            motif_locations,
-            position_lookup,
-        }
+        Self { motif_locations, position_lookup }
     }
 
     pub fn motifs_for_position(
@@ -525,10 +523,7 @@ impl MotifLocations {
             })
             .collect();
 
-        Ok(Self {
-            tid_to_motif_positions,
-            motif: regex_motif,
-        })
+        Ok(Self { tid_to_motif_positions, motif: regex_motif })
     }
 
     pub fn from_fasta(

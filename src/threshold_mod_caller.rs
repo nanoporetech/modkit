@@ -21,9 +21,10 @@ impl MultipleThresholdModCaller {
         }
     }
 
-    /// Make a base modification call from the probabilities of each modification class.
-    /// Result will be Err if the raw mod code cannot be parsed (this will change in the future,
-    /// when BaseModProbs don't need to be converted to ModCodes.
+    /// Make a base modification call from the probabilities of each
+    /// modification class. Result will be Err if the raw mod code cannot be
+    /// parsed (this will change in the future, when BaseModProbs don't need
+    /// to be converted to ModCodes.
     pub fn call(
         &self,
         canonical_base: &DnaBase,
@@ -58,15 +59,13 @@ impl MultipleThresholdModCaller {
                 .push(BaseModCall::Canonical(base_mod_probs.canonical_prob()))
         };
 
-        filtered_probs
-            .into_iter()
-            .max()
-            .unwrap_or(BaseModCall::Filtered)
+        filtered_probs.into_iter().max().unwrap_or(BaseModCall::Filtered)
     }
 
-    /// Use thresholds to convert base modification probabilities into a "call", where
-    /// the probabilities are 1.0 for the predicted class. None is returned when the
-    /// probabilities all fail to meet the threshold requirements
+    /// Use thresholds to convert base modification probabilities into a "call",
+    /// where the probabilities are 1.0 for the predicted class. None is
+    /// returned when the probabilities all fail to meet the threshold
+    /// requirements
     pub fn call_probs(
         &self,
         canonical_base: &DnaBase,
