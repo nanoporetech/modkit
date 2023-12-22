@@ -8,6 +8,7 @@ use clap::Args;
 use crossbeam_channel::{bounded, Sender};
 use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
+use itertools::Itertools;
 use log::{debug, error, info};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -336,8 +337,12 @@ impl ExtractMods {
             let pb = master_progress_bar
                 .add(get_subroutine_progress_bar(contigs.len()));
             pb.set_message("contigs searched");
+            let contigs_sorted_by_size = contigs
+                .iter()
+                .sorted_by(|(_, s), (_, p)| s.len().cmp(&p.len()))
+                .collect::<Vec<(&String, &Vec<u8>)>>();
             let tid_to_positions = thread_pool.install(|| {
-                contigs
+                contigs_sorted_by_size
                     .into_par_iter()
                     .progress_with(pb)
                     .filter_map(|(name, raw_seq)| {
@@ -437,13 +442,11 @@ impl ExtractMods {
                         let reference_and_intervals = reference_records
                             .into_iter()
                             .map(|reference_record| {
-                                let interval_chunks =
-                                    IntervalChunks::new_without_motifs(
-                                        reference_record.start,
-                                        reference_record.length,
-                                        self.interval_size,
-                                        reference_record.tid,
-                                    );
+                                let interval_chunks = IntervalChunks::new(
+                                    reference_record.start,
+                                    reference_record.length,
+                                    self.interval_size,
+                                );
                                 (reference_record, interval_chunks)
                             })
                             .collect::<ReferenceAndIntervals>();

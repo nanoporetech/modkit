@@ -1,75 +1,14 @@
-use rustc_hash::FxHashMap;
-
-use crate::motif_bed::MultipleMotifLocations;
+use crate::motif_bed::{MultipleMotifLocations, RegexMotif};
 
 pub struct IntervalChunks {
     seq_len: u32,
     chunk_size: u32,
     curr: u32,
-    motif_positions: FxHashMap<u32, u32>,
 }
 
 impl IntervalChunks {
-    pub fn new_without_motifs(
-        start: u32,
-        seq_len: u32,
-        chunk_size: u32,
-        reference_id: u32,
-    ) -> Self {
-        Self::new(start, seq_len, chunk_size, reference_id, None)
-    }
-
-    pub fn new_with_multiple_motifs(
-        start: u32,
-        seq_len: u32,
-        chunk_size: u32,
-        reference_id: u32,
-        motif_locations: Option<&MultipleMotifLocations>,
-    ) -> Self {
-        Self::new(start, seq_len, chunk_size, reference_id, motif_locations)
-    }
-
-    fn new(
-        start: u32,
-        seq_len: u32,
-        chunk_size: u32,
-        reference_id: u32,
-        motif_locations: Option<&MultipleMotifLocations>,
-    ) -> Self {
-        let motif_positions = motif_locations
-            .map(|locations| {
-                locations
-                    .motif_locations
-                    .iter()
-                    .map(|loc| {
-                        loc.get_locations_unchecked(reference_id)
-                            .keys()
-                            .copied()
-                            .map(|pos| (pos, loc.motif_length() as u32))
-                            .collect::<Vec<(u32, u32)>>()
-                    })
-                    .fold(
-                        FxHashMap::<u32, u32>::default(),
-                        |mut acc, motif_positions| {
-                            for (position, length) in motif_positions {
-                                if let Some(l) = acc.get_mut(&position) {
-                                    *l = std::cmp::max(*l, length);
-                                } else {
-                                    acc.insert(position, length);
-                                }
-                            }
-                            acc
-                        },
-                    )
-            })
-            .unwrap_or_else(|| FxHashMap::default());
-
-        Self {
-            seq_len: start + seq_len,
-            chunk_size,
-            curr: start,
-            motif_positions,
-        }
+    pub fn new(start: u32, seq_len: u32, chunk_size: u32) -> Self {
+        Self { seq_len: start + seq_len, chunk_size, curr: start }
     }
 }
 
@@ -81,10 +20,98 @@ impl Iterator for IntervalChunks {
             None
         } else {
             let start = self.curr;
+            let end = std::cmp::min(start + self.chunk_size, self.seq_len);
+            self.curr = end;
+            Some((start, end))
+        }
+    }
+}
+
+pub struct MotifAwareIntervalChunks<'a> {
+    seq_len: u32,
+    chunk_size: u32,
+    curr: u32,
+    reference_id: u32,
+    motifs: Option<&'a MultipleMotifLocations>,
+}
+
+impl<'a> MotifAwareIntervalChunks<'a> {
+    /// Make an interval iterator that will not make
+    /// split points within motifs when the entire
+    /// motif must be computed at once (as with
+    /// `strand_combine`). E.g. if we have CpG
+    /// motifs _and_ want to combine counts on the +
+    /// and - strand calls, we need to make sure not to
+    /// have one interval go up to the first C and leave
+    /// the second C on the next interval. However, if
+    /// we're not combining strands, they can be split
+    /// since the counts are independent.
+    pub fn new(
+        start: u32,
+        seq_len: u32,
+        chunk_size: u32,
+        reference_id: u32,
+        strand_combine: bool,
+        motif_locations: Option<&'a MultipleMotifLocations>,
+    ) -> Self {
+        Self {
+            seq_len: start + seq_len,
+            chunk_size,
+            curr: start,
+            motifs: if strand_combine { motif_locations } else { None },
+            reference_id,
+        }
+    }
+}
+
+impl Iterator for MotifAwareIntervalChunks<'_> {
+    type Item = (u32, u32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.curr >= self.seq_len {
+            None
+        } else {
+            let start = self.curr;
             let mut end = std::cmp::min(start + self.chunk_size, self.seq_len);
-            while let Some(&len) = self.motif_positions.get(&(end - 1)) {
-                end += len;
+            if let Some(mls) = self.motifs {
+                'creep_loop: loop {
+                    let motifs_at_position = mls
+                        .motifs_at_position(
+                            self.reference_id,
+                            end.checked_sub(1).unwrap_or(end),
+                        )
+                        .into_iter()
+                        .filter(|motif| motif.length > 1)
+                        .collect::<Vec<&RegexMotif>>();
+                    if motifs_at_position.is_empty() {
+                        break 'creep_loop;
+                    }
+                    let creep_out = motifs_at_position
+                        .iter()
+                        .map(|motif| {
+                            motif
+                                .length
+                                .checked_sub(motif.forward_offset)
+                                .unwrap_or(motif.length)
+                        })
+                        .max();
+                    if let Some(creep) = creep_out {
+                        end += creep as u32;
+                        if creep == 0 {
+                            // just in case so that we don't get stuck
+                            // forever
+                            break 'creep_loop;
+                        } else {
+                            continue 'creep_loop;
+                        }
+                    } else {
+                        // shouldn't ever really hit this since we have
+                        // a break when motifs_at_position is empty
+                        break 'creep_loop;
+                    }
+                }
             }
+            let end = std::cmp::min(end, self.seq_len);
             self.curr = end;
             Some((start, end))
         }

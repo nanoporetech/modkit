@@ -265,7 +265,7 @@ pub fn process_region_duplex<T: AsRef<Path>>(
     );
 
     for (pileup, motif) in pileup_iter.filter_map(|pileup| {
-        let motifs = motif_locations.motifs_for_position(
+        let motifs = motif_locations.motifs_at_position_nonempty(
             chrom_tid,
             pileup.bam_pileup.pos(),
             Strand::Positive,
