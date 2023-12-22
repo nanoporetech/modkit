@@ -23,7 +23,7 @@ pub(crate) fn create_out_directory<T: AsRef<std::ffi::OsStr>>(
     raw_path: T,
 ) -> anyhow::Result<()> {
     if let Some(p) = Path::new(&raw_path).parent() {
-        if !p.exists() {
+        if !p.exists() && p != Path::new("") {
             info!("creating directory at {p:?}");
             std::fs::create_dir_all(p)?;
         }
@@ -190,6 +190,14 @@ pub enum StrandRule {
 }
 
 impl StrandRule {
+    pub fn covers(&self, strand: Strand) -> bool {
+        match &self {
+            StrandRule::Positive => strand == Strand::Positive,
+            StrandRule::Negative => strand == Strand::Negative,
+            StrandRule::Both => true,
+        }
+    }
+
     pub fn same_as(&self, strand: Strand) -> bool {
         match &self {
             StrandRule::Positive => strand == Strand::Positive,

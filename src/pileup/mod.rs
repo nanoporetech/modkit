@@ -556,7 +556,7 @@ fn combine_strand_features(
 
     for positive_strand_pos in positions_to_combine {
         // get the motifs that hit at the positive position
-        let motifs_at_position = motif_locations.motifs_for_position(
+        let motifs_at_position = motif_locations.motifs_at_position_nonempty(
             target_id,
             positive_strand_pos,
             Strand::Positive,
@@ -1110,14 +1110,14 @@ pub fn process_region<T: AsRef<Path>>(
                     neg_strand_observed_mod_codes.get(&partition_key);
 
                 let positive_motif_idxs = motif_locations.and_then(|mls| {
-                    mls.motif_idxs_for_position(
+                    mls.motif_idx_at_position_nonempty(
                         chrom_tid,
                         pos,
                         Strand::Positive,
                     )
                 });
                 let negative_motif_idxs = motif_locations.and_then(|mls| {
-                    mls.motif_idxs_for_position(
+                    mls.motif_idx_at_position_nonempty(
                         chrom_tid,
                         pos,
                         Strand::Negative,
@@ -1132,8 +1132,8 @@ pub fn process_region<T: AsRef<Path>>(
                         neg_strand_observed_mod_codes_for_key
                             .unwrap_or(&FxHashMap::default()),
                         &pileup_numeric_options,
-                        positive_motif_idxs,
-                        negative_motif_idxs,
+                        positive_motif_idxs.as_ref(),
+                        negative_motif_idxs.as_ref(),
                     ),
                 )
             })
