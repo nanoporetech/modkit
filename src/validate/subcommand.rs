@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::string::FromUtf8Error;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail};
 use clap::Args;
 use log::info;
 use rust_htslib::bam::{Read, Reader, Record};
@@ -17,37 +18,36 @@ use crate::util::{
     get_reference_mod_strand, get_ticker, record_is_secondary, Strand,
 };
 
-fn parse_ground_truth_bed_line(
-    line: &str,
-) -> Result<(String, Strand, ModCodeRepr, Vec<i64>), String> {
+pub struct GroundTruthSite {
+    pub chrom: String,
+    pub strand: Strand,
+    pub mod_code: ModCodeRepr,
+    pub positions: Vec<i64>,
+}
+
+fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
+    // todo convert this function to use nom
     let fields: Vec<&str> = line.split_whitespace().collect();
-    if fields.len() >= 6 {
-        let chromosome = fields[0].to_string();
-        let strand_char = fields[5]
-            .chars()
-            .next()
-            .ok_or_else(|| format!("Error parsing strand {}", fields[5]))?;
-        let strand = Strand::parse_char(strand_char)?;
-        let mod_code = fields[3].to_string();
-        let start: i64 = fields[1]
-            .parse()
-            .map_err(|e| format!("Error parsing start: {}", e))?;
-        let end: i64 = fields[2]
-            .parse()
-            .map_err(|e| format!("Error parsing end: {}", e))?;
-        let positions = (start..end + 1).collect();
-        Ok((
-            chromosome,
-            strand,
-            ModCodeRepr::parse(&mod_code).expect(concat!(
-                "Bad modified base code: ",
-                stringify!(mod_code)
-            )),
-            positions,
-        ))
-    } else {
-        Err("Invalid number of fields in BED line".to_string())
+    if fields.len() < 6 {
+        bail!("Invalid number of fields in BED line");
     }
+    let chrom = fields[0].to_string();
+    let start: i64 =
+        fields[1].parse().map_err(|e| anyhow!("Error parsing start: {}", e))?;
+    let end: i64 =
+        fields[2].parse().map_err(|e| anyhow!("Error parsing end: {}", e))?;
+    let raw_mod_code = fields[3];
+    let strand_char = fields[5]
+        .chars()
+        .next()
+        .ok_or_else(|| anyhow!("Error parsing strand {}", fields[5]))?;
+
+    let strand = Strand::parse_char(strand_char)?;
+    let mod_code = ModCodeRepr::parse(&raw_mod_code)
+        .map_err(|e| anyhow!("Error parsing modified base code: {}", e))?;
+    let positions = (start..end + 1).collect();
+
+    Ok(GroundTruthSite { chrom, strand, mod_code, positions })
 }
 
 type ChromToTid = HashMap<String, u32>;
@@ -55,14 +55,18 @@ type ChromToTid = HashMap<String, u32>;
 type TidStrandNamePositions =
     HashMap<u32, HashMap<Strand, HashMap<ModCodeRepr, Vec<i64>>>>;
 
-fn get_chrom_to_tid(reader: &Reader) -> ChromToTid {
+fn get_chrom_to_tid(reader: &Reader) -> anyhow::Result<ChromToTid> {
     let header = reader.header().to_owned();
-    let chrom_to_tid = (0..header.target_count())
-        .map(|tid| {
-            (String::from_utf8(header.tid2name(tid).to_vec()).unwrap(), tid)
+    let chrom_to_tid_result = (0..header.target_count())
+        .map(|tid: u32| {
+            let raw_name = header.tid2name(tid);
+            let stringed_name: Result<String, FromUtf8Error> =
+                String::from_utf8(raw_name.to_vec());
+            stringed_name.map(|name: String| (name, tid))
         })
-        .collect::<ChromToTid>();
-    chrom_to_tid
+        .collect::<Result<HashMap<String, u32>, _>>();
+    let chrom_to_tid = chrom_to_tid_result?;
+    Ok(chrom_to_tid)
 }
 
 fn parse_ground_truth_bed_file(
@@ -79,42 +83,35 @@ fn parse_ground_truth_bed_file(
     }
     lines_processed.set_message("rows processed");
 
-    if let Ok(file) = File::open(file_path) {
-        let reader = BufReader::new(file);
-        for line in reader.lines() {
-            if let Ok((chrom_name, strand, mod_code, positions)) =
-                parse_ground_truth_bed_line(&line.as_ref().unwrap())
-            {
-                let Some(tid) = chrom_to_tid.get(&chrom_name) else {
-                    continue;
-                };
-                result
-                    .entry(*tid)
-                    .or_insert_with(HashMap::new)
-                    .entry(strand)
-                    .or_insert_with(HashMap::new)
-                    .entry(mod_code)
-                    .or_insert_with(Vec::new)
-                    .extend(positions);
-                lines_processed.inc(1);
-            } else {
-                return Err(anyhow!(
-                    "Error parsing BED line: {:?}",
-                    line.unwrap()
-                ));
-            }
-        }
-        if result.is_empty() {
-            return Err(anyhow!(
-                "zero valid positions parsed from BED file".to_string()
-            ));
-        }
-        lines_processed.finish_and_clear();
-        info!("processed {} BED lines", lines_processed.position());
-        Ok(result)
-    } else {
-        Err(anyhow!("Error opening BED file: {:?}", file_path))
+    let reader = BufReader::new(File::open(file_path)?);
+    for ground_truth_site in reader
+        .lines()
+        .filter_map(|r| r.ok())
+        .filter_map(|line| {
+            Some(parse_ground_truth_bed_line(&line).map(Some).transpose())
+                .flatten()
+        })
+        .filter_map(|r| r.ok())
+    {
+        let Some(tid) = chrom_to_tid.get(&ground_truth_site.chrom) else {
+            continue;
+        };
+        result
+            .entry(*tid)
+            .or_insert_with(HashMap::new)
+            .entry(ground_truth_site.strand)
+            .or_insert_with(HashMap::new)
+            .entry(ground_truth_site.mod_code)
+            .or_insert_with(Vec::new)
+            .extend(ground_truth_site.positions);
+        lines_processed.inc(1);
     }
+    if result.is_empty() {
+        bail!("zero valid positions parsed from BED file".to_string());
+    }
+    lines_processed.finish_and_clear();
+    info!("processed {} BED lines", lines_processed.position());
+    Ok(result)
 }
 
 // ground truth and observed mod base codes pointing to vector of mod qualities
@@ -131,7 +128,7 @@ fn process_bam_record(
     let record_name = String::from_utf8(record.qname().to_vec())
         .unwrap_or("utf-decode-failed".to_string());
     if record.is_unmapped() || record_is_secondary(&record) {
-        return Err(anyhow!("Unmapped or secondary"));
+        bail!("Unmapped or secondary");
     }
 
     let cgt_mod_pos =
@@ -190,7 +187,7 @@ fn process_bam_file(
             .set_draw_target(indicatif::ProgressDrawTarget::hidden());
     }
     lines_processed.set_message("BAM records processed");
-    let mut errs: HashMap<String, i32> = HashMap::new();
+    let mut errs: HashMap<String, u32> = HashMap::new();
     let mut gt_mod_quals = HashMap::new();
     for record in reader.records() {
         let record = match record {
@@ -309,7 +306,7 @@ impl ValidateFromModbam {
 
             let mut reader = Reader::from_path(bam_path.as_path())?;
             reader.set_threads(self.threads)?;
-            let chrom_to_tid = get_chrom_to_tid(&reader);
+            let chrom_to_tid = get_chrom_to_tid(&reader)?;
             let mod_positions = parse_ground_truth_bed_file(
                 bed_path,
                 chrom_to_tid,
