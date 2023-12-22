@@ -27,12 +27,12 @@ pub(crate) struct PositionModCalls {
     num_soft_clipped_start: usize,
     num_soft_clipped_end: usize,
     read_length: usize,
-    base_mod_probs: BaseModProbs,
+    pub(crate) base_mod_probs: BaseModProbs,
     q_base: u8,
     query_kmer: Kmer,
     pub(crate) mod_strand: Strand,
     pub(crate) alignment_strand: Option<Strand>,
-    canonical_base: DnaBase,
+    pub(crate) canonical_base: DnaBase,
 }
 
 impl PositionModCalls {

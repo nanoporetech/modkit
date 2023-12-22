@@ -1,2 +1,2 @@
 pub mod subcommand;
-mod writer;
+pub mod writer;
