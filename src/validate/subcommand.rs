@@ -6,7 +6,9 @@ use std::string::FromUtf8Error;
 
 use anyhow::{anyhow, bail};
 use clap::Args;
-use log::info;
+use itertools::Itertools;
+use log::{info, warn};
+use prettytable::{Cell, Row, Table};
 use rust_htslib::bam::{Read, Reader, Record};
 
 use crate::command_utils::parse_edge_filter_input;
@@ -16,7 +18,7 @@ use crate::mod_bam::BaseModCall;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, ModBaseInfo};
 use crate::mod_base_code::ModCodeRepr;
 use crate::read_ids_to_base_mod_probs::ReadBaseModProfile;
-use crate::thresholds::Percentiles;
+use crate::thresholds::percentile_linear_interp;
 use crate::util::{
     get_reference_mod_strand, get_ticker, record_is_secondary, Strand,
 };
@@ -256,6 +258,83 @@ fn process_bam_file(
     Ok(gt_mod_quals)
 }
 
+// todo fix this function
+/*fn balance_ground_truth(gt_mod_quals: &mut ModBaseQuals) {
+    let gt_bases: HashSet<ModCodeRepr> =
+        gt_mod_quals.keys().map(|(k, _)| k.clone()).collect();
+    let min_sum_lengths: HashMap<ModCodeRepr, usize> = gt_bases
+        .iter()
+        .map(|&first_key| {
+            (
+                first_key,
+                gt_mod_quals
+                    .values()
+                    .filter(|k| match (first_key, k) {
+                        (ModCodeRepr::Code(c1), ModCodeRepr::Code(c2)) => {
+                            c1 == c2
+                        }
+                        (ModCodeRepr::ChEbi(u1), ModCodeRepr::ChEbi(u2)) => {
+                            u1 == u2
+                        }
+                        _ => false,
+                    })
+                    .map(|(_, v)| v.len())
+                    .sum(),
+            )
+        })
+        .collect();
+    // Sample down to the minimum sum length for each group
+    for ((first_key, _), values) in gt_mod_quals.iter_mut() {
+        if let Some(&min_sum_length) = min_sum_lengths.get(&first_key.0) {
+            values.truncate(min_sum_length);
+        }
+    }
+}*/
+
+fn print_table(gt_mod_quals: &ModBaseQuals) {
+    let gt_codes: Vec<_> = gt_mod_quals.keys().map(|&(k, _)| k).collect();
+    let call_codes: Vec<_> = gt_mod_quals.keys().map(|&(_, k)| k).collect();
+
+    let all_codes: Vec<_> =
+        gt_codes.iter().chain(call_codes.iter()).unique().collect();
+
+    let mut table = Table::new();
+    table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
+
+    // Create a header row
+    let mut header = Row::empty();
+    header.add_cell(Cell::new(""));
+    for &call_code in &all_codes {
+        header.add_cell(Cell::new(&call_code.to_string()));
+    }
+    table.add_row(header);
+
+    // Create separator row
+    let mut separator = Row::empty();
+    separator.add_cell(Cell::new(""));
+    for _ in &all_codes {
+        separator.add_cell(Cell::new("------"));
+    }
+    table.add_row(separator);
+
+    // Create table rows
+    for &gt_code in &all_codes {
+        let mut row = Row::empty();
+        row.add_cell(Cell::new(&gt_code.to_string()));
+        for &call_code in &all_codes {
+            let vector_length = gt_mod_quals
+                .get(&(*gt_code, *call_code))
+                .map(|v| v.len())
+                .unwrap_or(0);
+            row.add_cell(Cell::new(&format!("{}", vector_length)));
+        }
+        table.add_row(row);
+    }
+
+    // Print the table
+    table.printstd();
+}
+
 #[derive(Args)]
 pub struct ValidateFromModbam {
     // running args
@@ -368,14 +447,23 @@ impl ValidateFromModbam {
             }
         }
 
+        warn!("Dataset balancing not currently implemented");
+        // todo fix this function and run it here
+        // balance_ground_truth(gt_mod_quals)
+
+        // todo also print percentages table
+        print_table(&all_gt_mod_quals);
+
         let mut all_quals = Vec::<f32>::new();
-        for ((gt_code, call_code), mod_quals) in all_gt_mod_quals.iter() {
+        for (_, mod_quals) in all_gt_mod_quals.iter() {
             all_quals.extend(mod_quals);
             //println!("gt:{} call:{}", gt_code, call_code);
             //println!("\t{:?}", mod_quals);
         }
-        let thresh = Percentiles::new(&mut all_quals, &[self.filter_quantile])?;
-        info!("{}", thresh.report());
+        all_quals.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        let thresh =
+            percentile_linear_interp(&all_quals, self.filter_quantile)?;
+        info!("Threshold: {}", thresh);
 
         Ok(())
     }
