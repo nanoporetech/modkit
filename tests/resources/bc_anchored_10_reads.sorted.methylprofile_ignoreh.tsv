@@ -1,110 +1,110 @@
-read_id	forward_read_position	ref_position	chrom	mod_strand	ref_strand	ref_mod_strand	fw_soft_clipped_start	fw_soft_clipped_end	read_length	mod_qual	mod_code	base_qual	ref_kmer	query_kmer	canonical_base	modified_primary_base	inferred
-068ce426-129e-4870-bd34-16cd78edaa43	18	9	oligo_1512_adapters	+	+	+	9	4	123	0.2607422	m	5	.	TTCGT	C	C	false
-068ce426-129e-4870-bd34-16cd78edaa43	27	19	oligo_1512_adapters	+	+	+	9	4	123	0.13574219	m	5	.	TACGT	C	C	false
-068ce426-129e-4870-bd34-16cd78edaa43	70	63	oligo_1512_adapters	+	+	+	9	4	123	0.86816406	m	16	.	CACGG	C	C	false
-068ce426-129e-4870-bd34-16cd78edaa43	76	69	oligo_1512_adapters	+	+	+	9	4	123	0.89746094	m	24	.	GACGG	C	C	false
-068ce426-129e-4870-bd34-16cd78edaa43	79	72	oligo_1512_adapters	+	+	+	9	4	123	0.9248047	m	32	.	GGCGG	C	C	false
-068ce426-129e-4870-bd34-16cd78edaa43	96	90	oligo_1512_adapters	+	+	+	9	4	123	0.5439453	m	6	.	GACGA	C	C	false
-068ce426-129e-4870-bd34-16cd78edaa43	99	93	oligo_1512_adapters	+	+	+	9	4	123	0.79785156	m	6	.	GACGA	C	C	false
-068ce426-129e-4870-bd34-16cd78edaa43	107	100	oligo_1512_adapters	+	+	+	9	4	123	0.9658203	m	11	.	CTCGG	C	C	false
-0376fd57-dfff-4d96-8123-9a23a166776f	33	19	oligo_1512_adapters	+	+	+	18	2	152	0.4794922	m	7	.	TACGT	C	C	false
-0376fd57-dfff-4d96-8123-9a23a166776f	76	63	oligo_1512_adapters	+	+	+	18	2	152	0.9404297	m	16	.	CACGG	C	C	false
-0376fd57-dfff-4d96-8123-9a23a166776f	82	69	oligo_1512_adapters	+	+	+	18	2	152	0.9736328	m	17	.	GACGG	C	C	false
-0376fd57-dfff-4d96-8123-9a23a166776f	85	72	oligo_1512_adapters	+	+	+	18	2	152	0.8701172	m	19	.	GGCGG	C	C	false
-0376fd57-dfff-4d96-8123-9a23a166776f	103	90	oligo_1512_adapters	+	+	+	18	2	152	0.7705078	m	5	.	GCCGT	C	C	false
-0376fd57-dfff-4d96-8123-9a23a166776f	110	100	oligo_1512_adapters	+	+	+	18	2	152	0.53808594	m	10	.	CTCGG	C	C	false
-0376fd57-dfff-4d96-8123-9a23a166776f	147	135	oligo_1512_adapters	+	+	+	18	2	152	0.34472656	m	9	.	TACGT	C	C	false
-00c9d90a-140f-489e-9bc1-bb5711fc4e2a	16	9	oligo_1512_adapters	+	+	+	13	21	147	0.9736328	m	5	.	TTCGC	C	C	false
-00c9d90a-140f-489e-9bc1-bb5711fc4e2a	26	19	oligo_1512_adapters	+	+	+	13	21	147	0.5029297	m	5	.	TACGT	C	C	false
-00c9d90a-140f-489e-9bc1-bb5711fc4e2a	69	63	oligo_1512_adapters	+	+	+	13	21	147	0.85253906	m	21	.	CACGG	C	C	false
-00c9d90a-140f-489e-9bc1-bb5711fc4e2a	75	69	oligo_1512_adapters	+	+	+	13	21	147	0.9970703	m	33	.	GACGG	C	C	false
-00c9d90a-140f-489e-9bc1-bb5711fc4e2a	78	72	oligo_1512_adapters	+	+	+	13	21	147	0.98535156	m	35	.	GGCGG	C	C	false
-00c9d90a-140f-489e-9bc1-bb5711fc4e2a	97	90	oligo_1512_adapters	+	+	+	13	21	147	0.60839844	m	10	.	ACCGG	C	C	false
-00c9d90a-140f-489e-9bc1-bb5711fc4e2a	101	93	oligo_1512_adapters	+	+	+	13	21	147	0.9873047	m	21	.	GACGT	C	C	false
-00c9d90a-140f-489e-9bc1-bb5711fc4e2a	108	100	oligo_1512_adapters	+	+	+	13	21	147	0.8330078	m	13	.	CTCGG	C	C	false
-0a3f83ad-b849-4d1d-9e39-095f9d9df03e	29	19	oligo_1512_adapters	+	+	+	16	0	142	0.47558594	m	5	.	TACGT	C	C	false
-0a3f83ad-b849-4d1d-9e39-095f9d9df03e	67	63	oligo_1512_adapters	+	+	+	16	0	142	0.59472656	m	21	.	CACGG	C	C	false
-0a3f83ad-b849-4d1d-9e39-095f9d9df03e	73	69	oligo_1512_adapters	+	+	+	16	0	142	0.80566406	m	10	.	GACGG	C	C	false
-0a3f83ad-b849-4d1d-9e39-095f9d9df03e	76	72	oligo_1512_adapters	+	+	+	16	0	142	0.53222656	m	5	.	GGCGG	C	C	false
-0a3f83ad-b849-4d1d-9e39-095f9d9df03e	96	93	oligo_1512_adapters	+	+	+	16	0	142	0.63378906	m	3	.	AACGA	C	C	false
-0a3f83ad-b849-4d1d-9e39-095f9d9df03e	105	100	oligo_1512_adapters	+	+	+	16	0	142	0.95214844	m	15	.	CTCGG	C	C	false
-0a3f83ad-b849-4d1d-9e39-095f9d9df03e	128	124	oligo_1512_adapters	+	+	+	16	0	142	0.9013672	m	7	.	CCCGG	C	C	false
-0a3f83ad-b849-4d1d-9e39-095f9d9df03e	139	135	oligo_1512_adapters	+	+	+	16	0	142	0.3955078	m	6	.	TGCGT	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	20	9	oligo_1512_adapters	+	+	+	18	111	239	0.3095703	m	7	.	TTCGT	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	30	19	oligo_1512_adapters	+	+	+	18	111	239	0.49316406	m	13	.	TACGT	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	68	63	oligo_1512_adapters	+	+	+	18	111	239	0.95214844	m	40	.	CACGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	74	72	oligo_1512_adapters	+	+	+	18	111	239	0.82128906	m	33	.	GACGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	90	90	oligo_1512_adapters	+	+	+	18	111	239	0.5205078	m	5	.	GCCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	93	93	oligo_1512_adapters	+	+	+	18	111	239	0.52441406	m	5	.	GGCGT	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	100	100	oligo_1512_adapters	+	+	+	18	111	239	0.74902344	m	4	.	TTCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	124	124	oligo_1512_adapters	+	+	+	18	111	239	0.7763672	m	23	.	CCCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	129	-1	oligo_1512_adapters	+	+	+	18	111	239	0.6591797	m	23	.	GCCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	135	-1	oligo_1512_adapters	+	+	+	18	111	239	0.52441406	m	6	.	TCCGC	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	138	-1	oligo_1512_adapters	+	+	+	18	111	239	0.5654297	m	5	.	GCCGC	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	140	-1	oligo_1512_adapters	+	+	+	18	111	239	0.7451172	m	10	.	CGCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	152	-1	oligo_1512_adapters	+	+	+	18	111	239	0.8173828	m	34	.	TGCGA	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	164	-1	oligo_1512_adapters	+	+	+	18	111	239	0.5048828	m	5	.	TCCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	173	-1	oligo_1512_adapters	+	+	+	18	111	239	0.7236328	m	4	.	TCCGC	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	175	-1	oligo_1512_adapters	+	+	+	18	111	239	0.72753906	m	10	.	CGCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	183	-1	oligo_1512_adapters	+	+	+	18	111	239	0.9013672	m	23	.	GGCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	191	-1	oligo_1512_adapters	+	+	+	18	111	239	0.23535156	m	21	.	GCCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	194	-1	oligo_1512_adapters	+	+	+	18	111	239	0.7451172	m	24	.	GGCGG	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	207	-1	oligo_1512_adapters	+	+	+	18	111	239	0.9580078	m	15	.	GGCGA	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	214	-1	oligo_1512_adapters	+	+	+	18	111	239	0.59277344	m	13	.	AACGC	C	C	false
-0a20a557-7129-4a84-8eca-eee056304829	219	-1	oligo_1512_adapters	+	+	+	18	111	239	0.5029297	m	11	.	TTCGG	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	14	9	oligo_1512_adapters	+	+	+	13	90	218	0.4658203	m	4	.	CTCGT	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	24	19	oligo_1512_adapters	+	+	+	13	90	218	0.14746094	m	14	.	TACGT	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	67	63	oligo_1512_adapters	+	+	+	13	90	218	0.54785156	m	16	.	ACCGG	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	73	69	oligo_1512_adapters	+	+	+	13	90	218	0.7705078	m	4	.	GTCGG	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	76	72	oligo_1512_adapters	+	+	+	13	90	218	0.53808594	m	6	.	GGCGG	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	90	90	oligo_1512_adapters	+	+	+	13	90	218	0.92285156	m	11	.	ACCGG	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	94	94	oligo_1512_adapters	+	+	+	13	90	218	0.94628906	m	20	.	GACGT	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	101	100	oligo_1512_adapters	+	+	+	13	90	218	0.89941406	m	18	.	TTCGG	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	124	124	oligo_1512_adapters	+	+	+	13	90	218	0.8564453	m	13	.	CCCGG	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	129	-1	oligo_1512_adapters	+	+	+	13	90	218	0.93652344	m	22	.	GCCGC	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	153	-1	oligo_1512_adapters	+	+	+	13	90	218	0.9873047	m	33	.	GGCGG	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	167	-1	oligo_1512_adapters	+	+	+	13	90	218	0.9736328	m	31	.	TCCGC	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	198	-1	oligo_1512_adapters	+	+	+	13	90	218	0.5029297	m	17	.	GACGC	C	C	false
-10fc76b1-f06f-42f5-9275-09cd438c1db5	207	-1	oligo_1512_adapters	+	+	+	13	90	218	0.5048828	m	12	.	CCCGA	C	C	false
-0bde0d1e-0b36-4a02-9774-5a11bd501aff	94	64	oligo_1512_adapters	+	-	-	16	2	141	0.50097656	m	8	.	ACCGG	C	C	false
-0bde0d1e-0b36-4a02-9774-5a11bd501aff	88	70	oligo_1512_adapters	+	-	-	16	2	141	0.9951172	m	11	.	GCCGT	C	C	false
-0bde0d1e-0b36-4a02-9774-5a11bd501aff	85	73	oligo_1512_adapters	+	-	-	16	2	141	0.99902344	m	10	.	CCCGC	C	C	false
-0bde0d1e-0b36-4a02-9774-5a11bd501aff	69	91	oligo_1512_adapters	+	-	-	16	2	141	0.6220703	m	12	.	GCCGG	C	C	false
-0bde0d1e-0b36-4a02-9774-5a11bd501aff	66	95	oligo_1512_adapters	+	-	-	16	2	141	0.6298828	m	24	.	GACGC	C	C	false
-0bde0d1e-0b36-4a02-9774-5a11bd501aff	60	102	oligo_1512_adapters	+	-	-	16	2	141	0.88183594	m	10	.	CCCGG	C	C	false
-0bde0d1e-0b36-4a02-9774-5a11bd501aff	40	125	oligo_1512_adapters	+	-	-	16	2	141	0.9189453	m	23	.	CCCGG	C	C	false
-0bde0d1e-0b36-4a02-9774-5a11bd501aff	28	136	oligo_1512_adapters	+	-	-	16	2	141	0.46972656	m	7	.	TACGT	C	C	false
-0bde0d1e-0b36-4a02-9774-5a11bd501aff	18	146	oligo_1512_adapters	+	-	-	16	2	141	0.08691406	m	22	.	TTCGT	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	101	65	oligo_1512_adapters	+	-	-	19	4	149	0.99121094	m	38	.	CACGG	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	96	70	oligo_1512_adapters	+	-	-	19	4	149	0.9716797	m	39	.	GCCGT	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	93	73	oligo_1512_adapters	+	-	-	19	4	149	0.96972656	m	37	.	CCCGC	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	74	91	oligo_1512_adapters	+	-	-	19	4	149	0.51464844	m	11	.	GCCGG	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	71	94	oligo_1512_adapters	+	-	-	19	4	149	0.5361328	m	9	.	AGCGC	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	67	101	oligo_1512_adapters	+	-	-	19	4	149	0.66308594	m	15	.	CCCGA	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	43	125	oligo_1512_adapters	+	-	-	19	4	149	0.94433594	m	11	.	CCCGG	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	32	136	oligo_1512_adapters	+	-	-	19	4	149	0.5048828	m	15	.	TACGT	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	22	146	oligo_1512_adapters	+	-	-	19	4	149	0.20019531	m	7	.	TTCGT	C	C	false
-0402c338-f011-407a-98a6-1baff24d7c1f	12	-1	oligo_1512_adapters	+	-	-	19	4	149	0.21386719	m	8	.	GTCGT	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	138	-1	oligo_1512_adapters	+	-	-	23	15	146	0.5263672	m	6	.	AGCGA	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	133	-1	oligo_1512_adapters	+	-	-	23	15	146	0.2705078	m	5	.	ACCGC	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	123	40	oligo_1512_adapters	+	-	-	23	15	146	0.5048828	m	12	.	ACCGA	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	100	63	oligo_1512_adapters	+	-	-	23	15	146	0.56347656	m	39	.	CGCGT	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	98	65	oligo_1512_adapters	+	-	-	23	15	146	0.71191406	m	31	.	CACGC	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	93	70	oligo_1512_adapters	+	-	-	23	15	146	0.77441406	m	9	.	GCCGT	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	90	73	oligo_1512_adapters	+	-	-	23	15	146	0.97558594	m	8	.	CCCGC	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	81	83	oligo_1512_adapters	+	-	-	23	15	146	0.3173828	m	5	.	CCCGA	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	73	91	oligo_1512_adapters	+	-	-	23	15	146	0.50097656	m	6	.	GCCGG	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	70	94	oligo_1512_adapters	+	-	-	23	15	146	0.50683594	m	9	.	ACCGC	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	63	101	oligo_1512_adapters	+	-	-	23	15	146	0.7998047	m	11	.	CACGA	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	40	125	oligo_1512_adapters	+	-	-	23	15	146	0.95996094	m	13	.	CCCGG	C	C	false
-0d6c61d1-493e-4e9b-9232-d878ce53ac39	29	136	oligo_1512_adapters	+	-	-	23	15	146	0.49902344	m	30	.	TACGT	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	112	-1	oligo_1512_adapters	+	-	-	9	26	130	0.23144531	m	5	.	CCCGT	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	108	-1	oligo_1512_adapters	+	-	-	9	26	130	0.88964844	m	6	.	CACGC	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	86	64	oligo_1512_adapters	+	-	-	9	26	130	0.78027344	m	9	.	ACCGG	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	80	70	oligo_1512_adapters	+	-	-	9	26	130	0.98535156	m	11	.	GCCGT	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	77	73	oligo_1512_adapters	+	-	-	9	26	130	0.9951172	m	16	.	CCCGC	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	58	91	oligo_1512_adapters	+	-	-	9	26	130	0.5029297	m	32	.	GCCGG	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	55	94	oligo_1512_adapters	+	-	-	9	26	130	0.50878906	m	24	.	GCCGC	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	47	101	oligo_1512_adapters	+	-	-	9	26	130	0.57128906	m	31	.	CCCGA	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	28	136	oligo_1512_adapters	+	-	-	9	26	130	0.49121094	m	8	.	TACGT	C	C	false
-061e7b7b-4e37-4f09-b7a7-e30460f89d3d	18	146	oligo_1512_adapters	+	-	-	9	26	130	0.4873047	m	4	.	CTCGT	C	C	false
+read_id	forward_read_position	ref_position	chrom	mod_strand	ref_strand	ref_mod_strand	fw_soft_clipped_start	fw_soft_clipped_end	read_length	mod_qual	mod_code	base_qual	ref_kmer	query_kmer	canonical_base	modified_primary_base	inferred	flag
+068ce426-129e-4870-bd34-16cd78edaa43	18	9	oligo_1512_adapters	+	+	+	9	4	123	0.2607422	m	5	.	TTCGT	C	C	false	0
+068ce426-129e-4870-bd34-16cd78edaa43	27	19	oligo_1512_adapters	+	+	+	9	4	123	0.13574219	m	5	.	TACGT	C	C	false	0
+068ce426-129e-4870-bd34-16cd78edaa43	70	63	oligo_1512_adapters	+	+	+	9	4	123	0.86816406	m	16	.	CACGG	C	C	false	0
+068ce426-129e-4870-bd34-16cd78edaa43	76	69	oligo_1512_adapters	+	+	+	9	4	123	0.89746094	m	24	.	GACGG	C	C	false	0
+068ce426-129e-4870-bd34-16cd78edaa43	79	72	oligo_1512_adapters	+	+	+	9	4	123	0.9248047	m	32	.	GGCGG	C	C	false	0
+068ce426-129e-4870-bd34-16cd78edaa43	96	90	oligo_1512_adapters	+	+	+	9	4	123	0.5439453	m	6	.	GACGA	C	C	false	0
+068ce426-129e-4870-bd34-16cd78edaa43	99	93	oligo_1512_adapters	+	+	+	9	4	123	0.79785156	m	6	.	GACGA	C	C	false	0
+068ce426-129e-4870-bd34-16cd78edaa43	107	100	oligo_1512_adapters	+	+	+	9	4	123	0.9658203	m	11	.	CTCGG	C	C	false	0
+0376fd57-dfff-4d96-8123-9a23a166776f	33	19	oligo_1512_adapters	+	+	+	18	2	152	0.4794922	m	7	.	TACGT	C	C	false	0
+0376fd57-dfff-4d96-8123-9a23a166776f	76	63	oligo_1512_adapters	+	+	+	18	2	152	0.9404297	m	16	.	CACGG	C	C	false	0
+0376fd57-dfff-4d96-8123-9a23a166776f	82	69	oligo_1512_adapters	+	+	+	18	2	152	0.9736328	m	17	.	GACGG	C	C	false	0
+0376fd57-dfff-4d96-8123-9a23a166776f	85	72	oligo_1512_adapters	+	+	+	18	2	152	0.8701172	m	19	.	GGCGG	C	C	false	0
+0376fd57-dfff-4d96-8123-9a23a166776f	103	90	oligo_1512_adapters	+	+	+	18	2	152	0.7705078	m	5	.	GCCGT	C	C	false	0
+0376fd57-dfff-4d96-8123-9a23a166776f	110	100	oligo_1512_adapters	+	+	+	18	2	152	0.53808594	m	10	.	CTCGG	C	C	false	0
+0376fd57-dfff-4d96-8123-9a23a166776f	147	135	oligo_1512_adapters	+	+	+	18	2	152	0.34472656	m	9	.	TACGT	C	C	false	0
+00c9d90a-140f-489e-9bc1-bb5711fc4e2a	16	9	oligo_1512_adapters	+	+	+	13	21	147	0.9736328	m	5	.	TTCGC	C	C	false	0
+00c9d90a-140f-489e-9bc1-bb5711fc4e2a	26	19	oligo_1512_adapters	+	+	+	13	21	147	0.5029297	m	5	.	TACGT	C	C	false	0
+00c9d90a-140f-489e-9bc1-bb5711fc4e2a	69	63	oligo_1512_adapters	+	+	+	13	21	147	0.85253906	m	21	.	CACGG	C	C	false	0
+00c9d90a-140f-489e-9bc1-bb5711fc4e2a	75	69	oligo_1512_adapters	+	+	+	13	21	147	0.9970703	m	33	.	GACGG	C	C	false	0
+00c9d90a-140f-489e-9bc1-bb5711fc4e2a	78	72	oligo_1512_adapters	+	+	+	13	21	147	0.98535156	m	35	.	GGCGG	C	C	false	0
+00c9d90a-140f-489e-9bc1-bb5711fc4e2a	97	90	oligo_1512_adapters	+	+	+	13	21	147	0.60839844	m	10	.	ACCGG	C	C	false	0
+00c9d90a-140f-489e-9bc1-bb5711fc4e2a	101	93	oligo_1512_adapters	+	+	+	13	21	147	0.9873047	m	21	.	GACGT	C	C	false	0
+00c9d90a-140f-489e-9bc1-bb5711fc4e2a	108	100	oligo_1512_adapters	+	+	+	13	21	147	0.8330078	m	13	.	CTCGG	C	C	false	0
+0a3f83ad-b849-4d1d-9e39-095f9d9df03e	29	19	oligo_1512_adapters	+	+	+	16	0	142	0.47558594	m	5	.	TACGT	C	C	false	0
+0a3f83ad-b849-4d1d-9e39-095f9d9df03e	67	63	oligo_1512_adapters	+	+	+	16	0	142	0.59472656	m	21	.	CACGG	C	C	false	0
+0a3f83ad-b849-4d1d-9e39-095f9d9df03e	73	69	oligo_1512_adapters	+	+	+	16	0	142	0.80566406	m	10	.	GACGG	C	C	false	0
+0a3f83ad-b849-4d1d-9e39-095f9d9df03e	76	72	oligo_1512_adapters	+	+	+	16	0	142	0.53222656	m	5	.	GGCGG	C	C	false	0
+0a3f83ad-b849-4d1d-9e39-095f9d9df03e	96	93	oligo_1512_adapters	+	+	+	16	0	142	0.63378906	m	3	.	AACGA	C	C	false	0
+0a3f83ad-b849-4d1d-9e39-095f9d9df03e	105	100	oligo_1512_adapters	+	+	+	16	0	142	0.95214844	m	15	.	CTCGG	C	C	false	0
+0a3f83ad-b849-4d1d-9e39-095f9d9df03e	128	124	oligo_1512_adapters	+	+	+	16	0	142	0.9013672	m	7	.	CCCGG	C	C	false	0
+0a3f83ad-b849-4d1d-9e39-095f9d9df03e	139	135	oligo_1512_adapters	+	+	+	16	0	142	0.3955078	m	6	.	TGCGT	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	20	9	oligo_1512_adapters	+	+	+	18	111	239	0.3095703	m	7	.	TTCGT	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	30	19	oligo_1512_adapters	+	+	+	18	111	239	0.49316406	m	13	.	TACGT	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	68	63	oligo_1512_adapters	+	+	+	18	111	239	0.95214844	m	40	.	CACGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	74	72	oligo_1512_adapters	+	+	+	18	111	239	0.82128906	m	33	.	GACGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	90	90	oligo_1512_adapters	+	+	+	18	111	239	0.5205078	m	5	.	GCCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	93	93	oligo_1512_adapters	+	+	+	18	111	239	0.52441406	m	5	.	GGCGT	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	100	100	oligo_1512_adapters	+	+	+	18	111	239	0.74902344	m	4	.	TTCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	124	124	oligo_1512_adapters	+	+	+	18	111	239	0.7763672	m	23	.	CCCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	129	-1	oligo_1512_adapters	+	+	+	18	111	239	0.6591797	m	23	.	GCCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	135	-1	oligo_1512_adapters	+	+	+	18	111	239	0.52441406	m	6	.	TCCGC	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	138	-1	oligo_1512_adapters	+	+	+	18	111	239	0.5654297	m	5	.	GCCGC	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	140	-1	oligo_1512_adapters	+	+	+	18	111	239	0.7451172	m	10	.	CGCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	152	-1	oligo_1512_adapters	+	+	+	18	111	239	0.8173828	m	34	.	TGCGA	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	164	-1	oligo_1512_adapters	+	+	+	18	111	239	0.5048828	m	5	.	TCCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	173	-1	oligo_1512_adapters	+	+	+	18	111	239	0.7236328	m	4	.	TCCGC	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	175	-1	oligo_1512_adapters	+	+	+	18	111	239	0.72753906	m	10	.	CGCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	183	-1	oligo_1512_adapters	+	+	+	18	111	239	0.9013672	m	23	.	GGCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	191	-1	oligo_1512_adapters	+	+	+	18	111	239	0.23535156	m	21	.	GCCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	194	-1	oligo_1512_adapters	+	+	+	18	111	239	0.7451172	m	24	.	GGCGG	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	207	-1	oligo_1512_adapters	+	+	+	18	111	239	0.9580078	m	15	.	GGCGA	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	214	-1	oligo_1512_adapters	+	+	+	18	111	239	0.59277344	m	13	.	AACGC	C	C	false	0
+0a20a557-7129-4a84-8eca-eee056304829	219	-1	oligo_1512_adapters	+	+	+	18	111	239	0.5029297	m	11	.	TTCGG	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	14	9	oligo_1512_adapters	+	+	+	13	90	218	0.4658203	m	4	.	CTCGT	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	24	19	oligo_1512_adapters	+	+	+	13	90	218	0.14746094	m	14	.	TACGT	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	67	63	oligo_1512_adapters	+	+	+	13	90	218	0.54785156	m	16	.	ACCGG	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	73	69	oligo_1512_adapters	+	+	+	13	90	218	0.7705078	m	4	.	GTCGG	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	76	72	oligo_1512_adapters	+	+	+	13	90	218	0.53808594	m	6	.	GGCGG	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	90	90	oligo_1512_adapters	+	+	+	13	90	218	0.92285156	m	11	.	ACCGG	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	94	94	oligo_1512_adapters	+	+	+	13	90	218	0.94628906	m	20	.	GACGT	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	101	100	oligo_1512_adapters	+	+	+	13	90	218	0.89941406	m	18	.	TTCGG	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	124	124	oligo_1512_adapters	+	+	+	13	90	218	0.8564453	m	13	.	CCCGG	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	129	-1	oligo_1512_adapters	+	+	+	13	90	218	0.93652344	m	22	.	GCCGC	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	153	-1	oligo_1512_adapters	+	+	+	13	90	218	0.9873047	m	33	.	GGCGG	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	167	-1	oligo_1512_adapters	+	+	+	13	90	218	0.9736328	m	31	.	TCCGC	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	198	-1	oligo_1512_adapters	+	+	+	13	90	218	0.5029297	m	17	.	GACGC	C	C	false	0
+10fc76b1-f06f-42f5-9275-09cd438c1db5	207	-1	oligo_1512_adapters	+	+	+	13	90	218	0.5048828	m	12	.	CCCGA	C	C	false	0
+0bde0d1e-0b36-4a02-9774-5a11bd501aff	94	64	oligo_1512_adapters	+	-	-	16	2	141	0.50097656	m	8	.	ACCGG	C	C	false	16
+0bde0d1e-0b36-4a02-9774-5a11bd501aff	88	70	oligo_1512_adapters	+	-	-	16	2	141	0.9951172	m	11	.	GCCGT	C	C	false	16
+0bde0d1e-0b36-4a02-9774-5a11bd501aff	85	73	oligo_1512_adapters	+	-	-	16	2	141	0.99902344	m	10	.	CCCGC	C	C	false	16
+0bde0d1e-0b36-4a02-9774-5a11bd501aff	69	91	oligo_1512_adapters	+	-	-	16	2	141	0.6220703	m	12	.	GCCGG	C	C	false	16
+0bde0d1e-0b36-4a02-9774-5a11bd501aff	66	95	oligo_1512_adapters	+	-	-	16	2	141	0.6298828	m	24	.	GACGC	C	C	false	16
+0bde0d1e-0b36-4a02-9774-5a11bd501aff	60	102	oligo_1512_adapters	+	-	-	16	2	141	0.88183594	m	10	.	CCCGG	C	C	false	16
+0bde0d1e-0b36-4a02-9774-5a11bd501aff	40	125	oligo_1512_adapters	+	-	-	16	2	141	0.9189453	m	23	.	CCCGG	C	C	false	16
+0bde0d1e-0b36-4a02-9774-5a11bd501aff	28	136	oligo_1512_adapters	+	-	-	16	2	141	0.46972656	m	7	.	TACGT	C	C	false	16
+0bde0d1e-0b36-4a02-9774-5a11bd501aff	18	146	oligo_1512_adapters	+	-	-	16	2	141	0.08691406	m	22	.	TTCGT	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	101	65	oligo_1512_adapters	+	-	-	19	4	149	0.99121094	m	38	.	CACGG	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	96	70	oligo_1512_adapters	+	-	-	19	4	149	0.9716797	m	39	.	GCCGT	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	93	73	oligo_1512_adapters	+	-	-	19	4	149	0.96972656	m	37	.	CCCGC	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	74	91	oligo_1512_adapters	+	-	-	19	4	149	0.51464844	m	11	.	GCCGG	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	71	94	oligo_1512_adapters	+	-	-	19	4	149	0.5361328	m	9	.	AGCGC	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	67	101	oligo_1512_adapters	+	-	-	19	4	149	0.66308594	m	15	.	CCCGA	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	43	125	oligo_1512_adapters	+	-	-	19	4	149	0.94433594	m	11	.	CCCGG	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	32	136	oligo_1512_adapters	+	-	-	19	4	149	0.5048828	m	15	.	TACGT	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	22	146	oligo_1512_adapters	+	-	-	19	4	149	0.20019531	m	7	.	TTCGT	C	C	false	16
+0402c338-f011-407a-98a6-1baff24d7c1f	12	-1	oligo_1512_adapters	+	-	-	19	4	149	0.21386719	m	8	.	GTCGT	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	138	-1	oligo_1512_adapters	+	-	-	23	15	146	0.5263672	m	6	.	AGCGA	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	133	-1	oligo_1512_adapters	+	-	-	23	15	146	0.2705078	m	5	.	ACCGC	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	123	40	oligo_1512_adapters	+	-	-	23	15	146	0.5048828	m	12	.	ACCGA	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	100	63	oligo_1512_adapters	+	-	-	23	15	146	0.56347656	m	39	.	CGCGT	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	98	65	oligo_1512_adapters	+	-	-	23	15	146	0.71191406	m	31	.	CACGC	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	93	70	oligo_1512_adapters	+	-	-	23	15	146	0.77441406	m	9	.	GCCGT	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	90	73	oligo_1512_adapters	+	-	-	23	15	146	0.97558594	m	8	.	CCCGC	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	81	83	oligo_1512_adapters	+	-	-	23	15	146	0.3173828	m	5	.	CCCGA	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	73	91	oligo_1512_adapters	+	-	-	23	15	146	0.50097656	m	6	.	GCCGG	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	70	94	oligo_1512_adapters	+	-	-	23	15	146	0.50683594	m	9	.	ACCGC	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	63	101	oligo_1512_adapters	+	-	-	23	15	146	0.7998047	m	11	.	CACGA	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	40	125	oligo_1512_adapters	+	-	-	23	15	146	0.95996094	m	13	.	CCCGG	C	C	false	16
+0d6c61d1-493e-4e9b-9232-d878ce53ac39	29	136	oligo_1512_adapters	+	-	-	23	15	146	0.49902344	m	30	.	TACGT	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	112	-1	oligo_1512_adapters	+	-	-	9	26	130	0.23144531	m	5	.	CCCGT	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	108	-1	oligo_1512_adapters	+	-	-	9	26	130	0.88964844	m	6	.	CACGC	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	86	64	oligo_1512_adapters	+	-	-	9	26	130	0.78027344	m	9	.	ACCGG	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	80	70	oligo_1512_adapters	+	-	-	9	26	130	0.98535156	m	11	.	GCCGT	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	77	73	oligo_1512_adapters	+	-	-	9	26	130	0.9951172	m	16	.	CCCGC	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	58	91	oligo_1512_adapters	+	-	-	9	26	130	0.5029297	m	32	.	GCCGG	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	55	94	oligo_1512_adapters	+	-	-	9	26	130	0.50878906	m	24	.	GCCGC	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	47	101	oligo_1512_adapters	+	-	-	9	26	130	0.57128906	m	31	.	CCCGA	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	28	136	oligo_1512_adapters	+	-	-	9	26	130	0.49121094	m	8	.	TACGT	C	C	false	16
+061e7b7b-4e37-4f09-b7a7-e30460f89d3d	18	146	oligo_1512_adapters	+	-	-	9	26	130	0.4873047	m	4	.	CTCGT	C	C	false	16
