@@ -11,7 +11,7 @@ use rust_htslib::bam;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::Read;
 
-use crate::adjust::{adjust_modbam, record_is_valid};
+use crate::adjust::adjust_modbam;
 use crate::command_utils::{
     get_bam_writer, get_serial_reader, get_threshold_from_options,
     parse_edge_filter_input, parse_per_mod_thresholds, parse_thresholds,
@@ -906,7 +906,6 @@ fn update_mod_tags(
     mut record: bam::Record,
     new_mode: Option<SkipMode>,
 ) -> CliResult<bam::Record> {
-    let _ok = record_is_valid(&record)?;
     let mod_base_info = ModBaseInfo::new_from_record(&record)?;
     let mm_style = mod_base_info.mm_style;
     let ml_style = mod_base_info.ml_style;
@@ -979,7 +978,7 @@ impl Update {
                             total_failed += 1;
                         } else {
                             spinner.inc(1);
-                            total = i;
+                            total = i + 1;
                         }
                     }
                 }

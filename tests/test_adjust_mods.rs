@@ -1,5 +1,6 @@
 use anyhow::Context;
 use rust_htslib::{bam, bam::Read};
+use std::path::PathBuf;
 
 use crate::common::{parse_mod_profile, run_simple_summary};
 use common::run_modkit;
@@ -94,7 +95,7 @@ fn test_adjust_convert_old_tags() {
     let mut reader =
         bam::Reader::from_path(out_file.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
-        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
+        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap();
         assert!(!raw_mod_tags.mm_is_new_style());
         assert!(!raw_mod_tags.ml_is_new_style());
         let mm = raw_mod_tags.get_raw_mm();
@@ -261,7 +262,7 @@ fn test_adjust_to_no_mods() {
     let mut reader =
         bam::Reader::from_path(test_ignore_h_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
-        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
+        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap();
         let mm = raw_mod_tags.get_raw_mm();
         assert!(mm.starts_with("C+m?"));
     }
@@ -276,7 +277,7 @@ fn test_adjust_to_no_mods() {
     let mut reader =
         bam::Reader::from_path(test_both_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
-        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap().unwrap();
+        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap();
         let mm = raw_mod_tags.get_raw_mm();
         assert!(mm.starts_with("C+C?"));
     }
@@ -396,4 +397,50 @@ fn test_adjust_chebi_code() {
         let ref_record = ref_res.unwrap();
         assert_eq!(test_record, ref_record);
     }
+}
+
+#[test]
+fn test_adjust_mods_supplementary_secondary() {
+    let out_bam_ignore = std::env::temp_dir()
+        .join("test_adjust_mods_supplementary_secondary_ignore.bam");
+    let out_bam_convert = std::env::temp_dir()
+        .join("test_adjust_mods_supplementary_secondary_convert.bam");
+
+    fn check(bam_fp: &PathBuf) {
+        let mut reader = bam::Reader::from_path(&bam_fp).unwrap();
+        let n_records = reader
+            .records()
+            .map(|r| r.unwrap())
+            .map(|record| parse_raw_mod_tags(&record).unwrap())
+            .count();
+        assert_eq!(n_records, 3);
+    }
+
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/test_supplementary_secondary.bam",
+        out_bam_ignore.to_str().unwrap(),
+        "--ignore",
+        "h",
+        "--ff",
+    ])
+    .context(format!("failed to run adjust"))
+    .unwrap();
+    check(&out_bam_ignore);
+
+    bam::index::build(out_bam_ignore.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    run_modkit(&[
+        "adjust-mods",
+        out_bam_ignore.to_str().unwrap(),
+        out_bam_convert.to_str().unwrap(),
+        "--convert",
+        "m",
+        "C",
+        "--ff",
+    ])
+    .context(format!("failed to run adjust"))
+    .unwrap();
+    check(&out_bam_convert);
 }

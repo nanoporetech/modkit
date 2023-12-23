@@ -136,20 +136,16 @@ pub(crate) fn get_tag<T>(
     record: &bam::Record,
     tag_keys: &[&'static str; 2],
     parser: &dyn Fn(&Aux, &str) -> Result<T, RunError>,
-) -> Option<Result<(T, &'static str), RunError>> {
+) -> Result<(T, &'static str), RunError> {
     let tag_new = record.aux(tag_keys[0].as_bytes());
     let tag_old = record.aux(tag_keys[1].as_bytes());
 
-    let tag = match (tag_new, tag_old) {
-        (Ok(aux), _) => Some((aux, tag_keys[0])),
-        (Err(_), Ok(aux)) => Some((aux, tag_keys[1])),
-        _ => None,
-    };
-
-    tag.map(|(aux, t)| {
-        let parsed = parser(&aux, t);
-        parsed.map(|res| (res, t))
-    })
+    let (tag, t) = match (tag_new, tag_old) {
+        (Ok(aux), _) => Ok((aux, tag_keys[0])),
+        (Err(_), Ok(aux)) => Ok((aux, tag_keys[1])),
+        _ => Err(RunError::new_skipped("AUX data not found")),
+    }?;
+    parser(&tag, t).map(|v| (v, t))
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, Default, PartialOrd, Ord)]
@@ -259,7 +255,7 @@ impl Display for StrandRule {
     }
 }
 
-pub fn record_is_secondary(record: &bam::Record) -> bool {
+pub fn record_is_not_primary(record: &bam::Record) -> bool {
     record.is_supplementary() || record.is_secondary() || record.is_duplicate()
 }
 

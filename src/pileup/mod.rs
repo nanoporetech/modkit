@@ -17,7 +17,7 @@ use crate::position_filter::StrandedPositionFilter;
 use crate::read_cache::ReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
-    get_query_name_string, get_stringable_aux, record_is_secondary, SamTag,
+    get_query_name_string, get_stringable_aux, record_is_not_primary, SamTag,
     Strand, StrandRule,
 };
 
@@ -950,7 +950,7 @@ pub fn process_region<T: AsRef<Path>>(
                     false
                 } else {
                     let record = alignment.record();
-                    !(record_is_secondary(&record) || record.seq_len() == 0)
+                    !(record_is_not_primary(&record) || record.seq_len() == 0)
                 }
             });
         for alignment in alignment_iter {
