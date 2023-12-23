@@ -30,7 +30,7 @@ fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {
 }
 
 #[test]
-fn test_mod_data_ord() {
+fn test_extract_mod_data_ord() {
     let mod_data1 =
         ModData::new(0, 1, 'm', '+', 100, "".to_string(), "".to_string());
     let mod_data2 =

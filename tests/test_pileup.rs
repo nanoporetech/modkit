@@ -801,7 +801,7 @@ fn test_pileup_motifs_cg0_cgcg2_combined() {
 }
 
 #[test]
-fn test_chebi_code_same_output() {
+fn test_pileup_chebi_code_same_output() {
     let ord_bm_line = |a: &BedMethylLine, b: &BedMethylLine| -> Ordering {
         match a.chrom.cmp(&b.chrom) {
             Ordering::Equal => match a.start().cmp(&b.start()) {
