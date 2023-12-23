@@ -6,9 +6,8 @@ modBAM where the base modification probabilities have been clamped to 100% and
 [options](./advanced_usage.md#call-mods) are provided, base modification calls
 failing the threshold will be removed prior to changing the probabilities. The
 output modBAM can be used for visualization, `pileup`, or other applications.
-If alignment information is present, only the **primary alignment** is used,
-and supplementary alignments will not be in the output (see 
-[limitations](./limitations.md)).
+For `call-mods`, if a correct `MN` tag is found, secondary and supplementary
+alignments will be output. See [troubleshooting](./troubleshooting.md) for details.
 
 A modBAM that has been transformed with `call-mods` using `--filter-threshold`
 and/or `--mod-threshold` cannot be re-transformed with different thresholds.
