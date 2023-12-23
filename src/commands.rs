@@ -487,6 +487,7 @@ impl SampleModBaseProbs {
                         edge_filter.as_ref(),
                         position_filter.as_ref(),
                         self.only_mapped || position_filter.is_some(),
+                        false,
                         None,
                     )?;
                 debug!("sampled {} records", read_ids_to_base_mod_probs.len());
@@ -785,6 +786,7 @@ impl ModSummarize {
                         edge_filter.as_ref(),
                         position_filter.as_ref(),
                         self.only_mapped || position_filter.is_some(),
+                        false,
                         None,
                     )?;
                 debug!("sampled {} records", read_ids_to_base_mod_probs.len());

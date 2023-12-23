@@ -26,6 +26,7 @@ use crate::util::{
 pub(crate) struct TrackingModRecordIter<'a, T: bam::Read> {
     records: bam::Records<'a, T>,
     skip_unmapped: bool,
+    allow_non_primary: bool,
     pub(crate) num_used: usize,
     pub(crate) num_skipped: usize,
     pub(crate) num_failed: usize,
@@ -35,10 +36,12 @@ impl<'a, T: bam::Read> TrackingModRecordIter<'a, T> {
     pub(crate) fn new(
         records: bam::Records<'a, T>,
         skip_unmapped: bool,
+        allow_non_primary: bool,
     ) -> Self {
         Self {
             records,
             skip_unmapped,
+            allow_non_primary,
             num_used: 0,
             num_skipped: 0,
             num_failed: 0,
@@ -57,9 +60,14 @@ impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
                     let record_name =
                         String::from_utf8(record.qname().to_vec())
                             .unwrap_or("utf-decode-failed".to_string());
-                    if record_is_not_primary(&record)
-                        || (record.is_unmapped() && self.skip_unmapped)
-                    {
+                    let should_skip = {
+                        let based_on_primary = record_is_not_primary(&record)
+                            && !self.allow_non_primary;
+                        let based_on_unmapped =
+                            record.is_unmapped() && self.skip_unmapped;
+                        based_on_primary || based_on_unmapped
+                    };
+                    if should_skip {
                         self.num_skipped += 1;
                         continue;
                     } else {
@@ -134,6 +142,7 @@ impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
     }
 }
 
+// todo deprecate this function or move it into the tracking iterator above
 pub(crate) fn filter_records_iter<T: bam::Read>(
     records: bam::Records<T>,
 ) -> impl Iterator<Item = (bam::Record, ModBaseInfo)> + '_ {

@@ -435,3 +435,30 @@ fn test_extract_calls_regression() {
         "tests/resources/test_read_calls_estimate_thresh.tsv",
     );
 }
+
+#[test]
+fn test_extract_supplementary_secondary() {
+    let extract_tsv = std::env::temp_dir()
+        .join("test_extract_supplementary_secondary_extract.tsv");
+    let calls_tsv = std::env::temp_dir()
+        .join("test_extract_supplementary_secondary_calls.tsv");
+
+    run_modkit(&[
+        "extract",
+        "tests/resources/supplementary_and_secondary_read.bam",
+        extract_tsv.to_str().unwrap(),
+        "--read-calls",
+        calls_tsv.to_str().unwrap(),
+        "--force",
+        "--allow-non-primary",
+    ])
+    .unwrap();
+    check_against_expected_text_file(
+        extract_tsv.to_str().unwrap(),
+        "tests/resources/test_supplementary_extract.tsv",
+    );
+    check_against_expected_text_file(
+        calls_tsv.to_str().unwrap(),
+        "tests/resources/test_supplementary_calls.tsv",
+    );
+}

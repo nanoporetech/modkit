@@ -62,6 +62,13 @@ pub struct ExtractMods {
     /// Include only mapped bases in output (alias: mapped).
     #[arg(long, alias = "mapped", default_value_t = false)]
     mapped_only: bool,
+    /// Output aligned secondary and supplementary base modification
+    /// probabilities as additional rows. The primary alignment will have
+    /// all of the base modification probabilities (including soft-clipped
+    /// ones, unless --mapped-only is used). The non-primary alignments
+    /// will only have mapped bases in the output.
+    #[arg(long, alias = "non-primary", default_value_t = false)]
+    allow_non_primary: bool,
     /// Number of reads to use. Note that when using a sorted, indexed modBAM
     /// that the sampling algorithm will attempt to sample records evenly
     /// over the length of the reference sequence. The result is the final
@@ -655,6 +662,7 @@ impl ExtractMods {
         let mapped_only = self.mapped_only;
         let in_bam = self.in_bam.clone();
         let kmer_size = self.kmer_size;
+        let allow_non_primary = self.allow_non_primary;
 
         thread::spawn(move || {
             pool.install(|| {
@@ -758,6 +766,7 @@ impl ExtractMods {
                                             edge_filter.as_ref(),
                                             None,
                                             false,
+                                            allow_non_primary,
                                             Some(kmer_size),
                                         )
                                         .map(|reads_base_mod_profile| {
@@ -818,6 +827,7 @@ impl ExtractMods {
                                         collapse_method.as_ref(),
                                         edge_filter.as_ref(),
                                         false,
+                                        false,
                                         "unmapped ",
                                         kmer_size,
                                     );
@@ -846,6 +856,7 @@ impl ExtractMods {
                         collapse_method.as_ref(),
                         edge_filter.as_ref(),
                         mapped_only,
+                        allow_non_primary,
                         "",
                         kmer_size,
                     );
@@ -954,10 +965,12 @@ impl ExtractMods {
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
         only_mapped: bool,
+        allow_non_primary: bool,
         message: &'static str,
         kmer_size: usize,
     ) -> (usize, usize) {
-        let mut mod_iter = TrackingModRecordIter::new(records, false);
+        let mut mod_iter =
+            TrackingModRecordIter::new(records, false, allow_non_primary);
         let pb = multi_pb.add(get_spinner());
         pb.set_message(format!("{message}records processed"));
         for (record, read_id, mod_base_info) in &mut mod_iter {
@@ -1056,6 +1069,8 @@ impl ReferencePositionFilter {
             .map(|read_base_mod_profile| {
                 let read_name = read_base_mod_profile.record_name;
                 let chrom_id = read_base_mod_profile.chrom_id;
+                let flag = read_base_mod_profile.flag;
+                let alignment_start = read_base_mod_profile.alignment_start;
                 let profile = read_base_mod_profile
                     .profile
                     .into_par_iter()
@@ -1077,7 +1092,13 @@ impl ReferencePositionFilter {
                         }
                     })
                     .collect::<Vec<ModProfile>>();
-                ReadBaseModProfile::new(read_name, chrom_id, profile)
+                ReadBaseModProfile::new(
+                    read_name,
+                    chrom_id,
+                    flag,
+                    alignment_start,
+                    profile,
+                )
             })
             .collect::<Vec<ReadBaseModProfile>>();
         let empty = profiles
