@@ -1,8 +1,9 @@
 # Extracting base modification information
 
 The `modkit extract` sub-command will produce a table containing the base modification probabilities, 
-the read sequence context, and optionally aligned reference information. If alignment information is 
-present, only the **primary alignment** is used.
+the read sequence context, and optionally aligned reference information.
+For `extract`, if a correct `MN` tag is found, secondary and supplementary alignments may be output with the `--allow-non-primary` flag. 
+See [troubleshooting](./troubleshooting.md) for details.
 
 The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
 To only include mapped bases use the `--mapped` flag. To only include sites of interest, pass a 
@@ -34,6 +35,7 @@ or `stdout` and filter the columns before writing to disk.
 | 16     | canonical_base        | canonical base from the query sequence, from the MM tag                         | str  |
 | 17     | modified_primary_base | primary sequence base with the modification                                     | str  |
 | 18     | inferred              | whether the base modification call is implicit canonical                        | str  |
+| 19     | flag                  | FLAG from alignment record                                                      | str  |
 
 
 # Tabulating base modification _calls_ for each read position
@@ -65,6 +67,7 @@ reserved for "any modification"). The full schema of the table is below:
 | 18     | fail                  | true if the base modification call fell below the pass threshold                | str  |
 | 19     | inferred              | whether the base modification call is implicit canonical                        | str  |
 | 20     | within_alignment      | when alignment information is present, is this base aligned to the reference    | str  |
+| 21     | flag                  | FLAG from alignment record                                                      | str  |
 
 
 ## Note on implicit base modification calls.
@@ -74,6 +77,14 @@ output rows with the `inferred` column set to `true` and a `mod_qual` value of `
 called on that read. For example, if you have a `A+a.` MM tag, and there are `A` bases in the read for which 
 there aren't base modification calls (identifiable as non-0s in the MM tag) will be rows where the `mod_code` 
 is `a` and the `mod_qual` is 0.0.
+
+## Note on non-primary alignments
+If a valid `MN` tag is found, secondary and supplementary alignments can be output in the `modkit extract` tables above.
+See [troubleshooting](./troubleshooting.md) for details on how to get valid `MN` tags.
+To have non-primary alignments appear in the output, the `--allow-non-primary` flag must be passed. 
+By default, the primary alignment will have all base modification information contained on the read, including soft-clipped and unaligned read positions. 
+If the `--mapped-only` flag is used, soft clipped sections of the read will not be included. 
+For secondary and supplementary alignments, soft-clipped positions are not repeated. See [advanced usage](./advanced_usage.md) for more details.
 
 ## Example usages:
 
@@ -111,5 +122,10 @@ to /dev/null, to keep this output specify a file or `-` for standard out.
 ```
 modkit extract <input.bam> <output.tsv> --read-calls <calls.tsv>
 ```
+Use `--allow-non-primary` to get secondary and supplementary mappings in the output.
+```
+modkit extract <input.bam> <output.tsv> --read-calls <calls.tsv> --allow-non-primary
+```
+
 
 See the help string and/or [advanced_usage](./advanced_usage.md) for more details.

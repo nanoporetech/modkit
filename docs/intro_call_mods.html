@@ -154,9 +154,8 @@ modBAM where the base modification probabilities have been clamped to 100% and
 <a href="./advanced_usage.html#call-mods">options</a> are provided, base modification calls
 failing the threshold will be removed prior to changing the probabilities. The
 output modBAM can be used for visualization, <code>pileup</code>, or other applications.
-If alignment information is present, only the <strong>primary alignment</strong> is used,
-and supplementary alignments will not be in the output (see 
-<a href="./limitations.html">limitations</a>).</p>
+For <code>call-mods</code>, if a correct <code>MN</code> tag is found, secondary and supplementary
+alignments will be output. See <a href="./troubleshooting.html">troubleshooting</a> for details.</p>
 <p>A modBAM that has been transformed with <code>call-mods</code> using <code>--filter-threshold</code>
 and/or <code>--mod-threshold</code> cannot be re-transformed with different thresholds.</p>
 <p>Note on <code>pileup</code> with clamped probabilities: <code>modkit pileup</code> will attempt to

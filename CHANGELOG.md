@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.4]
+### Adds
+- [extract, adjust-mods, update-tags, call-mods] Parse MN tag in order to use secondary and supplementary alignments.
+### Fixes
+- [all] Improve performance slightly when using short and frequent motifs with `--motif` option.
+
+
 ## [v0.2.3]
 ### Adds
 - [dmr, multi] Allow site-level scoring by omitting the `--regions` argument. Sites will be collected from the input bedMethyl files.
