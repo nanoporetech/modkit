@@ -286,9 +286,8 @@ fn balance_ground_truth(gt_mod_quals: &mut ModBaseQuals) -> anyhow::Result<()> {
                 continue;
             }
             let ratio = values.len() as f32 / *gt_total as f32;
-            let samp_target_size = (ratio
-                * (values.len() as f32 - elements_to_remove as f32))
-                .round() as usize;
+            let samp_target_size = values.len()
+                - (ratio * elements_to_remove as f32).round() as usize;
             // Generate indices to keep using linspace logic
             let keep_indices: Vec<usize> = Array1::linspace(
                 0.0,
@@ -352,6 +351,9 @@ fn print_table(gt_mod_quals: &ModBaseQuals) {
 
     // Print the table
     table.printstd();
+
+    // todo also print percentages table
+    // also print key metrics
 }
 
 #[derive(Args)]
@@ -466,27 +468,24 @@ impl ValidateFromModbam {
             }
         }
 
-        // todo this is not working properly
+        // todo sort vectors before this call
         let _ = balance_ground_truth(&mut all_gt_mod_quals)?;
 
-        // todo also print percentages table
         print_table(&all_gt_mod_quals);
 
         let mut all_quals = Vec::<f32>::new();
         for (_, mod_quals) in all_gt_mod_quals.iter() {
             all_quals.extend(mod_quals);
-            //println!("gt:{} call:{}", gt_code, call_code);
-            //println!("\t{:?}", mod_quals);
         }
-
         all_quals.sort_by(|x, y| x.partial_cmp(y).unwrap_or(Ordering::Equal));
         if all_quals.iter().any(|v| v.is_nan()) {
             bail!("Failed to compare values");
         }
-
         let thresh =
             percentile_linear_interp(&all_quals, self.filter_quantile)?;
         info!("Threshold: {}", thresh);
+
+        // todo apply threshold and print table again
 
         Ok(())
     }
