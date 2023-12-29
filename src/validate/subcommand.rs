@@ -7,9 +7,11 @@ use std::string::FromUtf8Error;
 use anyhow::{anyhow, bail};
 use clap::Args;
 use itertools::Itertools;
-use log::{info, warn};
+use log::info;
+use ndarray::Array1;
 use prettytable::{Cell, Row, Table};
 use rust_htslib::bam::{Read, Reader, Record};
+use std::cmp::Ordering;
 
 use crate::command_utils::parse_edge_filter_input;
 use crate::extract::writer::PositionModCalls;
@@ -258,38 +260,55 @@ fn process_bam_file(
     Ok(gt_mod_quals)
 }
 
-// todo fix this function
-/*fn balance_ground_truth(gt_mod_quals: &mut ModBaseQuals) {
-    let gt_bases: HashSet<ModCodeRepr> =
-        gt_mod_quals.keys().map(|(k, _)| k.clone()).collect();
-    let min_sum_lengths: HashMap<ModCodeRepr, usize> = gt_bases
+fn balance_ground_truth(gt_mod_quals: &mut ModBaseQuals) -> anyhow::Result<()> {
+    // Calculate the total number of elements in each row
+    let gt_totals: HashMap<_, _> = gt_mod_quals
         .iter()
-        .map(|&first_key| {
-            (
-                first_key,
-                gt_mod_quals
-                    .values()
-                    .filter(|k| match (first_key, k) {
-                        (ModCodeRepr::Code(c1), ModCodeRepr::Code(c2)) => {
-                            c1 == c2
-                        }
-                        (ModCodeRepr::ChEbi(u1), ModCodeRepr::ChEbi(u2)) => {
-                            u1 == u2
-                        }
-                        _ => false,
-                    })
-                    .map(|(_, v)| v.len())
-                    .sum(),
+        .map(|((gt_mod, _), values)| (*gt_mod, values.len()))
+        .fold(HashMap::new(), |mut acc, (gt_mod, len)| {
+            *acc.entry(gt_mod).or_insert(0) += len;
+            acc
+        });
+    // Determine the target size for each row
+    let gt_target_size = *gt_totals
+        .values()
+        .min()
+        .ok_or_else(|| anyhow!("No minimum value found"))?;
+    for (gt_total_mod, gt_total) in gt_totals.iter() {
+        let elements_to_remove = *gt_total - gt_target_size;
+        if elements_to_remove == 0 {
+            // don't need to remove elements from this label
+            continue;
+        }
+        for ((gt_mod, _), values) in gt_mod_quals.iter_mut() {
+            if gt_total_mod != gt_mod {
+                // skip other mods
+                continue;
+            }
+            let ratio = values.len() as f32 / *gt_total as f32;
+            let samp_target_size = (ratio
+                * (values.len() as f32 - elements_to_remove as f32))
+                .round() as usize;
+            // Generate indices to keep using linspace logic
+            let keep_indices: Vec<usize> = Array1::linspace(
+                0.0,
+                (values.len() - 1) as f64,
+                samp_target_size + 2,
             )
-        })
-        .collect();
-    // Sample down to the minimum sum length for each group
-    for ((first_key, _), values) in gt_mod_quals.iter_mut() {
-        if let Some(&min_sum_length) = min_sum_lengths.get(&first_key.0) {
-            values.truncate(min_sum_length);
+            .into_raw_vec()
+            .into_iter()
+            .skip(1)
+            .take(samp_target_size)
+            .map(|x| x.round() as usize)
+            .collect();
+            let values_to_keep: Vec<_> =
+                keep_indices.iter().map(|&i| values[i]).collect();
+            values.retain(|_| false);
+            values.extend_from_slice(&values_to_keep);
         }
     }
-}*/
+    Ok(())
+}
 
 fn print_table(gt_mod_quals: &ModBaseQuals) {
     let gt_codes: Vec<_> = gt_mod_quals.keys().map(|&(k, _)| k).collect();
@@ -447,9 +466,8 @@ impl ValidateFromModbam {
             }
         }
 
-        warn!("Dataset balancing not currently implemented");
-        // todo fix this function and run it here
-        // balance_ground_truth(gt_mod_quals)
+        // todo this is not working properly
+        let _ = balance_ground_truth(&mut all_gt_mod_quals)?;
 
         // todo also print percentages table
         print_table(&all_gt_mod_quals);
@@ -460,7 +478,12 @@ impl ValidateFromModbam {
             //println!("gt:{} call:{}", gt_code, call_code);
             //println!("\t{:?}", mod_quals);
         }
-        all_quals.sort_by(|x, y| x.partial_cmp(y).unwrap());
+
+        all_quals.sort_by(|x, y| x.partial_cmp(y).unwrap_or(Ordering::Equal));
+        if all_quals.iter().any(|v| v.is_nan()) {
+            bail!("Failed to compare values");
+        }
+
         let thresh =
             percentile_linear_interp(&all_quals, self.filter_quantile)?;
         info!("Threshold: {}", thresh);
