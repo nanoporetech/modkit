@@ -7,10 +7,14 @@ use std::string::FromUtf8Error;
 use anyhow::{anyhow, bail};
 use clap::Args;
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use log::info;
 use log_once::warn_once;
 use ndarray::Array1;
-use prettytable::{Cell, Row, Table};
+use prettytable::format::{
+    FormatBuilder, LinePosition, LineSeparator, TableFormat,
+};
+use prettytable::{cell, row, Row, Table};
 use rust_htslib::bam::{Read, Reader, Record};
 use std::cmp::Ordering;
 
@@ -25,6 +29,28 @@ use crate::thresholds::percentile_linear_interp;
 use crate::util::{
     get_reference_mod_strand, get_ticker, record_is_secondary, Strand,
 };
+
+lazy_static! {
+    static ref TBL_FMT: TableFormat = {
+        FormatBuilder::new()
+            .column_separator('│')
+            .borders('│')
+            .separator(
+                LinePosition::Title,
+                LineSeparator::new('─', '┼', '├', '┤'),
+            )
+            .separator(
+                LinePosition::Bottom,
+                LineSeparator::new('─', '┴', '└', '┘'),
+            )
+            .separator(
+                LinePosition::Top,
+                LineSeparator::new('─', '┬', '┌', '┐'),
+            )
+            .padding(1, 1)
+            .build()
+    };
+}
 
 pub struct GroundTruthSite {
     pub chrom: String,
@@ -278,84 +304,81 @@ fn balance_ground_truth(gt_mod_quals: &mut GtProbs) -> anyhow::Result<()> {
         .values()
         .min()
         .ok_or_else(|| anyhow!("No minimum value found"))?;
-    for (gt_total_mod, gt_total) in gt_totals.iter() {
-        let elements_to_remove =
-            gt_total.checked_sub(gt_target_size).unwrap_or(0);
-        if elements_to_remove == 0 {
-            // don't need to remove elements from this label
+    let totals_and_limits = gt_totals
+        .into_iter()
+        .map(|(gt_mod_repr, gt_total)| {
+            let elements_to_remove =
+                gt_total.checked_sub(gt_target_size).unwrap_or(0);
+            (gt_mod_repr, (gt_total, elements_to_remove))
+        })
+        .collect::<HashMap<BaseStatus, (usize, usize)>>();
+
+    for ((gt_mod, _calls), probs) in gt_mod_quals.iter_mut() {
+        if probs.len() <= gt_target_size {
             continue;
         }
-        for ((gt_mod, _), values) in gt_mod_quals.iter_mut() {
-            if gt_total_mod != gt_mod {
-                // skip other mods
-                continue;
-            }
-            let ratio = values.len() as f32 / *gt_total as f32;
-            let samp_target_size = values.len()
-                - (ratio * elements_to_remove as f32).round() as usize;
-            // Generate indices to keep using linspace logic
-            let keep_indices: Vec<usize> = Array1::linspace(
-                0.0,
-                (values.len() - 1) as f64,
-                samp_target_size + 2,
-            )
-            .into_raw_vec()
-            .into_iter()
-            .skip(1)
-            .take(samp_target_size)
-            .map(|x| x.round() as usize)
-            .collect();
-            let values_to_keep: Vec<_> =
-                keep_indices.iter().map(|&i| values[i]).collect();
-            values.retain(|_| false);
-            values.extend_from_slice(&values_to_keep);
+        if let Some((gt_total, elements_to_remove)) =
+            totals_and_limits.get(gt_mod)
+        {
+            let n_obs = probs.len();
+            let ratio = n_obs as f32 / *gt_total as f32;
+            let samp_target_size =
+                n_obs - (ratio * (*elements_to_remove) as f32).round() as usize;
+            let keepers =
+                Array1::linspace(0.0, (n_obs - 1) as f64, samp_target_size + 2)
+                    .into_iter()
+                    .skip(1)
+                    .take(samp_target_size)
+                    .map(|x| x.round() as usize)
+                    .filter_map(|idx| probs.get(idx).map(|x| *x))
+                    .collect::<Vec<f32>>();
+            *probs = keepers;
         }
     }
     Ok(())
 }
 
 fn print_table(gt_mod_quals: &GtProbs) {
-    let gt_codes: Vec<_> = gt_mod_quals.keys().map(|&(k, _)| k).collect();
+    let mut gt_codes: Vec<_> = gt_mod_quals.keys().map(|&(k, _)| k).collect();
+    gt_codes.sort();
     let call_codes: Vec<_> = gt_mod_quals.keys().map(|&(_, k)| k).collect();
 
-    let all_codes: Vec<_> =
+    let mut all_codes: Vec<_> =
         gt_codes.iter().chain(call_codes.iter()).unique().collect();
+    all_codes.sort();
 
-    let mut table = Table::new();
-    table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
+    let mut count_tbl = Table::new();
+    count_tbl.set_format(*TBL_FMT);
 
     // Create a header row
     let mut header = Row::empty();
-    header.add_cell(Cell::new(""));
+    header.add_cell(cell!(""));
     for &call_code in &all_codes {
-        header.add_cell(Cell::new(&call_code.to_string()));
+        header.add_cell(cell!(&call_code.to_string()));
     }
-    table.add_row(header);
-
-    // Create separator row
-    let mut separator = Row::empty();
-    separator.add_cell(Cell::new(""));
-    for _ in &all_codes {
-        separator.add_cell(Cell::new("------"));
-    }
-    table.add_row(separator);
+    count_tbl.set_titles(header);
 
     // Create table rows
     for &gt_code in &all_codes {
         let mut row = Row::empty();
-        row.add_cell(Cell::new(&gt_code.to_string()));
+        row.add_cell(cell!(&gt_code.to_string()));
         for &call_code in &all_codes {
             let vector_length = gt_mod_quals
                 .get(&(*gt_code, *call_code))
                 .map(|v| v.len())
                 .unwrap_or(0);
-            row.add_cell(Cell::new(&format!("{}", vector_length)));
+            row.add_cell(cell!(&format!("{}", vector_length)));
         }
-        table.add_row(row);
+        count_tbl.add_row(row);
     }
 
+    let mut metatable = Table::new();
+    metatable.set_format(*prettytable::format::consts::FORMAT_CLEAN);
+    metatable.add_row(row!("", cb->"Called Base"));
+    metatable.add_row(row!(b->"\n\n\nGround\nTruth", count_tbl));
+
     // Print the table
-    table.printstd();
+    metatable.printstd();
 
     // todo also print percentages table
     // also print key metrics

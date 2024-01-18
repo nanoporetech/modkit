@@ -306,6 +306,26 @@ impl Display for BaseStatus {
     }
 }
 
+impl Ord for BaseStatus {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (BaseStatus::Canonical, BaseStatus::Canonical) => {
+                std::cmp::Ordering::Equal
+            }
+            (BaseStatus::Canonical, _) => std::cmp::Ordering::Less,
+            (_, BaseStatus::Canonical) => std::cmp::Ordering::Greater,
+            (BaseStatus::Modified(mod1), BaseStatus::Modified(mod2)) => {
+                mod1.cmp(mod2)
+            }
+        }
+    }
+}
+
+impl PartialOrd for BaseStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 impl BaseStatus {
     pub fn parse(raw: &str) -> anyhow::Result<Self> {
         if let Ok(code) = raw.parse::<char>() {

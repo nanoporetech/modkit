@@ -38,6 +38,7 @@ noodles = { version = "0.50.0", features = ["tabix", "core", "bgzf", "csi"] }
 rv = "0.16.0"
 ndarray = "0.15.6"
 log-once = "0.4.0"
+lazy_static = "1.4"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"
