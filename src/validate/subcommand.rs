@@ -8,6 +8,7 @@ use anyhow::{anyhow, bail};
 use clap::Args;
 use itertools::Itertools;
 use log::info;
+use log_once::warn_once;
 use ndarray::Array1;
 use prettytable::{Cell, Row, Table};
 use rust_htslib::bam::{Read, Reader, Record};
@@ -16,9 +17,9 @@ use std::cmp::Ordering;
 use crate::command_utils::parse_edge_filter_input;
 use crate::extract::writer::PositionModCalls;
 use crate::logging::init_logging;
-use crate::mod_bam::BaseModCall;
+use crate::mod_bam::{BaseModCall, BaseStatus};
 use crate::mod_bam::{CollapseMethod, EdgeFilter, ModBaseInfo};
-use crate::mod_base_code::ModCodeRepr;
+use crate::mod_base_code::{ModCodeRepr, ANY_MOD_CODES};
 use crate::read_ids_to_base_mod_probs::ReadBaseModProfile;
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{
@@ -28,7 +29,7 @@ use crate::util::{
 pub struct GroundTruthSite {
     pub chrom: String,
     pub strand: Strand,
-    pub mod_code: ModCodeRepr,
+    pub base_status: BaseStatus,
     pub positions: Vec<i64>,
 }
 
@@ -50,17 +51,27 @@ fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
         .ok_or_else(|| anyhow!("Error parsing strand {}", fields[5]))?;
 
     let strand = Strand::parse_char(strand_char)?;
-    let mod_code = ModCodeRepr::parse(&raw_mod_code)
-        .map_err(|e| anyhow!("Error parsing modified base code: {}", e))?;
+    let base_status = BaseStatus::parse(&raw_mod_code)
+        .map_err(|e| anyhow!("Error parsing base status code: {}", e))?;
+    if let BaseStatus::Modified(mod_code) = base_status {
+        if ANY_MOD_CODES.contains(&mod_code) {
+            warn_once!(
+                "Ground truth file contains `any mod` code '{}'. If the \
+                 intent was to represent a canonical position replace with a \
+                 `-`",
+                base_status
+            )
+        }
+    }
     let positions = (start..end + 1).collect();
 
-    Ok(GroundTruthSite { chrom, strand, mod_code, positions })
+    Ok(GroundTruthSite { chrom, strand, base_status, positions })
 }
 
 type ChromToTid = HashMap<String, u32>;
 
 type TidStrandNamePositions =
-    HashMap<u32, HashMap<Strand, HashMap<ModCodeRepr, Vec<i64>>>>;
+    HashMap<u32, HashMap<Strand, HashMap<BaseStatus, Vec<i64>>>>;
 
 fn get_chrom_to_tid(reader: &Reader) -> anyhow::Result<ChromToTid> {
     let header = reader.header().to_owned();
@@ -91,15 +102,11 @@ fn parse_ground_truth_bed_file(
     lines_processed.set_message("rows processed");
 
     let reader = BufReader::new(File::open(file_path)?);
-    for ground_truth_site in reader
-        .lines()
-        .filter_map(|r| r.ok())
-        .filter_map(|line| {
-            Some(parse_ground_truth_bed_line(&line).map(Some).transpose())
-                .flatten()
-        })
-        .filter_map(|r| r.ok())
-    {
+    for ground_truth_site in reader.lines().filter_map(|r| {
+        r.map_err(|e| anyhow!("failed to read, {}", e.to_string()))
+            .and_then(|line| parse_ground_truth_bed_line(&line))
+            .ok()
+    }) {
         let Some(tid) = chrom_to_tid.get(&ground_truth_site.chrom) else {
             continue;
         };
@@ -108,7 +115,7 @@ fn parse_ground_truth_bed_file(
             .or_insert_with(HashMap::new)
             .entry(ground_truth_site.strand)
             .or_insert_with(HashMap::new)
-            .entry(ground_truth_site.mod_code)
+            .entry(ground_truth_site.base_status)
             .or_insert_with(Vec::new)
             .extend(ground_truth_site.positions);
         lines_processed.inc(1);
@@ -122,14 +129,14 @@ fn parse_ground_truth_bed_file(
 }
 
 // ground truth and observed mod base codes pointing to vector of mod qualities
-type ModBaseQuals = HashMap<(ModCodeRepr, ModCodeRepr), Vec<f32>>;
+type GtProbs = HashMap<(BaseStatus, BaseStatus), Vec<f32>>;
 
 fn process_bam_record(
     record: &Record,
     mod_positions: &TidStrandNamePositions,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
-) -> anyhow::Result<ModBaseQuals> {
+) -> anyhow::Result<GtProbs> {
     let mut result = HashMap::new();
     let mbi = ModBaseInfo::new_from_record(&record)?;
     let record_name = String::from_utf8(record.qname().to_vec())
@@ -176,13 +183,10 @@ fn process_bam_record(
                     .base_mod_probs
                     .argmax_base_mod_call()
                 {
-                    BaseModCall::Canonical(p) => (
-                        p,
-                        ModCodeRepr::parse(
-                            &mod_call.canonical_base.char().to_string(),
-                        )?,
-                    ),
-                    BaseModCall::Modified(p, code) => (p, code),
+                    BaseModCall::Canonical(p) => (p, BaseStatus::Canonical),
+                    BaseModCall::Modified(p, code) => {
+                        (p, BaseStatus::Modified(code))
+                    }
                     BaseModCall::Filtered => {
                         unreachable!("argmax should not output filtered calls")
                     }
@@ -203,13 +207,13 @@ fn process_bam_file(
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
     suppress_pb: bool,
-) -> anyhow::Result<ModBaseQuals> {
+) -> anyhow::Result<GtProbs> {
     let lines_processed = get_ticker();
     if suppress_pb {
         lines_processed
             .set_draw_target(indicatif::ProgressDrawTarget::hidden());
     }
-    lines_processed.set_message("BAM records processed");
+    lines_processed.set_message("Records processed");
     let (gt_mod_quals, errs) = reader.records().fold(
         (HashMap::new(), HashMap::new()),
         |(mut gt_mod_quals, mut errs), record| {
@@ -260,7 +264,7 @@ fn process_bam_file(
     Ok(gt_mod_quals)
 }
 
-fn balance_ground_truth(gt_mod_quals: &mut ModBaseQuals) -> anyhow::Result<()> {
+fn balance_ground_truth(gt_mod_quals: &mut GtProbs) -> anyhow::Result<()> {
     // Calculate the total number of elements in each row
     let gt_totals: HashMap<_, _> = gt_mod_quals
         .iter()
@@ -275,7 +279,8 @@ fn balance_ground_truth(gt_mod_quals: &mut ModBaseQuals) -> anyhow::Result<()> {
         .min()
         .ok_or_else(|| anyhow!("No minimum value found"))?;
     for (gt_total_mod, gt_total) in gt_totals.iter() {
-        let elements_to_remove = *gt_total - gt_target_size;
+        let elements_to_remove =
+            gt_total.checked_sub(gt_target_size).unwrap_or(0);
         if elements_to_remove == 0 {
             // don't need to remove elements from this label
             continue;
@@ -309,7 +314,7 @@ fn balance_ground_truth(gt_mod_quals: &mut ModBaseQuals) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn print_table(gt_mod_quals: &ModBaseQuals) {
+fn print_table(gt_mod_quals: &GtProbs) {
     let gt_codes: Vec<_> = gt_mod_quals.keys().map(|&(k, _)| k).collect();
     let call_codes: Vec<_> = gt_mod_quals.keys().map(|&(_, k)| k).collect();
 

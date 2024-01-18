@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use derive_new::new;
 use itertools::{Itertools, PeekingNext};
 use log::{debug, error};
@@ -290,6 +290,40 @@ impl SkipMode {
     }
 }
 
+/// todo investigate using this type in BaseModCall
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum BaseStatus {
+    Canonical,
+    Modified(ModCodeRepr),
+}
+
+impl Display for BaseStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            BaseStatus::Canonical => write!(f, "-"),
+            BaseStatus::Modified(b) => write!(f, "{}", b),
+        }
+    }
+}
+
+impl BaseStatus {
+    pub fn parse(raw: &str) -> anyhow::Result<Self> {
+        if let Ok(code) = raw.parse::<char>() {
+            if code == '-' {
+                Ok(Self::Canonical)
+            } else {
+                Ok(Self::Modified(ModCodeRepr::Code(code)))
+            }
+        } else {
+            if let Ok(chebi) = raw.parse::<u32>() {
+                Ok(Self::Modified(ModCodeRepr::ChEbi(chebi)))
+            } else {
+                Err(anyhow!("failed to parse mod code {raw}"))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BaseModCall {
     Canonical(f32),
@@ -316,6 +350,18 @@ impl PartialOrd for BaseModCall {
             BaseModCall::Filtered => None,
         };
         p_a.partial_cmp(&p_b)
+    }
+}
+
+impl BaseModCall {
+    pub fn to_base_status(&self) -> anyhow::Result<BaseStatus> {
+        match *self {
+            BaseModCall::Canonical(_) => Ok(BaseStatus::Canonical),
+            BaseModCall::Modified(_, c) => Ok(BaseStatus::Modified(c)),
+            BaseModCall::Filtered => {
+                Err(anyhow!("Filtered call cannot be converted to base status"))
+            }
+        }
     }
 }
 

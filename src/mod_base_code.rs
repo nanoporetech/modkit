@@ -31,6 +31,8 @@ pub const ANY_THYMINE: ModCodeRepr = ModCodeRepr::Code('T');
 pub const OXO_GUANINE: ModCodeRepr = ModCodeRepr::Code('o');
 pub const ANY_GUANINE: ModCodeRepr = ModCodeRepr::Code('G');
 
+pub const ANY_MOD_CODES: [ModCodeRepr; 4] =
+    [ANY_ADENINE, ANY_CYTOSINE, ANY_GUANINE, ANY_THYMINE];
 pub const SUPPORTED_CODES: [ModCodeRepr; 14] = [
     METHYL_CYTOSINE,
     HYDROXY_METHYL_CYTOSINE,
