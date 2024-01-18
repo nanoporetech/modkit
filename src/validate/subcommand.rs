@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -21,14 +22,78 @@ use std::cmp::Ordering;
 use crate::command_utils::parse_edge_filter_input;
 use crate::extract::writer::PositionModCalls;
 use crate::logging::init_logging;
-use crate::mod_bam::{BaseModCall, BaseStatus};
+use crate::mod_bam::BaseModCall;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, ModBaseInfo};
-use crate::mod_base_code::{ModCodeRepr, ANY_MOD_CODES};
+use crate::mod_base_code::{DnaBase, ModCodeRepr, ANY_MOD_CODES};
 use crate::read_ids_to_base_mod_probs::ReadBaseModProfile;
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{
     get_reference_mod_strand, get_ticker, record_is_secondary, Strand,
 };
+
+/// todo investigate using this type in BaseModCall
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum BaseStatus {
+    Canonical,
+    Modified(ModCodeRepr),
+    Mismatch(DnaBase),
+    Deletion,
+}
+
+impl Display for BaseStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            BaseStatus::Canonical => write!(f, "-"),
+            BaseStatus::Modified(b) => write!(f, "{}", b),
+            BaseStatus::Mismatch(b) => write!(f, "{}", b.char()),
+            BaseStatus::Deletion => write!(f, "Deletion"),
+        }
+    }
+}
+
+impl Ord for BaseStatus {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (BaseStatus::Canonical, BaseStatus::Canonical) => {
+                std::cmp::Ordering::Equal
+            }
+            (BaseStatus::Canonical, _) => std::cmp::Ordering::Less,
+            (_, BaseStatus::Canonical) => std::cmp::Ordering::Greater,
+            (BaseStatus::Modified(mod1), BaseStatus::Modified(mod2)) => {
+                mod1.cmp(mod2)
+            }
+            (BaseStatus::Modified(_), _) => std::cmp::Ordering::Less,
+            (_, BaseStatus::Modified(_)) => std::cmp::Ordering::Greater,
+            (BaseStatus::Mismatch(b1), BaseStatus::Mismatch(b2)) => b1.cmp(b2),
+            (BaseStatus::Deletion, _) => std::cmp::Ordering::Greater,
+            (_, BaseStatus::Deletion) => std::cmp::Ordering::Less,
+        }
+    }
+}
+
+impl PartialOrd for BaseStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl BaseStatus {
+    pub fn parse(raw: &str) -> anyhow::Result<Self> {
+        if let Ok(code) = raw.parse::<char>() {
+            if code == '-' {
+                Ok(Self::Canonical)
+            } else {
+                Ok(Self::Modified(ModCodeRepr::Code(code)))
+            }
+        } else {
+            if let Ok(chebi) = raw.parse::<u32>() {
+                Ok(Self::Modified(ModCodeRepr::ChEbi(chebi)))
+            } else {
+                Err(anyhow!("failed to parse mod code {raw}"))
+            }
+        }
+    }
+}
 
 lazy_static! {
     static ref TBL_FMT: TableFormat = {
@@ -94,31 +159,30 @@ fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
     Ok(GroundTruthSite { chrom, strand, base_status, positions })
 }
 
-type ChromToTid = HashMap<String, u32>;
+type TidToChrom = HashMap<u32, String>;
 
-type TidStrandNamePositions =
-    HashMap<u32, HashMap<Strand, HashMap<BaseStatus, Vec<i64>>>>;
+type ChromStrandNamePositions =
+    HashMap<String, HashMap<Strand, HashMap<BaseStatus, Vec<i64>>>>;
 
-fn get_chrom_to_tid(reader: &Reader) -> anyhow::Result<ChromToTid> {
+fn get_tid_to_chrom(reader: &Reader) -> anyhow::Result<TidToChrom> {
     let header = reader.header().to_owned();
-    let chrom_to_tid_result = (0..header.target_count())
+    let tid_to_chrom_result = (0..header.target_count())
         .map(|tid: u32| {
             let raw_name = header.tid2name(tid);
             let stringed_name: Result<String, FromUtf8Error> =
                 String::from_utf8(raw_name.to_vec());
-            stringed_name.map(|name: String| (name, tid))
+            stringed_name.map(|name: String| (tid, name))
         })
-        .collect::<Result<HashMap<String, u32>, _>>();
-    let chrom_to_tid = chrom_to_tid_result?;
-    Ok(chrom_to_tid)
+        .collect::<Result<HashMap<u32, String>, _>>();
+    let tid_to_chrom = tid_to_chrom_result?;
+    Ok(tid_to_chrom)
 }
 
 fn parse_ground_truth_bed_file(
     file_path: &PathBuf,
-    chrom_to_tid: ChromToTid,
     suppress_pb: bool,
-) -> anyhow::Result<TidStrandNamePositions> {
-    info!("parsing BED at {}", file_path.to_str().unwrap_or("invalid-UTF-8"));
+) -> anyhow::Result<ChromStrandNamePositions> {
+    info!("Parsing BED at {}", file_path.to_str().unwrap_or("invalid-UTF-8"));
     let mut result = HashMap::new();
     let lines_processed = get_ticker();
     if suppress_pb {
@@ -133,11 +197,8 @@ fn parse_ground_truth_bed_file(
             .and_then(|line| parse_ground_truth_bed_line(&line))
             .ok()
     }) {
-        let Some(tid) = chrom_to_tid.get(&ground_truth_site.chrom) else {
-            continue;
-        };
         result
-            .entry(*tid)
+            .entry(ground_truth_site.chrom)
             .or_insert_with(HashMap::new)
             .entry(ground_truth_site.strand)
             .or_insert_with(HashMap::new)
@@ -150,16 +211,17 @@ fn parse_ground_truth_bed_file(
         bail!("zero valid positions parsed from BED file".to_string());
     }
     lines_processed.finish_and_clear();
-    info!("processed {} BED lines", lines_processed.position());
+    info!("Processed {} BED lines", lines_processed.position());
     Ok(result)
 }
 
-// ground truth and observed mod base codes pointing to vector of mod qualities
+// ground truth and observed base status pointing to vector of mod probabilities
 type GtProbs = HashMap<(BaseStatus, BaseStatus), Vec<f32>>;
 
 fn process_bam_record(
     record: &Record,
-    mod_positions: &TidStrandNamePositions,
+    mod_positions: &ChromStrandNamePositions,
+    tid_to_chrom: &TidToChrom,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
 ) -> anyhow::Result<GtProbs> {
@@ -171,14 +233,16 @@ fn process_bam_record(
         bail!("Unmapped or secondary");
     }
 
-    let cgt_mod_pos =
-        mod_positions.get(&(record.tid() as u32)).ok_or_else(|| {
-            anyhow!(
-                "No ground truth on this contig. {} not in {:?}",
-                record_name,
-                mod_positions.keys(),
-            )
-        })?;
+    let chrom = tid_to_chrom
+        .get(&(record.tid() as u32))
+        .ok_or_else(|| anyhow!("Invalid record TID: {}", record.tid(),))?;
+    let cgt_mod_pos = mod_positions.get(chrom).ok_or_else(|| {
+        anyhow!(
+            "No ground truth on this contig. {} not in {:?}",
+            record_name,
+            mod_positions.keys(),
+        )
+    })?;
     let mbp = ReadBaseModProfile::process_record(
         &record,
         &record_name,
@@ -229,7 +293,8 @@ fn process_bam_record(
 
 fn process_bam_file(
     reader: &mut Reader,
-    mod_positions: TidStrandNamePositions,
+    mod_positions: &ChromStrandNamePositions,
+    tid_to_chrom: &TidToChrom,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
     suppress_pb: bool,
@@ -248,6 +313,7 @@ fn process_bam_file(
                     match process_bam_record(
                         &record,
                         &mod_positions,
+                        tid_to_chrom,
                         collapse_method,
                         edge_filter,
                     ) {
@@ -278,7 +344,7 @@ fn process_bam_file(
         },
     );
     lines_processed.finish_and_clear();
-    info!("processed {} BAM recrods", lines_processed.position());
+    info!("Processed {} mapping recrods", lines_processed.position());
     if !errs.is_empty() {
         let mut sorted_errs: Vec<_> = errs.iter().collect();
         sorted_errs.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
@@ -464,45 +530,78 @@ impl ValidateFromModbam {
             .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
             .transpose()?;
 
-        let mut all_gt_mod_quals = HashMap::new();
+        // parse bed files and determine canonical base
+        let mut bed_paths = Vec::new();
+        let mut bam_path_to_bed_indices: HashMap<PathBuf, Vec<usize>> =
+            HashMap::new();
         for bam_and_bed in self.bam_and_bed.chunks(2) {
-            let bam_path = &bam_and_bed[0];
-            let bed_path = &bam_and_bed[1];
+            let bam_path = &bam_and_bed[0]
+                .canonicalize()
+                .map_err(|e| anyhow::anyhow!("Cannot resolve path: {}", e))?;
+            let bed_path = &bam_and_bed[1]
+                .canonicalize()
+                .map_err(|e| anyhow::anyhow!("Cannot resolve path: {}", e))?;
 
+            let bed_idx = if let Some(bed_idx) =
+                bed_paths.iter().position(|s| s == bed_path)
+            {
+                bed_idx
+            } else {
+                bed_paths.push(bed_path.to_path_buf());
+                bed_paths.len() - 1
+            };
+            bam_path_to_bed_indices
+                .entry(bam_path.clone())
+                .or_insert_with(Vec::new)
+                .push(bed_idx);
+        }
+
+        let gt_positions: Vec<_> = bed_paths
+            .iter()
+            .map(|bed_path| {
+                parse_ground_truth_bed_file(bed_path, self.suppress_progress)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // todo determine canonnical base of interest
+
+        let mut all_gt_probs = HashMap::new();
+        for (bam_path, bed_indices) in bam_path_to_bed_indices {
             let mut reader = Reader::from_path(bam_path.as_path())?;
             reader.set_threads(self.threads)?;
-            let chrom_to_tid = get_chrom_to_tid(&reader)?;
-            let mod_positions = parse_ground_truth_bed_file(
-                bed_path,
-                chrom_to_tid,
-                self.suppress_progress,
-            )?;
+            let tid_to_chrom = get_tid_to_chrom(&reader)?;
             info!(
-                "parsing BAM at {}",
+                "Parsing mapping at {}",
                 bam_path.to_str().unwrap_or("invalid-UTF-8")
             );
-            let gt_mod_quals = process_bam_file(
-                &mut reader,
-                mod_positions,
-                collapse_method.as_ref(),
-                edge_filter.as_ref(),
-                self.suppress_progress,
-            )?;
-            for ((gt_code, call_code), mod_quals) in gt_mod_quals.iter() {
-                all_gt_mod_quals
-                    .entry((gt_code.clone(), call_code.clone()))
-                    .or_insert_with(Vec::new)
-                    .extend(mod_quals.clone());
+
+            for bed_idx in bed_indices {
+                let gt_mod_probs = process_bam_file(
+                    &mut reader,
+                    &gt_positions[bed_idx],
+                    &tid_to_chrom,
+                    collapse_method.as_ref(),
+                    edge_filter.as_ref(),
+                    self.suppress_progress,
+                )?;
+                for ((gt_code, call_code), probs) in gt_mod_probs.iter() {
+                    all_gt_probs
+                        .entry((gt_code.clone(), call_code.clone()))
+                        .or_insert_with(Vec::new)
+                        .extend(probs.clone());
+                }
             }
         }
 
-        // todo sort vectors before this call
-        let _ = balance_ground_truth(&mut all_gt_mod_quals)?;
+        // sort prob vectors
+        for ((_, _), probs) in all_gt_probs.iter_mut() {
+            probs.sort_by_key(|&x| x.to_bits());
+        }
+        balance_ground_truth(&mut all_gt_probs)?;
 
-        print_table(&all_gt_mod_quals);
+        print_table(&all_gt_probs);
 
         let mut all_quals = Vec::<f32>::new();
-        for (_, mod_quals) in all_gt_mod_quals.iter() {
+        for (_, mod_quals) in all_gt_probs.iter() {
             all_quals.extend(mod_quals);
         }
         all_quals.sort_by(|x, y| x.partial_cmp(y).unwrap_or(Ordering::Equal));

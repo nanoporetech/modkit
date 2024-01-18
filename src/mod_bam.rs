@@ -290,60 +290,6 @@ impl SkipMode {
     }
 }
 
-/// todo investigate using this type in BaseModCall
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum BaseStatus {
-    Canonical,
-    Modified(ModCodeRepr),
-}
-
-impl Display for BaseStatus {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match *self {
-            BaseStatus::Canonical => write!(f, "-"),
-            BaseStatus::Modified(b) => write!(f, "{}", b),
-        }
-    }
-}
-
-impl Ord for BaseStatus {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match (self, other) {
-            (BaseStatus::Canonical, BaseStatus::Canonical) => {
-                std::cmp::Ordering::Equal
-            }
-            (BaseStatus::Canonical, _) => std::cmp::Ordering::Less,
-            (_, BaseStatus::Canonical) => std::cmp::Ordering::Greater,
-            (BaseStatus::Modified(mod1), BaseStatus::Modified(mod2)) => {
-                mod1.cmp(mod2)
-            }
-        }
-    }
-}
-
-impl PartialOrd for BaseStatus {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl BaseStatus {
-    pub fn parse(raw: &str) -> anyhow::Result<Self> {
-        if let Ok(code) = raw.parse::<char>() {
-            if code == '-' {
-                Ok(Self::Canonical)
-            } else {
-                Ok(Self::Modified(ModCodeRepr::Code(code)))
-            }
-        } else {
-            if let Ok(chebi) = raw.parse::<u32>() {
-                Ok(Self::Modified(ModCodeRepr::ChEbi(chebi)))
-            } else {
-                Err(anyhow!("failed to parse mod code {raw}"))
-            }
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BaseModCall {
     Canonical(f32),
