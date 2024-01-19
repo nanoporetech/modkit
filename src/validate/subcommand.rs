@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -16,6 +17,7 @@ use prettytable::format::{
     FormatBuilder, LinePosition, LineSeparator, TableFormat,
 };
 use prettytable::{cell, row, Row, Table};
+use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{Read, Reader, Record};
 use std::cmp::Ordering;
 
@@ -24,7 +26,9 @@ use crate::extract::writer::PositionModCalls;
 use crate::logging::init_logging;
 use crate::mod_bam::BaseModCall;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, ModBaseInfo};
-use crate::mod_base_code::{DnaBase, ModCodeRepr, ANY_MOD_CODES};
+use crate::mod_base_code::{
+    DnaBase, ModCodeRepr, ANY_MOD_CODES, MOD_CODE_TO_DNA_BASE,
+};
 use crate::read_ids_to_base_mod_probs::ReadBaseModProfile;
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{
@@ -32,10 +36,11 @@ use crate::util::{
 };
 
 /// todo investigate using this type in BaseModCall
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BaseStatus {
     Canonical,
     Modified(ModCodeRepr),
+    NoCall,
     Mismatch(DnaBase),
     Deletion,
 }
@@ -45,35 +50,10 @@ impl Display for BaseStatus {
         match *self {
             BaseStatus::Canonical => write!(f, "-"),
             BaseStatus::Modified(b) => write!(f, "{}", b),
+            BaseStatus::NoCall => write!(f, "No Call"),
             BaseStatus::Mismatch(b) => write!(f, "{}", b.char()),
             BaseStatus::Deletion => write!(f, "Deletion"),
         }
-    }
-}
-
-impl Ord for BaseStatus {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match (self, other) {
-            (BaseStatus::Canonical, BaseStatus::Canonical) => {
-                std::cmp::Ordering::Equal
-            }
-            (BaseStatus::Canonical, _) => std::cmp::Ordering::Less,
-            (_, BaseStatus::Canonical) => std::cmp::Ordering::Greater,
-            (BaseStatus::Modified(mod1), BaseStatus::Modified(mod2)) => {
-                mod1.cmp(mod2)
-            }
-            (BaseStatus::Modified(_), _) => std::cmp::Ordering::Less,
-            (_, BaseStatus::Modified(_)) => std::cmp::Ordering::Greater,
-            (BaseStatus::Mismatch(b1), BaseStatus::Mismatch(b2)) => b1.cmp(b2),
-            (BaseStatus::Deletion, _) => std::cmp::Ordering::Greater,
-            (_, BaseStatus::Deletion) => std::cmp::Ordering::Less,
-        }
-    }
-}
-
-impl PartialOrd for BaseStatus {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
     }
 }
 
@@ -161,8 +141,8 @@ fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
 
 type TidToChrom = HashMap<u32, String>;
 
-type ChromStrandNamePositions =
-    HashMap<String, HashMap<Strand, HashMap<BaseStatus, Vec<i64>>>>;
+type ChromStrandPositionNames =
+    HashMap<String, HashMap<Strand, BTreeMap<i64, BaseStatus>>>;
 
 fn get_tid_to_chrom(reader: &Reader) -> anyhow::Result<TidToChrom> {
     let header = reader.header().to_owned();
@@ -181,7 +161,7 @@ fn get_tid_to_chrom(reader: &Reader) -> anyhow::Result<TidToChrom> {
 fn parse_ground_truth_bed_file(
     file_path: &PathBuf,
     suppress_pb: bool,
-) -> anyhow::Result<ChromStrandNamePositions> {
+) -> anyhow::Result<ChromStrandPositionNames> {
     info!("Parsing BED at {}", file_path.to_str().unwrap_or("invalid-UTF-8"));
     let mut result = HashMap::new();
     let lines_processed = get_ticker();
@@ -197,14 +177,14 @@ fn parse_ground_truth_bed_file(
             .and_then(|line| parse_ground_truth_bed_line(&line))
             .ok()
     }) {
-        result
+        let cs_res = result
             .entry(ground_truth_site.chrom)
             .or_insert_with(HashMap::new)
             .entry(ground_truth_site.strand)
-            .or_insert_with(HashMap::new)
-            .entry(ground_truth_site.base_status)
-            .or_insert_with(Vec::new)
-            .extend(ground_truth_site.positions);
+            .or_insert_with(BTreeMap::new);
+        for pos in ground_truth_site.positions {
+            cs_res.insert(pos, ground_truth_site.base_status);
+        }
         lines_processed.inc(1);
     }
     if result.is_empty() {
@@ -215,16 +195,65 @@ fn parse_ground_truth_bed_file(
     Ok(result)
 }
 
+fn derive_canonical_base(
+    gt_positions: &Vec<ChromStrandPositionNames>,
+    can_base: Option<DnaBase>,
+) -> anyhow::Result<DnaBase> {
+    let mut base_statuses = HashSet::new();
+    for chrom_strand_position_names in gt_positions {
+        for (_, strand_map) in chrom_strand_position_names.iter() {
+            for (_, base_status_map) in strand_map.iter() {
+                for (_, base_status) in base_status_map.iter() {
+                    base_statuses.insert(base_status);
+                }
+            }
+        }
+    }
+    let mut can_base = can_base.clone();
+    for base_status in base_statuses {
+        match base_status {
+            BaseStatus::Modified(mod_code) => {
+                if let Some(existing_can_base) = &can_base {
+                    if *existing_can_base
+                        != *MOD_CODE_TO_DNA_BASE
+                            .get(&mod_code)
+                            .unwrap_or(existing_can_base)
+                    {
+                        return Err(anyhow::anyhow!(
+                            "Multiple canonical bases represented in ground \
+                             truth BED files: {} {}",
+                            existing_can_base.char(),
+                            MOD_CODE_TO_DNA_BASE
+                                .get(&mod_code)
+                                .unwrap_or(existing_can_base)
+                                .char()
+                        ));
+                    }
+                } else {
+                    can_base = Some(MOD_CODE_TO_DNA_BASE[&mod_code]);
+                }
+            }
+            _ => {
+                continue;
+            }
+        }
+    }
+    can_base.ok_or(anyhow::anyhow!(
+        "Could not derive canonical base from ground truth."
+    ))
+}
+
 // ground truth and observed base status pointing to vector of mod probabilities
-type GtProbs = HashMap<(BaseStatus, BaseStatus), Vec<f32>>;
+type StatusProbs = HashMap<(BaseStatus, BaseStatus), Vec<f32>>;
 
 fn process_bam_record(
     record: &Record,
-    mod_positions: &ChromStrandNamePositions,
+    mod_positions: &ChromStrandPositionNames,
     tid_to_chrom: &TidToChrom,
+    can_base: DnaBase,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
-) -> anyhow::Result<GtProbs> {
+) -> anyhow::Result<StatusProbs> {
     let mut result = HashMap::new();
     let mbi = ModBaseInfo::new_from_record(&record)?;
     let record_name = String::from_utf8(record.qname().to_vec())
@@ -236,13 +265,9 @@ fn process_bam_record(
     let chrom = tid_to_chrom
         .get(&(record.tid() as u32))
         .ok_or_else(|| anyhow!("Invalid record TID: {}", record.tid(),))?;
-    let cgt_mod_pos = mod_positions.get(chrom).ok_or_else(|| {
-        anyhow!(
-            "No ground truth on this contig. {} not in {:?}",
-            record_name,
-            mod_positions.keys(),
-        )
-    })?;
+    let cgt_mod_pos = mod_positions
+        .get(chrom)
+        .ok_or_else(|| anyhow!("No ground truth on this contig.",))?;
     let mbp = ReadBaseModProfile::process_record(
         &record,
         &record_name,
@@ -251,8 +276,8 @@ fn process_bam_record(
         edge_filter,
         1,
     )?;
-    let position_calls = PositionModCalls::from_profile(&mbp);
-    for mod_call in position_calls {
+    let mut called_ref_pos = HashMap::new();
+    for mod_call in PositionModCalls::from_profile(&mbp) {
         let Some(ref_pos) = mod_call.ref_position else {
             continue;
         };
@@ -264,74 +289,117 @@ fn process_bam_record(
         };
         let ref_mod_strand =
             get_reference_mod_strand(mod_call.mod_strand, alignment_strand);
-        let cgt_strand_mod_pos = cgt_mod_pos
-            .get(&ref_mod_strand)
-            .ok_or_else(|| anyhow!("No ground truth on this strand"))?;
-        for (mod_code, ground_truth_pos) in cgt_strand_mod_pos.iter() {
-            if ground_truth_pos.contains(&ref_pos) {
-                let (mod_call_prob, mod_call_code) = match mod_call
-                    .base_mod_probs
-                    .argmax_base_mod_call()
-                {
-                    BaseModCall::Canonical(p) => (p, BaseStatus::Canonical),
-                    BaseModCall::Modified(p, code) => {
-                        (p, BaseStatus::Modified(code))
-                    }
-                    BaseModCall::Filtered => {
-                        unreachable!("argmax should not output filtered calls")
-                    }
-                };
+        let Some(cs_mod_pos) = cgt_mod_pos.get(&ref_mod_strand) else {
+            continue;
+        };
+        let strand_called_ref_pos =
+            called_ref_pos.entry(ref_mod_strand).or_insert_with(HashSet::new);
+        let Some(gt_code) = cs_mod_pos.get(&ref_pos) else {
+            continue;
+        };
+        let (mod_call_prob, call_code) = match mod_call
+            .base_mod_probs
+            .argmax_base_mod_call()
+        {
+            BaseModCall::Canonical(p) => (p, BaseStatus::Canonical),
+            BaseModCall::Modified(p, code) => (p, BaseStatus::Modified(code)),
+            BaseModCall::Filtered => {
+                unreachable!("argmax should not output filtered calls")
+            }
+        };
+        result
+            .entry((*gt_code, call_code))
+            .or_insert_with(Vec::new)
+            .push(mod_call_prob);
+        strand_called_ref_pos.insert(ref_pos);
+    }
+    // add in no call, mismatch and deletion positions
+    let r_st = record.reference_start();
+    let r_en = record.reference_end();
+    let q_seq = record.seq();
+    let ref_to_query: FxHashMap<i64, i64> = record
+        .aligned_pairs()
+        .filter_map(|p| Some(p))
+        .map(|pos| (pos[1], pos[0]))
+        .collect();
+    for (strand, positions) in called_ref_pos.iter() {
+        let Some(cs_mod_pos) = cgt_mod_pos.get(&strand) else {
+            continue;
+        };
+        for (pos, gt_code) in cs_mod_pos.range(r_st..r_en) {
+            if positions.contains(pos) {
+                // already recorded in result above
+                continue;
+            };
+            let Some(q_pos) = ref_to_query.get(pos) else {
                 result
-                    .entry((*mod_code, mod_call_code))
+                    .entry((*gt_code, BaseStatus::Deletion))
                     .or_insert_with(Vec::new)
-                    .push(mod_call_prob);
+                    .push(f32::NAN);
+                continue;
+            };
+            let mut base = DnaBase::parse(q_seq[*q_pos as usize] as char)?;
+            if record.is_reverse() {
+                base = base.complement();
+            }
+            if base == can_base {
+                result
+                    .entry((*gt_code, BaseStatus::NoCall))
+                    .or_insert_with(Vec::new)
+                    .push(f32::NAN);
+            } else {
+                result
+                    .entry((*gt_code, BaseStatus::Mismatch(base)))
+                    .or_insert_with(Vec::new)
+                    .push(f32::NAN);
             }
         }
     }
+
     Ok(result)
 }
 
 fn process_bam_file(
     reader: &mut Reader,
-    mod_positions: &ChromStrandNamePositions,
+    mod_positions: &ChromStrandPositionNames,
     tid_to_chrom: &TidToChrom,
+    can_base: DnaBase,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
     suppress_pb: bool,
-) -> anyhow::Result<GtProbs> {
+) -> anyhow::Result<StatusProbs> {
     let lines_processed = get_ticker();
     if suppress_pb {
         lines_processed
             .set_draw_target(indicatif::ProgressDrawTarget::hidden());
     }
     lines_processed.set_message("Records processed");
-    let (gt_mod_quals, errs) = reader.records().fold(
+    let (status_probs, errs) = reader.records().fold(
         (HashMap::new(), HashMap::new()),
-        |(mut gt_mod_quals, mut errs), record| {
+        |(mut status_probs, mut errs), record| {
             match record {
                 Ok(record) => {
                     match process_bam_record(
                         &record,
                         &mod_positions,
                         tid_to_chrom,
+                        can_base,
                         collapse_method,
                         edge_filter,
                     ) {
-                        Ok(mod_base_quals) => {
-                            for ((gt_code, call_code), mod_quals) in
-                                mod_base_quals.into_iter()
+                        Ok(read_probs) => {
+                            for ((gt_code, call_code), probs) in
+                                read_probs.into_iter()
                             {
-                                gt_mod_quals
+                                status_probs
                                     .entry((gt_code.clone(), call_code.clone()))
                                     .or_insert_with(Vec::new)
-                                    .extend(mod_quals);
+                                    .extend(probs);
                             }
                             lines_processed.inc(1)
                         }
                         Err(err) => {
-                            let err_counter =
-                                errs.entry(err.to_string()).or_insert(0);
-                            *err_counter += 1;
+                            *errs.entry(err.to_string()).or_insert(0) += 1;
                         }
                     }
                 }
@@ -340,7 +408,7 @@ fn process_bam_file(
                     *err_counter += 1;
                 }
             }
-            (gt_mod_quals, errs)
+            (status_probs, errs)
         },
     );
     lines_processed.finish_and_clear();
@@ -353,12 +421,12 @@ fn process_bam_file(
             info!("\t{}: {}", key, err);
         }
     }
-    Ok(gt_mod_quals)
+    Ok(status_probs)
 }
 
-fn balance_ground_truth(gt_mod_quals: &mut GtProbs) -> anyhow::Result<()> {
+fn balance_ground_truth(status_probs: &mut StatusProbs) -> anyhow::Result<()> {
     // Calculate the total number of elements in each row
-    let gt_totals: HashMap<_, _> = gt_mod_quals
+    let gt_totals: HashMap<_, _> = status_probs
         .iter()
         .map(|((gt_mod, _), values)| (*gt_mod, values.len()))
         .fold(HashMap::new(), |mut acc, (gt_mod, len)| {
@@ -379,7 +447,7 @@ fn balance_ground_truth(gt_mod_quals: &mut GtProbs) -> anyhow::Result<()> {
         })
         .collect::<HashMap<BaseStatus, (usize, usize)>>();
 
-    for ((gt_mod, _calls), probs) in gt_mod_quals.iter_mut() {
+    for ((gt_mod, _), probs) in status_probs.iter_mut() {
         if probs.len() <= gt_target_size {
             continue;
         }
@@ -404,10 +472,11 @@ fn balance_ground_truth(gt_mod_quals: &mut GtProbs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn print_table(gt_mod_quals: &GtProbs) {
-    let mut gt_codes: Vec<_> = gt_mod_quals.keys().map(|&(k, _)| k).collect();
+fn print_table(status_probs: &StatusProbs) {
+    let mut gt_codes: Vec<_> =
+        status_probs.keys().map(|&(k, _)| k).unique().collect();
     gt_codes.sort();
-    let call_codes: Vec<_> = gt_mod_quals.keys().map(|&(_, k)| k).collect();
+    let call_codes: Vec<_> = status_probs.keys().map(|&(_, k)| k).collect();
 
     let mut all_codes: Vec<_> =
         gt_codes.iter().chain(call_codes.iter()).unique().collect();
@@ -425,11 +494,11 @@ fn print_table(gt_mod_quals: &GtProbs) {
     count_tbl.set_titles(header);
 
     // Create table rows
-    for &gt_code in &all_codes {
+    for gt_code in &gt_codes {
         let mut row = Row::empty();
         row.add_cell(cell!(&gt_code.to_string()));
         for &call_code in &all_codes {
-            let vector_length = gt_mod_quals
+            let vector_length = status_probs
                 .get(&(*gt_code, *call_code))
                 .map(|v| v.len())
                 .unwrap_or(0);
@@ -492,6 +561,11 @@ pub struct ValidateFromModbam {
     /// first 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
+    /// Canonical base to evaluate. By default, this will be derived from mod
+    /// codes in ground truth BED files. For ground truth with only canonical
+    /// sites and/or ChEBI codes this values must be set.
+    #[clap(short = 'c', long)]
+    canonical_base: Option<DnaBase>,
 
     // threshold args
     // todo add direct thresholds support
@@ -562,9 +636,11 @@ impl ValidateFromModbam {
                 parse_ground_truth_bed_file(bed_path, self.suppress_progress)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // todo determine canonnical base of interest
+        let can_base =
+            derive_canonical_base(&gt_positions, self.canonical_base)?;
+        info!("Canonical base: {}", can_base.char());
 
-        let mut all_gt_probs = HashMap::new();
+        let mut all_probs = HashMap::new();
         for (bam_path, bed_indices) in bam_path_to_bed_indices {
             let mut reader = Reader::from_path(bam_path.as_path())?;
             reader.set_threads(self.threads)?;
@@ -575,16 +651,17 @@ impl ValidateFromModbam {
             );
 
             for bed_idx in bed_indices {
-                let gt_mod_probs = process_bam_file(
+                let status_probs = process_bam_file(
                     &mut reader,
                     &gt_positions[bed_idx],
                     &tid_to_chrom,
+                    can_base,
                     collapse_method.as_ref(),
                     edge_filter.as_ref(),
                     self.suppress_progress,
                 )?;
-                for ((gt_code, call_code), probs) in gt_mod_probs.iter() {
-                    all_gt_probs
+                for ((gt_code, call_code), probs) in status_probs.iter() {
+                    all_probs
                         .entry((gt_code.clone(), call_code.clone()))
                         .or_insert_with(Vec::new)
                         .extend(probs.clone());
@@ -593,23 +670,23 @@ impl ValidateFromModbam {
         }
 
         // sort prob vectors
-        for ((_, _), probs) in all_gt_probs.iter_mut() {
+        for ((_, _), probs) in all_probs.iter_mut() {
             probs.sort_by_key(|&x| x.to_bits());
         }
-        balance_ground_truth(&mut all_gt_probs)?;
+        balance_ground_truth(&mut all_probs)?;
 
-        print_table(&all_gt_probs);
+        print_table(&all_probs);
 
-        let mut all_quals = Vec::<f32>::new();
-        for (_, mod_quals) in all_gt_probs.iter() {
-            all_quals.extend(mod_quals);
+        let mut flat_probs = Vec::<f32>::new();
+        for (_, probs) in all_probs.iter() {
+            flat_probs.extend(probs);
         }
-        all_quals.sort_by(|x, y| x.partial_cmp(y).unwrap_or(Ordering::Equal));
-        if all_quals.iter().any(|v| v.is_nan()) {
+        flat_probs.sort_by(|x, y| x.partial_cmp(y).unwrap_or(Ordering::Equal));
+        if flat_probs.iter().any(|v| v.is_nan()) {
             bail!("Failed to compare values");
         }
         let thresh =
-            percentile_linear_interp(&all_quals, self.filter_quantile)?;
+            percentile_linear_interp(&flat_probs, self.filter_quantile)?;
         info!("Threshold: {}", thresh);
 
         // todo apply threshold and print table again

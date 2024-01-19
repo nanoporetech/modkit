@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 
-use anyhow::{anyhow, bail};
+use anyhow::bail;
 use derive_new::new;
 use itertools::{Itertools, PeekingNext};
 use log::{debug, error};
@@ -316,18 +316,6 @@ impl PartialOrd for BaseModCall {
             BaseModCall::Filtered => None,
         };
         p_a.partial_cmp(&p_b)
-    }
-}
-
-impl BaseModCall {
-    pub fn to_base_status(&self) -> anyhow::Result<BaseStatus> {
-        match *self {
-            BaseModCall::Canonical(_) => Ok(BaseStatus::Canonical),
-            BaseModCall::Modified(_, c) => Ok(BaseStatus::Modified(c)),
-            BaseModCall::Filtered => {
-                Err(anyhow!("Filtered call cannot be converted to base status"))
-            }
-        }
     }
 }
 

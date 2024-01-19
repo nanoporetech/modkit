@@ -39,6 +39,7 @@ rv = "0.16.0"
 ndarray = "0.15.6"
 log-once = "0.4.0"
 lazy_static = "1.4"
+common_macros = "0.1.1"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"
