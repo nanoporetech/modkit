@@ -2,10 +2,11 @@ use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::string::FromUtf8Error;
 
+use ansi_term::Style;
 use anyhow::{anyhow, bail};
 use clap::Args;
 use itertools::Itertools;
@@ -32,7 +33,8 @@ use crate::mod_base_code::{
 use crate::read_ids_to_base_mod_probs::ReadBaseModProfile;
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{
-    get_reference_mod_strand, get_ticker, record_is_secondary, Strand,
+    format_int_with_commas, get_reference_mod_strand, get_ticker,
+    record_is_secondary, Strand,
 };
 
 /// todo investigate using this type in BaseModCall
@@ -134,7 +136,7 @@ fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
             )
         }
     }
-    let positions = (start..end + 1).collect();
+    let positions = (start..end).collect();
 
     Ok(GroundTruthSite { chrom, strand, base_status, positions })
 }
@@ -472,7 +474,7 @@ fn balance_ground_truth(status_probs: &mut StatusProbs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn print_table(status_probs: &StatusProbs) {
+fn machine_parseable_table(status_probs: &StatusProbs) -> String {
     let mut gt_codes: Vec<_> =
         status_probs.keys().map(|&(k, _)| k).unique().collect();
     gt_codes.sort();
@@ -481,6 +483,47 @@ fn print_table(status_probs: &StatusProbs) {
     let mut all_codes: Vec<_> =
         gt_codes.iter().chain(call_codes.iter()).unique().collect();
     all_codes.sort();
+
+    let mut out_str = "[[ground_truth_label,".to_string();
+    out_str.push_str(&all_codes.iter().map(|x| x.to_string()).join(","));
+    out_str.push_str("]");
+    for gt_code in &gt_codes {
+        out_str.push_str(",[");
+        out_str.push_str(&gt_code.to_string());
+        for &call_code in &all_codes {
+            let vector_length = status_probs
+                .get(&(*gt_code, *call_code))
+                .map(|v| v.len())
+                .unwrap_or(0);
+            out_str.push_str(",");
+            out_str.push_str(&vector_length.to_string());
+        }
+        out_str.push_str("]");
+    }
+    out_str.push_str("]");
+    out_str
+}
+
+fn print_table(status_probs: &StatusProbs, show_percentages: bool) {
+    let mut gt_codes: Vec<_> =
+        status_probs.keys().map(|&(k, _)| k).unique().collect();
+    gt_codes.sort();
+    let call_codes: Vec<_> = status_probs.keys().map(|&(_, k)| k).collect();
+
+    let mut all_codes: Vec<_> =
+        gt_codes.iter().chain(call_codes.iter()).unique().collect();
+    all_codes.sort();
+
+    let mut gt_totals: HashMap<BaseStatus, usize> = HashMap::new();
+    if show_percentages {
+        gt_totals = status_probs
+            .iter()
+            .map(|((gt_mod, _), values)| (*gt_mod, values.len()))
+            .fold(HashMap::new(), |mut acc, (gt_mod, len)| {
+                *acc.entry(gt_mod).or_insert(0) += len;
+                acc
+            });
+    }
 
     let mut count_tbl = Table::new();
     count_tbl.set_format(*TBL_FMT);
@@ -502,21 +545,45 @@ fn print_table(status_probs: &StatusProbs) {
                 .get(&(*gt_code, *call_code))
                 .map(|v| v.len())
                 .unwrap_or(0);
-            row.add_cell(cell!(&format!("{}", vector_length)));
+            if show_percentages {
+                let gt_total = gt_totals.get(gt_code).unwrap();
+                row.add_cell(
+                    cell!(&format!(
+                        "{:.2}%",
+                        100.0 * vector_length as f32 / *gt_total as f32
+                    ))
+                    .style_spec("r"),
+                );
+            } else {
+                row.add_cell(
+                    cell!(&format!(
+                        "{}",
+                        format_int_with_commas(vector_length as isize)
+                    ))
+                    .style_spec("r"),
+                );
+            }
         }
         count_tbl.add_row(row);
     }
 
+    let mut longest_gt_code_len: usize = 0;
+    if let Some(longest_gt_code) = gt_codes
+        .iter()
+        .max_by(|&a, &b| a.to_string().len().cmp(&b.to_string().len()))
+    {
+        longest_gt_code_len = longest_gt_code.to_string().len();
+    }
     let mut metatable = Table::new();
     metatable.set_format(*prettytable::format::consts::FORMAT_CLEAN);
-    metatable.add_row(row!("", cb->"Called Base"));
-    metatable.add_row(row!(b->"\n\n\nGround\nTruth", count_tbl));
+    metatable.add_row(row!(
+        "",
+        format!("{:1$}Called Base", "", longest_gt_code_len + 4)
+    ));
+    metatable.add_row(row!("\n\n\nGround\nTruth", count_tbl));
 
     // Print the table
     metatable.printstd();
-
-    // todo also print percentages table
-    // also print key metrics
 }
 
 #[derive(Args)]
@@ -582,6 +649,9 @@ pub struct ValidateFromModbam {
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
+    /// Specify a file for machine parseable output.
+    #[arg(short = 'o', long, alias = "out")]
+    out_filepath: Option<PathBuf>,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
     #[arg(long, alias = "log")]
@@ -591,6 +661,10 @@ pub struct ValidateFromModbam {
 impl ValidateFromModbam {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        let mut out_handle: Option<File> = None;
+        if let Some(file_path) = self.out_filepath.clone() {
+            out_handle = Some(File::create(&file_path)?);
+        }
         let collapse_method = match &self.ignore {
             Some(raw_mod_code) => {
                 let mod_code = ModCodeRepr::parse(raw_mod_code)?;
@@ -660,11 +734,11 @@ impl ValidateFromModbam {
                     edge_filter.as_ref(),
                     self.suppress_progress,
                 )?;
-                for ((gt_code, call_code), probs) in status_probs.iter() {
+                for ((gt_code, call_code), probs) in status_probs.into_iter() {
                     all_probs
-                        .entry((gt_code.clone(), call_code.clone()))
+                        .entry((gt_code, call_code))
                         .or_insert_with(Vec::new)
-                        .extend(probs.clone());
+                        .extend(probs);
                 }
             }
         }
@@ -673,9 +747,53 @@ impl ValidateFromModbam {
         for ((_, _), probs) in all_probs.iter_mut() {
             probs.sort_by_key(|&x| x.to_bits());
         }
-        balance_ground_truth(&mut all_probs)?;
+        info!("Raw counts summary");
+        print_table(&all_probs, false);
+        if let Some(valid_out_handle) = &mut out_handle {
+            valid_out_handle
+                .write_all(
+                    &format!(
+                        "full_contingency_table: {}\n",
+                        machine_parseable_table(&all_probs)
+                    )
+                    .into_bytes(),
+                )
+                .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
+        }
 
-        print_table(&all_probs);
+        // filter to only modified base calls
+        all_probs.retain(|&(_, call_code), _| {
+            call_code == BaseStatus::Canonical
+                || matches!(call_code, BaseStatus::Modified(_))
+        });
+
+        info!("Balancing ground truth call totals");
+        balance_ground_truth(&mut all_probs)?;
+        let total_calls =
+            all_probs.iter().map(|(_, values)| values.len()).sum::<usize>();
+        let correct_calls = all_probs
+            .iter()
+            .filter(|&((gt_code, call_code), _)| gt_code == call_code)
+            .map(|(_, values)| values.len())
+            .sum::<usize>();
+        let raw_acc = 100.0 * correct_calls as f32 / total_calls as f32;
+        info!("Raw accuracy: {:.2}%", raw_acc);
+        info!("Raw modified base calls contingency table");
+        print_table(&all_probs, true);
+        if let Some(valid_out_handle) = &mut out_handle {
+            valid_out_handle
+                .write_all(&format!("raw_accuracy: {}\n", raw_acc).into_bytes())
+                .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
+            valid_out_handle
+                .write_all(
+                    &format!(
+                        "raw_contingency_table: {}\n",
+                        machine_parseable_table(&all_probs)
+                    )
+                    .into_bytes(),
+                )
+                .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
+        }
 
         let mut flat_probs = Vec::<f32>::new();
         for (_, probs) in all_probs.iter() {
@@ -687,9 +805,44 @@ impl ValidateFromModbam {
         }
         let thresh =
             percentile_linear_interp(&flat_probs, self.filter_quantile)?;
-        info!("Threshold: {}", thresh);
+        info!("Call probability threshold: {:.4}", thresh);
 
-        // todo apply threshold and print table again
+        // apply threshold and print filtered table
+        all_probs.values_mut().for_each(|probs| {
+            probs.retain(|&p| p > thresh);
+        });
+        let filt_calls =
+            all_probs.iter().map(|(_, values)| values.len()).sum::<usize>();
+        let correct_filt_calls = all_probs
+            .iter()
+            .filter(|&((gt_code, call_code), _)| gt_code == call_code)
+            .map(|(_, values)| values.len())
+            .sum::<usize>();
+        let filt_acc = 100.0 * correct_filt_calls as f32 / filt_calls as f32;
+        info!(
+            "{}",
+            Style::new()
+                .bold()
+                .paint(format!("Filtered accuracy: {:.2}%", filt_acc)),
+        );
+        info!("Filtered modified base calls contingency table");
+        print_table(&all_probs, true);
+        if let Some(valid_out_handle) = &mut out_handle {
+            valid_out_handle
+                .write_all(
+                    &format!("filtered_accuracy: {}\n", filt_acc).into_bytes(),
+                )
+                .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
+            valid_out_handle
+                .write_all(
+                    &format!(
+                        "filtered_contingency_table: {}\n",
+                        machine_parseable_table(&all_probs)
+                    )
+                    .into_bytes(),
+                )
+                .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
+        }
 
         Ok(())
     }
