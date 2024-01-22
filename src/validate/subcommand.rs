@@ -484,12 +484,13 @@ fn machine_parseable_table(status_probs: &StatusProbs) -> String {
         gt_codes.iter().chain(call_codes.iter()).unique().collect();
     all_codes.sort();
 
-    let mut out_str = "[[ground_truth_label,".to_string();
-    out_str.push_str(&all_codes.iter().map(|x| x.to_string()).join(","));
-    out_str.push_str("]");
+    let mut out_str = "[[\"ground_truth_label\",\"".to_string();
+    out_str.push_str(&all_codes.iter().map(|x| x.to_string()).join("\",\""));
+    out_str.push_str("\"]");
     for gt_code in &gt_codes {
-        out_str.push_str(",[");
+        out_str.push_str(",[\"");
         out_str.push_str(&gt_code.to_string());
+        out_str.push_str("\"");
         for &call_code in &all_codes {
             let vector_length = status_probs
                 .get(&(*gt_code, *call_code))

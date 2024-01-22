@@ -88,4 +88,4 @@ The validate command will assume that any base from the associated modBAM file o
 
 The `--out-filepath` option is provided to allow persistent storage of results in a machine-parseable format without other logging lines.
 This format outputs all contingency tables in a machine-parseable format.
-For example this contingency table `[[ground_truth_label,-,a],[-,9900,100],[a,100,9900]]` would be produced from the above example results.
+For example this contingency table `[["ground_truth_label","-","a"],["-",9900,100],["a",100,9900]]` would be produced from the above example results.
