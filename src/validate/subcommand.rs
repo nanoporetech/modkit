@@ -466,7 +466,7 @@ fn balance_ground_truth(status_probs: &mut StatusProbs) -> anyhow::Result<()> {
                     .skip(1)
                     .take(samp_target_size)
                     .map(|x| x.round() as usize)
-                    .filter_map(|idx| probs.get(idx).map(|x| *x))
+                    .filter_map(|idx| probs.get(idx).copied())
                     .collect::<Vec<f32>>();
             *probs = keepers;
         }
