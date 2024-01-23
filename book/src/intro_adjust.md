@@ -2,8 +2,8 @@
 
 The `adjust-mods` subcommand can be used to manipulate MM (and corresponding ML) tags in a
 modBam. In general, these simple commands are run prior to `pileup`, visualization, or
-other analysis. If alignment information is present, only the **primary alignment** is used, 
-and supplementary alignments will not be in the output (see [limitations](./limitations.md)).
+other analysis. For `adjust-mods` and `update-tags`, if a correct `MN` tag is found, secondary and supplementary
+alignments will be output. See [troubleshooting](./troubleshooting.md) for details.
 
 
 ## Ignoring a modification class.

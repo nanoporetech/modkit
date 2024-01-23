@@ -15,7 +15,7 @@ use crate::command_utils::{
     get_threshold_from_options, parse_edge_filter_input,
     parse_per_mod_thresholds, parse_thresholds,
 };
-use crate::interval_chunks::IntervalChunks;
+use crate::interval_chunks::MotifAwareIntervalChunks;
 use crate::logging::init_logging;
 use crate::mod_bam::CollapseMethod;
 use crate::mod_base_code::{ModCodeRepr, HYDROXY_METHYL_CYTOSINE};
@@ -679,11 +679,12 @@ impl ModBamPileup {
         std::thread::spawn(move || {
             pool.install(|| {
                 for target in tids {
-                    let intervals = IntervalChunks::new_with_multiple_motifs(
+                    let intervals = MotifAwareIntervalChunks::new(
                         target.start,
                         target.length,
                         interval_size,
                         target.tid,
+                        combine_strands,
                         motif_locations.as_ref(),
                     )
                     .filter(|(start, end)| {
@@ -1346,14 +1347,18 @@ impl DuplexModBamPileup {
         std::thread::spawn(move || {
             pool.install(|| {
                 for target in tids {
-                    let intervals = IntervalChunks::new_with_multiple_motifs(
+                    let intervals = MotifAwareIntervalChunks::new(
                         target.start,
                         target.length,
                         interval_size,
                         target.tid,
+                        // why is this hard-coded to true?
+                        // for pileup-hemi we requre a motif is provided and that the
+                        // motif is palindromic. Therefore we need to make sure
+                        // that we do not split intervals at motif boundaries.
+                        true,
                         Some(&motif_locations),
-                    )
-                        .filter(|(start, end)| {
+                    ).filter(|(start, end)| {
                             position_filter
                                 .as_ref()
                                 .map(|pf| {

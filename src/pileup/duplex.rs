@@ -16,7 +16,7 @@ use crate::pileup::{
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_cache::DuplexReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{record_is_secondary, Strand, StrandRule};
+use crate::util::{record_is_not_primary, Strand, StrandRule};
 
 /// Summarizes the duplex (hemi) methylation patterns for
 /// a genomic interval
@@ -265,7 +265,7 @@ pub fn process_region_duplex<T: AsRef<Path>>(
     );
 
     for (pileup, motif) in pileup_iter.filter_map(|pileup| {
-        let motifs = motif_locations.motifs_for_position(
+        let motifs = motif_locations.motifs_at_position_nonempty(
             chrom_tid,
             pileup.bam_pileup.pos(),
             Strand::Positive,
@@ -284,7 +284,7 @@ pub fn process_region_duplex<T: AsRef<Path>>(
                     false
                 } else {
                     let record = alignment.record();
-                    !(record_is_secondary(&record) || record.seq_len() == 0)
+                    !(record_is_not_primary(&record) || record.seq_len() == 0)
                 }
             });
 

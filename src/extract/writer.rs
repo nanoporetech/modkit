@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 use derive_new::new;
 use itertools::Itertools;
-use log::debug;
 use rustc_hash::FxHashMap;
 
 use crate::mod_bam::{BaseModCall, BaseModProbs};
@@ -59,19 +58,19 @@ impl PositionModCalls {
             modified_primary_base{tab}\
             fail{tab}\
             inferred{tab}\
-            within_alignment"
+            within_alignment{tab}\
+            flag"
         )
     }
 
     pub(crate) fn from_profile(
         read_base_mod_profile: &ReadBaseModProfile,
     ) -> Vec<Self> {
-        let read_id = &read_base_mod_profile.record_name;
         type Key = (usize, Strand, DnaBase);
         let (grouped, mod_codes): (
             HashMap<Key, Vec<&ModProfile>>,
             HashSet<ModCodeRepr>,
-        ) = read_base_mod_profile.profile.iter().fold(
+        ) = read_base_mod_profile.iter_profiles().fold(
             (HashMap::new(), HashSet::new()),
             |(mut acc, mut codes), x| {
                 let k = (x.query_position, x.mod_strand, x.canonical_base);
@@ -89,14 +88,6 @@ impl PositionModCalls {
                 |mut acc, ((query_pos, strand, base), mod_profile)| {
                     let base_mod_probs =
                         if mod_profile.iter().any(|x| x.inferred) {
-                            if mod_profile.len() != 1 {
-                                debug!(
-                                    "should have only 1 when line when mod is \
-                                     inferred, got {}. read: {read_id} pos: \
-                                     {query_pos}.",
-                                    mod_profile.len()
-                                );
-                            }
                             BaseModProbs::new_inferred_canonical(&mod_codes)
                         } else {
                             let mut probs = mod_profile
@@ -166,6 +157,7 @@ impl PositionModCalls {
         chrom_name: Option<&String>,
         caller: &MultipleThresholdModCaller,
         reference_seqs: &HashMap<String, Vec<u8>>,
+        flag: u16,
     ) -> String {
         let tab = '\t';
         let missing = ".".to_string();
@@ -237,7 +229,8 @@ impl PositionModCalls {
             {modified_primary_base}{tab}\
             {filtered}{tab}\
             {inferred}{tab}\
-            {within_alignment}\n"
+            {within_alignment}{tab}\
+            {flag}\n"
         )
     }
 }
@@ -247,11 +240,13 @@ pub trait OutwriterWithMemory<T> {
     fn num_reads(&self) -> usize;
 }
 
+/// (Record Name, Flag, Alignment Start)
+type WrittenRecordKey = (String, u16, i64);
 pub struct TsvWriterWithContigNames<W: Write> {
     tsv_writer: TsvWriter<W>,
     tid_to_name: HashMap<u32, String>,
     name_to_seq: HashMap<String, Vec<u8>>,
-    written_reads: HashSet<String>,
+    written_reads: HashSet<WrittenRecordKey>,
     read_calls_writer: Option<TsvWriter<File>>,
     caller: MultipleThresholdModCaller,
 }
@@ -293,23 +288,28 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
         let missing_chrom = ".".to_string();
         let mut rows_written = 0u64;
         for profile in item.profiles.iter() {
-            if self.written_reads.contains(&profile.record_name) {
+            let written_record_key = (
+                profile.record_name.to_owned(),
+                profile.flag,
+                profile.alignment_start,
+            );
+            if self.written_reads.contains(&written_record_key) {
                 continue;
             } else {
                 let chrom_name = profile
                     .chrom_id
                     .and_then(|chrom_id| self.tid_to_name.get(&chrom_id));
-                for mod_profile in profile.profile.iter() {
+                for mod_profile in profile.iter_profiles() {
                     let row = mod_profile.to_row(
                         &profile.record_name,
                         chrom_name.unwrap_or(&missing_chrom),
                         &self.name_to_seq,
                         kmer_size,
+                        profile.flag,
                     );
                     self.tsv_writer.write(row.as_bytes())?;
                     rows_written += 1;
                 }
-                self.written_reads.insert(profile.record_name.to_owned());
                 if let Some(read_calls_writer) = self.read_calls_writer.as_mut()
                 {
                     let position_calls =
@@ -321,11 +321,13 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
                                 chrom_name,
                                 &self.caller,
                                 &self.name_to_seq,
+                                profile.flag,
                             )
                             .as_bytes(),
                         )?;
                     }
                 }
+                self.written_reads.insert(written_record_key);
             }
         }
         Ok(rows_written)

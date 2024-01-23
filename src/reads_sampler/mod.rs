@@ -103,6 +103,7 @@ where
                 edge_filter,
                 position_filter,
                 only_mapped,
+                false,
                 None,
             )?;
             debug!(
@@ -138,6 +139,7 @@ where
             edge_filter,
             position_filter,
             only_mapped,
+            false,
             None,
         )?;
         debug!("sampled {} records", read_ids_to_base_mod_probs.len());
@@ -146,7 +148,7 @@ where
 }
 
 /// Sample reads evenly over a specified region or over
-/// an entire sorted, aligned BAM.
+/// an entire sorted, aligned BAM. Only uses primary alignments
 fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
     bam_fp: &PathBuf,
     interval_size: u32,
@@ -186,11 +188,10 @@ where
 
     let mut aggregator = <P::Output as Moniod>::zero();
     for reference_record in contigs {
-        let intervals = IntervalChunks::new_without_motifs(
+        let intervals = IntervalChunks::new(
             reference_record.start,
             reference_record.length,
             interval_size,
-            reference_record.tid,
         )
         .filter(|(start, end)| {
             position_filter
@@ -238,6 +239,7 @@ where
                     edge_filter,
                     position_filter,
                     only_mapped,
+                    false,
                     None,
                 ) {
                     Ok(res) => {
@@ -277,6 +279,7 @@ pub(crate) fn sample_reads_from_interval<P: RecordProcessor>(
     edge_filter: Option<&EdgeFilter>,
     position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
+    allow_non_primary: bool,
     kmer_size: Option<usize>,
 ) -> anyhow::Result<P::Output>
 where
@@ -297,6 +300,7 @@ where
         edge_filter,
         position_filter,
         only_mapped,
+        allow_non_primary,
         kmer_size,
     )
 }

@@ -4,6 +4,19 @@ It's recommended to run all `modkit` commands with the `--log-filepath <path-to-
 option set. When unexpected outputs are produced inspecting this file will often indicate
 the reason.
 
+
+## Missing secondary and supplementary alignments in output
+
+As of v0.2.4 secondary and supplementary alignments are supported in `adjust-mods`, `update-tags`, `call-mods`, and (optionally) in `extract`.
+However, in order to use these alignment records correctly, the `MN` tag must be present and correct in the record. 
+The `MN` tag indicates the length of the sequence corresponding to the `MM` and `ML` tags.
+As of dorado v0.5.0 the `MN` tag is output when modified base calls are produced.
+If the aligner has hard-clipped the sequence, this number will not match the sequence length and the record cannot be used. 
+Similarly, if the SEQ field is empty (sequence length zero), the record cannot be used. 
+One way to use supplementary alignments is to specify the `-Y` flag when using [dorado](https://github.com/nanoporetech/dorado/) or [minimap2](https://lh3.github.io/minimap2/minimap2.html). 
+For these programs, when `-Y` is specified, the sequence will not be hardclipped in supplementary alignments and will be present in secondary alignments. 
+Other mapping algorithms that are "MM tag-aware" may allow hard-clipping and update the `MM` and `ML` tags, `modkit` will accept these records as long as the `MN` tag indicates the correct sequence length.
+
 ## No rows in `modkit pileup` output.
 
 First, check the logfile, there may be many lines with a variant of

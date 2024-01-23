@@ -187,6 +187,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         edge_filter: Option<&EdgeFilter>,
         position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
+        _allow_non_primary: bool,
         _kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
         let spinner = if with_progress {
@@ -405,7 +406,8 @@ impl ModProfile {
             query_kmer{tab}\
             canonical_base{tab}\
             modified_primary_base{tab}\
-            inferred"
+            inferred{tab}\
+            flag"
         )
     }
 
@@ -424,6 +426,7 @@ impl ModProfile {
         chrom_name: &str,
         reference_seqs: &HashMap<String, Vec<u8>>,
         kmer_size: usize,
+        flag: u16,
     ) -> String {
         let query_kmer = format!("{}", self.query_kmer);
         let ref_kmer = if let Some(ref_pos) = self.ref_position {
@@ -468,6 +471,7 @@ impl ModProfile {
             {}{sep}\
             {}{sep}\
             {}{sep}\
+            {}{sep}\
             {}\n",
             self.query_position,
             self.ref_position.unwrap_or(-1),
@@ -487,6 +491,7 @@ impl ModProfile {
             self.canonical_base.char(),
             modified_primary_base,
             self.inferred,
+            flag,
         )
     }
 }
@@ -495,6 +500,8 @@ impl ModProfile {
 pub(crate) struct ReadBaseModProfile {
     pub(crate) record_name: String,
     pub(crate) chrom_id: Option<u32>,
+    pub(crate) flag: u16,
+    pub(crate) alignment_start: i64,
     pub(crate) profile: Vec<ModProfile>,
 }
 
@@ -728,10 +735,14 @@ impl ReadBaseModProfile {
                 a.query_position.cmp(&b.query_position)
             }
         });
+        let flag = record.flags();
+        let alignment_start = record.reference_start();
 
         Ok(Self {
             record_name: record_name.to_owned(),
             chrom_id: chrom_tid,
+            flag,
+            alignment_start,
             profile: mod_profiles,
         })
     }
@@ -739,7 +750,31 @@ impl ReadBaseModProfile {
     pub(crate) fn remove_inferred(self) -> Self {
         let profile =
             self.profile.into_iter().filter(|p| !p.inferred).collect();
-        Self::new(self.record_name, self.chrom_id, profile)
+        Self::new(
+            self.record_name,
+            self.chrom_id,
+            self.flag,
+            self.alignment_start,
+            profile,
+        )
+    }
+
+    fn primary_alignment(&self) -> bool {
+        self.flag == 0 || self.flag == 16
+    }
+
+    fn unmapped_alignment(&self) -> bool {
+        self.flag == 4
+    }
+
+    pub(crate) fn iter_profiles(
+        &self,
+    ) -> Box<dyn Iterator<Item = &ModProfile> + '_> {
+        if self.unmapped_alignment() || self.primary_alignment() {
+            Box::new(self.profile.iter())
+        } else {
+            Box::new(self.profile.iter().filter(|p| p.within_alignment()))
+        }
     }
 }
 
@@ -841,9 +876,11 @@ impl RecordProcessor for ReadsBaseModProfile {
         edge_filter: Option<&EdgeFilter>,
         _position_filter: Option<&StrandedPositionFilter<()>>,
         _only_mapped: bool,
+        allow_non_primary: bool,
         kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
-        let mut mod_iter = TrackingModRecordIter::new(records, false);
+        let mut mod_iter =
+            TrackingModRecordIter::new(records, false, allow_non_primary);
         let mut agg = Vec::new();
         let mut seen = HashSet::new();
         let pb = if with_progress { Some(get_spinner()) } else { None };

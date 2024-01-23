@@ -732,6 +732,12 @@ Options:
       --mapped-only
           Include only mapped bases in output. (alias: mapped)
 
+      --allow-non-primary
+          Output aligned secondary and supplementary base modification probabilities as additional
+          rows. The primary alignment will have all of the base modification probabilities
+          (including soft-clipped ones, unless --mapped-only is used). The non-primary alignments
+          will only have mapped bases in the output.
+
       --num-reads <NUM_READS>
           Number of reads to use. Note that when using a sorted, indexed modBAM that the sampling
           algorithm will attempt to sample records evenly over the length of the reference sequence.

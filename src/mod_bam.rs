@@ -20,12 +20,13 @@ use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::util;
 use crate::util::{
-    get_query_name_string, get_tag, record_is_secondary, Strand,
+    get_query_name_string, get_tag, record_is_not_primary, Strand,
 };
 
 pub(crate) struct TrackingModRecordIter<'a, T: bam::Read> {
     records: bam::Records<'a, T>,
     skip_unmapped: bool,
+    allow_non_primary: bool,
     pub(crate) num_used: usize,
     pub(crate) num_skipped: usize,
     pub(crate) num_failed: usize,
@@ -35,10 +36,12 @@ impl<'a, T: bam::Read> TrackingModRecordIter<'a, T> {
     pub(crate) fn new(
         records: bam::Records<'a, T>,
         skip_unmapped: bool,
+        allow_non_primary: bool,
     ) -> Self {
         Self {
             records,
             skip_unmapped,
+            allow_non_primary,
             num_used: 0,
             num_skipped: 0,
             num_failed: 0,
@@ -57,9 +60,14 @@ impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
                     let record_name =
                         String::from_utf8(record.qname().to_vec())
                             .unwrap_or("utf-decode-failed".to_string());
-                    if record_is_secondary(&record)
-                        || (record.is_unmapped() && self.skip_unmapped)
-                    {
+                    let should_skip = {
+                        let based_on_primary = record_is_not_primary(&record)
+                            && !self.allow_non_primary;
+                        let based_on_unmapped =
+                            record.is_unmapped() && self.skip_unmapped;
+                        based_on_primary || based_on_unmapped
+                    };
+                    if should_skip {
                         self.num_skipped += 1;
                         continue;
                     } else {
@@ -134,6 +142,7 @@ impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
     }
 }
 
+// todo deprecate this function or move it into the tracking iterator above
 pub(crate) fn filter_records_iter<T: bam::Read>(
     records: bam::Records<T>,
 ) -> impl Iterator<Item = (bam::Record, ModBaseInfo)> + '_ {
@@ -146,7 +155,7 @@ pub(crate) fn filter_records_iter<T: bam::Read>(
             }
         })
         // skip non-primary
-        .filter(|record| !record_is_secondary(&record))
+        .filter(|record| !record_is_not_primary(&record))
         // skip records with empty sequences
         .filter(|record| {
             if record.seq_len() > 0 {
@@ -183,12 +192,12 @@ pub(crate) fn filter_records_iter<T: bam::Read>(
 
 pub const MM_TAGS: [&str; 2] = ["MM", "Mm"];
 pub const ML_TAGS: [&str; 2] = ["ML", "Ml"];
-
-// pub type RawModCode = char;
+pub const MN_TAG: &str = "MN";
 
 pub struct RawModTags {
     raw_mm: String,
     raw_ml: Vec<u16>,
+    mn_length: Option<usize>,
     mm_style: &'static str,
     ml_style: &'static str,
 }
@@ -201,6 +210,7 @@ impl RawModTags {
         Self {
             raw_mm: raw_mm.to_owned(),
             raw_ml: raw_ml.to_vec(),
+            mn_length: None,
             mm_style,
             ml_style,
         }
@@ -220,6 +230,10 @@ impl RawModTags {
 
     pub fn ml_is_new_style(&self) -> bool {
         self.ml_style == ML_TAGS[0]
+    }
+
+    pub fn get_mn_length(&self) -> Option<usize> {
+        self.mn_length
     }
 }
 
@@ -1124,35 +1138,81 @@ fn parse_ml_tag(ml_aux: &Aux, tag_key: &str) -> Result<Vec<u16>, RunError> {
 
 pub fn get_mm_tag_from_record(
     record: &bam::Record,
-) -> Option<Result<(String, &'static str), RunError>> {
+) -> Result<(String, &'static str), RunError> {
     get_tag::<String>(&record, &MM_TAGS, &parse_mm_tag)
 }
 
 pub fn get_ml_tag_from_record(
     record: &bam::Record,
-) -> Option<Result<(Vec<u16>, &'static str), RunError>> {
+) -> Result<(Vec<u16>, &'static str), RunError> {
     get_tag::<Vec<u16>>(&record, &ML_TAGS, &parse_ml_tag)
+}
+
+#[inline]
+fn get_mn_tag_from_record(
+    record: &bam::Record,
+) -> Result<Option<usize>, RunError> {
+    match record.aux(MN_TAG.as_bytes()) {
+        Ok(Aux::U8(x)) => Ok(Some(x as usize)),
+        Ok(Aux::U16(x)) => Ok(Some(x as usize)),
+        Ok(Aux::U32(x)) => Ok(Some(x as usize)),
+        Ok(Aux::I8(x)) => Ok(Some(x as usize)),
+        Ok(Aux::I16(x)) => Ok(Some(x as usize)),
+        Ok(Aux::I32(x)) => Ok(Some(x as usize)),
+        Ok(_) => Err(RunError::new_input_error("MN invalid type")),
+        Err(rust_htslib::errors::Error::BamAuxTagNotFound) => Ok(None),
+        Err(e) => Err(RunError::new_failed(format!(
+            "failed to parse MN tag, {}",
+            e.to_string()
+        ))),
+    }
+}
+
+#[inline]
+fn check_mn_tag_correct(
+    record: &bam::Record,
+    mn_tag: Option<usize>,
+) -> Result<(), RunError> {
+    match mn_tag {
+        Some(l) if l != record.seq_len() => {
+            return Err(RunError::new_input_error(format!(
+                "MN tag length {} and seq length {} don't match",
+                l,
+                record.seq_len()
+            )));
+        }
+        _ => {}
+    }
+    if record_is_not_primary(&record) && mn_tag.is_none() {
+        return Err(RunError::new_skipped(
+            "non-primary alignments must have MN tag",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mn_tag_on_record(
+    record: &bam::Record,
+) -> Result<Option<usize>, RunError> {
+    let mn_tag_value = get_mn_tag_from_record(record)?;
+    check_mn_tag_correct(record, mn_tag_value).map(|_| mn_tag_value)
 }
 
 pub fn parse_raw_mod_tags(
     record: &bam::Record,
-) -> Option<Result<RawModTags, RunError>> {
-    let mm = get_mm_tag_from_record(record);
-    let ml = get_ml_tag_from_record(record);
-    match (mm, ml) {
-        (None, _) | (_, None) => None,
-        (Some(Ok((raw_mm, mm_style))), Some(Ok((raw_ml, ml_style)))) => {
-            Some(Ok(RawModTags { raw_mm, raw_ml, mm_style, ml_style }))
-        }
-        (Some(Err(err)), _) => Some(Err(RunError::new_input_error(format!(
-            "MM tag malformed {}",
-            err.to_string()
-        )))),
-        (_, Some(Err(err))) => Some(Err(RunError::new_input_error(format!(
-            "ML tag malformed {}",
-            err.to_string()
-        )))),
-    }
+) -> Result<RawModTags, RunError> {
+    let (raw_mm, mm_style) =
+        get_mm_tag_from_record(record).map_err(|e| match e {
+            RunError::Skipped(_) => e,
+            _ => RunError::new_input_error("MM tag malformed"),
+        })?;
+    let (raw_ml, ml_style) =
+        get_ml_tag_from_record(record).map_err(|e| match e {
+            RunError::Skipped(_) => e,
+            _ => RunError::new_input_error("ML tag malformed"),
+        })?;
+    let mn = validate_mn_tag_on_record(record)?;
+    Ok(RawModTags { raw_mm, raw_ml, mn_length: mn, mm_style, ml_style })
 }
 
 pub struct ModBaseInfo {
@@ -1165,16 +1225,7 @@ pub struct ModBaseInfo {
 
 impl ModBaseInfo {
     pub fn new_from_record(record: &bam::Record) -> Result<Self, RunError> {
-        let raw_mod_tags = match parse_raw_mod_tags(record) {
-            Some(Ok(raw_mod_tags)) => raw_mod_tags,
-            Some(Err(run_error)) => {
-                return Err(run_error);
-            }
-            None => {
-                return Err(RunError::new_skipped("no mod tags"));
-            }
-        };
-
+        let raw_mod_tags = parse_raw_mod_tags(record)?;
         let forward_sequence = util::get_forward_sequence(record)?;
         Self::new(&raw_mod_tags, &forward_sequence, record)
     }
@@ -1286,49 +1337,13 @@ impl ModBaseInfo {
     }
 }
 
-pub fn get_canonical_bases_with_mod_calls(
-    record: &bam::Record,
-) -> Result<Vec<DnaBase>, RunError> {
-    match parse_raw_mod_tags(record) {
-        Some(Ok(raw_mod_tags)) => raw_mod_tags
-            .raw_mm
-            .split(';')
-            .filter_map(|raw_mm| {
-                if raw_mm.is_empty() {
-                    None
-                } else {
-                    Some(BaseModPositions::parse(raw_mm).and_then(
-                        |base_mod_positions| {
-                            DnaBase::parse(base_mod_positions.canonical_base)
-                                .map_err(|e| InputError::new(&e.to_string()))
-                        },
-                    ))
-                }
-            })
-            .collect::<Result<HashSet<DnaBase>, InputError>>()
-            .map(|canonical_bases| {
-                canonical_bases.into_iter().collect::<Vec<DnaBase>>()
-            })
-            .map_err(|input_err| input_err.into()),
-        Some(Err(e)) => Err(e),
-        None => Ok(Vec::new()),
-    }
-}
-
+#[cfg(test)]
 pub fn base_mod_probs_from_record(
     record: &bam::Record,
     converter: &DeltaListConverter,
 ) -> Result<SeqPosBaseModProbs, RunError> {
-    let (mm, ml) = match parse_raw_mod_tags(record) {
-        Some(Ok(raw_mod_tags)) => (raw_mod_tags.raw_mm, raw_mod_tags.raw_ml),
-        Some(Err(run_error)) => {
-            return Err(run_error);
-        }
-        None => {
-            return Err(RunError::new_skipped("no mod tags"));
-        }
-    };
-
+    let (mm, ml) =
+        parse_raw_mod_tags(record).map(|tags| (tags.raw_mm, tags.raw_ml))?;
     extract_mod_probs(record, &mm, &ml, &converter)
         .map_err(|input_err| RunError::BadInput(input_err))
 }

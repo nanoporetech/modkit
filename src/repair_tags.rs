@@ -6,7 +6,7 @@ use crate::mod_bam::{
 };
 use crate::util::{
     get_forward_sequence, get_query_name_string, get_ticker,
-    record_is_secondary,
+    record_is_not_primary,
 };
 use anyhow::{anyhow, bail, Context};
 use clap::Args;
@@ -193,7 +193,7 @@ fn get_next_record<T: Read>(
     loop {
         match records.next() {
             Some(Ok(record)) => {
-                if record_is_secondary(&record) && donor {
+                if record_is_not_primary(&record) && donor {
                     continue;
                 } else {
                     break Some(record);

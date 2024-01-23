@@ -17,7 +17,7 @@ use crate::position_filter::StrandedPositionFilter;
 use crate::read_cache::ReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
-    get_query_name_string, get_stringable_aux, record_is_secondary, SamTag,
+    get_query_name_string, get_stringable_aux, record_is_not_primary, SamTag,
     Strand, StrandRule,
 };
 
@@ -556,7 +556,7 @@ fn combine_strand_features(
 
     for positive_strand_pos in positions_to_combine {
         // get the motifs that hit at the positive position
-        let motifs_at_position = motif_locations.motifs_for_position(
+        let motifs_at_position = motif_locations.motifs_at_position_nonempty(
             target_id,
             positive_strand_pos,
             Strand::Positive,
@@ -950,7 +950,7 @@ pub fn process_region<T: AsRef<Path>>(
                     false
                 } else {
                     let record = alignment.record();
-                    !(record_is_secondary(&record) || record.seq_len() == 0)
+                    !(record_is_not_primary(&record) || record.seq_len() == 0)
                 }
             });
         for alignment in alignment_iter {
@@ -1110,14 +1110,14 @@ pub fn process_region<T: AsRef<Path>>(
                     neg_strand_observed_mod_codes.get(&partition_key);
 
                 let positive_motif_idxs = motif_locations.and_then(|mls| {
-                    mls.motif_idxs_for_position(
+                    mls.motif_idx_at_position_nonempty(
                         chrom_tid,
                         pos,
                         Strand::Positive,
                     )
                 });
                 let negative_motif_idxs = motif_locations.and_then(|mls| {
-                    mls.motif_idxs_for_position(
+                    mls.motif_idx_at_position_nonempty(
                         chrom_tid,
                         pos,
                         Strand::Negative,
@@ -1132,8 +1132,8 @@ pub fn process_region<T: AsRef<Path>>(
                         neg_strand_observed_mod_codes_for_key
                             .unwrap_or(&FxHashMap::default()),
                         &pileup_numeric_options,
-                        positive_motif_idxs,
-                        negative_motif_idxs,
+                        positive_motif_idxs.as_ref(),
+                        negative_motif_idxs.as_ref(),
                     ),
                 )
             })

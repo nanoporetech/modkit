@@ -11,20 +11,7 @@ use crate::mod_bam::{
 };
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{
-    get_forward_sequence, get_query_name_string, get_spinner,
-    record_is_secondary,
-};
-
-pub fn record_is_valid(record: &bam::Record) -> Result<(), RunError> {
-    if record_is_secondary(&record) {
-        return Err(RunError::new_skipped("not primary"));
-    }
-    if record.seq_len() == 0 {
-        return Err(RunError::new_failed("seq is zero length"));
-    }
-    Ok(())
-}
+use crate::util::{get_forward_sequence, get_query_name_string, get_spinner};
 
 pub fn adjust_mod_probs(
     mut record: bam::Record,
@@ -32,8 +19,6 @@ pub fn adjust_mod_probs(
     caller: Option<&MultipleThresholdModCaller>,
     edge_filter: Option<&EdgeFilter>,
 ) -> Result<bam::Record, RunError> {
-    let _ok = record_is_valid(&record)?;
-
     let mod_base_info = ModBaseInfo::new_from_record(&record)?;
     let mm_style = mod_base_info.mm_style;
     let ml_style = mod_base_info.ml_style;
@@ -187,7 +172,7 @@ pub fn adjust_modbam(
                         }
                     } else {
                         spinner.inc(1);
-                        total = i;
+                        total = i + 1;
                     }
                 }
             }

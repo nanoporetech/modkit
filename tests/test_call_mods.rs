@@ -1,6 +1,6 @@
 use crate::common::{check_against_expected_text_file, run_modkit};
-use anyhow::anyhow;
-use mod_kit::mod_bam::ModBaseInfo;
+use anyhow::{anyhow, Context};
+use mod_kit::mod_bam::{parse_raw_mod_tags, ModBaseInfo};
 use rust_htslib::bam::{self, Read};
 use std::collections::HashMap;
 use std::fs::File;
@@ -171,4 +171,31 @@ fn test_call_mods_same_pileup() {
         mod_called_pileup.to_str().unwrap(),
         in_situ_threshold_pileup.to_str().unwrap(),
     );
+}
+
+#[test]
+fn test_call_mods_supplementary_secondary() {
+    fn check(bam_fp: &PathBuf) {
+        let mut reader = bam::Reader::from_path(&bam_fp).unwrap();
+        let n_records = reader
+            .records()
+            .map(|r| r.unwrap())
+            .map(|record| parse_raw_mod_tags(&record).unwrap())
+            .count();
+        assert_eq!(n_records, 3);
+    }
+
+    let out_bam =
+        std::env::temp_dir().join("test_call_mods_supplementary_secondary.bam");
+    run_modkit(&[
+        "adjust-mods",
+        "tests/resources/test_supplementary_secondary.bam",
+        out_bam.to_str().unwrap(),
+        "--ignore",
+        "h",
+        "--ff",
+    ])
+    .context(format!("failed to run adjust"))
+    .unwrap();
+    check(&out_bam);
 }

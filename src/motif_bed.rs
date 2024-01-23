@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, bail, Context, Result as AnyhowResult};
 use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
-use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
+use indicatif::{MultiProgress, ProgressIterator};
 use itertools::Itertools;
 use log::{debug, info};
 use rayon::prelude::*;
@@ -18,7 +18,7 @@ use crate::util::{
     StrandRule,
 };
 
-fn iupac_to_regex(pattern: &str) -> String {
+fn iupac_to_regex(pattern: &str) -> anyhow::Result<String> {
     let mut regex = String::new();
     for c in pattern.chars() {
         regex.push_str(match c {
@@ -39,10 +39,10 @@ fn iupac_to_regex(pattern: &str) -> String {
             'B' => "[CGT]",
             'X' => "[ACGT]",
             'N' => "[ACGT]",
-            _ => panic!("Invalid IUPAC code: {}", c),
+            _ => bail!("Invalid IUPAC code: {}", c),
         });
     }
-    regex
+    Ok(regex)
 }
 
 fn motif_rev_comp(motif: &str) -> String {
@@ -166,7 +166,16 @@ impl RegexMotif {
 
     pub fn parse_string(raw_motif: &str, offset: usize) -> AnyhowResult<Self> {
         let length = raw_motif.len();
-        let motif = iupac_to_regex(raw_motif);
+        if length == 1 {
+            match raw_motif {
+                "A" | "C" | "G" | "T" => {}
+                _ => bail!(
+                    "degenerate bases are not supported as single base \
+                     motifs, must be 'A', 'C', 'G', or 'T'."
+                ),
+            };
+        };
+        let motif = iupac_to_regex(raw_motif)?;
         let re = OverlappingRegex::new(&motif)?;
         let rc_motif = motif_rev_comp(&motif);
         let rc_re = OverlappingRegex::new(&rc_motif)?;
@@ -217,6 +226,34 @@ impl Display for RegexMotif {
     }
 }
 
+pub(crate) fn find_single_bases(
+    seq: &str,
+    regex_motif: &RegexMotif,
+) -> Vec<(usize, Strand)> {
+    let haystack = seq.as_bytes();
+    let (fw, rv) = match regex_motif.forward_pattern.as_str() {
+        "A" => ('A', 'T'),
+        "C" => ('C', 'G'),
+        "G" => ('G', 'C'),
+        "T" => ('T', 'A'),
+        // todo refactor this into a compile-time check
+        _ => unreachable!(
+            "RegexMotif cannot be constructed from non DNA-base single letter \
+             motifs"
+        ),
+    };
+    let (fw, rv) = (fw as u8, rv as u8);
+    memchr::memchr2_iter(fw, rv, haystack)
+        .map(|pos| {
+            if haystack[pos] == fw {
+                (pos, Strand::Positive)
+            } else {
+                (pos, Strand::Negative)
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn find_motif_hits(
     seq: &str,
     regex_motif: &RegexMotif,
@@ -246,6 +283,9 @@ pub(crate) fn find_motif_hits(
                 ));
             }
         }
+    } else if regex_motif.length == 1 {
+        let mut single_base_sites = find_single_bases(seq, regex_motif);
+        motif_hits.append(&mut single_base_sites);
     } else {
         for m in regex_motif.forward_pattern.find_iter(seq) {
             motif_hits.push((
@@ -286,7 +326,7 @@ pub fn motif_bed(
     offset: usize,
     mask: bool,
 ) -> AnyhowResult<()> {
-    let motif = iupac_to_regex(&motif_raw);
+    let motif = iupac_to_regex(&motif_raw)?;
     let re = OverlappingRegex::new(&motif)
         .context("failed to make forward regex pattern")?;
     let rc_motif = motif_rev_comp(&motif);
@@ -354,93 +394,85 @@ pub fn motif_bed(
     Ok(())
 }
 
+/// A wrapper for a collection of MotifLocations
 pub struct MultipleMotifLocations {
     pub(crate) motif_locations: Vec<MotifLocations>,
-    /// mapping of target_id to mapping of sequence position to vector indices
-    /// into `self.motif_locations` that have a hit at that position and
-    /// strand
-    position_lookup: FxHashMap<u32, FxHashMap<(u32, Strand), Vec<usize>>>,
 }
 
 impl MultipleMotifLocations {
     pub fn new(motif_locations: Vec<MotifLocations>) -> Self {
-        // see docs above for what position_lookup is
-        let position_lookup = motif_locations.iter().enumerate().fold(
-            FxHashMap::<u32, FxHashMap<(u32, Strand), Vec<usize>>>::default(),
-            |mut acc, (idx, mls)| {
-                mls.tid_to_motif_positions.iter().for_each(
-                    |(target_id, positions)| {
-                        // get or initialize sequence position to indices
-                        let positions_for_target = acc
-                            .entry(*target_id)
-                            .or_insert(FxHashMap::default());
-                        positions.iter().for_each(|(position, strand_rule)| {
-                            // add the idx (index into motif_locations) to the
-                            // mapping
-                            match strand_rule {
-                                StrandRule::Positive => {
-                                    let k = (*position, Strand::Positive);
-                                    positions_for_target
-                                        .entry(k)
-                                        .or_insert(Vec::new())
-                                        .push(idx)
-                                }
-                                StrandRule::Negative => {
-                                    let k = (*position, Strand::Negative);
-                                    positions_for_target
-                                        .entry(k)
-                                        .or_insert(Vec::new())
-                                        .push(idx)
-                                }
-                                StrandRule::Both => {
-                                    for k in [
-                                        (*position, Strand::Positive),
-                                        (*position, Strand::Negative),
-                                    ] {
-                                        positions_for_target
-                                            .entry(k)
-                                            .or_insert(Vec::new())
-                                            .push(idx)
-                                    }
-                                }
-                            }
-                        });
-                    },
-                );
-                acc
-            },
-        );
-
-        Self { motif_locations, position_lookup }
+        Self { motif_locations }
     }
 
-    pub fn motifs_for_position(
+    pub fn motifs_at_position(
+        &self,
+        target_id: u32,
+        position: u32,
+    ) -> Vec<&RegexMotif> {
+        self.motif_locations
+            .iter()
+            .filter(|ml| {
+                ml.tid_to_motif_positions
+                    .get(&target_id)
+                    .and_then(|pos| pos.get(&position))
+                    .is_some()
+            })
+            .map(|ml| &ml.motif)
+            .collect()
+    }
+
+    fn indices_and_motifs_at_position(
+        &self,
+        target_id: u32,
+        position: u32,
+        strand: Strand,
+    ) -> Vec<(usize, &MotifLocations)> {
+        self.motif_locations
+            .iter()
+            .enumerate()
+            .filter(|(_idx, mls)| {
+                mls.tid_to_motif_positions
+                    .get(&target_id)
+                    .and_then(|positions| positions.get(&position))
+                    .map(|strand_rule| strand_rule.covers(strand))
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<(usize, &MotifLocations)>>()
+    }
+
+    // todo refactor this so that the Option is unnecessary
+    pub fn motifs_at_position_nonempty(
         &self,
         target_id: u32,
         position: u32,
         strand: Strand,
     ) -> Option<Vec<(usize, &MotifLocations)>> {
-        self.position_lookup
-            .get(&target_id)
-            .and_then(|positions| positions.get(&(position, strand)))
-            .map(|idxs| {
-                idxs.iter()
-                    .filter_map(|&i| {
-                        self.motif_locations.get(i).map(|ml| (i, ml))
-                    })
-                    .collect()
-            })
+        let x =
+            self.indices_and_motifs_at_position(target_id, position, strand);
+        if x.is_empty() {
+            None
+        } else {
+            Some(x)
+        }
     }
 
-    pub fn motif_idxs_for_position(
+    // todo refactor this so that the Option is unnecessary
+    pub fn motif_idx_at_position_nonempty(
         &self,
         target_id: u32,
         position: u32,
         strand: Strand,
-    ) -> Option<&Vec<usize>> {
-        self.position_lookup
-            .get(&target_id)
-            .and_then(|positions| positions.get(&(position, strand)))
+    ) -> Option<Vec<usize>> {
+        let idxs = self
+            .indices_and_motifs_at_position(target_id, position, strand)
+            .into_iter()
+            .map(|(idx, _)| idx)
+            .collect::<Vec<usize>>();
+        if idxs.is_empty() {
+            None
+        } else {
+            Some(idxs)
+        }
     }
 }
 
@@ -487,12 +519,17 @@ impl MotifLocations {
         let motif_progress = master_progress_bar
             .add(get_master_progress_bar(sequences_and_ids.len()));
         motif_progress.set_message(format!("finding {} motifs", regex_motif));
+        let sequences_and_ids = sequences_and_ids
+            .iter()
+            .sorted_by(|(s, _), (p, _)| s.len().cmp(&p.len()))
+            .collect::<Vec<_>>();
+
         let tid_to_motif_positions = sequences_and_ids
             .into_par_iter()
-            .progress_with(motif_progress)
             .map(|(seq, tid)| {
+                let now = std::time::Instant::now();
                 let positions = find_motif_hits(&seq, &regex_motif)
-                    .into_iter() // todo into_par_iter?
+                    .into_par_iter()
                     .filter_map(|(pos, strand)| {
                         if let Some(position_filter) = position_filter {
                             if position_filter.contains(
@@ -509,7 +546,7 @@ impl MotifLocations {
                         }
                     })
                     .fold(
-                        FxHashMap::<u32, StrandRule>::default(),
+                        || FxHashMap::<u32, StrandRule>::default(),
                         |mut acc, (pos, strand)| {
                             if let Some(strand_rule) = acc.get_mut(&pos) {
                                 *strand_rule = strand_rule.absorb(strand);
@@ -518,7 +555,23 @@ impl MotifLocations {
                             }
                             acc
                         },
+                    )
+                    .reduce(
+                        || FxHashMap::<u32, StrandRule>::default(),
+                        |a, b| a.into_iter().chain(b).collect(),
                     );
+                let duration = now.elapsed().as_millis() as f64 / 1000f64;
+                let rate = seq.len() as f64 / (duration * 1000_000f64);
+                debug!(
+                    "motif {} has {} positions in tid {}, took {:.4}s ({rate} \
+                     kb/msec)",
+                    &regex_motif,
+                    positions.len(),
+                    tid,
+                    duration
+                );
+
+                motif_progress.inc(1);
                 (*tid, positions)
             })
             .collect();
@@ -595,7 +648,9 @@ mod motif_bed_tests {
     #[test]
     fn test_regex_motif() {
         let regex_motif = RegexMotif::parse_string("CCWGG", 1).unwrap();
+        assert_eq!(regex_motif.forward_offset, 1);
         assert_eq!(regex_motif.reverse_offset, 3);
+        assert_eq!(regex_motif.length, 5);
         let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
         assert_eq!(regex_motif.reverse_offset, 1);
 

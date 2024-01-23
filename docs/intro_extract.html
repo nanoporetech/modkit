@@ -149,8 +149,9 @@
                     <main>
                         <h1 id="extracting-base-modification-information"><a class="header" href="#extracting-base-modification-information">Extracting base modification information</a></h1>
 <p>The <code>modkit extract</code> sub-command will produce a table containing the base modification probabilities, 
-the read sequence context, and optionally aligned reference information. If alignment information is 
-present, only the <strong>primary alignment</strong> is used.</p>
+the read sequence context, and optionally aligned reference information.
+For <code>extract</code>, if a correct <code>MN</code> tag is found, secondary and supplementary alignments may be output with the <code>--allow-non-primary</code> flag. 
+See <a href="./troubleshooting.html">troubleshooting</a> for details.</p>
 <p>The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
 To only include mapped bases use the <code>--mapped</code> flag. To only include sites of interest, pass a 
 BED-formatted file to the <code>--include-bed</code> option. Similarly, to exclude sites, pass a BED-formatted
@@ -178,6 +179,7 @@ or <code>stdout</code> and filter the columns before writing to disk.</p>
 <tr><td>16</td><td>canonical_base</td><td>canonical base from the query sequence, from the MM tag</td><td>str</td></tr>
 <tr><td>17</td><td>modified_primary_base</td><td>primary sequence base with the modification</td><td>str</td></tr>
 <tr><td>18</td><td>inferred</td><td>whether the base modification call is implicit canonical</td><td>str</td></tr>
+<tr><td>19</td><td>flag</td><td>FLAG from alignment record</td><td>str</td></tr>
 </tbody></table>
 </div>
 <h1 id="tabulating-base-modification-calls-for-each-read-position"><a class="header" href="#tabulating-base-modification-calls-for-each-read-position">Tabulating base modification <em>calls</em> for each read position</a></h1>
@@ -207,6 +209,7 @@ reserved for &quot;any modification&quot;). The full schema of the table is belo
 <tr><td>18</td><td>fail</td><td>true if the base modification call fell below the pass threshold</td><td>str</td></tr>
 <tr><td>19</td><td>inferred</td><td>whether the base modification call is implicit canonical</td><td>str</td></tr>
 <tr><td>20</td><td>within_alignment</td><td>when alignment information is present, is this base aligned to the reference</td><td>str</td></tr>
+<tr><td>21</td><td>flag</td><td>FLAG from alignment record</td><td>str</td></tr>
 </tbody></table>
 </div>
 <h2 id="note-on-implicit-base-modification-calls"><a class="header" href="#note-on-implicit-base-modification-calls">Note on implicit base modification calls.</a></h2>
@@ -216,6 +219,13 @@ output rows with the <code>inferred</code> column set to <code>true</code> and a
 called on that read. For example, if you have a <code>A+a.</code> MM tag, and there are <code>A</code> bases in the read for which 
 there aren't base modification calls (identifiable as non-0s in the MM tag) will be rows where the <code>mod_code</code> 
 is <code>a</code> and the <code>mod_qual</code> is 0.0.</p>
+<h2 id="note-on-non-primary-alignments"><a class="header" href="#note-on-non-primary-alignments">Note on non-primary alignments</a></h2>
+<p>If a valid <code>MN</code> tag is found, secondary and supplementary alignments can be output in the <code>modkit extract</code> tables above.
+See <a href="./troubleshooting.html">troubleshooting</a> for details on how to get valid <code>MN</code> tags.
+To have non-primary alignments appear in the output, the <code>--allow-non-primary</code> flag must be passed. 
+By default, the primary alignment will have all base modification information contained on the read, including soft-clipped and unaligned read positions. 
+If the <code>--mapped-only</code> flag is used, soft clipped sections of the read will not be included. 
+For secondary and supplementary alignments, soft-clipped positions are not repeated. See <a href="./advanced_usage.html">advanced usage</a> for more details.</p>
 <h2 id="example-usages"><a class="header" href="#example-usages">Example usages:</a></h2>
 <h3 id="extract-a-table-from-an-aligned-and-indexed-bam"><a class="header" href="#extract-a-table-from-an-aligned-and-indexed-bam">Extract a table from an aligned and indexed BAM</a></h3>
 <pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt; 
@@ -239,6 +249,9 @@ modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-
 <p>Using &quot;null&quot; in the place of the normal output will direct the normal extract output
 to /dev/null, to keep this output specify a file or <code>-</code> for standard out.</p>
 <pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt; --read-calls &lt;calls.tsv&gt;
+</code></pre>
+<p>Use <code>--allow-non-primary</code> to get secondary and supplementary mappings in the output.</p>
+<pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt; --read-calls &lt;calls.tsv&gt; --allow-non-primary
 </code></pre>
 <p>See the help string and/or <a href="./advanced_usage.html">advanced_usage</a> for more details.</p>
 
