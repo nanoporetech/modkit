@@ -232,7 +232,14 @@ fn derive_canonical_base(
                         ));
                     }
                 } else {
-                    can_base = Some(MOD_CODE_TO_DNA_BASE[&mod_code]);
+                    match MOD_CODE_TO_DNA_BASE.get(&mod_code) {
+                        Some(extracted_can_base) => {
+                            can_base = Some(*extracted_can_base);
+                        }
+                        None => {
+                            continue;
+                        }
+                    }
                 }
             }
             _ => {
@@ -414,7 +421,7 @@ fn process_bam_file(
         },
     );
     lines_processed.finish_and_clear();
-    info!("Processed {} mapping recrods", lines_processed.position());
+    info!("Processed {} mapping records", lines_processed.position());
     if !errs.is_empty() {
         let mut sorted_errs: Vec<_> = errs.iter().collect();
         sorted_errs.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
