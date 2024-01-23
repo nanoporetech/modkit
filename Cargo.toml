@@ -44,6 +44,7 @@ ansi_term="0.12.1"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"
+tempfile = "3.2"
 
 # Used in benchmarking, but the slower code gets removed, usually.
 #criterion = "0.5.1"

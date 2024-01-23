@@ -855,3 +855,75 @@ impl ValidateFromModbam {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod validate_tests {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    use std::path::PathBuf;
+    use tempfile::NamedTempFile;
+
+    use super::ValidateFromModbam;
+
+    #[test]
+    fn test_validate() {
+        let mut bam_bed_opts = Vec::new();
+        bam_bed_opts.push(PathBuf::from("tests/resources/input_5mC.bam"));
+        bam_bed_opts.push(PathBuf::from(
+            "tests/resources/CGI_ladder_3.6kb_ref_CG_5mC.bed",
+        ));
+        bam_bed_opts.push(PathBuf::from("tests/resources/input_C.bam"));
+        bam_bed_opts.push(PathBuf::from(
+            "tests/resources/CGI_ladder_3.6kb_ref_CG_C.bed",
+        ));
+
+        let temp_file =
+            NamedTempFile::new().expect("Output file creation failed");
+        let file_path_buf = Some(temp_file.path().to_path_buf());
+        println!(
+            "Temp output file location: {}",
+            temp_file.path().to_str().unwrap()
+        );
+        let log_temp_file =
+            NamedTempFile::new().expect("Output file creation failed");
+        let log_file_path_buf = Some(log_temp_file.path().to_path_buf());
+
+        let val_opts = ValidateFromModbam {
+            bam_and_bed: bam_bed_opts,
+            ignore: None,
+            edge_filter: None,
+            invert_edge_filter: false,
+            canonical_base: None,
+            filter_quantile: 0.1,
+            threads: 4,
+            suppress_progress: false,
+            out_filepath: file_path_buf,
+            log_filepath: log_file_path_buf,
+        };
+        val_opts.run().unwrap();
+        let file_path = temp_file.path().to_path_buf();
+        let file = File::open(&file_path).unwrap();
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            let line_content = line.unwrap();
+            if line_content.starts_with("raw_accuracy") {
+                let accuracy: f32 = line_content
+                    .split_whitespace()
+                    .skip(1)
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default();
+                assert_eq!(accuracy, 79.97674);
+            }
+            if line_content.starts_with("filtered_accuracy") {
+                let accuracy: f32 = line_content
+                    .split_whitespace()
+                    .skip(1)
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_default();
+                assert_eq!(accuracy, 84.24458);
+            }
+        }
+    }
+}
