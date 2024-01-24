@@ -34,7 +34,7 @@ use crate::read_ids_to_base_mod_probs::ReadBaseModProfile;
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{
     format_int_with_commas, get_reference_mod_strand, get_ticker,
-    record_is_secondary, Strand,
+    record_is_not_primary, Strand,
 };
 
 /// todo investigate using this type in BaseModCall
@@ -267,7 +267,7 @@ fn process_bam_record(
     let mbi = ModBaseInfo::new_from_record(&record)?;
     let record_name = String::from_utf8(record.qname().to_vec())
         .unwrap_or("utf-decode-failed".to_string());
-    if record.is_unmapped() || record_is_secondary(&record) {
+    if record.is_unmapped() || record_is_not_primary(&record) {
         bail!("Unmapped or secondary");
     }
 
