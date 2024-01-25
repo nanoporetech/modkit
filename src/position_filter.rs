@@ -216,8 +216,4 @@ impl StrandedPositionFilter<DnaBase> {
             lp.find(position, position + 1).map(|x| x.val).next()
         })
     }
-
-    // pub fn get_forward_base_at_position(&self, chrom_id: u32, position: u64)
-    // -> Option<DnaBase> {     unimplemented!()
-    // }
 }

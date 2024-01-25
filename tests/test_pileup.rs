@@ -253,9 +253,9 @@ fn test_pileup_cpg_motif_filtering() {
 fn test_pileup_cpg_motif_filtering_strand_combine() {
     let temp_file = std::env::temp_dir()
         .join("test_cpg_motif_filtering_strand_combine.bed");
-    for interval_size in
-        ["10", "88", "89", "90", "91", "92", "93", "94", "10000"]
-    {
+    let interval_sizes =
+        ["10", "88", "89", "90", "91", "92", "93", "94", "10000"];
+    for interval_size in interval_sizes {
         run_modkit(&[
             "pileup",
             "tests/resources/bc_anchored_10_reads.sorted.bam",
