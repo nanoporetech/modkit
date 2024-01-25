@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::thread;
 
 use anyhow::bail;
 use bio::io::fasta::Reader as FastaReader;
@@ -21,7 +20,7 @@ use crate::command_utils::{
 };
 use crate::errs::RunError;
 use crate::extract::writer::{OutwriterWithMemory, TsvWriterWithContigNames};
-use crate::interval_chunks::IntervalChunks;
+use crate::interval_chunks::ReferenceIntervalsFeeder;
 use crate::logging::init_logging;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCodeRepr;
@@ -38,8 +37,7 @@ use crate::record_processor::WithRecords;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
     get_master_progress_bar, get_reference_mod_strand, get_spinner,
-    get_subroutine_progress_bar, get_targets, get_ticker, ReferenceRecord,
-    Region, Strand,
+    get_subroutine_progress_bar, get_targets, get_ticker, Region, Strand,
 };
 use crate::writers::TsvWriter;
 
@@ -88,7 +86,7 @@ pub struct ExtractMods {
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
     /// Set the query and reference k-mer size (if a reference is provided).
-    /// Maxumum number for this value is 12.
+    /// Maximum number for this value is 12.
     #[arg(long, default_value_t = 5)]
     kmer_size: usize,
     /// Ignore the BAM index (if it exists) and default to a serial scan of the
@@ -277,8 +275,6 @@ pub struct ExtractMods {
     ignore_implicit: bool,
 }
 
-type ReferenceAndIntervals = Vec<(ReferenceRecord, IntervalChunks)>;
-
 impl ExtractMods {
     fn using_stdin(&self) -> bool {
         using_stream(&self.in_bam)
@@ -291,8 +287,10 @@ impl ExtractMods {
         contigs: &HashMap<String, Vec<u8>>,
         master_progress_bar: &MultiProgress,
         thread_pool: &ThreadPool,
-    ) -> anyhow::Result<(Option<ReferenceAndIntervals>, ReferencePositionFilter)>
-    {
+    ) -> anyhow::Result<(
+        Option<ReferenceIntervalsFeeder>,
+        ReferencePositionFilter,
+    )> {
         let include_unmapped = if self.include_bed.is_some() {
             info!("specifying include-only BED outputs only mapped sites");
             false
@@ -446,18 +444,15 @@ impl ExtractMods {
                         );
                         let reference_records =
                             get_targets(reader.header(), region);
-                        let reference_and_intervals = reference_records
-                            .into_iter()
-                            .map(|reference_record| {
-                                let interval_chunks = IntervalChunks::new(
-                                    reference_record.start,
-                                    reference_record.length,
-                                    self.interval_size,
-                                );
-                                (reference_record, interval_chunks)
-                            })
-                            .collect::<ReferenceAndIntervals>();
-                        Some(reference_and_intervals)
+                        let feeder = ReferenceIntervalsFeeder::new(
+                            reference_records,
+                            (self.threads as f32 * 1.5f32).floor() as usize,
+                            self.interval_size,
+                            false,
+                            None,
+                            None,
+                        )?;
+                        Some(feeder)
                     }
                     Err(_) => {
                         info!(
@@ -664,103 +659,64 @@ impl ExtractMods {
         let kmer_size = self.kmer_size;
         let allow_non_primary = self.allow_non_primary;
 
-        thread::spawn(move || {
-            pool.install(|| {
-                // references_and_intervals is only some when we have an index
-                if let Some(reference_and_intervals) = references_and_intervals
-                {
-                    drop(reader);
-                    // should make this a method on this struct?
-                    let bam_fp = Path::new(&in_bam).to_path_buf();
+        pool.spawn(move || {
+            // references_and_intervals is only some when we have an index
+            if let Some(feeder) = references_and_intervals {
+                drop(reader);
+                // should make this a method on this struct?
+                let bam_fp = Path::new(&in_bam).to_path_buf();
 
-                    // if using unmapped add 1 to total chrms to traverse
-                    let prog_length = if reference_position_filter
-                        .include_unmapped
-                        && schedule
-                            .as_ref()
-                            .map(|s| s.has_unmapped())
-                            .unwrap_or(true)
-                    {
-                        reference_and_intervals.len() + 1
-                    } else {
-                        reference_and_intervals.len()
-                    };
-                    let master_progress =
-                        multi_prog.add(get_master_progress_bar(prog_length));
-                    master_progress.set_message("contigs");
+                let prog_length = feeder.total_length();
+                let master_progress =
+                    multi_prog.add(get_master_progress_bar(prog_length));
+                master_progress.set_message("genome positions");
 
-                    let mut num_aligned_reads_used = 0usize;
-                    for (reference_record, interval_chunks) in
-                        reference_and_intervals
-                    {
-                        let interval_chunks = interval_chunks
-                            .filter(|(start, end)| {
-                                reference_position_filter
-                                    .include_pos
-                                    .as_ref()
-                                    .map(|pf| {
-                                        pf.overlaps_not_stranded(
-                                            reference_record.tid,
-                                            *start as u64,
-                                            *end as u64,
-                                        )
-                                    })
-                                    .unwrap_or(true)
-                            })
-                            .collect::<Vec<(u32, u32)>>();
-
-                        let total_interval_length = interval_chunks
-                            .iter()
-                            .map(|(start, end)| {
-                                end.checked_sub(*start).unwrap_or(0)
-                            })
-                            .sum::<u32>();
-
-                        // skip this contig if there aren't any reads
-                        let ref_has_reads = schedule
-                            .as_ref()
-                            .map(|s| s.chrom_has_reads(reference_record.tid))
-                            .unwrap_or(true);
-                        if !ref_has_reads {
-                            master_progress.inc(1);
-                            continue;
-                        }
-
-                        let interval_pb = multi_prog.add(
-                            get_subroutine_progress_bar(interval_chunks.len()),
-                        );
-                        interval_pb.set_message(format!(
-                            "processing {}",
-                            &reference_record.name
-                        ));
-                        let n_reads_used =
-                            interval_chunks
+                let mut num_aligned_reads_used = 0usize;
+                for super_batch in feeder {
+                    let total_batch_length = super_batch
+                        .iter()
+                        .map(|c| c.total_length())
+                        .sum::<u64>();
+                    let batch_progress = multi_prog
+                        .add(get_subroutine_progress_bar(super_batch.len()));
+                    batch_progress.set_message("batch progress");
+                    let n_reads_used = super_batch
+                        .into_par_iter()
+                        .progress_with(batch_progress)
+                        .map(|batch| {
+                            let successful_reads_in_batch = batch
+                                .0
                                 .into_par_iter()
-                                .progress_with(interval_pb)
-                                .map(|(start, end)| {
+                                .filter(|cc| {
+                                    schedule
+                                        .as_ref()
+                                        .map(|s| {
+                                            s.chrom_has_reads(cc.chrom_tid)
+                                        })
+                                        .unwrap_or(true)
+                                })
+                                .map(|cc| {
                                     let record_sampler = schedule
                                         .as_ref()
-                                        .map(|sampling_schedule| {
-                                            sampling_schedule
-                                                .get_record_sampler(
-                                                    &reference_record,
-                                                    total_interval_length,
-                                                    start,
-                                                    end,
-                                                )
+                                        .map(|s| {
+                                            s.get_record_sampler(
+                                                cc.chrom_tid,
+                                                total_batch_length as u32,
+                                                cc.start_pos,
+                                                cc.end_pos,
+                                            )
                                         })
-                                        .unwrap_or(
-                                            RecordSampler::new_passthrough(),
-                                        );
-
+                                        .unwrap_or_else(|| {
+                                            RecordSampler::new_passthrough()
+                                        });
                                     let batch_result =
                                         sample_reads_from_interval::<
                                             ReadsBaseModProfile,
                                         >(
                                             &bam_fp,
-                                            reference_record.tid,
-                                            start,
-                                            end,
+                                            cc.chrom_tid,
+                                            cc.start_pos,
+                                            cc.end_pos,
                                             record_sampler,
                                             collapse_method.as_ref(),
                                             edge_filter.as_ref(),
@@ -775,9 +731,10 @@ impl ExtractMods {
                                                     reads_base_mod_profile,
                                                 )
                                         });
+
                                     let num_reads_success = batch_result
                                         .as_ref()
-                                        .map(|batch| batch.num_reads())
+                                        .map(|r| r.num_reads())
                                         .unwrap_or(0);
 
                                     match snd.send(batch_result) {
@@ -793,80 +750,81 @@ impl ExtractMods {
                                     }
                                 })
                                 .sum::<usize>();
-                        num_aligned_reads_used += n_reads_used;
-                        master_progress.inc(1);
-                    }
-
-                    if reference_position_filter.include_unmapped {
-                        let n_unmapped_reads = n_reads.map(|nr| {
-                            nr.checked_sub(num_aligned_reads_used).unwrap_or(0)
-                        });
-                        if let Some(n) = n_unmapped_reads {
-                            debug!("processing {n} unmapped reads");
-                        } else {
-                            debug!("processing unmapped reads");
-                        }
-                        let reader = bam::IndexedReader::from_path(&bam_fp)
-                            .and_then(|mut reader| {
-                                reader
-                                    .fetch(FetchDefinition::Unmapped)
-                                    .map(|_| reader)
-                            })
-                            .and_then(|mut reader| {
-                                reader.set_threads(threads).map(|_| reader)
-                            });
-                        match reader {
-                            Ok(mut reader) => {
-                                let (skip, fail) =
-                                    Self::process_records_to_chan(
-                                        reader.records(),
-                                        &multi_prog,
-                                        &reference_position_filter,
-                                        snd.clone(),
-                                        n_unmapped_reads,
-                                        collapse_method.as_ref(),
-                                        edge_filter.as_ref(),
-                                        false,
-                                        false,
-                                        "unmapped ",
-                                        kmer_size,
-                                    );
-                                let _ = snd.send(Ok(ReadsBaseModProfile::new(
-                                    Vec::new(),
-                                    skip,
-                                    fail,
-                                )));
-                            }
-                            Err(e) => {
-                                error!(
-                                    "failed to get indexed reader for \
-                                     unmapped read processing, {}",
-                                    e.to_string()
-                                );
-                            }
-                        }
-                    }
-                } else {
-                    let (skip, fail) = Self::process_records_to_chan(
-                        reader.records(),
-                        &multi_prog,
-                        &reference_position_filter,
-                        snd.clone(),
-                        n_reads,
-                        collapse_method.as_ref(),
-                        edge_filter.as_ref(),
-                        mapped_only,
-                        allow_non_primary,
-                        "",
-                        kmer_size,
-                    );
-                    let _ = snd.send(Ok(ReadsBaseModProfile::new(
-                        Vec::new(),
-                        skip,
-                        fail,
-                    )));
+                            successful_reads_in_batch
+                        })
+                        .sum::<usize>();
+                    num_aligned_reads_used += n_reads_used;
+                    master_progress.inc(total_batch_length);
                 }
-            })
+
+                if reference_position_filter.include_unmapped {
+                    let n_unmapped_reads = n_reads.map(|nr| {
+                        nr.checked_sub(num_aligned_reads_used).unwrap_or(0)
+                    });
+                    if let Some(n) = n_unmapped_reads {
+                        debug!("processing {n} unmapped reads");
+                    } else {
+                        debug!("processing unmapped reads");
+                    }
+                    let reader = bam::IndexedReader::from_path(&bam_fp)
+                        .and_then(|mut reader| {
+                            reader
+                                .fetch(FetchDefinition::Unmapped)
+                                .map(|_| reader)
+                        })
+                        .and_then(|mut reader| {
+                            reader.set_threads(threads).map(|_| reader)
+                        });
+                    match reader {
+                        Ok(mut reader) => {
+                            let (skip, fail) = Self::process_records_to_chan(
+                                reader.records(),
+                                &multi_prog,
+                                &reference_position_filter,
+                                snd.clone(),
+                                n_unmapped_reads,
+                                collapse_method.as_ref(),
+                                edge_filter.as_ref(),
+                                false,
+                                false,
+                                "unmapped ",
+                                kmer_size,
+                            );
+                            let _ = snd.send(Ok(ReadsBaseModProfile::new(
+                                Vec::new(),
+                                skip,
+                                fail,
+                            )));
+                        }
+                        Err(e) => {
+                            error!(
+                                "failed to get indexed reader for unmapped \
+                                 read processing, {}",
+                                e.to_string()
+                            );
+                        }
+                    }
+                }
+            } else {
+                let (skip, fail) = Self::process_records_to_chan(
+                    reader.records(),
+                    &multi_prog,
+                    &reference_position_filter,
+                    snd.clone(),
+                    n_reads,
+                    collapse_method.as_ref(),
+                    edge_filter.as_ref(),
+                    mapped_only,
+                    allow_non_primary,
+                    "",
+                    kmer_size,
+                );
+                let _ = snd.send(Ok(ReadsBaseModProfile::new(
+                    Vec::new(),
+                    skip,
+                    fail,
+                )));
+            }
         });
 
         let mut writer: Box<dyn OutwriterWithMemory<ReadsBaseModProfile>> =

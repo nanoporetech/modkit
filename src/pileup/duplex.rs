@@ -2,21 +2,18 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::Path;
 
+use anyhow::bail;
 use derive_new::new;
 use log::debug;
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
+use crate::interval_chunks::{FocusPositions, MultiChromCoordinates};
 use crate::mod_bam::{DuplexModCall, DuplexPattern, EdgeFilter};
-use crate::motif_bed::MultipleMotifLocations;
-use crate::pileup::{
-    get_forward_read_base, get_motif_locations_for_region, PileupIter,
-    PileupNumericOptions,
-};
-use crate::position_filter::StrandedPositionFilter;
+use crate::pileup::{get_forward_read_base, PileupIter, PileupNumericOptions};
 use crate::read_cache::DuplexReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{record_is_not_primary, Strand, StrandRule};
+use crate::util::record_is_not_primary;
 
 /// Summarizes the duplex (hemi) methylation patterns for
 /// a genomic interval
@@ -207,7 +204,38 @@ impl DuplexFeatureVector {
     }
 }
 
-pub fn process_region_duplex<T: AsRef<Path>>(
+// todo this function should be removed in favor of a more
+//  generic version in pileup/mod.rs
+pub fn process_region_duplex_batch<T: AsRef<Path> + Copy>(
+    chromosome_coordintes: &MultiChromCoordinates,
+    bam_fp: T,
+    caller: &MultipleThresholdModCaller,
+    pileup_numeric_options: &PileupNumericOptions,
+    force_allow: bool,
+    max_depth: u32,
+    edge_filter: Option<&EdgeFilter>,
+) -> Vec<anyhow::Result<DuplexModBasePileup>> {
+    chromosome_coordintes
+        .0
+        .iter()
+        .map(|chrom_coords| {
+            process_region_duplex(
+                bam_fp,
+                chrom_coords.chrom_tid,
+                chrom_coords.start_pos,
+                chrom_coords.end_pos,
+                caller,
+                pileup_numeric_options,
+                force_allow,
+                max_depth,
+                &chrom_coords.focus_positions,
+                edge_filter,
+            )
+        })
+        .collect()
+}
+
+fn process_region_duplex<T: AsRef<Path>>(
     bam_fp: T,
     chrom_tid: u32,
     start_pos: u32,
@@ -216,10 +244,16 @@ pub fn process_region_duplex<T: AsRef<Path>>(
     pileup_numeric_options: &PileupNumericOptions,
     force_allow: bool,
     max_depth: u32,
-    motif_locations: &MultipleMotifLocations,
+    focus_positions: &FocusPositions,
     edge_filter: Option<&EdgeFilter>,
-    position_filter: Option<&StrandedPositionFilter<()>>,
 ) -> anyhow::Result<DuplexModBasePileup> {
+    let positions_to_motifs = match focus_positions {
+        FocusPositions::MotifCombineStrands { positive_motifs, .. } => {
+            positive_motifs
+        }
+        _ => bail!("duplex requires a motif"),
+    };
+
     let mut bam_reader = bam::IndexedReader::from_path(bam_fp)?;
     let chrom_name =
         String::from_utf8_lossy(bam_reader.header().tid2name(chrom_tid))
@@ -243,37 +277,16 @@ pub fn process_region_duplex<T: AsRef<Path>>(
         tmp_pileup.set_max_depth(max_depth);
         tmp_pileup
     };
-    // filter motif positions to only positive strand. We get the negative
-    // strand calls in the read cache when getting a duplex mod call
-    let motif_positions = get_motif_locations_for_region(
-        motif_locations,
-        chrom_tid,
-        start_pos,
-        end_pos,
-    )
-    .into_iter()
-    .filter(|(_, strand_rule)| strand_rule.eq(&StrandRule::Positive))
-    .collect::<FxHashMap<u32, StrandRule>>();
 
-    let pileup_iter = PileupIter::new(
-        hts_pileup,
-        chrom_tid,
-        start_pos,
-        end_pos,
-        Some(&motif_positions),
-        position_filter,
-    );
+    let pileup_iter =
+        PileupIter::new(hts_pileup, start_pos, end_pos, focus_positions);
 
     for (pileup, motif) in pileup_iter.filter_map(|pileup| {
-        let motifs = motif_locations.motifs_at_position_nonempty(
-            chrom_tid,
-            pileup.bam_pileup.pos(),
-            Strand::Positive,
-        )?;
+        let motifs = positions_to_motifs.get(&pileup.bam_pileup.pos())?;
         if motifs.len() > 1 {
             debug!("more than 1 motif not supported yet");
         };
-        let (_, motif) = motifs[0];
+        let (motif, _idx) = &motifs[0];
         Some((pileup, motif))
     }) {
         let pos = pileup.bam_pileup.pos();

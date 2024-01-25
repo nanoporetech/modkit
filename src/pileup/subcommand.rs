@@ -15,15 +15,17 @@ use crate::command_utils::{
     get_threshold_from_options, parse_edge_filter_input,
     parse_per_mod_thresholds, parse_thresholds,
 };
-use crate::interval_chunks::MotifAwareIntervalChunks;
+use crate::interval_chunks::ReferenceIntervalsFeeder;
 use crate::logging::init_logging;
 use crate::mod_bam::CollapseMethod;
 use crate::mod_base_code::{ModCodeRepr, HYDROXY_METHYL_CYTOSINE};
 use crate::motif_bed::{
     get_masked_sequences, MotifLocations, MultipleMotifLocations, RegexMotif,
 };
-use crate::pileup::duplex::{process_region_duplex, DuplexModBasePileup};
-use crate::pileup::{process_region, ModBasePileup, PileupNumericOptions};
+use crate::pileup::duplex::{process_region_duplex_batch, DuplexModBasePileup};
+use crate::pileup::{
+    process_region_batch, ModBasePileup, PileupNumericOptions,
+};
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::util::{
@@ -529,7 +531,9 @@ impl ModBamPileup {
             .num_threads(self.threads)
             .build()
             .with_context(|| "failed to make threadpool")?;
-        let (motif_locations, tids) = if let Some(regex_motifs) = regex_motifs {
+        let (motif_locations, reference_records) = if let Some(regex_motifs) =
+            regex_motifs
+        {
             let fasta_fp = self.reference_fasta.as_ref().ok_or(anyhow!(
                 "reference fasta is required for using --motif or --cpg \
                  options"
@@ -655,17 +659,24 @@ impl ModBamPileup {
         }
 
         let (snd, rx) = bounded(1_000); // todo figure out sane default for this?
-        let in_bam_fp = self.in_bam.clone();
-        let interval_size = self.interval_size;
+        let feeder = ReferenceIntervalsFeeder::new(
+            reference_records,
+            chunk_size,
+            self.interval_size,
+            combine_strands,
+            motif_locations,
+            position_filter,
+        )?;
 
+        let in_bam_fp = self.in_bam.clone();
         let master_progress = MultiProgress::new();
         if self.suppress_progress {
             master_progress
                 .set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
         let tid_progress =
-            master_progress.add(get_master_progress_bar(tids.len()));
-        tid_progress.set_message("contigs");
+            master_progress.add(get_master_progress_bar(feeder.total_length()));
+        tid_progress.set_message("genome positions");
         let write_progress = master_progress.add(get_ticker());
         write_progress.set_message("rows written");
         let skipped_reads = master_progress.add(get_ticker());
@@ -678,35 +689,15 @@ impl ModBamPileup {
 
         std::thread::spawn(move || {
             pool.install(|| {
-                for target in tids {
-                    let intervals = MotifAwareIntervalChunks::new(
-                        target.start,
-                        target.length,
-                        interval_size,
-                        target.tid,
-                        combine_strands,
-                        motif_locations.as_ref(),
-                    )
-                    .filter(|(start, end)| {
-                        position_filter
-                            .as_ref()
-                            .map(|pf| {
-                                pf.overlaps_not_stranded(
-                                    target.tid,
-                                    *start as u64,
-                                    *end as u64,
-                                )
-                            })
-                            .unwrap_or(true)
-                    })
-                    .collect::<Vec<(u32, u32)>>();
-
-                    let n_intervals = intervals.len();
+                for multi_chrom_coords in feeder {
+                    let genome_length_in_batch = multi_chrom_coords.iter()
+                        .map(|x| x.total_length())
+                        .sum::<u64>();
+                    let n_intervals = multi_chrom_coords.len();
                     let interval_progress = master_progress
                         .add(get_subroutine_progress_bar(n_intervals));
-                    interval_progress
-                        .set_message(format!("processing {}", &target.name));
-                    for work_chunk in intervals.chunks(chunk_size) {
+
+                    for work_chunk in multi_chrom_coords.chunks(chunk_size) {
                         let mut result: Vec<Result<ModBasePileup, String>> = vec![];
                         let chunk_progress = master_progress.add(get_subroutine_progress_bar(work_chunk.len()));
                         chunk_progress.set_message("chunk progress");
@@ -715,23 +706,20 @@ impl ModBamPileup {
                                 work_chunk
                                     .into_par_iter()
                                     .progress_with(chunk_progress)
-                                    .map(|(start, end)| {
-                                        process_region(
+                                    .map(|multi_chrom_coords| {
+                                        process_region_batch(
+                                            multi_chrom_coords,
                                             &in_bam_fp,
-                                            target.tid,
-                                            *start,
-                                            *end,
                                             &threshold_caller,
                                             &pileup_options,
                                             force_allow,
                                             combine_strands,
                                             max_depth,
-                                            motif_locations.as_ref(),
                                             edge_filter.as_ref(),
                                             partition_tags.as_ref(),
-                                            position_filter.as_ref(),
                                         )
                                     })
+                                    .flatten()
                                     .collect::<Vec<Result<ModBasePileup, String>>>()
                             },
                             || {
@@ -759,7 +747,7 @@ impl ModBamPileup {
                             }
                         });
                     }
-                    tid_progress.inc(1);
+                    tid_progress.inc(genome_length_in_batch);
                 }
                 tid_progress.finish_and_clear();
             });
@@ -1213,7 +1201,7 @@ impl DuplexModBamPileup {
             .with_context(|| "failed to make threadpool")?;
 
         // put this into it's own function
-        let (motif_locations, tids) = {
+        let (motif_locations, reference_records) = {
             let fasta_fp = self.reference_fasta.as_ref().ok_or(anyhow!(
                 "reference fasta is required for using --motif or --cpg \
                  options"
@@ -1323,8 +1311,16 @@ impl DuplexModBamPileup {
 
         // from here down could also be it's own "Processor"
         let (snd, rx) = bounded(1_000); // todo figure out sane default for this?
+        let feeder = ReferenceIntervalsFeeder::new(
+            reference_records,
+            chunk_size,
+            self.interval_size,
+            true, // must be true for duplex
+            Some(motif_locations),
+            position_filter,
+        )?;
+
         let in_bam_fp = self.in_bam.clone();
-        let interval_size = self.interval_size;
 
         let master_progress = MultiProgress::new();
         if self.suppress_progress {
@@ -1332,8 +1328,8 @@ impl DuplexModBamPileup {
                 .set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
         let tid_progress =
-            master_progress.add(get_master_progress_bar(tids.len()));
-        tid_progress.set_message("contigs");
+            master_progress.add(get_master_progress_bar(feeder.total_length()));
+        tid_progress.set_message("genome positions");
         let write_progress = master_progress.add(get_ticker());
         write_progress.set_message("rows written");
         let skipped_reads = master_progress.add(get_ticker());
@@ -1344,94 +1340,68 @@ impl DuplexModBamPileup {
         let force_allow = self.force_allow_implicit;
         let max_depth = self.max_depth;
 
-        std::thread::spawn(move || {
-            pool.install(|| {
-                for target in tids {
-                    let intervals = MotifAwareIntervalChunks::new(
-                        target.start,
-                        target.length,
-                        interval_size,
-                        target.tid,
-                        // why is this hard-coded to true?
-                        // for pileup-hemi we requre a motif is provided and that the
-                        // motif is palindromic. Therefore we need to make sure
-                        // that we do not split intervals at motif boundaries.
-                        true,
-                        Some(&motif_locations),
-                    ).filter(|(start, end)| {
-                            position_filter
-                                .as_ref()
-                                .map(|pf| {
-                                    pf.overlaps_not_stranded(
-                                        target.tid,
-                                        *start as u64,
-                                        *end as u64,
+        pool.spawn(move || {
+            for multi_chrom_coords in feeder {
+                let genome_length_in_batch = multi_chrom_coords.iter()
+                    .map(|x| x.total_length())
+                    .sum::<u64>();
+                let n_intervals = multi_chrom_coords.len();
+                let interval_progress = master_progress
+                    .add(get_subroutine_progress_bar(n_intervals));
+
+                interval_progress
+                    .set_message(format!("processing {n_intervals} intervals"));
+                for work_chunk in multi_chrom_coords.chunks(chunk_size) {
+                    let mut result: Vec<anyhow::Result<DuplexModBasePileup>> = vec![];
+                    let chunk_progress = master_progress.add(get_subroutine_progress_bar(work_chunk.len()));
+                    chunk_progress.set_message("chunk progress");
+                    let (res, _) = rayon::join(
+                        || {
+                            work_chunk
+                                .into_par_iter()
+                                .progress_with(chunk_progress)
+                                .map(|multi_chrom_coords| {
+                                    process_region_duplex_batch(
+                                        multi_chrom_coords,
+                                        &in_bam_fp,
+                                        &threshold_caller,
+                                        &pileup_options,
+                                        force_allow,
+                                        max_depth,
+                                        edge_filter.as_ref(),
                                     )
                                 })
-                                .unwrap_or(true)
-                        })
-                        .collect::<Vec<(u32, u32)>>();
-
-                    let n_intervals = intervals.len();
-                    let interval_progress = master_progress
-                        .add(get_subroutine_progress_bar(n_intervals));
-                    interval_progress
-                        .set_message(format!("processing {}", &target.name));
-                    for work_chunk in intervals.chunks(chunk_size) {
-                        let mut result: Vec<anyhow::Result<DuplexModBasePileup>> = vec![];
-                        let chunk_progress = master_progress.add(get_subroutine_progress_bar(work_chunk.len()));
-                        chunk_progress.set_message("chunk progress");
-                        let (res, _) = rayon::join(
-                            || {
-                                work_chunk
-                                    .into_par_iter()
-                                    .progress_with(chunk_progress)
-                                    .map(|(start, end)| {
-                                        process_region_duplex(
-                                            &in_bam_fp,
-                                            target.tid,
-                                            *start,
-                                            *end,
-                                            &threshold_caller,
-                                            &pileup_options,
-                                            force_allow,
-                                            max_depth,
-                                            &motif_locations,
-                                            edge_filter.as_ref(),
-                                            position_filter.as_ref(),
-                                        )
-                                    })
-                                    .collect::<Vec<anyhow::Result<DuplexModBasePileup>>>()
-                            },
-                            || {
-                                result.into_iter().for_each(|mod_base_pileup| {
-                                    match snd.send(mod_base_pileup) {
-                                        Ok(_) => {
-                                            interval_progress.inc(1)
-                                        }
-                                        Err(e) => {
-                                            error!("failed to send results, {}", e.to_string())
-                                        },
+                                .flatten()
+                                .collect::<Vec<anyhow::Result<DuplexModBasePileup>>>()
+                        },
+                        || {
+                            result.into_iter().for_each(|mod_base_pileup| {
+                                match snd.send(mod_base_pileup) {
+                                    Ok(_) => {
+                                        interval_progress.inc(1)
                                     }
-                                });
-                            },
-                        );
-                        result = res;
-                        result.into_iter().for_each(|pileup| {
-                            match snd.send(pileup) {
-                                Ok(_) => {
-                                    interval_progress.inc(1)
+                                    Err(e) => {
+                                        error!("failed to send results, {}", e.to_string())
+                                    },
                                 }
-                                Err(e) => {
-                                    error!("failed to send results, {}", e.to_string())
-                                },
+                            });
+                        },
+                    );
+                    result = res;
+                    result.into_iter().for_each(|pileup| {
+                        match snd.send(pileup) {
+                            Ok(_) => {
+                                interval_progress.inc(1)
                             }
-                        });
-                    }
-                    tid_progress.inc(1);
+                            Err(e) => {
+                                error!("failed to send results, {}", e.to_string())
+                            },
+                        }
+                    });
                 }
-                tid_progress.finish_and_clear();
-            });
+                tid_progress.inc(genome_length_in_batch);
+            }
+            tid_progress.finish_and_clear();
         });
 
         for result in rx.into_iter() {

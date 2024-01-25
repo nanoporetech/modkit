@@ -1,10 +1,10 @@
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::RecordSampler;
-use crate::util::{reader_is_bam, ReferenceRecord, Region};
+use crate::util::{reader_is_bam, Region};
 use anyhow::{anyhow, bail, Context};
 use derive_new::new;
 use itertools::Itertools;
-use log::debug;
+use log::{debug, error};
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
@@ -153,7 +153,7 @@ impl SamplingSchedule {
                 Self::get_contig_to_counts_frac(index_stats, include_unmapped)?;
             let mut total_to_sample = 0usize;
 
-            let counts_for_chroms = contig_to_counts_frac
+            let mut counts_for_chroms = contig_to_counts_frac
                 .iter()
                 .filter(|(&chrom_id, counts_frac)| {
                     chrom_id >= 0 && counts_frac.counts > 0
@@ -182,6 +182,55 @@ impl SamplingSchedule {
             } else {
                 None
             };
+
+            let mut floor = 1usize;
+            while (total_to_sample as f64 / num_reads as f64) > 1.5f64 {
+                debug!(
+                    "pruning sampling, currently scheduled to sample \
+                     {total_to_sample} reads expected to sample {num_reads}, \
+                     dropping chroms with <= {floor} reads"
+                );
+                'discard: for (_chrom_id, count) in counts_for_chroms.iter_mut()
+                {
+                    match count {
+                        CountOrSample::Count(x) => {
+                            if *x <= floor {
+                                total_to_sample -= *x;
+                                *x = 0;
+                            }
+                        }
+                        _ => {}
+                    }
+                    if total_to_sample <= num_reads {
+                        break 'discard;
+                    }
+                }
+                total_to_sample = counts_for_chroms
+                    .values()
+                    .map(|c| match &c {
+                        CountOrSample::Count(x) => *x,
+                        _ => 0usize,
+                    })
+                    .sum::<usize>();
+                floor += 1;
+            }
+
+            let starting_count = counts_for_chroms.len();
+            counts_for_chroms.retain(|_tid, count| match count {
+                CountOrSample::Count(x) => *x > 0,
+                _ => true,
+            });
+            let contigs_pruned = starting_count
+                .checked_sub(counts_for_chroms.len())
+                .unwrap_or_else(|| {
+                    error!("somehow there are more contigs after pruning?");
+                    0
+                });
+            debug!(
+                "removed {contigs_pruned} contigs from schedule with <= \
+                 {floor} reads"
+            );
+
             Self::log_schedule(
                 true,
                 &counts_for_chroms,
@@ -327,13 +376,13 @@ impl SamplingSchedule {
 
     pub(crate) fn get_record_sampler(
         &self,
-        reference_record: &ReferenceRecord,
+        chrom_id: u32,
         total_interval_length: u32,
         start: u32,
         end: u32,
     ) -> RecordSampler {
         self.counts_for_chroms
-            .get(&reference_record.tid)
+            .get(&chrom_id)
             .map(|counts_or_sample| match counts_or_sample {
                 CountOrSample::Count(count) => {
                     let f = (end - start) as f64 / total_interval_length as f64;

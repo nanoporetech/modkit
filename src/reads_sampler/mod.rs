@@ -1,7 +1,7 @@
 pub(crate) mod record_sampler;
 pub(crate) mod sampling_schedule;
 
-use crate::interval_chunks::IntervalChunks;
+use crate::interval_chunks::{MultiChromCoordinates, ReferenceIntervalsFeeder};
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::monoid::Moniod;
 use crate::position_filter::StrandedPositionFilter;
@@ -12,7 +12,7 @@ use crate::util::{
     get_ticker, ReferenceRecord, Region,
 };
 use anyhow::anyhow;
-use indicatif::{MultiProgress, ParallelProgressIterator};
+use indicatif::{MultiProgress, ParallelProgressIterator, ProgressBar};
 use log::debug;
 use rayon::prelude::*;
 use record_sampler::RecordSampler;
@@ -69,6 +69,7 @@ where
             sample_reads_base_mod_calls_over_regions::<P>(
                 bam_fp,
                 interval_size,
+                (reader_threads as f32 * 1.5).floor() as usize,
                 region,
                 edge_filter,
                 collapse_method,
@@ -152,6 +153,7 @@ where
 fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
     bam_fp: &PathBuf,
     interval_size: u32,
+    batch_size: usize,
     region: Option<&Region>,
     edge_filter: Option<&EdgeFilter>,
     collapse_method: Option<&CollapseMethod>,
@@ -173,6 +175,15 @@ where
         })
         .collect::<Vec<ReferenceRecord>>();
 
+    let feeder = ReferenceIntervalsFeeder::new(
+        contigs,
+        batch_size,
+        interval_size,
+        false,
+        None,
+        None,
+    )?;
+
     // prog bar stuff
     let master_progress = MultiProgress::new();
     if suppress_progress {
@@ -180,93 +191,112 @@ where
             .set_draw_target(indicatif::ProgressDrawTarget::hidden());
     }
     let tid_progress =
-        master_progress.add(get_master_progress_bar(contigs.len()));
-    tid_progress.set_message("contigs");
+        master_progress.add(get_master_progress_bar(feeder.total_length()));
+    tid_progress.set_message("genome positions");
+
     let sampled_items = master_progress.add(get_ticker());
     sampled_items.set_message("base mod calls sampled");
     // end prog bar stuff
 
     let mut aggregator = <P::Output as Moniod>::zero();
-    for reference_record in contigs {
-        let intervals = IntervalChunks::new(
-            reference_record.start,
-            reference_record.length,
-            interval_size,
-        )
-        .filter(|(start, end)| {
-            position_filter
-                .as_ref()
-                .map(|pf| {
-                    pf.overlaps_not_stranded(
-                        reference_record.tid,
-                        *start as u64,
-                        *end as u64,
-                    )
-                })
-                .unwrap_or(true)
-        })
-        .collect::<Vec<(u32, u32)>>();
-
-        let total_interval_length = intervals
-            .iter()
-            .map(|(start, end)| end.checked_sub(*start).unwrap_or(0))
-            .sum::<u32>();
-
-        // progress bar stuff
-        let interval_progress =
-            master_progress.add(get_subroutine_progress_bar(intervals.len()));
-        interval_progress
-            .set_message(format!("processing {}", &reference_record.name));
-        // end progress bar stuff
-
-        let proc_outputs = intervals
+    for super_batch in feeder {
+        let total_batch_length =
+            super_batch.iter().map(|c| c.total_length()).sum::<u64>();
+        let batch_progress =
+            master_progress.add(get_subroutine_progress_bar(super_batch.len()));
+        debug!("batch has total length {total_batch_length}");
+        batch_progress.set_message("interval batches in progress");
+        let super_batch_result = super_batch
             .into_par_iter()
-            .progress_with(interval_progress)
-            .filter_map(|(start, end)| {
-                let record_sampler = sampling_schedule.get_record_sampler(
-                    &reference_record,
-                    total_interval_length,
-                    start,
-                    end,
-                );
-                match sample_reads_from_interval::<P>(
+            .progress_with(batch_progress)
+            .map(|multi_coords| {
+                run_batch::<P>(
                     bam_fp,
-                    reference_record.tid,
-                    start,
-                    end,
-                    record_sampler,
+                    multi_coords,
+                    total_batch_length as u32,
+                    sampling_schedule,
                     collapse_method,
                     edge_filter,
                     position_filter,
                     only_mapped,
                     false,
                     None,
-                ) {
-                    Ok(res) => {
-                        let sampled_count = res.size();
-                        sampled_items.inc(sampled_count);
-                        Some(res)
-                    }
-                    Err(e) => {
-                        debug!(
-                            "reference {} for interval {} to {} failed {}",
-                            &reference_record.name,
-                            start,
-                            end,
-                            e.to_string()
-                        );
-                        None
-                    }
-                }
+                    &sampled_items,
+                )
             })
+            .flatten()
             .reduce(|| <P::Output as Moniod>::zero(), |a, b| a.op(b));
-        aggregator.op_mut(proc_outputs);
-        tid_progress.inc(1);
+        tid_progress.inc(total_batch_length);
+        aggregator.op_mut(super_batch_result);
     }
-
-    tid_progress.finish_and_clear();
-    let _ = master_progress.clear();
     Ok(aggregator)
+}
+
+fn run_batch<P: RecordProcessor>(
+    bam_fp: &PathBuf,
+    batch: MultiChromCoordinates,
+    total_batch_length: u32,
+    sampling_schedule: &SamplingSchedule,
+    collapse_method: Option<&CollapseMethod>,
+    edge_filter: Option<&EdgeFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
+    only_mapped: bool,
+    allow_non_primary: bool,
+    kmer_size: Option<usize>,
+    sampled_items_counter: &ProgressBar,
+) -> Vec<P::Output> {
+    batch
+        .0
+        .into_par_iter()
+        .filter(|cc| sampling_schedule.chrom_has_reads(cc.chrom_tid))
+        .filter(|cc| {
+            position_filter
+                .map(|pf| {
+                    pf.overlaps_not_stranded(
+                        cc.chrom_tid,
+                        cc.start_pos as u64,
+                        cc.end_pos as u64,
+                    )
+                })
+                .unwrap_or(true)
+        })
+        .filter_map(|cc| {
+            let record_sampler = sampling_schedule.get_record_sampler(
+                cc.chrom_tid,
+                total_batch_length,
+                cc.start_pos,
+                cc.end_pos,
+            );
+            match sample_reads_from_interval::<P>(
+                bam_fp,
+                cc.chrom_tid,
+                cc.start_pos,
+                cc.end_pos,
+                record_sampler,
+                collapse_method,
+                edge_filter,
+                position_filter,
+                only_mapped,
+                allow_non_primary,
+                kmer_size,
+            ) {
+                Ok(res) => {
+                    sampled_items_counter.inc(res.size());
+                    Some(res)
+                }
+                Err(e) => {
+                    debug!(
+                        "reference {} for interval {} to {} failed {}",
+                        cc.chrom_tid,
+                        cc.start_pos,
+                        cc.end_pos,
+                        e.to_string()
+                    );
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn sample_reads_from_interval<P: RecordProcessor>(
