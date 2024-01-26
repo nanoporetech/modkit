@@ -304,8 +304,14 @@ pub(crate) fn get_targets(
 pub struct ReferenceRecord {
     pub tid: u32,
     pub start: u32,
-    pub length: u32,
+    pub(crate) length: u32,
     pub name: String,
+}
+
+impl ReferenceRecord {
+    pub fn end(&self) -> u32 {
+        self.start + self.length
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]

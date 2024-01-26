@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
@@ -108,13 +108,43 @@ impl OverlappingRegex {
     }
 }
 
+#[derive(Debug, new, Copy, Clone)]
+pub struct MotifInfo {
+    pub forward_offset: usize,
+    pub reverse_offset: usize,
+    pub length: usize,
+    pub is_palendrome: bool,
+}
+
+impl MotifInfo {
+    pub(crate) fn offset(&self) -> i32 {
+        self.reverse_offset as i32 - self.forward_offset as i32
+    }
+
+    pub(crate) fn negative_strand_position(
+        &self,
+        positive_position: u32,
+    ) -> Option<u32> {
+        if !self.is_palendrome {
+            None
+        } else {
+            let pos = positive_position as i64;
+            let offset = self.offset() as i64;
+            let adj = pos + offset;
+            if adj < 0 {
+                None
+            } else {
+                Some(adj as u32)
+            }
+        }
+    }
+}
+
 #[derive(Debug, new)]
 pub struct RegexMotif {
     forward_pattern: OverlappingRegex,
     reverse_pattern: OverlappingRegex,
-    pub forward_offset: usize,
-    pub reverse_offset: usize,
-    pub length: usize,
+    pub motif_info: MotifInfo,
     pub raw_motif: String,
 }
 
@@ -183,46 +213,43 @@ impl RegexMotif {
             .len()
             .checked_sub(offset + 1)
             .ok_or(anyhow!("motif not long enough for offset {}", offset))?;
-        Ok(Self::new(
-            re,
-            rc_re,
+        let motif_info = MotifInfo::new(
             offset,
             rc_offset,
             length,
-            raw_motif.to_owned(),
-        ))
+            re.as_str() == rc_re.as_str(),
+        );
+        Ok(Self::new(re, rc_re, motif_info, raw_motif.to_owned()))
     }
 
     pub(crate) fn is_palendrome(&self) -> bool {
         self.forward_pattern.as_str() == self.reverse_pattern.as_str()
     }
 
-    pub(crate) fn offset(&self) -> i32 {
-        self.reverse_offset as i32 - self.forward_offset as i32
+    #[inline(always)]
+    pub(crate) fn length(&self) -> usize {
+        self.motif_info.length
     }
 
-    pub(crate) fn negative_strand_position(
-        &self,
-        positive_position: u32,
-    ) -> Option<u32> {
-        if !self.is_palendrome() {
-            None
-        } else {
-            let pos = positive_position as i64;
-            let offset = self.offset() as i64;
-            let adj = pos + offset;
-            if adj < 0 {
-                None
-            } else {
-                Some(adj as u32)
-            }
-        }
+    #[inline(always)]
+    pub(crate) fn forward_offset(&self) -> usize {
+        self.motif_info.forward_offset
+    }
+
+    #[inline(always)]
+    pub(crate) fn reverse_offset(&self) -> usize {
+        self.motif_info.reverse_offset
+    }
+
+    #[cfg(test)]
+    fn offset(&self) -> i32 {
+        self.motif_info.offset()
     }
 }
 
 impl Display for RegexMotif {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{},{}", self.raw_motif, self.forward_offset)
+        write!(f, "{},{}", self.raw_motif, self.forward_offset())
     }
 }
 
@@ -263,39 +290,39 @@ pub(crate) fn find_motif_hits(
     // and avoid sort
     if regex_motif.is_palendrome() {
         for m in regex_motif.forward_pattern.find_iter(seq) {
-            if regex_motif.forward_offset <= regex_motif.reverse_offset {
+            if regex_motif.forward_offset() <= regex_motif.reverse_offset() {
                 motif_hits.push((
-                    m.start() + regex_motif.forward_offset,
+                    m.start() + regex_motif.forward_offset(),
                     Strand::Positive,
                 ));
                 motif_hits.push((
-                    m.start() + regex_motif.reverse_offset,
+                    m.start() + regex_motif.reverse_offset(),
                     Strand::Negative,
                 ));
             } else {
                 motif_hits.push((
-                    m.start() + regex_motif.reverse_offset,
+                    m.start() + regex_motif.reverse_offset(),
                     Strand::Negative,
                 ));
                 motif_hits.push((
-                    m.start() + regex_motif.forward_offset,
+                    m.start() + regex_motif.forward_offset(),
                     Strand::Positive,
                 ));
             }
         }
-    } else if regex_motif.length == 1 {
+    } else if regex_motif.length() == 1 {
         let mut single_base_sites = find_single_bases(seq, regex_motif);
         motif_hits.append(&mut single_base_sites);
     } else {
         for m in regex_motif.forward_pattern.find_iter(seq) {
             motif_hits.push((
-                m.start() + regex_motif.forward_offset,
+                m.start() + regex_motif.forward_offset(),
                 Strand::Positive,
             ));
         }
         for m in regex_motif.reverse_pattern.find_iter(seq) {
             motif_hits.push((
-                m.start() + regex_motif.reverse_offset,
+                m.start() + regex_motif.reverse_offset(),
                 Strand::Negative,
             ));
         }
@@ -337,14 +364,14 @@ pub fn motif_bed(
         .checked_sub(offset + 1)
         .ok_or(anyhow!("invalid offset for motif"))?;
 
-    let regex_motif = RegexMotif::new(
-        re,
-        rc_re,
+    let motif_info = MotifInfo::new(
         offset,
         rc_offset,
         motif_raw.len(),
-        motif_raw.to_owned(),
+        re.as_str() == rc_re.as_str(),
     );
+    let regex_motif =
+        RegexMotif::new(re, rc_re, motif_info, motif_raw.to_owned());
 
     let reader =
         FastaReader::from_file(path).context("failed to open FASTA")?;
@@ -505,7 +532,7 @@ pub fn get_masked_sequences(
 
 #[derive(Debug)]
 pub struct MotifLocations {
-    tid_to_motif_positions: FxHashMap<u32, FxHashMap<u32, StrandRule>>,
+    tid_to_motif_positions: FxHashMap<u32, BTreeMap<u32, StrandRule>>,
     motif: RegexMotif,
 }
 
@@ -546,7 +573,7 @@ impl MotifLocations {
                         }
                     })
                     .fold(
-                        || FxHashMap::<u32, StrandRule>::default(),
+                        || BTreeMap::<u32, StrandRule>::new(),
                         |mut acc, (pos, strand)| {
                             if let Some(strand_rule) = acc.get_mut(&pos) {
                                 *strand_rule = strand_rule.absorb(strand);
@@ -557,7 +584,7 @@ impl MotifLocations {
                         },
                     )
                     .reduce(
-                        || FxHashMap::<u32, StrandRule>::default(),
+                        || BTreeMap::<u32, StrandRule>::new(),
                         |a, b| a.into_iter().chain(b).collect(),
                     );
                 let duration = now.elapsed().as_millis() as f64 / 1000f64;
@@ -621,22 +648,16 @@ impl MotifLocations {
     pub fn get_locations_unchecked(
         &self,
         target_id: u32,
-    ) -> &FxHashMap<u32, StrandRule> {
+    ) -> &BTreeMap<u32, StrandRule> {
         self.tid_to_motif_positions.get(&target_id).unwrap()
     }
 
     pub fn motif_length(&self) -> usize {
-        self.motif.length
+        self.motif.length()
     }
 
     pub fn motif(&self) -> &RegexMotif {
         &self.motif
-    }
-
-    pub fn targets_to_positions(
-        &self,
-    ) -> &FxHashMap<u32, FxHashMap<u32, StrandRule>> {
-        &self.tid_to_motif_positions
     }
 }
 
@@ -648,11 +669,11 @@ mod motif_bed_tests {
     #[test]
     fn test_regex_motif() {
         let regex_motif = RegexMotif::parse_string("CCWGG", 1).unwrap();
-        assert_eq!(regex_motif.forward_offset, 1);
-        assert_eq!(regex_motif.reverse_offset, 3);
-        assert_eq!(regex_motif.length, 5);
+        assert_eq!(regex_motif.forward_offset(), 1);
+        assert_eq!(regex_motif.reverse_offset(), 3);
+        assert_eq!(regex_motif.length(), 5);
         let regex_motif = RegexMotif::parse_string("CG", 0).unwrap();
-        assert_eq!(regex_motif.reverse_offset, 1);
+        assert_eq!(regex_motif.reverse_offset(), 1);
 
         let motif = RegexMotif::parse_string("CGCG", 2).unwrap();
         assert_eq!(motif.offset(), -1);
@@ -677,6 +698,7 @@ mod motif_bed_tests {
             .map(|(p, _)| *p as u32)
         {
             let negative_strand_pos = motif
+                .motif_info
                 .negative_strand_position(pos)
                 .expect("should find position");
             let _found = hits
@@ -687,7 +709,7 @@ mod motif_bed_tests {
                 })
                 .expect("should find negative strand position");
         }
-        assert!(motif.negative_strand_position(0).is_none())
+        assert!(motif.motif_info.negative_strand_position(0).is_none())
     }
 
     #[test]

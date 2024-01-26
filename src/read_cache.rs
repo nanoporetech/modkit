@@ -11,7 +11,7 @@ use crate::mod_bam::{
 };
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::monoid::BorrowingMoniod;
-use crate::motif_bed::MotifLocations;
+use crate::motif_bed::MotifInfo;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{self, Strand};
 
@@ -467,7 +467,7 @@ impl<'a> DuplexReadCache<'a> {
         record: &bam::Record,
         position: u32,
         read_base: DnaBase,
-        motif: &MotifLocations,
+        motif: &MotifInfo,
     ) -> Option<DuplexModCall> {
         let read_id = util::get_query_name_string(&record).ok()?;
         if self.read_cache.skip_set.contains(&read_id) {
@@ -484,8 +484,7 @@ impl<'a> DuplexReadCache<'a> {
             position,
             pos_base.char(),
         );
-        let negative_position =
-            motif.motif().negative_strand_position(position);
+        let negative_position = motif.negative_strand_position(position);
 
         if negative_position.is_none() {
             return Some(DuplexModCall::NoCall {

@@ -1,19 +1,20 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use derive_new::new;
 use indexmap::IndexSet;
 use itertools::Itertools;
 use log::{debug, error};
+use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
+use crate::interval_chunks::{FocusPositions, MultiChromCoordinates};
 use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
-use crate::motif_bed::MultipleMotifLocations;
-use crate::position_filter::StrandedPositionFilter;
+use crate::motif_bed::MotifInfo;
 use crate::read_cache::ReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
@@ -535,52 +536,28 @@ fn select_pileup_feature_counts(
 }
 
 fn combine_strand_features(
-    motif_positions: &FxHashMap<u32, StrandRule>,
-    motif_locations: &MultipleMotifLocations,
+    positive_motif_idxs_lut: &BTreeMap<u32, Vec<(MotifInfo, usize)>>,
     position_feature_counts: HashMap<
         u32,
         HashMap<PartitionKey, Vec<PileupFeatureCounts>>,
     >,
-    target_id: u32,
 ) -> HashMap<u32, HashMap<PartitionKey, Vec<PileupFeatureCounts>>> {
     let mut result = HashMap::new();
-    // these are the positive stand positions that will contain the sum of the
-    // positive and negative counts
-    let positions_to_combine = motif_positions
-        .iter()
-        .filter_map(|(position, strand_rule)| match strand_rule {
-            StrandRule::Positive | StrandRule::Both => Some(*position),
-            StrandRule::Negative => None,
-        })
-        .collect::<BTreeSet<u32>>();
-
-    for positive_strand_pos in positions_to_combine {
-        // get the motifs that hit at the positive position
-        let motifs_at_position = motif_locations.motifs_at_position_nonempty(
-            target_id,
-            positive_strand_pos,
-            Strand::Positive,
-        );
-        if motifs_at_position.is_none() {
-            // this is an error because we should only be looking at positions
-            // with positive hits
-            error!("no motifs at position {positive_strand_pos}?");
-            continue;
-        }
-        let motifs_at_position = motifs_at_position.unwrap();
+    for (positive_strand_pos, motifs_at_position) in positive_motif_idxs_lut {
         let positive_feature_mappings =
             position_feature_counts.get(&positive_strand_pos);
 
         // start summing up the motif counts
-        'motif: for (idx, motif) in motifs_at_position {
+        'motif: for (motif, idx) in motifs_at_position {
             // this is the position on the negative strand corresponding to this
             // positive strand motif,
             // e.g. for CCGG, 0
             //   v
             // + CCGG
-            // - GGCC ^ <- this position
+            // - GGCC
+            // _____^ <- this position
             let negative_strand_pos =
-                motif.motif().negative_strand_position(positive_strand_pos);
+                motif.negative_strand_position(*positive_strand_pos);
             if negative_strand_pos.is_none() {
                 continue 'motif;
             }
@@ -602,13 +579,13 @@ fn combine_strand_features(
                     positive_feature_mappings,
                     partition_key,
                     Strand::Positive,
-                    idx,
+                    *idx,
                 );
                 let negative_strand_features = select_pileup_feature_counts(
                     negative_feature_mappings,
                     partition_key,
                     Strand::Negative,
-                    idx,
+                    *idx,
                 );
                 // group them by mod code, use BTreeMap here so that the mod
                 // codes are in a consistent order
@@ -631,7 +608,7 @@ fn combine_strand_features(
                             PileupFeatureCounts::new_empty(
                                 '.',
                                 mod_code,
-                                Some(idx),
+                                Some(*idx),
                             ),
                             |acc, next| {
                                 acc.combine_counts_ignore_strand(next) // use moniod
@@ -640,7 +617,7 @@ fn combine_strand_features(
                     })
                     .collect::<Vec<PileupFeatureCounts>>();
                 result
-                    .entry(positive_strand_pos)
+                    .entry(*positive_strand_pos)
                     .or_insert(HashMap::new())
                     .entry(partition_key)
                     .or_insert(Vec::new())
@@ -652,70 +629,18 @@ fn combine_strand_features(
     result
 }
 
-fn get_motif_locations_for_region(
-    motif_locations: &MultipleMotifLocations,
-    reference_id: u32,
-    start_pos: u32,
-    end_pos: u32,
-) -> FxHashMap<u32, StrandRule> {
-    motif_locations.motif_locations.iter().fold(
-        FxHashMap::<u32, StrandRule>::default(),
-        |mut acc, locs| {
-            locs.get_locations_unchecked(reference_id)
-                .iter()
-                .filter_map(|(pos, strand)| {
-                    if pos >= &start_pos && pos < &end_pos {
-                        Some((*pos, *strand))
-                    } else {
-                        None
-                    }
-                })
-                .for_each(|(pos, strand)| {
-                    if let Some(strand_rule) = acc.get_mut(&pos) {
-                        *strand_rule = strand_rule.combine(strand)
-                    } else {
-                        acc.insert(pos, strand);
-                    }
-                });
-
-            acc
-        },
-    )
-}
-
 #[derive(new)]
 struct StrandPileup {
     pub(crate) bam_pileup: bam::pileup::Pileup,
     strand_rule: StrandRule,
 }
 
+#[derive(new)]
 struct PileupIter<'a> {
     pileups: bam::pileup::Pileups<'a, bam::IndexedReader>,
-    chrom_id: u32,
     start_pos: u32,
     end_pos: u32,
-    motif_locations: Option<&'a FxHashMap<u32, StrandRule>>,
-    position_filter: Option<&'a StrandedPositionFilter<()>>,
-}
-
-impl<'a> PileupIter<'a> {
-    fn new(
-        pileups: bam::pileup::Pileups<'a, bam::IndexedReader>,
-        chrom_id: u32,
-        start_pos: u32,
-        end_pos: u32,
-        motif_locations: Option<&'a FxHashMap<u32, StrandRule>>,
-        position_filter: Option<&'a StrandedPositionFilter<()>>,
-    ) -> Self {
-        Self {
-            pileups,
-            chrom_id,
-            start_pos,
-            end_pos,
-            motif_locations,
-            position_filter,
-        }
-    }
+    focus_positions: &'a FocusPositions,
 }
 
 impl<'a> Iterator for PileupIter<'a> {
@@ -733,58 +658,13 @@ impl<'a> Iterator for PileupIter<'a> {
                 continue;
             } else {
                 let pos = plp.pos();
-                match (self.motif_locations, self.position_filter) {
-                    // the motif locations should be pre-filtered, so no
-                    // need to handle the case where there is a position filter
-                    // and motif locations
-                    (Some(locations), _) => {
-                        if let Some(strand_rule) = locations.get(&pos) {
-                            pileup = Some(StrandPileup::new(plp, *strand_rule));
-                            break;
-                        } else {
-                            continue;
-                        }
-                    }
-                    (None, Some(positions_filter)) => {
-                        let pos_hit = positions_filter.contains(
-                            self.chrom_id as i32,
-                            pos as u64,
-                            Strand::Positive,
-                        );
-                        let neg_hit = positions_filter.contains(
-                            self.chrom_id as i32,
-                            pos as u64,
-                            Strand::Negative,
-                        );
-                        match (pos_hit, neg_hit) {
-                            (true, true) => {
-                                pileup = Some(StrandPileup::new(
-                                    plp,
-                                    StrandRule::Both,
-                                ));
-                                break;
-                            }
-                            (true, false) => {
-                                pileup = Some(StrandPileup::new(
-                                    plp,
-                                    StrandRule::Positive,
-                                ));
-                                break;
-                            }
-                            (false, true) => {
-                                pileup = Some(StrandPileup::new(
-                                    plp,
-                                    StrandRule::Negative,
-                                ));
-                                break;
-                            }
-                            (false, false) => continue,
-                        }
-                    }
-                    (None, None) => {
-                        pileup = Some(StrandPileup::new(plp, StrandRule::Both));
-                        break;
-                    }
+                if let Some(strand_rule) =
+                    self.focus_positions.check_position(&pos)
+                {
+                    pileup = Some(StrandPileup::new(plp, strand_rule));
+                    break;
+                } else {
+                    continue;
                 }
             }
         }
@@ -868,7 +748,43 @@ impl PileupNumericOptions {
     }
 }
 
-pub fn process_region<T: AsRef<Path>>(
+// todo make this function generic so it can be used for duplex
+//  as well.
+pub fn process_region_batch<T: AsRef<Path> + Copy + Sync>(
+    chromosome_coordintes: &MultiChromCoordinates,
+    bam_fp: T,
+    caller: &MultipleThresholdModCaller,
+    pileup_numeric_options: &PileupNumericOptions,
+    force_allow: bool,
+    combine_strands: bool,
+    max_depth: u32,
+    edge_filter: Option<&EdgeFilter>,
+    partition_tags: Option<&Vec<SamTag>>,
+) -> Vec<Result<ModBasePileup, String>> {
+    // todo make this anyhow::Result
+    chromosome_coordintes
+        .0
+        .par_iter()
+        .map(|chrom_coords| {
+            process_region(
+                bam_fp,
+                chrom_coords.chrom_tid,
+                chrom_coords.start_pos,
+                chrom_coords.end_pos,
+                caller,
+                pileup_numeric_options,
+                force_allow,
+                combine_strands,
+                max_depth,
+                &chrom_coords.focus_positions,
+                edge_filter,
+                partition_tags,
+            )
+        })
+        .collect()
+}
+
+fn process_region<T: AsRef<Path>>(
     bam_fp: T,
     chrom_tid: u32,
     start_pos: u32,
@@ -878,10 +794,9 @@ pub fn process_region<T: AsRef<Path>>(
     force_allow: bool,
     combine_strands: bool,
     max_depth: u32,
-    motif_locations: Option<&MultipleMotifLocations>,
+    focus_positions: &FocusPositions,
     edge_filter: Option<&EdgeFilter>,
     partition_tags: Option<&Vec<SamTag>>,
-    position_filter: Option<&StrandedPositionFilter<()>>,
 ) -> Result<ModBasePileup, String> {
     let mut bam_reader =
         bam::IndexedReader::from_path(bam_fp).map_err(|e| e.to_string())?;
@@ -895,10 +810,6 @@ pub fn process_region<T: AsRef<Path>>(
             end_pos as i64,
         ))
         .map_err(|e| e.to_string())?;
-
-    let motif_positions = motif_locations.map(|mls| {
-        get_motif_locations_for_region(mls, chrom_tid, start_pos, end_pos)
-    });
 
     let mut read_cache = ReadCache::new(
         pileup_numeric_options.get_collapse_method(),
@@ -915,14 +826,8 @@ pub fn process_region<T: AsRef<Path>>(
         tmp_pileup.set_max_depth(max_depth);
         tmp_pileup
     };
-    let pileup_iter = PileupIter::new(
-        hts_pileup,
-        chrom_tid,
-        start_pos,
-        end_pos,
-        motif_positions.as_ref(),
-        position_filter,
-    );
+    let pileup_iter =
+        PileupIter::new(hts_pileup, start_pos, end_pos, focus_positions);
     let mut dupe_reads = HashMap::new(); // optimize
     for pileup in pileup_iter {
         let pos = pileup.bam_pileup.pos();
@@ -1109,21 +1014,10 @@ pub fn process_region<T: AsRef<Path>>(
                 let neg_strand_observed_mod_codes_for_key =
                     neg_strand_observed_mod_codes.get(&partition_key);
 
-                let positive_motif_idxs = motif_locations.and_then(|mls| {
-                    mls.motif_idx_at_position_nonempty(
-                        chrom_tid,
-                        pos,
-                        Strand::Positive,
-                    )
-                });
-                let negative_motif_idxs = motif_locations.and_then(|mls| {
-                    mls.motif_idx_at_position_nonempty(
-                        chrom_tid,
-                        pos,
-                        Strand::Negative,
-                    )
-                });
-
+                let positive_motif_idxs =
+                    focus_positions.get_positive_strand_motif_ids(&pos);
+                let negative_motif_idxs =
+                    focus_positions.get_negative_strand_motif_ids(&pos);
                 (
                     partition_key,
                     fv.decode(
@@ -1149,13 +1043,13 @@ pub fn process_region<T: AsRef<Path>>(
     } // position loop
 
     let position_feature_counts = if combine_strands {
-        match (motif_locations, motif_positions.as_ref()) {
-            (Some(mls), Some(mps)) => combine_strand_features(
-                mps,
-                mls,
-                position_feature_counts,
-                chrom_tid,
-            ),
+        match focus_positions {
+            FocusPositions::MotifCombineStrands { positive_motifs, .. } => {
+                combine_strand_features(
+                    positive_motifs,
+                    position_feature_counts,
+                )
+            }
             _ => {
                 error!(
                     "asked to combine strand information without any motifs"
@@ -1198,12 +1092,12 @@ pub fn process_region<T: AsRef<Path>>(
 mod mod_pileup_tests {
     use std::collections::HashSet;
 
-    use crate::mod_base_code::{
-        BaseState, HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE,
-    };
     use rust_htslib::bam::{self, Read};
     use rustc_hash::FxHashMap;
 
+    use crate::mod_base_code::{
+        BaseState, HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE,
+    };
     use crate::pileup::{
         parse_tags_from_record, DnaBase, Feature, FeatureVector,
         PileupNumericOptions, StrandRule,
