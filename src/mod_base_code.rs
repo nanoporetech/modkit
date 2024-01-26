@@ -1,6 +1,11 @@
 use anyhow::{anyhow, Result as AnyhowResult};
+use clap::ValueEnum;
+use common_macros::hash_map;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+
+use lazy_static::lazy_static;
 
 pub trait ParseChar {
     fn parse_char(c: char) -> AnyhowResult<Self>
@@ -31,10 +36,12 @@ pub const ANY_THYMINE: ModCodeRepr = ModCodeRepr::Code('T');
 pub const OXO_GUANINE: ModCodeRepr = ModCodeRepr::Code('o');
 pub const ANY_GUANINE: ModCodeRepr = ModCodeRepr::Code('G');
 
+pub const ANY_MOD_CODES: [ModCodeRepr; 4] =
+    [ANY_ADENINE, ANY_CYTOSINE, ANY_GUANINE, ANY_THYMINE];
 pub const SUPPORTED_CODES: [ModCodeRepr; 14] = [
     METHYL_CYTOSINE,
     HYDROXY_METHYL_CYTOSINE,
-    FOUR_METHYL_CYTOSINE,
+    FORMYL_CYTOSINE,
     CARBOXY_CYTOSINE,
     FOUR_METHYL_CYTOSINE,
     ANY_CYTOSINE,
@@ -47,6 +54,27 @@ pub const SUPPORTED_CODES: [ModCodeRepr; 14] = [
     OXO_GUANINE,
     ANY_GUANINE,
 ];
+
+lazy_static! {
+    pub static ref MOD_CODE_TO_DNA_BASE: HashMap<ModCodeRepr, DnaBase> = {
+        hash_map! {
+            METHYL_CYTOSINE => DnaBase::C,
+            HYDROXY_METHYL_CYTOSINE => DnaBase::C,
+            FORMYL_CYTOSINE => DnaBase::C,
+            CARBOXY_CYTOSINE => DnaBase::C,
+            FOUR_METHYL_CYTOSINE => DnaBase::C,
+            ANY_CYTOSINE => DnaBase::C,
+            SIX_METHYL_ADENINE => DnaBase::A,
+            ANY_ADENINE => DnaBase::A,
+            HYDROXY_METHYL_URACIL => DnaBase::T,
+            FORMYL_URACIL => DnaBase::T,
+            CARBOXY_URACIL => DnaBase::T,
+            ANY_THYMINE => DnaBase::T,
+            OXO_GUANINE => DnaBase::G,
+            ANY_GUANINE => DnaBase::G,
+        }
+    };
+}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, Hash)]
 pub enum ModCodeRepr {
@@ -68,20 +96,10 @@ impl ModCodeRepr {
     }
 
     pub fn check_base(&self, dna_base: DnaBase) -> bool {
-        match self {
-            &METHYL_CYTOSINE
-            | &HYDROXY_METHYL_CYTOSINE
-            | &FORMYL_CYTOSINE
-            | &CARBOXY_CYTOSINE
-            | &FOUR_METHYL_CYTOSINE
-            | &ANY_CYTOSINE => dna_base == DnaBase::C,
-            &SIX_METHYL_ADENINE | &ANY_ADENINE => dna_base == DnaBase::A,
-            &HYDROXY_METHYL_URACIL
-            | &FORMYL_URACIL
-            | &CARBOXY_URACIL
-            | &ANY_THYMINE => dna_base == DnaBase::T,
-            &OXO_GUANINE | &ANY_GUANINE => dna_base == DnaBase::G,
-            _ => false,
+        if let Some(self_base) = MOD_CODE_TO_DNA_BASE.get(self) {
+            *self_base == dna_base
+        } else {
+            false
         }
     }
 }
@@ -124,11 +142,17 @@ impl From<u32> for ModCodeRepr {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, ValueEnum,
+)]
 pub enum DnaBase {
+    #[clap(name = "A")]
     A,
+    #[clap(name = "C")]
     C,
+    #[clap(name = "G")]
     G,
+    #[clap(name = "T")]
     T,
 }
 

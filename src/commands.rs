@@ -39,6 +39,7 @@ use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{calc_thresholds_per_base, Percentiles};
 use crate::util;
 use crate::util::{add_modkit_pg_records, get_targets, get_ticker, Region};
+use crate::validate::subcommand::ValidateFromModbam;
 use crate::writers::{
     MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
 };
@@ -95,6 +96,10 @@ pub enum Commands {
     /// produces a bedMethyl file, the schema can be found in the online
     /// documentation.
     PileupHemi(DuplexModBamPileup),
+    /// Validate results from a set of mod-BAM files and associated BED files
+    /// containing the ground truth modified base status at reference
+    /// positions.
+    Validate(ValidateFromModbam),
 }
 
 impl Commands {
@@ -111,6 +116,7 @@ impl Commands {
             Self::Repair(x) => x.run(),
             Self::Dmr(x) => x.run(),
             Self::PileupHemi(x) => x.run(),
+            Self::Validate(x) => x.run(),
         }
     }
 }

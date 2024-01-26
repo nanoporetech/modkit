@@ -38,10 +38,14 @@ noodles = { version = "0.50.0", features = ["tabix", "core", "bgzf", "csi"] }
 rv = "0.16.0"
 ndarray = "0.15.6"
 log-once = "0.4.0"
+lazy_static = "1.4"
+common_macros = "0.1.1"
+ansi_term="0.12.1"
 memchr = "2.6.4"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"
+tempfile = "3.2"
 
 # Used in benchmarking, but the slower code gets removed, usually.
 #criterion = "0.5.1"

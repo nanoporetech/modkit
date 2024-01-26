@@ -14,7 +14,10 @@ use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::Region;
 
-fn percentile_linear_interp(xs: &[f32], q: f32) -> AnyhowResult<f32> {
+pub(crate) fn percentile_linear_interp(
+    xs: &[f32],
+    q: f32,
+) -> AnyhowResult<f32> {
     if xs.len() < 2 {
         Err(anyhow!(
             "not enough data points (got {}) to calculate percentile",

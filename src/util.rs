@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::path::Path;
+use std::str;
 use std::string::FromUtf8Error;
 
 use anyhow::Result as AnyhowResult;
@@ -737,4 +738,21 @@ mod utils_tests {
             vec![SamTag::parse(['H', 'P']), SamTag::parse(['R', 'G'])];
         assert_eq!(parsed, expected);
     }
+}
+
+pub fn format_int_with_commas(val: isize) -> String {
+    let mut num = val
+        .abs()
+        .to_string()
+        .as_bytes()
+        .rchunks(3)
+        .rev()
+        .map(str::from_utf8)
+        .collect::<Result<Vec<&str>, _>>()
+        .unwrap()
+        .join(",");
+    if val < 0 {
+        num = format!("-{num}")
+    }
+    num
 }

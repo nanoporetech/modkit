@@ -15,6 +15,7 @@ pub mod position_filter;
 pub mod summarize;
 pub mod threshold_mod_caller;
 pub mod thresholds;
+pub mod validate;
 pub mod writers;
 
 pub(crate) mod command_utils;
