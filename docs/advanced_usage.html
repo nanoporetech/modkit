@@ -86,7 +86,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.10.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.11.</strong> Perform differential methylation scoring</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html" class="active"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.10.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.11.</strong> Perform differential methylation scoring</a></li><li class="chapter-item expanded "><a href="intro_validate.html"><strong aria-hidden="true">1.12.</strong> Validate ground truth results</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html" class="active"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -1032,6 +1032,71 @@ Options:
   -t, --threads &lt;THREADS&gt;            The number of threads to use [default: 4]
   -h, --help                         Print help information.
 </code></pre>
+<h2 id="validate"><a class="header" href="#validate">validate</a></h2>
+<pre><code class="language-text">Validate results from a set of mod-BAM files and associated BED files containing the ground truth
+modified base status at reference positions.
+
+Usage: modkit validate [OPTIONS]
+
+Options:
+      --bam-and-bed &lt;BAM&gt; &lt;BED&gt;
+          Argument accepts 2 values. The first value is the BAM file path with modified base tags.
+          The second is a bed file with ground truth reference positions. The name field in the
+          ground truth bed file should be the short name (single letter code or ChEBI ID) for a
+          modified base or the corresponding canonical base. This argument can be provided more than
+          once for multiple samples.
+
+      --ignore &lt;IGNORE&gt;
+          Ignore a modified base class  _in_situ_ by redistributing base modification probability
+          equally across other options. For example, if collapsing 'h', with 'm' and canonical
+          options, half of the probability of 'h' will be added to both 'm' and 'C'. A full
+          description of the methods can be found in collapse.md.
+
+      --edge-filter &lt;EDGE_FILTER&gt;
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. Two comma-separated values may be provided to asymmetrically filter out base
+          modification calls from the start and end of the reads. For example, 4,8 will filter out
+          base modification calls in the first 4 and last 8 bases of the read.
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification calls at the ends of
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
+          the read, using this flag will keep only base modification calls in the first 4 and last 8
+          bases.
+
+  -c, --canonical-base &lt;CANONICAL_BASE&gt;
+          Canonical base to evaluate. By default, this will be derived from mod codes in ground
+          truth BED files. For ground truth with only canonical sites and/or ChEBI codes this values
+          must be set.
+
+          [possible values: A, C, G, T]
+
+  -q, --filter-quantile &lt;FILTER_QUANTILE&gt;
+          Filter out modified base calls where the probability of the predicted variant is below
+          this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
+          modification calls.
+
+          [default: 0.1]
+
+  -t, --threads &lt;THREADS&gt;
+          Number of threads to use.
+
+          [default: 4]
+
+      --suppress-progress
+          Hide the progress bar.
+
+  -o, --out-filepath &lt;OUT_FILEPATH&gt;
+          Specify a file for machine parseable output.
+
+      --log-filepath &lt;LOG_FILEPATH&gt;
+          Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
+          recommended. (alias: log)
+
+  -h, --help
+          Print help information (use `-h` for a summary).
+</code></pre>
 <h2 id="pileup-hemi"><a class="header" href="#pileup-hemi">pileup-hemi</a></h2>
 <pre><code class="language-text">Tabulates double-stranded base modification patters (such as hemi-methylation) across genomic motif
 positions. This command produces a bedMethyl file, the schema can be found in the online
@@ -1323,7 +1388,7 @@ Options:
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="intro_dmr.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="intro_validate.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
@@ -1337,7 +1402,7 @@ Options:
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="intro_dmr.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="intro_validate.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 

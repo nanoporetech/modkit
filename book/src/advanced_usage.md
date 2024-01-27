@@ -905,6 +905,73 @@ Options:
   -h, --help                         Print help information.
 ```
 
+## validate
+```text
+Validate results from a set of mod-BAM files and associated BED files containing the ground truth
+modified base status at reference positions.
+
+Usage: modkit validate [OPTIONS]
+
+Options:
+      --bam-and-bed <BAM> <BED>
+          Argument accepts 2 values. The first value is the BAM file path with modified base tags.
+          The second is a bed file with ground truth reference positions. The name field in the
+          ground truth bed file should be the short name (single letter code or ChEBI ID) for a
+          modified base or the corresponding canonical base. This argument can be provided more than
+          once for multiple samples.
+
+      --ignore <IGNORE>
+          Ignore a modified base class  _in_situ_ by redistributing base modification probability
+          equally across other options. For example, if collapsing 'h', with 'm' and canonical
+          options, half of the probability of 'h' will be added to both 'm' and 'C'. A full
+          description of the methods can be found in collapse.md.
+
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the start or the end of the
+          read. Two comma-separated values may be provided to asymmetrically filter out base
+          modification calls from the start and end of the reads. For example, 4,8 will filter out
+          base modification calls in the first 4 and last 8 bases of the read.
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification calls at the ends of
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
+          would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
+          the read, using this flag will keep only base modification calls in the first 4 and last 8
+          bases.
+
+  -c, --canonical-base <CANONICAL_BASE>
+          Canonical base to evaluate. By default, this will be derived from mod codes in ground
+          truth BED files. For ground truth with only canonical sites and/or ChEBI codes this values
+          must be set.
+
+          [possible values: A, C, G, T]
+
+  -q, --filter-quantile <FILTER_QUANTILE>
+          Filter out modified base calls where the probability of the predicted variant is below
+          this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
+          modification calls.
+
+          [default: 0.1]
+
+  -t, --threads <THREADS>
+          Number of threads to use.
+
+          [default: 4]
+
+      --suppress-progress
+          Hide the progress bar.
+
+  -o, --out-filepath <OUT_FILEPATH>
+          Specify a file for machine parseable output.
+
+      --log-filepath <LOG_FILEPATH>
+          Specify a file for debug logs to be written to, otherwise ignore them. Setting a file is
+          recommended. (alias: log)
+
+  -h, --help
+          Print help information (use `-h` for a summary).
+```
+
 ## pileup-hemi
 ```text
 Tabulates double-stranded base modification patters (such as hemi-methylation) across genomic motif
