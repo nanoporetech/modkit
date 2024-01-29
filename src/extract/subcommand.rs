@@ -38,6 +38,7 @@ use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
     get_master_progress_bar, get_reference_mod_strand, get_spinner,
     get_subroutine_progress_bar, get_targets, get_ticker, Region, Strand,
+    KMER_SIZE,
 };
 use crate::writers::TsvWriter;
 
@@ -478,7 +479,7 @@ impl ExtractMods {
     pub(crate) fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
 
-        if self.kmer_size > 12 {
+        if self.kmer_size > KMER_SIZE {
             bail!("kmer size must be less than or equal to 12")
         }
 

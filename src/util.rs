@@ -600,9 +600,11 @@ pub(crate) fn reader_is_bam(reader: &bam::IndexedReader) -> bool {
     }
 }
 
+pub(crate) const KMER_SIZE: usize = 50;
+
 #[derive(Copy, Clone)]
 pub(crate) struct Kmer {
-    inner: [u8; 12],
+    inner: [u8; KMER_SIZE],
     pub(crate) size: usize,
 }
 
@@ -613,7 +615,7 @@ impl Kmer {
 
     // kinda risky, size needs to be < 12
     pub(crate) fn new(seq: &[u8], position: usize, size: usize) -> Self {
-        if size > 12 {
+        if size > KMER_SIZE {
             debug!("kmers greater that size 12 will be corrupted");
         }
         let get_back_base_safe = |i| -> Option<u8> {
@@ -622,11 +624,11 @@ impl Kmer {
         let before = if size % 2 == 0 { size / 2 - 1 } else { size / 2 };
 
         let after = size / 2;
-        let mut buffer = [Some(45u8); 12];
+        let mut buffer = [Some(45u8); KMER_SIZE];
         let mut i = 0;
         let mut assign = |b: Option<u8>| {
             buffer[i] = b;
-            i = std::cmp::min(i + 1, 11);
+            i = std::cmp::min(i + 1, KMER_SIZE - 1);
         };
 
         for offset in (1..=before).rev() {
@@ -642,7 +644,7 @@ impl Kmer {
     }
 
     pub(crate) fn reverse_complement(self) -> Self {
-        let mut inner = [45u8; 12];
+        let mut inner = [45u8; KMER_SIZE];
         for (i, p) in (0..self.size).rev().enumerate() {
             let mut b = self.inner[p];
             if b != 45 {
