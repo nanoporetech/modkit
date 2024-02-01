@@ -64,8 +64,8 @@ stages:
 
 # build images
 .rust_image: &rust_image
-  # 1.69.0
-  image: rust@sha256:c2dcc19371a976065950915307b03a9c5514e5143bdd833635d5501a0642992e
+  # 1.75.0
+  image: rust@sha256:b7b25312e49dfbe6cab04c89d5a8ed5df2df971406a3b5c5ac43e247b5821b5f
 
 .ubuntu_1604_image: &ub16_image
   image: ubuntu@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6
