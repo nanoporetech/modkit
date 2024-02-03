@@ -96,6 +96,7 @@ impl MultipleThresholdModCaller {
         canonical_base: &DnaBase,
         seq_pos_mod_probs: SeqPosBaseModProbs,
     ) -> anyhow::Result<SeqPosBaseModProbs> {
+        let skip_mode = seq_pos_mod_probs.get_skip_mode();
         let pos_to_base_mod_probs = seq_pos_mod_probs
             .pos_to_base_mod_probs
             .into_iter()
@@ -104,14 +105,8 @@ impl MultipleThresholdModCaller {
                     .map(|probs| (q_pos, probs))
             })
             .collect::<FxHashMap<usize, BaseModProbs>>();
-        // .into_iter()
-        // .filter_map(|(q_pos, probs)| probs.map(|p| (q_pos, p)))
-        // .collect::<FxHashMap<usize, BaseModProbs>>();
 
-        Ok(SeqPosBaseModProbs {
-            pos_to_base_mod_probs,
-            skip_mode: seq_pos_mod_probs.skip_mode,
-        })
+        Ok(SeqPosBaseModProbs::new(skip_mode, pos_to_base_mod_probs))
     }
 
     pub fn iter_thresholds(&self) -> impl Iterator<Item = (&DnaBase, &f32)> {

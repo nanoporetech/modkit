@@ -867,17 +867,18 @@ impl MotifBed {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 #[allow(non_camel_case_types)]
 enum ModMode {
-    ambiguous,
+    #[clap(alias = "ambiguous")]
+    explicit,
     implicit,
 }
 
 impl ModMode {
     fn to_skip_mode(self) -> SkipMode {
         match self {
-            Self::ambiguous => SkipMode::Ambiguous,
+            Self::explicit => SkipMode::Explicit,
             Self::implicit => SkipMode::ProbModified,
         }
     }
@@ -891,9 +892,9 @@ pub struct Update {
     /// File to new BAM file to be created or one of `-` or `stdin` to specify
     /// a stream from standard output.
     out_bam: String,
-    /// Mode, change mode to this value, options {'ambiguous', 'implicit'}.
+    /// Mode, change mode to this value, options {'explicit', 'implicit'}.
     /// See spec at: https://samtools.github.io/hts-specs/SAMtags.pdf.
-    /// 'ambiguous' ('?') means residues without explicit modification
+    /// 'explicit' ('?') means residues without modification
     /// probabilities will not be assumed canonical or modified. 'implicit'
     /// means residues without explicit modification probabilities are
     /// assumed to be canonical.
@@ -902,6 +903,15 @@ pub struct Update {
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
+    /// Don't add implicit canonical calls. This flag is important when
+    /// converting from one of the implicit modes ( `.` or `""`) to
+    /// explicit mode (`?`). By passing this flag, the bases without
+    /// associated base modification probabilities will not be assumed to
+    /// be canonical. No base modification probability will be written for
+    /// these bases, meaning there is no information. The mode will
+    /// automatically be set to the explicit mode `?`.
+    #[arg(long, default_value_t = false)]
+    no_implicit_probs: bool,
     /// Output debug logs to file at this path.
     #[arg(long)]
     log_filepath: Option<PathBuf>,
@@ -912,7 +922,8 @@ pub struct Update {
 
 fn update_mod_tags(
     mut record: bam::Record,
-    new_mode: Option<SkipMode>,
+    no_implicit_calls: bool,
+    new_mode: SkipMode,
 ) -> CliResult<bam::Record> {
     let mod_base_info = ModBaseInfo::new_from_record(&record)?;
     let mm_style = mod_base_info.mm_style;
@@ -924,8 +935,10 @@ fn update_mod_tags(
     let (converters, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
     for (base, strand, mut seq_pos_mod_probs) in mod_prob_iter {
         let converter = converters.get(&base).unwrap();
-        if let Some(mode) = new_mode {
-            seq_pos_mod_probs.skip_mode = mode;
+        if no_implicit_calls && new_mode == SkipMode::Explicit {
+            seq_pos_mod_probs = seq_pos_mod_probs.remove_implicit_probs();
+        } else {
+            seq_pos_mod_probs.set_skip_mode(new_mode);
         }
         let (mm, mut ml) =
             format_mm_ml_tag(seq_pos_mod_probs, strand, converter);
@@ -947,7 +960,7 @@ fn update_mod_tags(
 }
 
 impl Update {
-    fn run(&self) -> AnyhowResult<()> {
+    fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         let threads = self.threads;
         let mut reader = get_serial_reader(&self.in_bam)?;
@@ -964,14 +977,28 @@ impl Update {
         let mut total_failed = 0usize;
         let mut total_skipped = 0usize;
 
+        let to_mode = if let Some(input_mode) = self.mode {
+            let skip_mode = input_mode.to_skip_mode();
+            if self.no_implicit_probs && skip_mode != SkipMode::Explicit {
+                bail!("cannot change to {input_mode:?} and skip implicit probs")
+            }
+            skip_mode
+        } else {
+            if self.no_implicit_probs {
+                info!("implicit canonical probs will not be present in output");
+                info!("setting mode to explicit, `?`");
+                SkipMode::Explicit
+            } else {
+                info!("mode will be set to prob-modified, '.'");
+                SkipMode::ProbModified
+            }
+        };
+
         for (i, result) in reader.records().enumerate() {
             if let Ok(record) = result {
                 let record_name = util::get_query_name_string(&record)
                     .unwrap_or("???".to_owned());
-                match update_mod_tags(
-                    record,
-                    self.mode.map(|m| m.to_skip_mode()),
-                ) {
+                match update_mod_tags(record, self.no_implicit_probs, to_mode) {
                     Err(RunError::BadInput(InputError(err)))
                     | Err(RunError::Failed(err)) => {
                         debug!("read {} failed, {}", record_name, err);

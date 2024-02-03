@@ -24,10 +24,8 @@ pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that
     /// read organized by the canonical base (the 'char') todo: should use
     /// DnaBase here
-    pos_reads:
-        FxHashMap<String, FxHashMap<char, (RefPosBaseModCalls, SkipMode)>>,
-    neg_reads:
-        FxHashMap<String, FxHashMap<char, (RefPosBaseModCalls, SkipMode)>>,
+    pos_reads: FxHashMap<String, FxHashMap<char, RefPosBaseModCalls>>,
+    neg_reads: FxHashMap<String, FxHashMap<char, RefPosBaseModCalls>>,
     /// these reads don't have mod tags or should be skipped for some other
     /// reason
     skip_set: HashSet<String>,
@@ -102,10 +100,7 @@ impl<'a> ReadCache<'a> {
         read_table
             .entry(record_name.to_owned())
             .or_insert(FxHashMap::default())
-            .insert(
-                canonical_base.char(),
-                (ref_pos_base_mod_calls, seq_pos_base_mod_probs.skip_mode),
-            );
+            .insert(canonical_base.char(), ref_pos_base_mod_calls);
         Ok(())
     }
 
@@ -126,14 +121,15 @@ impl<'a> ReadCache<'a> {
         for (_base, _strand, seq_pos_probs) in
             mod_base_info.iter_seq_base_mod_probs()
         {
-            if seq_pos_probs.skip_mode == SkipMode::ImplicitProbModified
+            if seq_pos_probs.get_skip_mode() == SkipMode::ImplicitProbModified
                 && !self.force_allow
             {
                 let msg = format!(
                     "record {} has un-allowed mode ({:?}), use \
                      '--force-allow-implicit' or 'modkit update-tags --mode \
                      ambiguous'",
-                    &record_name, seq_pos_probs.skip_mode
+                    &record_name,
+                    seq_pos_probs.get_skip_mode()
                 );
                 return Err(RunError::Skipped(msg));
             }
@@ -239,25 +235,13 @@ impl<'a> ReadCache<'a> {
 
     #[inline]
     fn get_mod_call_from_mapping(
-        strand_calls: &FxHashMap<char, (RefPosBaseModCalls, SkipMode)>,
+        strand_calls: &FxHashMap<char, RefPosBaseModCalls>,
         canonical_base: char,
         position: u32,
     ) -> Option<BaseModCall> {
-        strand_calls.get(&canonical_base).and_then(
-            |(ref_pos_mod_calls, skip_mode)| {
-                let mod_base_call =
-                    ref_pos_mod_calls.get(&(position as u64)).map(|bmc| *bmc);
-                match skip_mode {
-                    SkipMode::Ambiguous => mod_base_call,
-                    SkipMode::ImplicitProbModified | SkipMode::ProbModified => {
-                        Some(
-                            mod_base_call
-                                .unwrap_or(BaseModCall::Canonical(1.0f32)),
-                        )
-                    }
-                }
-            },
-        )
+        strand_calls.get(&canonical_base).and_then(|ref_pos_mod_calls| {
+            ref_pos_mod_calls.get(&(position as u64)).map(|bmc| *bmc)
+        })
     }
 
     /// Get the mod call for a reference position from a read. If this read is
@@ -518,9 +502,7 @@ mod read_cache_tests {
 
     use rust_htslib::bam::{self, FetchDefinition, Read, Reader as BamReader};
 
-    use crate::mod_bam::{
-        base_mod_probs_from_record, DeltaListConverter, SkipMode,
-    };
+    use crate::mod_bam::{base_mod_probs_from_record, DeltaListConverter};
     use crate::read_cache::ReadCache;
     use crate::test_utils::dna_complement;
     use crate::threshold_mod_caller::MultipleThresholdModCaller;
@@ -549,32 +531,11 @@ mod read_cache_tests {
         let base_mod_probs =
             base_mod_probs_from_record(&record, &converter).unwrap();
 
-        let (read_base_mod_probs, skip_mode) = cache
+        let read_base_mod_probs = cache
             .pos_reads
             .get(&query_name)
             .and_then(|base_to_calls| base_to_calls.get(&'C'))
             .unwrap();
-
-        assert_eq!(skip_mode, &SkipMode::Ambiguous);
-
-        // let read_base_mod_probs = match record.is_reverse() {
-        //     true => cache
-        //         .neg_reads
-        //         .get(&query_name)
-        //         .and_then(|base_to_calls| base_to_calls.get(&'C'))
-        //         .unwrap(),
-        //     false => cache
-        //         .pos_reads
-        //         .get(&query_name)
-        //         .and_then(|base_to_calls| base_to_calls.get(&'C'))
-        //         .unwrap(),
-        // };
-
-        // let read_base_mod_probs = cache
-        //     .pos_reads
-        //     .get(&query_name)
-        //     .and_then(|base_to_calls| base_to_calls.get(&'C'))
-        //     .unwrap();
 
         assert_eq!(
             base_mod_probs.pos_to_base_mod_probs.len(),

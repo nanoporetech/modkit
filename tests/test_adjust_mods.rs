@@ -285,11 +285,21 @@ fn test_adjust_to_no_mods() {
 
 #[test]
 fn test_adjust_out_of_spec_codes() {
+    let updated_bam =
+        std::env::temp_dir().join("test_adjust_out_of_spec_codes_update.bam");
+    run_modkit(&[
+        "update-tags",
+        "tests/resources/bc_anchored_10_reads_old_tags.bam",
+        updated_bam.to_str().unwrap(),
+        "--no-implicit-probs",
+    ])
+    .expect("should run update");
+
     let adjusted_bam =
-        std::env::temp_dir().join("test_adjust_out_of_spec_codes.bam");
+        std::env::temp_dir().join("test_adjust_out_of_spec_codes_adjusted.bam");
     run_modkit(&[
         "adjust-mods",
-        "tests/resources/bc_anchored_10_reads_old_tags.bam",
+        updated_bam.to_str().unwrap(),
         adjusted_bam.to_str().unwrap(),
         "--convert",
         "Z",

@@ -15,7 +15,7 @@ use rustc_hash::FxHashMap;
 use crate::errs::RunError;
 use crate::mod_bam::{
     filter_records_iter, BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
-    ModBaseInfo, SkipMode, TrackingModRecordIter,
+    ModBaseInfo, SeqPosBaseModProbs, SkipMode, TrackingModRecordIter,
 };
 use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
@@ -23,9 +23,8 @@ use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
-    self, get_aligned_pairs_forward, get_forward_sequence,
-    get_master_progress_bar, get_query_name_string, get_reference_mod_strand,
-    get_spinner, Kmer, Strand,
+    self, get_aligned_pairs_forward, get_master_progress_bar,
+    get_query_name_string, get_reference_mod_strand, get_spinner, Kmer, Strand,
 };
 
 /// Read IDs mapped to their base modification probabilities, organized
@@ -204,10 +203,6 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                 }
             });
         let mut read_ids_to_mod_base_probs = Self::zero();
-        let codes_to_remove = collapse_method
-            .map(|method| method.get_codes_to_remove())
-            .unwrap_or(HashSet::new());
-
         for (record, mod_base_info) in mod_base_info_iter {
             match record_sampler.ask() {
                 Indicator::Use(token) => {
@@ -259,34 +254,6 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                                 dna_base.complement()
                             }
                         };
-                        let seq_pos_base_mod_probs = if &seq_pos_base_mod_probs
-                            .skip_mode
-                            == &SkipMode::ProbModified
-                        {
-                            get_forward_sequence(&record).map(|forward_seq| {
-                                seq_pos_base_mod_probs.add_implicit_mod_calls(
-                                    &forward_seq,
-                                    raw_canonical_base,
-                                    &codes_to_remove,
-                                    edge_filter,
-                                )
-                            })
-                        } else {
-                            Ok(seq_pos_base_mod_probs)
-                        };
-                        let seq_pos_base_mod_probs =
-                            match seq_pos_base_mod_probs {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    debug!(
-                                        "record {record_name} failed to add \
-                                         implicit calls, failed to get \
-                                         forward sequence, {}",
-                                        e.to_string()
-                                    );
-                                    continue;
-                                }
-                            };
 
                         let seq_pos_base_mod_probs = seq_pos_base_mod_probs
                             .filter_positions(
@@ -640,15 +607,11 @@ impl ReadBaseModProfile {
             record.qual().to_vec()
         };
         let seq_len = record.seq_len();
-        let read_sequence = get_forward_sequence(&record)?;
         let forward_sequence = if record.is_reverse() {
             revcomp(record.seq().as_bytes())
         } else {
             record.seq().as_bytes()
         };
-        let codes_to_remove = collapse_method
-            .map(|m| m.get_codes_to_remove())
-            .unwrap_or(HashSet::new());
         let (_, iter) = mod_base_info.into_iter_base_mod_probs();
         let base_mod_probs_iter = iter
             .into_iter()
@@ -673,13 +636,7 @@ impl ReadBaseModProfile {
                         .ok()
                 })
             })
-            .map(|(base, strand, probs)| {
-                let mut probs = probs.add_implicit_mod_calls(
-                    &read_sequence,
-                    base.char(),
-                    &codes_to_remove,
-                    edge_filter,
-                );
+            .map(|(base, strand, mut probs)| {
                 if let Some(collapse_method) = collapse_method {
                     probs = probs.into_collapsed(collapse_method);
                 }
@@ -945,5 +902,202 @@ impl WithRecords for ReadsBaseModProfile {
 
     fn num_reads(&self) -> usize {
         self.profiles.len()
+    }
+}
+
+impl SeqPosBaseModProbs {
+    fn filter_positions(
+        self,
+        edge_filter: Option<&EdgeFilter>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
+        only_mapped: bool,
+        aligned_pairs: &FxHashMap<usize, u64>,
+        mod_strand: Strand,
+        record: &bam::Record,
+    ) -> Option<Self> {
+        let read_length = record.seq_len();
+        let read_can_be_trimmed = edge_filter
+            .map(|ef| ef.read_can_be_trimmed(read_length))
+            .unwrap_or(true);
+        if !read_can_be_trimmed {
+            return None;
+        }
+
+        let starting_positions = self.pos_to_base_mod_probs.len();
+        let starting_skip_mode = self.get_skip_mode();
+        let probs = self
+            .pos_to_base_mod_probs
+            .into_iter()
+            .filter(|(q_pos, _)| {
+                // use edge filter, if provided
+                let edge_keep = edge_filter
+                    .map(|ef| match ef.keep_position(*q_pos, read_length) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            let read_name = get_query_name_string(record)
+                                .unwrap_or_else(|e| {
+                                    format!(
+                                        "UTF-8 DECODE ERROR, {}",
+                                        e.to_string()
+                                    )
+                                });
+                            debug!(
+                                "{read_name}, error when trying to filter \
+                                 edge positions, {}",
+                                e.to_string()
+                            );
+                            false
+                        }
+                    })
+                    .unwrap_or(true);
+
+                // only mapped, if asked for
+                let only_mapped_keep = if only_mapped {
+                    aligned_pairs.contains_key(q_pos)
+                } else {
+                    true
+                };
+
+                // "bedtools intersect" keep only positions in interval
+                let position_keep = match position_filter {
+                    Some(position_filter) => aligned_pairs
+                        .get(q_pos)
+                        .map(|ref_pos| {
+                            let reference_strand =
+                                match (mod_strand, record.is_reverse()) {
+                                    (Strand::Positive, false) => {
+                                        Strand::Positive
+                                    }
+                                    (Strand::Positive, true) => {
+                                        Strand::Negative
+                                    }
+                                    (Strand::Negative, false) => {
+                                        Strand::Negative
+                                    }
+                                    (Strand::Negative, true) => {
+                                        Strand::Positive
+                                    }
+                                };
+
+                            position_filter.contains(
+                                record.tid(),
+                                *ref_pos,
+                                reference_strand,
+                            )
+                        })
+                        .unwrap_or(false),
+                    None => true,
+                };
+
+                edge_keep && only_mapped_keep && position_keep
+            })
+            .collect::<FxHashMap<usize, BaseModProbs>>();
+        if probs.is_empty() {
+            None
+        } else {
+            let skip_mode = if probs.len() == starting_positions {
+                starting_skip_mode
+            } else {
+                // change to Explicit if we filtered any positions. This
+                // is a little unnecessary since this method is private to
+                // this module and it does not write MM/ML tags, but just
+                // in case that isn't always true.
+                // N.B. If you filter out calls, you _must_ change to Explicit
+                // mode otherwise the trimmed calls could be considered
+                // canonical.
+                SkipMode::Explicit
+            };
+            Some(Self::new(skip_mode, probs))
+        }
+    }
+}
+
+#[cfg(test)]
+mod read_ids_to_base_mod_probs_tests {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    use std::path::Path;
+
+    use crate::mod_bam::filter_records_iter;
+    use crate::position_filter::StrandedPositionFilter;
+    use rust_htslib::bam::{self, Read};
+    use rustc_hash::{FxHashMap, FxHashSet};
+    use std::collections::HashMap;
+
+    use crate::util::get_aligned_pairs_forward;
+    #[test]
+    fn test_seq_pos_base_mod_probs_filter_positions() {
+        let mut reader = bam::Reader::from_path(
+            "tests/resources/bc_anchored_10_reads.sorted.bam",
+        )
+        .unwrap();
+        let header = reader.header().to_owned();
+        let records = reader.records();
+        let chrom_to_tid = (0..header.target_count())
+            .map(|tid| {
+                (String::from_utf8(header.tid2name(tid).to_vec()).unwrap(), tid)
+            })
+            .collect::<HashMap<String, u32>>();
+
+        let position_bed_fp = "tests/resources/CGI_ladder_3.6kb_ref_CG.bed";
+        let position_filter = StrandedPositionFilter::from_bed_file(
+            &Path::new(position_bed_fp).to_path_buf(),
+            &chrom_to_tid.iter().map(|(k, v)| (k.as_str(), *v)).collect(),
+            true,
+        )
+        .unwrap();
+
+        let mut pos_positions = FxHashSet::default();
+        let mut neg_positions = FxHashSet::default();
+        for line in BufReader::new(File::open(position_bed_fp).unwrap())
+            .lines()
+            .map(|r| r.unwrap())
+        {
+            let parts = line.split_whitespace().collect::<Vec<&str>>();
+            assert_eq!(parts.len(), 6);
+            if parts[0] != "oligo_1512_adapters" {
+                continue;
+            }
+            // assert_eq!(parts[0], );
+            let pos = parts[1].parse::<u64>().unwrap();
+            match parts[5] {
+                "+" => assert!(pos_positions.insert(pos)),
+                "-" => assert!(neg_positions.insert(pos)),
+                _ => panic!("illegal strand in BED"),
+            }
+        }
+
+        let mod_base_info_iter = filter_records_iter(records);
+        for (record, mod_base_info) in mod_base_info_iter {
+            let aligned_pairs = get_aligned_pairs_forward(&record)
+                .filter_map(|pair| pair.ok())
+                .collect::<FxHashMap<usize, u64>>();
+
+            let (_converters, base_mod_probs_iter) =
+                mod_base_info.into_iter_base_mod_probs();
+            for (_primary_base, mod_strand, seq_pos_mod_base_probs) in
+                base_mod_probs_iter
+            {
+                let seq_pos_mod_base_probs = seq_pos_mod_base_probs
+                    .filter_positions(
+                        None,
+                        Some(&position_filter),
+                        true,
+                        &aligned_pairs,
+                        mod_strand,
+                        &record,
+                    )
+                    .unwrap();
+                let positions_to_check = if record.is_reverse() {
+                    &neg_positions
+                } else {
+                    &pos_positions
+                };
+                for (q_pos, _) in seq_pos_mod_base_probs.pos_to_base_mod_probs {
+                    let r_pos = aligned_pairs.get(&q_pos).unwrap();
+                    assert!(positions_to_check.contains(r_pos));
+                }
+            }
+        }
     }
 }
