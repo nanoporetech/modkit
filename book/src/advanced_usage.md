@@ -44,6 +44,8 @@ Commands:
   pileup-hemi   Tabulates double-stranded base modification patters (such as hemi-methylation)
                     across genomic motif positions. This command produces a bedMethyl file, the
                     schema can be found in the online documentation.
+  validate      Validate results from a set of mod-BAM files and associated BED files containing
+                    the ground truth modified base status at reference positions.
   help          Print this message or the help of the given subcommand(s).
 
 Options:
@@ -330,15 +332,21 @@ Arguments:
              standard output.
 
 Options:
-  -m, --mode <MODE>                  Mode, change mode to this value, options {'ambiguous',
+  -m, --mode <MODE>                  Mode, change mode to this value, options {'explicit',
                                      'implicit'}. See spec at:
-                                     https://samtools.github.io/hts-specs/SAMtags.pdf. 'ambiguous'
-                                     ('?') means residues without explicit modification
-                                     probabilities will not be assumed canonical or modified.
-                                     'implicit' means residues without explicit modification
-                                     probabilities are assumed to be canonical. [possible values:
-                                     ambiguous, implicit]
-  -t, --threads <THREADS>            Number of threads to use. [default: 4]
+                                     https://samtools.github.io/hts-specs/SAMtags.pdf. 'explicit'
+                                     ('?') means residues without modification probabilities will
+                                     not be assumed canonical or modified. 'implicit' means residues
+                                     without explicit modification probabilities are assumed to be
+                                     canonical. [possible values: explicit, implicit]
+  -t, --threads <THREADS>            Number of threads to use [default: 4]
+      --no-implicit-probs            Don't add implicit canonical calls. This flag is important when
+                                     converting from one of the implicit modes ( `.` or `""`) to
+                                     explicit mode (`?`). By passing this flag, the bases without
+                                     associated base modification probabilities will not be assumed
+                                     to be canonical. No base modification probability will be
+                                     written for these bases, meaning there is no information. The
+                                     mode will automatically be set to the explicit mode `?`.
       --log-filepath <LOG_FILEPATH>  Output debug logs to file at this path.
       --output-sam                   Output SAM format instead of BAM.
   -h, --help                         Print help information.
