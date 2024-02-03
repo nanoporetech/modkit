@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use anyhow::anyhow;
 use log::{debug, info};
 use rust_htslib::bam::record::{Aux, AuxArray};
@@ -9,9 +7,9 @@ use crate::errs::{InputError, RunError};
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, EdgeFilter, ModBaseInfo,
 };
-use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::mod_base_code::DnaBase;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{get_forward_sequence, get_query_name_string, get_spinner};
+use crate::util::{get_query_name_string, get_spinner};
 
 pub fn adjust_mod_probs(
     mut record: bam::Record,
@@ -31,23 +29,13 @@ pub fn adjust_mod_probs(
     let (converters, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
     for (base, strand, seq_pos_mod_probs) in mod_prob_iter {
         let converter = converters.get(&base).unwrap();
+        // edge filter
         let filtered_seq_pos_mod_probs = if let Some(edge_filter) = edge_filter
         {
-            let forward_sequence = get_forward_sequence(&record)?;
+            // remove the positions at the ends, also update to Ambiguous mode
             match seq_pos_mod_probs
                 .edge_filter_positions(edge_filter, record.seq_len())
-                .map(|mod_probs| {
-                    let codes_to_remove = methods
-                        .iter()
-                        .flat_map(|method| method.get_codes_to_remove())
-                        .collect::<HashSet<ModCodeRepr>>();
-                    mod_probs.add_implicit_mod_calls(
-                        &forward_sequence,
-                        base,
-                        &codes_to_remove,
-                        Some(edge_filter),
-                    )
-                }) {
+            {
                 Some(x) => Some(x),
                 None => {
                     debug!(
@@ -61,9 +49,11 @@ pub fn adjust_mod_probs(
             Some(seq_pos_mod_probs)
         };
         if let Some(mut seq_pos_mod_probs) = filtered_seq_pos_mod_probs {
+            // collapse/convert
             for method in methods {
                 seq_pos_mod_probs = seq_pos_mod_probs.into_collapsed(method);
             }
+            // call mods
             match (caller, DnaBase::parse(base)) {
                 (Some(caller), Ok(dna_base)) => {
                     seq_pos_mod_probs = caller

@@ -345,7 +345,7 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
         {
             let converter =
                 DeltaListConverter::new(&acceptor_seq, primary_base);
-            let skip_mode = seq_pos_base_mod_probs.skip_mode;
+            let skip_mode = seq_pos_base_mod_probs.get_skip_mode();
             let adjusted = seq_pos_base_mod_probs
                 .pos_to_base_mod_probs
                 .into_iter()
@@ -358,7 +358,7 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
                 })
                 .collect::<FxHashMap<usize, BaseModProbs>>();
             let repaired_seq_pos_base_mod_probs =
-                SeqPosBaseModProbs::new(adjusted, skip_mode);
+                SeqPosBaseModProbs::new(skip_mode, adjusted);
             let (mm, mut ml) = format_mm_ml_tag(
                 repaired_seq_pos_base_mod_probs,
                 strand,

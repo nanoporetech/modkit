@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.5-rc2]
+### Fixes
+- [all] Reads with entirely implicit canonical calls are no longer skipped for "modbase info empty" or similar.
+### Adds
+- adds the `--no-implicit-calls` flag to `modkit update-tags` so when changing from the "probability of modification" modes (".", and "") to explicit mode (`?`) implicit cannonical calls can be skipped. This is important, for example, if the modification calling model did not have the `?` mode available.
+
+
 ## [v0.2.5-rc1]
 ### Adds
 - `modkit validate` sub-command for rigorous testing of modified base calling models when ground truth labels are known.

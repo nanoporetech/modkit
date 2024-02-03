@@ -166,6 +166,7 @@ fn test_pileup_old_tags() {
         "tests/resources/HG002_small.ch20._other.sorted.bam",
         "--mode",
         "ambiguous",
+        "--no-implicit-probs",
         updated_file.to_str().unwrap(),
     ])
     .unwrap();
