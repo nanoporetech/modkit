@@ -939,8 +939,7 @@ pub fn format_mm_ml_tag(
         HashMap::<(ModCodeRepr, Strand), Vec<(usize, f32)>>::new();
 
     for (position, mod_base_probs) in positions_to_probs.pos_to_base_mod_probs {
-        // don't write down inferred base mod probs. Shouldn't need to check
-        // that the skip mode is correct here..
+        // don't write down inferred base mod probs.
         if mod_base_probs.inferred
             && (skip_mode == SkipMode::ProbModified
                 || skip_mode == SkipMode::ImplicitProbModified)
