@@ -2,7 +2,7 @@ use crate::errs::RunError;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, BaseModProbs, DeltaListConverter, ModBaseInfo,
-    SeqPosBaseModProbs, ML_TAGS, MM_TAGS,
+    SeqPosBaseModProbs, ML_TAGS, MM_TAGS, MN_TAG,
 };
 use crate::util::{
     get_forward_sequence, get_query_name_string, get_ticker,
@@ -330,8 +330,9 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
     } else if starts.is_empty() {
         bail!("acceptor sequence is not a substring of the donor sequence")
     } else {
+        let acceptor_seq_len = acceptor_seq.len();
         let start = *starts.get(0).unwrap();
-        let end = start + acceptor_seq.len();
+        let end = start + acceptor_seq_len;
 
         let mm_style = modbase_info.mm_style;
         let ml_style = modbase_info.ml_style;
@@ -368,6 +369,7 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
             ml_agg.extend_from_slice(&mut ml);
         }
 
+        let mn = Aux::U32(acceptor_seq_len as u32);
         let mm = Aux::String(&mm_agg);
         let ml_arr: AuxArray<u8> = {
             let sl = &ml_agg;
@@ -379,6 +381,8 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
         for tag in MM_TAGS.iter().chain(ML_TAGS.iter()) {
             let _ = repaired_record.remove_aux(tag.as_bytes());
         }
+        let _ = repaired_record.remove_aux(MN_TAG.as_bytes());
+
         repaired_record.push_aux(mm_style.as_bytes(), mm).map_err(|e| {
             RunError::new_failed(format!(
                 "failed to add MM tag, {}",
@@ -391,6 +395,13 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
                 e.to_string()
             ))
         })?;
+        repaired_record.push_aux(MN_TAG.as_bytes(), mn).map_err(|e| {
+            RunError::new_failed(format!(
+                "failed to add MM tag, {}",
+                e.to_string()
+            ))
+        })?;
+
         Ok(repaired_record)
     }
 }
