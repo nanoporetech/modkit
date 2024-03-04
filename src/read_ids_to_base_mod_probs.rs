@@ -187,6 +187,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
         _allow_non_primary: bool,
+        _cut: Option<u32>,
         _kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
         let spinner = if with_progress {
@@ -834,6 +835,7 @@ impl RecordProcessor for ReadsBaseModProfile {
         _position_filter: Option<&StrandedPositionFilter<()>>,
         _only_mapped: bool,
         allow_non_primary: bool,
+        cut: Option<u32>,
         kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
         let mut mod_iter =
@@ -845,6 +847,12 @@ impl RecordProcessor for ReadsBaseModProfile {
         let mut n_fails = 0usize;
         let mut n_skips = 0usize;
         for (record, record_name, modbase_info) in &mut mod_iter {
+            if let Some(cut) = cut {
+                if record.reference_start() < cut as i64 {
+                    continue;
+                }
+            }
+
             match record_sampler.ask() {
                 Indicator::Use(token) => {
                     match ReadBaseModProfile::process_record(

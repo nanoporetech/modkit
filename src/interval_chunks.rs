@@ -623,6 +623,112 @@ impl Iterator for ReferenceIntervalsFeeder {
     }
 }
 
+#[derive(Copy, Clone)]
+struct ChromEnd {
+    chrom_id: u32,
+    end_pos: u32,
+}
+
+#[derive(new)]
+pub(crate) struct LinkedChromCoordinates {
+    chrom_coordinates: ChromCoordinates,
+    prev_chrom_end: Option<ChromEnd>,
+}
+
+impl LinkedChromCoordinates {
+    pub(crate) fn chrom_tid(&self) -> u32 {
+        self.chrom_coordinates.chrom_tid
+    }
+
+    pub(crate) fn start_pos(&self) -> u32 {
+        self.chrom_coordinates.start_pos
+    }
+
+    pub(crate) fn end_pos(&self) -> u32 {
+        self.chrom_coordinates.end_pos
+    }
+
+    pub(crate) fn prev_end(&self) -> Option<u32> {
+        self.prev_chrom_end.map(|x| x.end_pos)
+    }
+}
+
+pub(crate) struct MultiLinkedChromCoordinates(pub Vec<LinkedChromCoordinates>);
+
+impl MultiLinkedChromCoordinates {
+    pub(crate) fn total_length(&self) -> u64 {
+        self.0.iter().map(|c| c.chrom_coordinates.len() as u64).sum::<u64>()
+    }
+}
+
+pub(crate) struct LastEnd<
+    I: Iterator<Item = Vec<MultiChromCoordinates>> + Sized,
+> {
+    iter: I,
+    chrom_end: Option<ChromEnd>,
+}
+
+pub(crate) trait WithPrevEnd<I: Iterator<Item = Vec<MultiChromCoordinates>>> {
+    fn with_prev_end(self) -> LastEnd<Self>
+    where
+        Self: Iterator<Item = Vec<MultiChromCoordinates>> + Sized,
+    {
+        LastEnd { iter: self, chrom_end: None }
+    }
+}
+
+impl<I: Iterator<Item = Vec<MultiChromCoordinates>>> WithPrevEnd<I> for I {}
+
+impl<I> Iterator for LastEnd<I>
+where
+    I: Iterator<Item = Vec<MultiChromCoordinates>>,
+{
+    type Item = Vec<MultiLinkedChromCoordinates>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(chrom_coords) = self.iter.next() {
+            let (super_batch, last_batch_end) = chrom_coords.into_iter().fold(
+                (Vec::new(), self.chrom_end),
+                |(mut super_batch_acc, prev_batch_end), chrom_coords| {
+                    let (linked_chrom_coords, batch_end) =
+                        chrom_coords.0.into_iter().fold(
+                            (Vec::new(), prev_batch_end),
+                            |(mut acc, prev_end), next| {
+                                // decide whether to keep the previous end:
+                                let prev_end = prev_end.and_then(|pe| {
+                                    // if this interval is on the same chrom:
+                                    // keep
+                                    if pe.chrom_id == next.chrom_tid {
+                                        Some(pe)
+                                    } else {
+                                        // if we're on a new chrom, don't keep
+                                        None
+                                    }
+                                });
+
+                                let end = Some(ChromEnd {
+                                    chrom_id: next.chrom_tid,
+                                    end_pos: next.end_pos,
+                                });
+                                acc.push(LinkedChromCoordinates::new(
+                                    next, prev_end,
+                                ));
+                                (acc, end)
+                            },
+                        );
+                    super_batch_acc
+                        .push(MultiLinkedChromCoordinates(linked_chrom_coords));
+                    (super_batch_acc, batch_end)
+                },
+            );
+            self.chrom_end = last_batch_end;
+            Some(super_batch)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod interval_chunks_tests {
     use rust_htslib::faidx;

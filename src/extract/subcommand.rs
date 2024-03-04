@@ -20,7 +20,7 @@ use crate::command_utils::{
 };
 use crate::errs::RunError;
 use crate::extract::writer::{OutwriterWithMemory, TsvWriterWithContigNames};
-use crate::interval_chunks::ReferenceIntervalsFeeder;
+use crate::interval_chunks::{ReferenceIntervalsFeeder, WithPrevEnd};
 use crate::logging::init_logging;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCodeRepr;
@@ -683,7 +683,7 @@ impl ExtractMods {
                 master_progress.set_message("genome positions");
 
                 let mut num_aligned_reads_used = 0usize;
-                for super_batch in feeder {
+                for super_batch in feeder.with_prev_end() {
                     let total_batch_length = super_batch
                         .iter()
                         .map(|c| c.total_length())
@@ -702,7 +702,7 @@ impl ExtractMods {
                                     schedule
                                         .as_ref()
                                         .map(|s| {
-                                            s.chrom_has_reads(cc.chrom_tid)
+                                            s.chrom_has_reads(cc.chrom_tid())
                                         })
                                         .unwrap_or(true)
                                 })
@@ -711,10 +711,10 @@ impl ExtractMods {
                                         .as_ref()
                                         .map(|s| {
                                             s.get_record_sampler(
-                                                cc.chrom_tid,
+                                                cc.chrom_tid(),
                                                 total_batch_length as u32,
-                                                cc.start_pos,
-                                                cc.end_pos,
+                                                cc.start_pos(),
+                                                cc.end_pos(),
                                             )
                                         })
                                         .unwrap_or_else(|| {
@@ -725,9 +725,10 @@ impl ExtractMods {
                                             ReadsBaseModProfile,
                                         >(
                                             &bam_fp,
-                                            cc.chrom_tid,
-                                            cc.start_pos,
-                                            cc.end_pos,
+                                            cc.chrom_tid(),
+                                            cc.start_pos(),
+                                            cc.end_pos(),
+                                            cc.prev_end(),
                                             record_sampler,
                                             collapse_method.as_ref(),
                                             edge_filter.as_ref(),
