@@ -1,5 +1,5 @@
 use rustc_hash::FxHashMap;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::Hash;
 
 pub trait Moniod {
@@ -23,6 +23,64 @@ where
 {
     fn zero() -> Self {
         HashMap::new()
+    }
+
+    fn op(self, other: Self) -> Self {
+        let mut out = Self::zero();
+        for (k, mut vs) in self.into_iter().chain(other.into_iter()) {
+            let agg = out.entry(k).or_insert(Vec::new());
+            agg.append(&mut vs);
+        }
+        out
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        for (k, mut vs) in other {
+            let agg = self.entry(k).or_insert(Vec::new());
+            agg.append(&mut vs);
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<A, B> Moniod for FxHashMap<A, Vec<B>>
+where
+    A: Eq + Hash,
+{
+    fn zero() -> Self {
+        FxHashMap::default()
+    }
+
+    fn op(self, other: Self) -> Self {
+        let mut out = Self::zero();
+        for (k, mut vs) in self.into_iter().chain(other.into_iter()) {
+            let agg = out.entry(k).or_insert(Vec::new());
+            agg.append(&mut vs);
+        }
+        out
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        for (k, mut vs) in other {
+            let agg = self.entry(k).or_insert(Vec::new());
+            agg.append(&mut vs);
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<A, B> Moniod for BTreeMap<A, Vec<B>>
+where
+    A: Eq + Hash + Ord + PartialOrd,
+{
+    fn zero() -> Self {
+        BTreeMap::new()
     }
 
     fn op(self, other: Self) -> Self {

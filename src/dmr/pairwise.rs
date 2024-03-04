@@ -1,246 +1,65 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufRead;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::bail;
 use indicatif::ProgressBar;
-use itertools::{Itertools, MinMaxResult};
 use log::{debug, error};
-use log_once::debug_once;
-use noodles::bgzf;
-use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 use rayon::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::dmr::bedmethyl::BedMethylLine;
-use crate::dmr::model::{AggregatedCounts, ModificationCounts};
-use crate::dmr::util::{DmrBatch, DmrIntervalIter};
-use crate::mod_base_code::DnaBase;
-use crate::position_filter::StrandedPositionFilter;
-use crate::util::{Strand, StrandRule};
-
-fn aggregate_counts(
-    bm_lines: &[&BedMethylLine],
-    chrom_id: u32,
-    position_filter: &StrandedPositionFilter<DnaBase>,
-) -> anyhow::Result<AggregatedCounts> {
-    let grouped_by_position: FxHashMap<u64, Vec<&BedMethylLine>> = bm_lines
-        .iter()
-        .filter_map(|&bm_line| {
-            let base = match bm_line.strand {
-                StrandRule::Positive | StrandRule::Both => position_filter
-                    .get_base_at_position_stranded(
-                        chrom_id as i32,
-                        bm_line.start(),
-                        Strand::Positive,
-                    ),
-                StrandRule::Negative => position_filter
-                    .get_base_at_position_stranded(
-                        chrom_id as i32,
-                        bm_line.start(),
-                        Strand::Negative,
-                    )
-                    .map(|b| b.complement()),
-            };
-            base.and_then(|b| {
-                if bm_line.check_base(b, None) {
-                    // todo add user mappings
-                    Some(bm_line)
-                } else {
-                    // this will eventually change when user-input is accepted
-                    if !bm_line.check_mod_code_supported() {
-                        debug_once!(
-                            "encountered modification code {} in bedMethyl \
-                             record, not currently supported",
-                            bm_line.raw_mod_code
-                        );
-                    }
-                    None
-                }
-            })
-        })
-        .fold(FxHashMap::default(), |mut acc, bm_line| {
-            acc.entry(bm_line.start()).or_insert(Vec::new()).push(bm_line);
-            acc
-        });
-    let (counts_per_code, total) = grouped_by_position.into_iter().try_fold(
-        (HashMap::new(), 0),
-        |(mut acc, mut total_so_far), (_pos, grouped)| {
-            let valid_covs = grouped
-                .iter()
-                .map(|bml| bml.valid_coverage)
-                .collect::<FxHashSet<u64>>();
-            let chroms = grouped
-                .iter()
-                .map(|bml| &bml.chrom)
-                .collect::<FxHashSet<&String>>();
-            let valid_coverage = grouped[0].valid_coverage as usize;
-            if valid_covs.len() != 1 {
-                let mut message = format!(
-                    "invalid data found, should not have more than 1 score \
-                     per position for a base."
-                );
-                match grouped.iter().minmax_by(|a, b| a.start().cmp(&b.start()))
-                {
-                    MinMaxResult::NoElements => {}
-                    MinMaxResult::MinMax(s, t) => message.push_str(&format!(
-                        "starting at {}, ending at {}",
-                        s.start(),
-                        t.stop()
-                    )),
-                    MinMaxResult::OneElement(s) => {
-                        message.push_str(&format!("starting at {}", s.start()))
-                    }
-                }
-                bail!(message)
-            }
-
-            if chroms.len() != 1 {
-                bail!(format!(
-                    "should only get one chrom, got {}",
-                    chroms.len()
-                ))
-            }
-            for x in grouped {
-                *acc.entry(x.raw_mod_code).or_insert(0) +=
-                    x.count_methylated as usize;
-            }
-            total_so_far += valid_coverage;
-            Ok((acc, total_so_far))
-        },
-    )?;
-    match AggregatedCounts::try_new(counts_per_code, total) {
-        Ok(x) => Ok(x),
-        Err(e) => {
-            debug!("{chrom_id}, {:?}\n{}", bm_lines, e.to_string());
-            Err(e)
-        }
-    }
-}
-
-fn read_bedmethyl(
-    fp: &PathBuf,
-    chunks: &[IndexChunk],
-) -> anyhow::Result<Vec<BedMethylLine>> {
-    let mut reader = File::open(fp).map(bgzf::Reader::new)?;
-    let mut bedmethyl_lines = Vec::new();
-    let mut failed_to_parse = 0;
-    let mut successfully_parsed = 0usize;
-    // todo could be a fold instead
-    for chunk in chunks {
-        reader.seek(chunk.start())?;
-        let mut lines = Vec::new();
-        // todo come back and make this one loop
-        'readloop: loop {
-            let mut buf = String::new();
-            let _byts = reader.read_line(&mut buf)?;
-            lines.push(buf);
-            let cur_pos = reader.virtual_position();
-            if cur_pos >= chunk.end() {
-                break 'readloop;
-            }
-        }
-        for line in lines.iter() {
-            match BedMethylLine::parse(line) {
-                Ok(bm_line) => {
-                    bedmethyl_lines.push(bm_line);
-                    successfully_parsed += 1;
-                }
-                Err(_e) => {
-                    // trace!("failed to parse line {line}");
-                    failed_to_parse += 1
-                }
-            }
-        }
-    }
-
-    if failed_to_parse > 0 {
-        debug!("failed to parse {failed_to_parse} lines from {fp:?}");
-    }
-
-    if successfully_parsed == 0 {
-        bail!("failed to parse any bedMethyl lines from {fp:?}",);
-    }
-
-    Ok(bedmethyl_lines)
-}
+use crate::dmr::bedmethyl::{aggregate_counts, BedMethylLine};
+use crate::dmr::llr_model::ModificationCounts;
+use crate::dmr::tabix::MultiSampleIndex;
+use crate::dmr::util::{DmrBatch, RegionOfInterest, RoiIter};
 
 pub(super) fn get_modification_counts(
-    control_bedmethyl: &PathBuf,
-    exp_bedmethyl: &PathBuf,
-    dmr_batch: DmrBatch,
-    min_valid_coverage: u64,
-    position_filter: &StrandedPositionFilter<DnaBase>,
+    sample_index: &MultiSampleIndex,
+    dmr_batch: DmrBatch<Vec<RegionOfInterest>>,
 ) -> anyhow::Result<Vec<anyhow::Result<ModificationCounts>>> {
-    let control_bedmethyl_lines =
-        read_bedmethyl(control_bedmethyl, &dmr_batch.get_control_chunks())?
-            .into_iter()
-            .filter(|bm| bm.valid_coverage >= min_valid_coverage)
-            .fold(FxHashMap::default(), |mut acc, bm_line| {
-                acc.entry(bm_line.chrom.clone())
-                    .or_insert(Vec::new())
-                    .push(bm_line);
-                acc
-            });
-    let exp_bedmethyl_lines =
-        read_bedmethyl(exp_bedmethyl, &dmr_batch.get_exp_chunks())?
-            .into_iter()
-            .filter(|bm| bm.valid_coverage >= min_valid_coverage)
-            .fold(FxHashMap::default(), |mut acc, bm_line| {
-                acc.entry(bm_line.chrom.clone())
-                    .or_insert(Vec::new())
-                    .push(bm_line);
-                acc
-            });
+    // these are the bedmethyl records associated with the entire batch.
+    // however, due to how tabix works, there will likely be additional
+    // bedmethyl records that aren't part of any region, so we need to do
+    // the filtering below.
+    let (bedmethyl_lines_a, bedmethyl_lines_b) =
+        sample_index.read_bedmethyl_lines_collapse_on_chrom(&dmr_batch)?;
 
     let modification_counts_results = dmr_batch
         .dmr_chunks
         .into_par_iter()
-        .map(|dmr_chunk| {
-            let control = control_bedmethyl_lines
-                .get(&dmr_chunk.dmr_interval.chrom)
+        .map(|region_of_interest| {
+            let filtered_a = bedmethyl_lines_a
+                .get(&region_of_interest.dmr_interval.chrom)
                 .map(|lines| {
                     lines
                         .iter()
                         .filter(|l| {
-                            dmr_chunk
-                                .dmr_interval
-                                .interval
-                                .overlap(l.start(), l.stop())
+                            region_of_interest
+                                .positions
+                                .contains(&l.get_stranded_position())
                         })
                         .collect::<Vec<&BedMethylLine>>()
                 })
                 .unwrap_or_else(|| Vec::new());
-            let exp = exp_bedmethyl_lines
-                .get(&dmr_chunk.dmr_interval.chrom)
+            let filtered_b = bedmethyl_lines_b
+                .get(&region_of_interest.dmr_interval.chrom)
                 .map(|lines| {
                     lines
                         .iter()
                         .filter(|l| {
-                            dmr_chunk
-                                .dmr_interval
-                                .interval
-                                .overlap(l.start(), l.stop())
+                            region_of_interest
+                                .positions
+                                .contains(&l.get_stranded_position())
                         })
                         .collect::<Vec<&BedMethylLine>>()
                 })
                 .unwrap_or_else(|| Vec::new());
-            let control_counts = aggregate_counts(
-                &control,
-                dmr_chunk.chrom_id,
-                &position_filter,
-            );
-            let exp_counts =
-                aggregate_counts(&exp, dmr_chunk.chrom_id, &position_filter);
+
+            let control_counts = aggregate_counts(&filtered_a);
+            let exp_counts = aggregate_counts(&filtered_b);
             match (control_counts, exp_counts) {
                 (Ok(control_counts), Ok(exp_counts)) => {
                     ModificationCounts::new(
-                        dmr_chunk.dmr_interval.start(),
-                        dmr_chunk.dmr_interval.stop(),
                         control_counts,
                         exp_counts,
-                        dmr_chunk.dmr_interval.clone(),
+                        region_of_interest.dmr_interval,
                     )
                 }
                 (Err(e), Err(f)) => {
@@ -271,25 +90,28 @@ pub(super) fn get_modification_counts(
 }
 
 pub(super) fn run_pairwise_dmr(
-    control_bed_fp: &PathBuf,
-    exp_bed_fp: &PathBuf,
-    dmr_interval_iter: DmrIntervalIter,
-    position_filter: StrandedPositionFilter<DnaBase>,
+    dmr_interval_iter: RoiIter,
+    sample_index: Arc<MultiSampleIndex>,
+    pool: rayon::ThreadPool,
     mut writer: Box<dyn std::io::Write>,
     pb: ProgressBar,
-    min_valid_coverage: u64,
+    header: bool,
+    a_name: &str,
+    b_name: &str,
     failure_counter: ProgressBar,
 ) -> anyhow::Result<usize> {
+    if header {
+        writer.write(ModificationCounts::header(a_name, b_name).as_bytes())?;
+    }
+
     let (snd, rcv) = crossbeam_channel::bounded(1000);
-    let control_bedmethyl_fp = control_bed_fp.clone();
-    let exp_bedmethyl_fp = exp_bed_fp.clone();
 
     enum BatchResult {
         Results(Vec<anyhow::Result<ModificationCounts>>),
         BatchError(String, anyhow::Error, usize),
     }
 
-    std::thread::spawn(move || {
+    pool.spawn(move || {
         for batch in dmr_interval_iter {
             let batch_size = batch.dmr_chunks.len();
             let range_message = {
@@ -304,13 +126,7 @@ pub(super) fn run_pairwise_dmr(
                     }
                 }
             };
-            match get_modification_counts(
-                &control_bedmethyl_fp,
-                &exp_bedmethyl_fp,
-                batch,
-                min_valid_coverage,
-                &position_filter,
-            ) {
+            match get_modification_counts(&sample_index, batch) {
                 Ok(results) => {
                     let results = BatchResult::Results(results);
                     match snd.send(results) {

@@ -12,7 +12,6 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 pub(crate) type Iv = lapper::Interval<u64, ()>;
-pub(crate) type BaseIv = lapper::Interval<u64, DnaBase>;
 pub(crate) type GenomeLapper<T> = lapper::Lapper<u64, T>;
 
 #[derive(Debug)]
