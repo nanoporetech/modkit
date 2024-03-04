@@ -19,12 +19,22 @@ fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {
         .map(|line| {
             let parts = line.split_ascii_whitespace().collect::<Vec<&str>>();
             let contig = parts[0].to_owned();
-            let pos = parts[1].parse::<i64>().unwrap();
-            let strand = parts[5].parse::<char>().unwrap();
+            let start = parts[1].parse::<i64>().unwrap();
+            let end = parts[2].parse::<i64>().unwrap();
+            assert!(start < end);
+            let strand = match parts.len() {
+                3 => '.',
+                6 => parts[5].parse::<char>().unwrap(),
+                _ => panic!("illegal bed line {line}"),
+            };
+            let pos = start..end;
             (contig, (pos, strand))
         })
-        .fold(HashMap::new(), |mut acc, (contig, (pos, strand))| {
-            acc.entry(contig).or_insert(HashSet::new()).insert((pos, strand));
+        .fold(HashMap::new(), |mut acc, (contig, (interval, strand))| {
+            let ctg_positions = acc.entry(contig).or_insert(HashSet::new());
+            for pos in interval {
+                ctg_positions.insert((pos, strand));
+            }
             acc
         })
 }
@@ -194,6 +204,49 @@ fn test_extract_include_sites() {
                 .expect(&format!("expect to find {}", &item.contig));
             let x = (item.ref_pos, item.strand);
             assert!(sites.contains(&x), "{}", format!("should find {:?}", x))
+        }
+    }
+}
+
+#[test]
+fn test_extract_include_sites_bed3() {
+    let out_fp =
+        std::env::temp_dir().join("test_extract_include_sites_bed3.bed");
+    let include_bed_fp = "tests/resources/CGI_ladder_3.6kb_ref_CG_bed3.bed";
+    run_modkit(&[
+        "extract",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        out_fp.to_str().unwrap(),
+        "-i",
+        "25",
+        "--include-bed",
+        include_bed_fp,
+        "--force",
+    ])
+    .unwrap();
+
+    let bed_positions =
+        parse_bed_file(&Path::new(include_bed_fp).to_path_buf())
+            .into_iter()
+            .map(|(contig, sites)| {
+                let sites = sites
+                    .into_iter()
+                    .map(|(pos, _)| pos)
+                    .collect::<HashSet<i64>>();
+                (contig, sites)
+            })
+            .collect::<HashMap<String, HashSet<i64>>>();
+    let mod_profile = parse_mod_profile(&out_fp).unwrap();
+    for (_read_id, data) in mod_profile {
+        for item in data {
+            let sites = bed_positions
+                .get(&item.contig)
+                .expect(&format!("expect to find {}", &item.contig));
+            assert!(
+                sites.contains(&item.ref_pos),
+                "{}",
+                format!("should find {:?}", &item.ref_pos)
+            )
         }
     }
 }

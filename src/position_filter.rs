@@ -2,6 +2,7 @@ use crate::mod_base_code::DnaBase;
 use crate::util::{get_targets, get_ticker, Strand};
 use anyhow::bail;
 use log::info;
+use log_once::info_once;
 use rust_htslib::bam::{self, Read};
 use rust_lapper as lapper;
 use rustc_hash::FxHashMap;
@@ -130,25 +131,46 @@ impl StrandedPositionFilter<()> {
             if warned.contains(chrom_name) {
                 continue;
             }
-            if parts.len() < 6 {
-                info!("improperly formatted BED line {line}");
-                continue;
-            }
             let raw_start = &parts[1].parse::<u64>();
             let raw_end = &parts[2].parse::<u64>();
             let (start, stop) = match (raw_start, raw_end) {
                 (Ok(start), Ok(end)) => (*start, *end),
                 _ => {
-                    info!("improperly formatted BED line {line}");
+                    info!(
+                        "improperly formatted BED line, failed to parse start \
+                         and/or stop, {line}"
+                    );
                     continue;
                 }
             };
-            let (pos_strand, neg_strand) = match parts[5] {
-                "+" => (true, false),
-                "-" => (false, true),
-                "." => (true, true),
+            let (pos_strand, neg_strand) = match parts.len() {
+                3 => {
+                    // BED3 use both strands
+                    info_once!(
+                        "a BED3 line encountered, strand with be set to BOTH"
+                    );
+                    (true, true)
+                }
+                6.. => {
+                    // BED6+ use specified strand
+                    match parts[5] {
+                        "+" => (true, false),
+                        "-" => (false, true),
+                        "." => (true, true),
+                        _ => {
+                            info!(
+                                "improperly formatted strand field {}",
+                                &parts[5]
+                            );
+                            continue;
+                        }
+                    }
+                }
                 _ => {
-                    info!("improperly formatted strand field {}", &parts[5]);
+                    info!(
+                        "improperly formatted BED line, must be BED3 or BED6 \
+                         {line}"
+                    );
                     continue;
                 }
             };
