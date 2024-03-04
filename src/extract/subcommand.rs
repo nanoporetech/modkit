@@ -38,6 +38,7 @@ use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
     get_master_progress_bar, get_reference_mod_strand, get_spinner,
     get_subroutine_progress_bar, get_targets, get_ticker, Region, Strand,
+    KMER_SIZE,
 };
 use crate::writers::TsvWriter;
 
@@ -291,18 +292,27 @@ impl ExtractMods {
         Option<ReferenceIntervalsFeeder>,
         ReferencePositionFilter,
     )> {
-        let include_unmapped = if self.include_bed.is_some() {
-            info!("specifying include-only BED outputs only mapped sites");
-            false
-        } else if self.motif.is_some() || self.cpg {
-            info!(
-                "specifying a motif (including --cpg) outputs only mapped \
-                 sites"
-            );
-            false
-        } else {
-            !self.mapped_only
-        };
+        let (include_unmapped_reads, include_unmapped_positions) =
+            if self.include_bed.is_some() {
+                info!("specifying include-only BED outputs only mapped sites");
+                (false, false)
+            } else if self.motif.is_some() || self.cpg {
+                info!(
+                    "specifying a motif (including --cpg) outputs only mapped \
+                     sites"
+                );
+                (false, false)
+            } else if region.is_some() {
+                info!("specifying a region outputs only mapped reads");
+                if self.mapped_only {
+                    info!("including only mapped positions");
+                } else {
+                    info!("including unmapped positions within mapped reads");
+                }
+                (false, !self.mapped_only)
+            } else {
+                (!self.mapped_only, !self.mapped_only)
+            };
 
         let motifs = if let Some(raw_motif_parts) = &self.motif {
             Some(RegexMotif::from_raw_parts(&raw_motif_parts, self.cpg)?)
@@ -469,7 +479,8 @@ impl ExtractMods {
         let reference_position_filter = ReferencePositionFilter::new(
             include_positions,
             exclude_positions,
-            include_unmapped,
+            include_unmapped_reads,
+            include_unmapped_positions,
         );
 
         Ok((reference_and_intervals, reference_position_filter))
@@ -478,7 +489,7 @@ impl ExtractMods {
     pub(crate) fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
 
-        if self.kmer_size > 12 {
+        if self.kmer_size > KMER_SIZE {
             bail!("kmer size must be less than or equal to 12")
         }
 
@@ -608,7 +619,7 @@ impl ExtractMods {
                             edge_filter.as_ref(),
                             collapse_method.as_ref(),
                             reference_position_filter.include_pos.as_ref(),
-                            !reference_position_filter.include_unmapped,
+                            reference_position_filter.only_mapped_positions(),
                             self.suppress_progress,
                         )
                     })?
@@ -629,7 +640,7 @@ impl ExtractMods {
                         num_reads,
                         region.as_ref(),
                         reference_position_filter.include_pos.as_ref(),
-                        reference_position_filter.include_unmapped,
+                        reference_position_filter.include_unmapped_reads,
                     )?),
                     Err(_) => {
                         debug!(
@@ -757,7 +768,7 @@ impl ExtractMods {
                     master_progress.inc(total_batch_length);
                 }
 
-                if reference_position_filter.include_unmapped {
+                if reference_position_filter.include_unmapped_reads {
                     let n_unmapped_reads = n_reads.map(|nr| {
                         nr.checked_sub(num_aligned_reads_used).unwrap_or(0)
                     });
@@ -929,7 +940,7 @@ impl ExtractMods {
     ) -> (usize, usize) {
         let mut mod_iter =
             TrackingModRecordIter::new(records, false, allow_non_primary);
-        let pb = multi_pb.add(get_spinner());
+        let pb = multi_pb.add(get_ticker());
         pb.set_message(format!("{message}records processed"));
         for (record, read_id, mod_base_info) in &mut mod_iter {
             if record.is_unmapped() && only_mapped {
@@ -984,10 +995,15 @@ impl ExtractMods {
 struct ReferencePositionFilter {
     include_pos: Option<StrandedPositionFilter<()>>,
     exclude_pos: Option<StrandedPositionFilter<()>>,
-    include_unmapped: bool,
+    include_unmapped_reads: bool,
+    include_unmapped_positions: bool,
 }
 
 impl ReferencePositionFilter {
+    fn only_mapped_positions(&self) -> bool {
+        !self.include_unmapped_positions
+    }
+
     fn keep(
         &self,
         chrom_id: u32,
@@ -1046,7 +1062,7 @@ impl ReferencePositionFilter {
                                     mod_profile.mod_strand,
                                 )
                             }
-                            _ => self.include_unmapped,
+                            _ => self.include_unmapped_positions,
                         }
                     })
                     .collect::<Vec<ModProfile>>();
