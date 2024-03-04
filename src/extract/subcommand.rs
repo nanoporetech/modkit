@@ -43,6 +43,7 @@ use crate::util::{
 use crate::writers::TsvWriter;
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct ExtractMods {
     /// Path to modBAM file to extract read-level information from, or one of
     /// `-` or `stdin` to specify a stream from standard input. If a file

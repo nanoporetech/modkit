@@ -595,6 +595,7 @@ fn print_table(status_probs: &StatusProbs, show_percentages: bool) {
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct ValidateFromModbam {
     // running args
     // convert to list of bam bed inputs

@@ -148,6 +148,7 @@ fn get_sampling_options(
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct Adjust {
     /// BAM file to collapse mod call from. Can be a path to a file or one of
     /// `-` or `stdin` to specify a stream from standard input.
@@ -308,6 +309,7 @@ fn parse_percentiles(
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct SampleModBaseProbs {
     /// Input BAM with modified base tags. If a index is found
     /// reads will be sampled evenly across the length of the
@@ -575,6 +577,7 @@ impl SampleModBaseProbs {
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct ModSummarize {
     /// Input modBam, can be a path to a file or one of `-` or
     /// `stdin` to specify a stream from standard input.
@@ -850,6 +853,7 @@ impl ModSummarize {
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct MotifBed {
     /// Input FASTA file
     fasta: PathBuf,
@@ -887,6 +891,7 @@ impl ModMode {
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct Update {
     /// BAM to update modified base tags in. Can be a path to a file or one of
     /// `-` or `stdin` to specify a stream from standard input.
@@ -1035,6 +1040,7 @@ impl Update {
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct CallMods {
     // running args
     /// Input BAM, may be sorted and have associated index available. Can be a

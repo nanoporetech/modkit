@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct RepairTags {
     /// Donor modBAM with original MM/ML tags. Must be sorted by read name.
     #[arg(long, short = 'd', alias = "donor")]
