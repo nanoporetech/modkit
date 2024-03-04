@@ -51,6 +51,7 @@ impl BedMethylDmr {
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct PairwiseDmr {
     /// Bgzipped bedMethyl file for the first (usually control) sample. There
     /// should be a tabix index with the same name and .tbi next to this
@@ -354,6 +355,7 @@ impl PairwiseDmr {
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct MultiSampleDmr {
     /// Two or more named samples to compare. Two arguments are required <path>
     /// <name>. This option should be repeated at least two times.

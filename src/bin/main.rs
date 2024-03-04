@@ -4,6 +4,8 @@ use mod_kit::commands::Commands;
 
 #[derive(Parser)]
 #[command(version)]
+/// Modkit is a bioinformatics tool for working with modified bases from Oxford
+/// Nanopore
 struct Cli {
     #[command(subcommand)]
     command: Commands,

@@ -38,6 +38,7 @@ use crate::writers::{
 };
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct ModBamPileup {
     // running args
     /// Input BAM, should be sorted and have associated index available.
@@ -794,6 +795,7 @@ enum Presets {
 }
 
 #[derive(Args)]
+#[command(arg_required_else_help = true)]
 pub struct DuplexModBamPileup {
     // running args
     /// Input BAM, should be sorted and have associated index available.
