@@ -69,6 +69,13 @@ fn check_mod_profiles_same(
 }
 
 #[test]
+fn test_extract_help() {
+    run_modkit(&["extract", "--help"])
+        .context("modkit extract --help failed")
+        .unwrap();
+}
+
+#[test]
 fn test_extract_correct_output() {
     let out_fp = std::env::temp_dir().join("test_extract_correct_output.tsv");
     run_modkit(&[
@@ -461,4 +468,34 @@ fn test_extract_supplementary_secondary() {
         calls_tsv.to_str().unwrap(),
         "tests/resources/test_supplementary_calls.tsv",
     );
+}
+
+#[test]
+fn test_extract_region_correct_output() {
+    let out_fp =
+        std::env::temp_dir().join("test_extract_region_correct_output");
+    run_modkit(&[
+        "extract",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        out_fp.to_str().unwrap(),
+        "--ignore",
+        "h",
+        "-i",
+        "10",
+        "--region",
+        "oligo_1512_adapters:55-95",
+        "--force",
+    ])
+    .unwrap();
+
+    check_mod_profiles_same(
+        &out_fp,
+        &Path::new(
+            "tests/resources/bc_anchored_10_reads.sorted.\
+             methylprofile_ignoreh.tsv",
+        )
+        .to_path_buf(),
+    )
+    .context("test_extract_collapse_correct_output, output didn't match")
+    .unwrap();
 }

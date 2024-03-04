@@ -240,13 +240,11 @@ pub trait OutwriterWithMemory<T> {
     fn num_reads(&self) -> usize;
 }
 
-/// (Record Name, Flag, Alignment Start)
-type WrittenRecordKey = (String, u16, i64);
 pub struct TsvWriterWithContigNames<W: Write> {
     tsv_writer: TsvWriter<W>,
     tid_to_name: HashMap<u32, String>,
     name_to_seq: HashMap<String, Vec<u8>>,
-    written_reads: HashSet<WrittenRecordKey>,
+    number_of_written_reads: usize,
     read_calls_writer: Option<TsvWriter<File>>,
     caller: MultipleThresholdModCaller,
 }
@@ -270,7 +268,7 @@ impl<W: Write> TsvWriterWithContigNames<W> {
             tsv_writer: output_writer,
             tid_to_name,
             name_to_seq,
-            written_reads: HashSet::new(),
+            number_of_written_reads: 0,
             read_calls_writer,
             caller,
         })
@@ -288,52 +286,41 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
         let missing_chrom = ".".to_string();
         let mut rows_written = 0u64;
         for profile in item.profiles.iter() {
-            let written_record_key = (
-                profile.record_name.to_owned(),
-                profile.flag,
-                profile.alignment_start,
-            );
-            if self.written_reads.contains(&written_record_key) {
-                continue;
-            } else {
-                let chrom_name = profile
-                    .chrom_id
-                    .and_then(|chrom_id| self.tid_to_name.get(&chrom_id));
-                for mod_profile in profile.iter_profiles() {
-                    let row = mod_profile.to_row(
-                        &profile.record_name,
-                        chrom_name.unwrap_or(&missing_chrom),
-                        &self.name_to_seq,
-                        kmer_size,
-                        profile.flag,
-                    );
-                    self.tsv_writer.write(row.as_bytes())?;
-                    rows_written += 1;
-                }
-                if let Some(read_calls_writer) = self.read_calls_writer.as_mut()
-                {
-                    let position_calls =
-                        PositionModCalls::from_profile(&profile);
-                    for call in position_calls {
-                        read_calls_writer.write(
-                            call.to_row(
-                                &profile.record_name,
-                                chrom_name,
-                                &self.caller,
-                                &self.name_to_seq,
-                                profile.flag,
-                            )
-                            .as_bytes(),
-                        )?;
-                    }
-                }
-                self.written_reads.insert(written_record_key);
+            let chrom_name = profile
+                .chrom_id
+                .and_then(|chrom_id| self.tid_to_name.get(&chrom_id));
+            for mod_profile in profile.iter_profiles() {
+                let row = mod_profile.to_row(
+                    &profile.record_name,
+                    chrom_name.unwrap_or(&missing_chrom),
+                    &self.name_to_seq,
+                    kmer_size,
+                    profile.flag,
+                );
+                self.tsv_writer.write(row.as_bytes())?;
+                rows_written += 1;
             }
+            if let Some(read_calls_writer) = self.read_calls_writer.as_mut() {
+                let position_calls = PositionModCalls::from_profile(&profile);
+                for call in position_calls {
+                    read_calls_writer.write(
+                        call.to_row(
+                            &profile.record_name,
+                            chrom_name,
+                            &self.caller,
+                            &self.name_to_seq,
+                            profile.flag,
+                        )
+                        .as_bytes(),
+                    )?;
+                }
+            }
+            self.number_of_written_reads += 1;
         }
         Ok(rows_written)
     }
 
     fn num_reads(&self) -> usize {
-        self.written_reads.len()
+        self.number_of_written_reads
     }
 }

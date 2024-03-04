@@ -106,6 +106,7 @@ where
                 only_mapped,
                 false,
                 None,
+                None,
             )?;
             debug!(
                 "sampled {} unmapped records",
@@ -141,6 +142,7 @@ where
             position_filter,
             only_mapped,
             false,
+            None,
             None,
         )?;
         debug!("sampled {} records", read_ids_to_base_mod_probs.len());
@@ -272,6 +274,7 @@ fn run_batch<P: RecordProcessor>(
                 cc.chrom_tid,
                 cc.start_pos,
                 cc.end_pos,
+                None,
                 record_sampler,
                 collapse_method,
                 edge_filter,
@@ -304,6 +307,7 @@ pub(crate) fn sample_reads_from_interval<P: RecordProcessor>(
     chrom_tid: u32,
     start: u32,
     end: u32,
+    prev_end: Option<u32>,
     record_sampler: RecordSampler,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
@@ -331,6 +335,7 @@ where
         position_filter,
         only_mapped,
         allow_non_primary,
+        prev_end,
         kmer_size,
     )
 }
