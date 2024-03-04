@@ -7,11 +7,12 @@ use rv::prelude::*;
 
 use crate::dmr::util::DmrInterval;
 use crate::mod_base_code::ModCodeRepr;
+use crate::monoid::BorrowingMoniod;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct AggregatedCounts {
     mod_code_counts: HashMap<ModCodeRepr, usize>,
-    total: usize,
+    pub(super) total: usize,
 }
 
 impl AggregatedCounts {
@@ -32,7 +33,11 @@ impl AggregatedCounts {
     fn get_canonical_counts(&self) -> usize {
         // safe because we check at creation, could be more careful if there
         // was a chance that &mut self was available.
-        self.total - self.mod_code_counts.values().sum::<usize>()
+        self.total - self.modified_counts()
+    }
+
+    pub(super) fn modified_counts(&self) -> usize {
+        self.mod_code_counts.values().sum::<usize>()
     }
 
     fn combine(&self, other: &Self) -> Self {
@@ -64,7 +69,7 @@ impl AggregatedCounts {
         Ok(trials)
     }
 
-    fn string_counts(&self) -> String {
+    pub(super) fn string_counts(&self) -> String {
         if self.mod_code_counts.is_empty() {
             ".".to_string()
         } else {
@@ -80,7 +85,7 @@ impl AggregatedCounts {
         }
     }
 
-    fn string_percentages(&self) -> String {
+    pub(super) fn string_percentages(&self) -> String {
         if self.mod_code_counts.is_empty() {
             ".".to_string()
         } else {
@@ -96,6 +101,41 @@ impl AggregatedCounts {
             csv.chars().into_iter().take(csv.len() - 1).collect()
         }
     }
+
+    pub(super) fn iter_mod_fractions(
+        &self,
+    ) -> impl Iterator<Item = (ModCodeRepr, f32)> + '_ {
+        self.mod_code_counts
+            .iter()
+            .map(|(code, count)| (*code, *count as f32 / self.total as f32))
+    }
+
+    pub(super) fn pct_modified(&self) -> f32 {
+        self.modified_counts() as f32 / self.total as f32
+    }
+}
+
+impl BorrowingMoniod for AggregatedCounts {
+    fn zero() -> Self {
+        Self { mod_code_counts: HashMap::new(), total: 0usize }
+    }
+
+    fn op(self, other: &Self) -> Self {
+        let mut this = self;
+        this.op_mut(other);
+        this
+    }
+
+    fn op_mut(&mut self, other: &Self) {
+        for (code, count) in other.mod_code_counts.iter() {
+            *self.mod_code_counts.entry(*code).or_insert(0usize) += *count;
+        }
+        self.total += other.total;
+    }
+
+    fn len(&self) -> usize {
+        todo!()
+    }
 }
 
 impl Display for AggregatedCounts {
@@ -106,8 +146,6 @@ impl Display for AggregatedCounts {
 
 #[derive(Debug)]
 pub(super) struct ModificationCounts {
-    start: u64,
-    stop: u64,
     control_counts: AggregatedCounts,
     exp_counts: AggregatedCounts,
     interval: DmrInterval,
@@ -115,21 +153,44 @@ pub(super) struct ModificationCounts {
 }
 
 impl ModificationCounts {
+    pub(super) fn header(a_name: &str, b_name: &str) -> String {
+        let mut s = [
+            "chrom",
+            "start",
+            "end",
+            "name",
+            "score",
+            &format!("{a_name}_counts"),
+            &format!("{a_name}_total"),
+            &format!("{b_name}_counts"),
+            &format!("{b_name}_total"),
+            &format!("{a_name}_mod_percentages"),
+            &format!("{b_name}_mod_percentages"),
+            &format!("{a_name}_pct_modified"),
+            &format!("{b_name}_pct_modified"),
+        ]
+        .join("\t");
+        s.push('\n');
+        s
+    }
+
     pub(super) fn new(
-        start: u64,
-        stop: u64,
         control_counts: AggregatedCounts,
         exp_counts: AggregatedCounts,
         interval: DmrInterval,
     ) -> anyhow::Result<Self> {
         let score = llk_ratio(&control_counts, &exp_counts)?;
-        Ok(Self { start, stop, control_counts, exp_counts, interval, score })
+        Ok(Self { control_counts, exp_counts, interval, score })
     }
 
     pub(super) fn to_row(&self) -> anyhow::Result<String> {
         let sep = '\t';
+        let start = self.interval.start();
+        let stop = self.interval.stop();
         let line = format!(
             "\
+        {}{sep}\
+        {}{sep}\
         {}{sep}\
         {}{sep}\
         {}{sep}\
@@ -143,8 +204,8 @@ impl ModificationCounts {
         {}\n\
         ",
             self.interval.chrom,
-            self.start,
-            self.stop,
+            start,
+            stop,
             self.interval.name,
             self.score,
             self.control_counts.string_counts(),
@@ -153,6 +214,8 @@ impl ModificationCounts {
             self.exp_counts.total,
             self.control_counts.string_percentages(),
             self.exp_counts.string_percentages(),
+            self.control_counts.pct_modified(),
+            self.exp_counts.pct_modified(),
         );
         Ok(line)
     }
@@ -265,16 +328,18 @@ pub(super) fn llk_ratio(
 
 #[cfg(test)]
 mod dmr_model_tests {
-    use crate::dmr::model::{llk_beta, llk_dirichlet, AggregatedCounts};
-    use crate::mod_base_code::{
-        ModCodeRepr, HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE,
-    };
+    use std::collections::HashMap;
+
     use itertools::Itertools;
     use rand::prelude::*;
     use rand::rngs::StdRng;
     use rv::dist::Categorical;
     use rv::prelude::{Bernoulli, Rv};
-    use std::collections::HashMap;
+
+    use crate::dmr::llr_model::{llk_beta, llk_dirichlet, AggregatedCounts};
+    use crate::mod_base_code::{
+        ModCodeRepr, HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE,
+    };
 
     fn methyl_sample(p: f64, n: usize, rng: &mut StdRng) -> AggregatedCounts {
         let mod_count = Bernoulli::new(p)

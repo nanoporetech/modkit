@@ -21,4 +21,5 @@
     - [Pass/fail base modification calls](./filtering.md)
         - [Threshold examples](./filtering_details.md)
         - [Numeric details](./filtering_numeric_details.md)
+    - [DMR model and scoring details](./dmr_scoring_details.md)
     - [Ignoring and combining calls](./collapse.md)

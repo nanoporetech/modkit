@@ -1,25 +1,26 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use clap::ValueEnum;
 use derive_new::new;
 use indicatif::ProgressBar;
-
 use log::{debug, error};
 use log_once::debug_once;
 use nom::character::complete::one_of;
 use nom::multi::many0;
 use nom::IResult;
-use noodles::csi::index::{
-    reference_sequence::bin::Chunk as IndexChunk, Index as CsiIndex,
-};
+use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
+use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::dmr::tabix::MultiSampleIndex;
+use crate::genome_positions::{GenomePositions, StrandedPosition};
+use crate::mod_base_code::DnaBase;
 use crate::parsing_utils::{
     consume_digit, consume_string, consume_string_spaces,
 };
@@ -43,6 +44,7 @@ impl Display for HandleMissing {
     }
 }
 
+// todo rename to ROI
 #[derive(new, Clone, Debug, Eq, PartialEq)]
 pub(super) struct DmrInterval {
     pub(super) interval: Iv,
@@ -84,19 +86,6 @@ impl DmrInterval {
     pub(super) fn stop(&self) -> u64 {
         self.interval.stop
     }
-
-    pub(super) fn get_index_chunks(
-        &self,
-        index: &CsiIndex,
-        chrom_id: usize,
-    ) -> std::io::Result<Vec<IndexChunk>> {
-        let start =
-            noodles::core::Position::new((self.start() + 1) as usize).unwrap();
-        let end =
-            noodles::core::Position::new((self.stop() + 1) as usize).unwrap();
-        let interval = noodles::core::region::Interval::from(start..=end);
-        index.query(chrom_id, interval)
-    }
 }
 
 impl PartialOrd for DmrInterval {
@@ -120,22 +109,50 @@ impl Display for DmrInterval {
     }
 }
 
-#[derive(new, Debug, Eq, PartialEq, PartialOrd)]
-pub(super) struct DmrChunk {
-    pub(super) chrom_id: u32,
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct RegionOfInterest {
+    // pub(super) chrom_id: u32,
+    pub(super) positions: FxHashSet<StrandedPosition<DnaBase>>,
     pub(super) dmr_interval: DmrInterval,
 }
 
-impl Ord for DmrChunk {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.chrom_id.cmp(&other.chrom_id) {
-            Ordering::Equal => self.dmr_interval.cmp(&other.dmr_interval),
-            o @ _ => o,
-        }
+impl RegionOfInterest {
+    /// Create a new region of interest with the positions selected
+    /// for just that region. None if there aren't any positions within
+    /// that region.
+    pub(super) fn new_from_interval(
+        dmr_interval: &DmrInterval,
+        genome_positions: &GenomePositions,
+    ) -> Option<Self> {
+        genome_positions
+            .get_positions(
+                &dmr_interval.chrom,
+                &(dmr_interval.start()..dmr_interval.stop()),
+            )
+            .map(|positions| Self {
+                positions: positions.into_iter().collect(),
+                dmr_interval: dmr_interval.to_owned(),
+            })
     }
 }
 
-impl Display for DmrChunk {
+impl PartialOrd for RegionOfInterest {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.dmr_interval.cmp(&other.dmr_interval))
+    }
+}
+
+impl Ord for RegionOfInterest {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.dmr_interval.cmp(&other.dmr_interval)
+        // match self.chrom_id.cmp(&other.chrom_id) {
+        //     Ordering::Equal => self.dmr_interval.cmp(&other.dmr_interval),
+        //     o @ _ => o,
+        // }
+    }
+}
+
+impl Display for RegionOfInterest {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -147,72 +164,48 @@ impl Display for DmrChunk {
     }
 }
 
-pub(super) struct DmrIntervalIter {
-    control_fn: String,
-    exp_fn: String,
-    control_contig_lookup: Arc<ContigLookup>,
-    exp_contig_lookup: ContigLookup,
-    control_index: CsiIndex,
-    exp_index: CsiIndex,
+pub(super) struct RoiIter {
+    sample_index_a: usize,
+    sample_index_b: usize,
+    sample_index: Arc<MultiSampleIndex>,
     regions_of_interest: VecDeque<DmrInterval>,
     chunk_size: usize,
+    genome_positions: Arc<GenomePositions>,
     failures: ProgressBar,
 }
 
-impl DmrIntervalIter {
+impl RoiIter {
     pub(super) fn new(
-        control_path: &PathBuf,
-        exp_path: &PathBuf,
-        control_contig_lookup: Arc<ContigLookup>,
-        exp_contig_lookup: ContigLookup,
-        control_index: CsiIndex,
-        exp_index: CsiIndex,
-        rois: VecDeque<DmrInterval>,
+        sample_index_a: usize,
+        sample_index_b: usize,
+        sample_name_a: &str,
+        sample_name_b: &str,
+        sample_index: Arc<MultiSampleIndex>,
+        rois: Vec<DmrInterval>,
         chunk_size: usize,
         failure_counter: ProgressBar,
         handle_missing: HandleMissing,
+        genome_positions: Arc<GenomePositions>,
     ) -> anyhow::Result<Self> {
-        let control_fn = control_path
-            .to_str()
-            .map(|s| s.to_owned())
-            .unwrap_or_else(|| format!("'a' failed path decode"));
-        let exp_fn = exp_path
-            .to_str()
-            .map(|s| s.to_owned())
-            .unwrap_or_else(|| format!("'a' failed path decode"));
+        // there is a lot of lines below, but, this is really just a bunch of
+        // input checking, depending on the "handle_missing" enum,
+        // we might warn, fail, or do nothing
         let regions_of_interest =
             rois.into_iter().try_fold(Vec::new(), |mut acc, roi| {
                 let a_found =
-                    control_contig_lookup.inner.contains_key(&roi.chrom);
-                let b_found = exp_contig_lookup.inner.contains_key(&roi.chrom);
+                    sample_index.has_contig(sample_index_a, &roi.chrom);
+                let b_found =
+                    sample_index.has_contig(sample_index_b, &roi.chrom);
                 if a_found && b_found {
+                    // happy path
                     acc.push(roi);
                     Ok(acc)
                 } else {
+                    // missing from one or the other..
                     let which = if b_found {
-                        if let Some(a_name) =
-                            control_contig_lookup.sample_name.as_ref()
-                        {
-                            format!("'{a_name}'")
-                        } else {
-                            format!("{:?}", &control_contig_lookup.file_path)
-                        }
+                        sample_name_a.to_string()
                     } else {
-                        match (
-                            control_contig_lookup.sample_name.as_ref(),
-                            exp_contig_lookup.sample_name.as_ref(),
-                        ) {
-                            (Some(a_name), Some(b_name)) => {
-                                format!("'{a_name}' and '{b_name}'")
-                            }
-                            _ => {
-                                format!(
-                                    "{:?} and {:?}",
-                                    &control_contig_lookup.file_path,
-                                    &exp_contig_lookup.file_path
-                                )
-                            }
-                        }
+                        format!("'{sample_name_a}' and '{sample_name_b}'")
                     };
                     match handle_missing {
                         HandleMissing::quiet => Ok(acc),
@@ -242,23 +235,21 @@ impl DmrIntervalIter {
         }
 
         Ok(Self {
-            control_fn,
-            exp_fn,
-            control_contig_lookup,
-            exp_contig_lookup,
-            control_index,
-            exp_index,
+            sample_index_a,
+            sample_index_b,
+            sample_index,
             regions_of_interest: regions_of_interest.into_iter().collect(),
             chunk_size,
+            genome_positions,
             failures: failure_counter,
         })
     }
 }
 
 #[derive(new, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-struct ProtoIndexChunk {
-    start: u64,
-    stop: u64,
+pub(super) struct ProtoIndexChunk {
+    pub(super) start: u64,
+    pub(super) stop: u64,
 }
 
 impl Into<IndexChunk> for ProtoIndexChunk {
@@ -275,26 +266,76 @@ impl From<IndexChunk> for ProtoIndexChunk {
     }
 }
 
-#[derive(Default)]
-pub(super) struct DmrBatch {
-    pub(super) dmr_chunks: Vec<DmrChunk>, // todo could make this DmrInterval?
-    control_chunks: BTreeSet<ProtoIndexChunk>,
-    experiment_chunks: BTreeSet<ProtoIndexChunk>,
+pub(super) struct DmrBatch<T> {
+    pub(super) dmr_chunks: T,
+    // mapping of the sample index (order provided on the command line)
+    // to the set of chunks to use
+    pub(super) chunks_a: FxHashMap<usize, BTreeSet<ProtoIndexChunk>>,
+    pub(super) chunks_b: FxHashMap<usize, BTreeSet<ProtoIndexChunk>>,
 }
 
-impl DmrBatch {
-    fn append(
-        &mut self,
-        dmr_chunk: DmrChunk,
-        control_index_chunks: Vec<IndexChunk>,
-        experiment_index_chunks: Vec<IndexChunk>,
-    ) {
-        self.dmr_chunks.push(dmr_chunk);
-        for x in control_index_chunks {
-            self.control_chunks.insert(x.into());
+pub type DmrBatchOfPositions =
+    DmrBatch<FxHashMap<String, FxHashSet<StrandedPosition<DnaBase>>>>;
+impl DmrBatchOfPositions {
+    pub(super) fn empty() -> Self {
+        Self {
+            dmr_chunks: FxHashMap::default(),
+            chunks_a: FxHashMap::default(),
+            chunks_b: FxHashMap::default(),
         }
-        for x in experiment_index_chunks {
-            self.experiment_chunks.insert(x.into());
+    }
+
+    pub(super) fn num_chunks(&self) -> usize {
+        self.dmr_chunks.values().map(|positions| positions.len()).sum::<usize>()
+    }
+
+    pub(super) fn add_chunks(
+        &mut self,
+        contig: &str,
+        positions: Vec<StrandedPosition<DnaBase>>,
+        control_index_chunks: FxHashMap<usize, Vec<IndexChunk>>,
+        experiment_index_chunks: FxHashMap<usize, Vec<IndexChunk>>,
+    ) {
+        let contig_positions = self
+            .dmr_chunks
+            .entry(contig.to_owned())
+            .or_insert_with(|| FxHashSet::default());
+        for position in positions {
+            contig_positions.insert(position);
+        }
+
+        let add_chunks =
+            |agg: &mut FxHashMap<usize, BTreeSet<ProtoIndexChunk>>,
+             to_add: FxHashMap<usize, Vec<IndexChunk>>| {
+                for (id, chunks) in to_add.into_iter() {
+                    let agg_chunks = agg.entry(id).or_insert(BTreeSet::new());
+                    for chunk in chunks {
+                        agg_chunks.insert(chunk.into());
+                    }
+                }
+            };
+        add_chunks(&mut self.chunks_a, control_index_chunks);
+        add_chunks(&mut self.chunks_b, experiment_index_chunks);
+    }
+
+    pub(super) fn contains_position(
+        &self,
+        chrom: &str,
+        position: &StrandedPosition<DnaBase>,
+    ) -> bool {
+        self.dmr_chunks
+            .get(chrom)
+            .map(|positions| positions.contains(position))
+            .unwrap_or(false)
+    }
+}
+
+impl DmrBatch<Vec<RegionOfInterest>> {
+    fn empty() -> Self {
+        Self {
+            dmr_chunks: Vec::new(),
+            chunks_a: FxHashMap::default(),
+            chunks_b: FxHashMap::default(),
         }
     }
 
@@ -306,85 +347,77 @@ impl DmrBatch {
         self.dmr_chunks.is_empty()
     }
 
-    #[inline]
-    fn proto_iter(chunks: &BTreeSet<ProtoIndexChunk>) -> Vec<IndexChunk> {
-        if let Some(&first) = chunks.first() {
-            let (mut chunks, last) = chunks.iter().skip(1).fold(
-                (Vec::new(), first),
-                |(mut acc, mut front), chunk| {
-                    if chunk.start <= front.stop {
-                        front = ProtoIndexChunk::new(front.start, chunk.stop);
-                        (acc, front)
-                    } else {
-                        acc.push(front);
-                        (acc, *chunk)
-                    }
-                },
-            );
-            chunks.push(last);
-            chunks.into_iter().map(|x| x.into()).collect()
-        } else {
-            Vec::new()
+    fn add_chunks(
+        &mut self,
+        region_of_interest: RegionOfInterest,
+        sample_index_a: usize,
+        sample_index_b: usize,
+        control_index_chunks: Vec<IndexChunk>,
+        experiment_index_chunks: Vec<IndexChunk>,
+    ) {
+        self.dmr_chunks.push(region_of_interest);
+
+        for x in control_index_chunks {
+            self.chunks_a
+                .entry(sample_index_a)
+                .or_insert(BTreeSet::new())
+                .insert(x.into());
         }
-    }
-
-    pub(super) fn get_control_chunks(&self) -> Vec<IndexChunk> {
-        Self::proto_iter(&self.control_chunks)
-    }
-
-    pub(super) fn get_exp_chunks(&self) -> Vec<IndexChunk> {
-        Self::proto_iter(&self.experiment_chunks)
+        for x in experiment_index_chunks {
+            self.chunks_b
+                .entry(sample_index_b)
+                .or_insert(BTreeSet::new())
+                .insert(x.into());
+        }
     }
 }
 
-impl Iterator for DmrIntervalIter {
-    type Item = DmrBatch;
+impl Iterator for RoiIter {
+    type Item = DmrBatch<Vec<RegionOfInterest>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut batch = DmrBatch::default();
-        // let mut chunks = Self::Item::with_capacity(self.chunk_size);
+        let mut batch = DmrBatch::<Vec<RegionOfInterest>>::empty();
         loop {
             if let Some(dmr_interval) = self.regions_of_interest.pop_front() {
-                let (control_chr_id, exp_chr_id) = match (
-                    self.control_contig_lookup.inner.get(&dmr_interval.chrom),
-                    self.exp_contig_lookup.inner.get(&dmr_interval.chrom),
-                ) {
-                    (Some(control_chr_id), Some(exp_chr_id)) => {
-                        (*control_chr_id, *exp_chr_id)
-                    }
-                    (None, _) => {
-                        self.failures.inc(1);
-                        debug!(
-                            "didn't find chrom id for {} in {} tabix header",
-                            &self.control_fn, &dmr_interval.chrom
-                        );
-                        continue;
-                    }
-                    (_, None) => {
-                        self.failures.inc(1);
-                        debug!(
-                            "didn't find chrom id for {} in {} tabix header",
-                            &self.exp_fn, &dmr_interval.chrom
-                        );
-                        continue;
-                    }
+                let region_of_interest = if let Some(roi) =
+                    RegionOfInterest::new_from_interval(
+                        &dmr_interval,
+                        &self.genome_positions,
+                    ) {
+                    roi
+                } else {
+                    debug!(
+                        "interval {dmr_interval} has zero comparative \
+                         positions, skipping"
+                    );
+                    continue;
                 };
-                let control_chunks = dmr_interval
-                    .get_index_chunks(&self.control_index, control_chr_id);
-                let exp_chunks =
-                    dmr_interval.get_index_chunks(&self.exp_index, exp_chr_id);
-                match (control_chunks, exp_chunks) {
-                    (Ok(control_chunks), Ok(exp_chunks)) => {
-                        let dmr_chunk =
-                            DmrChunk::new(control_chr_id as u32, dmr_interval);
-                        batch.append(dmr_chunk, control_chunks, exp_chunks);
+                let sample_a_chunks = self.sample_index.get_index_chunks(
+                    self.sample_index_a,
+                    &dmr_interval.chrom,
+                    &(dmr_interval.interval.start..dmr_interval.interval.stop),
+                );
+                let sample_b_chunks = self.sample_index.get_index_chunks(
+                    self.sample_index_b,
+                    &dmr_interval.chrom,
+                    &(dmr_interval.interval.start..dmr_interval.interval.stop),
+                );
+                match (sample_a_chunks, sample_b_chunks) {
+                    (Ok(a_chunks), Ok(b_chunks)) => {
+                        batch.add_chunks(
+                            region_of_interest,
+                            self.sample_index_a,
+                            self.sample_index_b,
+                            a_chunks,
+                            b_chunks,
+                        );
                     }
                     (Err(e), _) => {
                         self.failures.inc(1);
                         debug!(
                             "failed to index into {} bedMethyl for region {}, \
                              {}",
-                            &self.control_fn,
+                            &self.sample_index_a,
                             dmr_interval,
                             e.to_string()
                         );
@@ -393,10 +426,10 @@ impl Iterator for DmrIntervalIter {
                     (_, Err(e)) => {
                         self.failures.inc(1);
                         debug!(
-                            "failed to index into {} bedMethyl for chrom id \
-                             {}, {}",
-                            &self.exp_fn,
-                            exp_chr_id,
+                            "failed to index into {} bedMethyl for region {}, \
+                             {}",
+                            &self.sample_index_b,
+                            dmr_interval,
                             e.to_string()
                         );
                         continue;
@@ -445,42 +478,35 @@ pub(super) fn parse_roi_bed<P: AsRef<Path>>(
     }
 }
 
-pub(super) struct ContigLookup {
-    pub(super) sample_name: Option<String>,
-    pub(super) file_path: PathBuf,
-    pub(super) inner: HashMap<String, usize>,
+fn factorial(n: usize) -> anyhow::Result<usize> {
+    if n < 1 {
+        bail!("n must be > 1")
+    } else {
+        Ok((1..=n).product())
+    }
 }
 
-impl ContigLookup {
-    pub(super) fn new(
-        index: &CsiIndex,
-        index_fp: &PathBuf,
-        sample_name: Option<&String>,
-    ) -> anyhow::Result<Self> {
-        let inner = index
-            .header()
-            .ok_or_else(|| anyhow!("failed to get control tabix header"))?
-            .reference_sequence_names()
-            .iter()
-            .enumerate()
-            .map(|(idx, r)| (r.to_owned(), idx))
-            .collect::<HashMap<String, usize>>();
-
-        Ok(Self {
-            sample_name: sample_name.map(|x| x.to_owned()),
-            file_path: index_fp.to_owned(),
-            inner,
-        })
+pub(super) fn n_choose_2(n: usize) -> anyhow::Result<usize> {
+    if n < 2 {
+        bail!("n must be > 2")
+    } else if n == 2 {
+        Ok(1)
+    } else {
+        let numerator = factorial(n)?;
+        let denom = 2 * factorial(n - 2)?;
+        Ok(numerator / denom)
     }
 }
 
 #[cfg(test)]
 mod dmr_util_tests {
-    use crate::dmr::util::{parse_roi_bed, DmrInterval, ProtoIndexChunk};
-    use crate::position_filter::Iv;
+    use std::collections::BTreeSet;
+
     use noodles::bgzf::VirtualPosition;
     use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
-    use std::collections::BTreeSet;
+
+    use crate::dmr::util::{parse_roi_bed, DmrInterval, ProtoIndexChunk};
+    use crate::position_filter::Iv;
 
     #[test]
     #[rustfmt::skip]

@@ -863,6 +863,7 @@ fn test_pileup_chebi_code_same_output() {
                         bm.strand,
                         bm.count_methylated,
                         bm.valid_coverage,
+                        bm.count_canonical,
                     )
                 } else {
                     bm

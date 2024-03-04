@@ -1,14 +1,18 @@
 # Perform differential methylation scoring
 
-The `modkit dmr` command contains two subcommands, `pair` and `multi`, that will compare a pair
-of samples and multiple samples, respectively. The details of `multi` are the same as `pair` (
-it simply does all the pairwise comparisons), so most of the description below will focus on how
-to run `pair` and how to interpret the outputs.
+The `modkit dmr` command contains two subcommands, `pair` and `multi`, that will compare pairwise conditions and multiple conditions.
+The `pair` command can be used to perform differential methylation detection on single genome positions (for example CpGs) or regions provided as a BED file.
+On the other hand, `multi` can only be used to compare regions (such as CpG islands), provided as a BED file.
+There are essentially three differential methylation workflows:
+1. Perform differential methylation scoring with a pair of samples on regions of the genome.
+1. Perform differential methylation scoring across all pairs of samples on regions of the genome.
+1. Perform base-level differential modification detection for a pair of conditions.
+
+Each application is explained below. For details on the scoping of these applications see the [limitations](./limitations.md).
 
 ## Preparing the input data
-The inputs to `modkit dmr` are two or more bedMethyl files (created by `modkit pileup`) that have
-been compressed with [bgzip](https://www.htslib.org/doc/bgzip.html) and indexed with 
-[tabix](https://www.htslib.org/doc/tabix.html). An example workflow to generate the input data is shown below:
+The inputs to all `modkit dmr` commands are two or more bedMethyl files (created by `modkit pileup`) that have been compressed with [bgzip](https://www.htslib.org/doc/bgzip.html) and indexed with [tabix](https://www.htslib.org/doc/tabix.html).
+An example of how to generate the input data is shown below:
 
 ```bash
 ref=grch38.fasta
@@ -23,33 +27,33 @@ modkit pileup ${norm} ${norm_pileup} \
   --threads ${threads} \
   --log-filepath log.txt
 
-bgzip ${norm_pileup}
-tabix ${norm_pileup}.gz
+bgzip -k ${norm_pileup}
+tabix -p bed ${norm_pileup}.gz
 
+# pileup and compression can also be done in one step
 tumor=tumor_sample.bam
-tumor_pileup=tumor_pileup.bed
+tumor_pileup=tumor_pileup.bed.gz
 
-modkit pileup ${tumor} ${tumor_pileup} \
+modkit pileup ${tumor} - \
   --cpg \
   --ref ${ref} \
   --threads ${threads} \
-  --log-filepath log.txt 
+  --log-filepath log.txt | ${bgzip} -c > ${tumor_pileup}
 
-bgzip ${tumor_pileup}
-tabix ${tumor_pileup}.gz
+tabix -p bed ${tumor_pileup}
 ```
 
-## Running differential methylation scoring
-Once you have the two (or more) samples to be compared in the appropriate format, the final piece necessary 
-is a BED file of the regions to be compared. The `modkit dmr` functionality does not "segment" or otherwise
-discover regions, it scores the differences between user-provided regions. To continue with the above example
-we can get CpG Islands from the [UCSC table browser](http://genome.ucsc.edu/cgi-bin/hgTables). The data may not 
-always be appropriate input for `modkit`. For example, the CpG Islands track has extra columns and a header line:
+## 1. Perform differential methylation scoring of genomic regions for a pair of samples.
+Once you have the two samples to be compared in the appropriate format, the final piece necessary is a BED file of the regions to be compared.
+Currently, the `modkit dmr` functionality does not "segment" or otherwise discover regions, however this [limitation](./limitations.md) will be removed in a future release.
+To continue with our example we can get CpG Islands from the [UCSC table browser](http://genome.ucsc.edu/cgi-bin/hgTables).
+The data may not always be appropriate input for `modkit`.
+For example, the CpG Islands track has extra columns and a header line:
 
 ```text
-#bin    chrom   chromStart      chromEnd        name       length  cpgNum  gcNum   perCpg  perGc   obsExp
-1065    chr20   63004819        63007703        CpG: 272   2884    272     1869    18.9    64.8    0.9
-1065    chr20   63009128        63009816        CpG: 48    688     48      432     14      62.8    0.71
+#bin  chrom  chromStart  chromEnd  name          length  cpgNum  gcNum  perCpg  perGc  obsExp
+660   chr20  9838623     9839213   CpG:  47      590     47     383     15.9   64.9    0.76
+661   chr20  10034962    10035266  CpG:  35      304     35     228     23     75      0.85
 ```
 
 Therefore, we need to transform the data with `awk` or similar, such as:
@@ -58,12 +62,11 @@ awk 'BEGIN{FS="\t"; OFS="\t"} NR>1 {print $2, $3, $4, $5}' cpg_islands_ucsc.bed 
   | bedtools sort -i - >  cpg_islands_ucsc_cleaned.bed
 ```
 
-Keeping the `name` column is optional. Sorting the regions isn't _strictly_ necessary, the output will
-be in the same order as the regions file. Below is an example command to produce the scored output
-(continuing from the top example). The `--base` option tells `modkit dmr` which bases to use for scoring
-the differences, the argument should be a canonical nucleotide (`A`, `C`, `G`, or `T`) whichever primary 
-sequence base has the modifications you're interested in capturing. For example, for CpG islands the base
-we're interested in is `C`.
+Keeping the `name` column is optional.
+Sorting the regions isn't _strictly_ necessary, the output will be in the same order as the regions file.
+Below is an example command to produce the scored output.
+The `--base` option tells `modkit dmr` which bases to use for scoring the differences, the argument should be a canonical nucleotide (`A`, `C`, `G`, or `T`) whichever primary sequence base has the modifications you're interested in capturing.
+For example, for CpG islands the base we're interested in is `C`.
 
 ```bash
 regions=cpg_islands_ucsc_cleaned.bed
@@ -82,30 +85,19 @@ modkit dmr pair \
   --log-filepath dmr.log
 ```
 
-## Scoring differentially methylated bases (as opposed to regions)
-To score individual bases (e.g. differentially methylated CpGs), simply omit the `--regions` (`-r`) option
-when running `modkit dmr [pair|multi]`. For example the above command becomes:
-
-```bash
-dmr_result=cpg_islands_tumor_normal.bed
-
-modkit dmr pair \
-  -a ${norm_pileup}.gz \
-  --index-a ${norm_pileup}.gz.tbi \ # optional
-  -b ${tumor_pileup}.gz \
-  --index-b ${tumor_pileup}.gz.tbi \ # optional
-  -o ${dmr_result} \ # output to stdout if not present
-  --ref ${ref} \
-  --base C \  # may be repeated if multiple modifications are being used
-  --threads ${threads} \
-  --log-filepath dmr.log
+The ouput of this command will be similar to
+```csv
+chr20  9838623   9839213   CpG:  47   257.34514203447543    C:57   1777  C:601  2091   C:3.21  C:28.74  0.032076534   0.2874223
+chr20  10034962  10035266  CpG:  35   1.294227443419004     C:7    1513  C:14   1349   C:0.46  C:1.04   0.00462657    0.010378058
 ```
 
+The full schema is described [below](#differential-methylation-output-format).
 
-### Running multiple samples
-The `modkit dmr multi` command runs all pairwise comparisons for more than two samples.
-The preparation of the data is identical to that for `dmr pair` (for each sample, of course). 
+### 2. Perform differential methylation detection on all pairs of samples over regions from the genome.
+The `modkit dmr multi` command runs all pairwise comparisons for more than two samples for all regions provided in the regions BED file.
+The preparation of the data is identical to that for the [previous section](#preparing-the-input-data) (for each sample, of course).
 An example command could be:
+
 ```bash
 modkit dmr multi \
   -s ${norm_pileup_1}.gz norm1 \
@@ -126,68 +118,100 @@ Unlike for `modkit dmr pair` a sample name (e.g. `norm1` and `tumor1` above) mus
 sample. You can also use `--index <filepath> <sample_name>` to specify where the tabix index file is for each
 sample.
 
+
+## 3. Detecting differential modification at single base positions
+The `modkit dmr pair` command has the ability to score individual bases (e.g. differentially methylated CpGs).
+To run single-base analysis on one or more paired samples, simply omit the `--regions` (`-r`) option when running `modkit dmr pair`.
+When performing single-base analysis the likelihood ratio score and a MAP-based p-value are available.
+For details on the likelihood ratio score and the MAP-based p-value, see the [scoring details section](./dmr_scoring_details.md).
+For example the above command becomes:
+
+```bash
+dmr_result=single_base_haplotype_dmr.bed
+
+modkit dmr pair \
+  -a ${hp1_pileup}.gz \
+  -b ${hp2_pileup}.gz \
+  -o ${dmr_result} \
+  --ref ${ref} \
+  --base C \
+  --threads ${threads} \
+  --log-filepath dmr.log
+```
+
+Multiple replicates can be provided as well by repeating the `-a` and `-b` options, such as:
+
+```bash
+dmr_result=tumor_normal_single_base_replicates.bed
+
+modkit dmr pair \
+  -a ${norm_pileup_1}.gz \
+  -a ${norm_pileup_2}.gz \
+  -b ${tumor_pileup_1}.gz \
+  -b ${tumor_pileup_2}.gz \
+  -o ${dmr_result_replicates} \
+  --ref ${ref} \
+  --base C \
+  --threads ${threads} \
+  --log-filepath dmr.log
+```
+
+Keep in mind that the MAP-based p-value provided in single-site analysis is based on a "modified" vs "unmodified" model, see the [scoring section](./dmr_scoring_details.md) and [limitations](./limitations.md) for additional details.
+
 ## Differential methylation output format
 The output from `modkit dmr pair` (and for each pairwise comparison with `modkit dmr multi`) is (roughly)
 a BED file with the following schema:
 
-| column | name                         | description                                                                               | type  |
-|--------|------------------------------|-------------------------------------------------------------------------------------------|-------|
-| 1      | chrom                        | name of reference sequence from bedMethyl input samples                                   | str   |
-| 2      | start position               | 0-based start position, from `--regions` argument                                         | int   |
-| 3      | end position                 | 0-based exclusive end position, from `--regions` argument                                 | int   |
-| 4      | name                         | `name` column from `--regions` BED, or `chr:start-stop` if absent                         | str   |
-| 5      | score                        | Difference score, more positive values have increased difference                          | float |
-| 6      | sample<sub>a</sub> counts    | Counts of each base modification in the region, comma-separated, for sample A             | str   |
-| 7      | sample<sub>a</sub> total     | Total number of base modification calls in the region, including unmodified, for sample A | str   |
-| 8      | sample<sub>b</sub> counts    | Counts of each base modification in the region, comma-separated, for sample B             | str   |
-| 9      | sample<sub>b</sub> total     | Total number of base modification calls in the region, including unmodified, for sample B | str   |
-| 10     | sample<sub>a</sub> fractions | Fraction of calls for each base modification in the region, comma-separated, for sample A | str   |
-| 11     | sample<sub>b</sub> fractions | Fraction of calls for each base modification in the region, comma-separated, for sample B | str   |
+| column | name                                | description                                                                               | type  |
+|--------|-------------------------------------|-------------------------------------------------------------------------------------------|-------|
+| 1      | chrom                               | name of reference sequence from bedMethyl input samples                                   | str   |
+| 2      | start position                      | 0-based start position, from `--regions` argument                                         | int   |
+| 3      | end position                        | 0-based exclusive end position, from `--regions` argument                                 | int   |
+| 4      | name                                | `name` column from `--regions` BED, or `chr:start-stop` if absent                         | str   |
+| 5      | score                               | Difference score, more positive values have increased difference                          | float |
+| 6      | sample<sub>a</sub> counts           | Counts of each base modification in the region, comma-separated, for sample A             | str   |
+| 7      | sample<sub>a</sub> total            | Total number of base modification calls in the region, including unmodified, for sample A | str   |
+| 8      | sample<sub>b</sub> counts           | Counts of each base modification in the region, comma-separated, for sample B             | str   |
+| 9      | sample<sub>b</sub> total            | Total number of base modification calls in the region, including unmodified, for sample B | str   |
+| 10     | sample<sub>a</sub> fractions        | Fraction of calls for each base modification in the region, comma-separated, for sample A | str   |
+| 11     | sample<sub>b</sub> fractions        | Fraction of calls for each base modification in the region, comma-separated, for sample B | str   |
+| 12     | sample<sub>a</sub> percent modified | percent modification (of any kind) in sample A                                            | float |
+| 13     | sample<sub>b</sub> percent modified | percent modification (of any kind) in sample B                                            | float |
 
 an example of the output is given below:
+
 ```text
-chr10   73861   74083   chr10:73861-74083       -0.5007740865394226     h:7,m:18        950     h:8,m:16        802     h:0.74,m:1.89   h:1.00,m:2.00
-chr10   74090   74289   chr10:74090-74289       0.5533780473006118      h:8,m:5         936     h:3,m:7         853     h:0.85,m:0.53   h:0.35,m:0.82
-chr10   76139   76313   chr10:76139-76313       1.334274110255592       h:6,m:46        507     h:13,m:35       446     h:1.18,m:9.07   h:2.91,m:7.85
+chr20  9838623   9839213   CpG:  47   257.34514203447543    C:57   1777  C:601  2091   C:3.21  C:28.74  0.032076534   0.2874223
+chr20  10034962  10035266  CpG:  35   1.294227443419004     C:7    1513  C:14   1349   C:0.46  C:1.04   0.00462657    0.010378058
+chr20  10172120  10172545  CpG:  35   5.013026381110649     C:43   1228  C:70   1088   C:3.50  C:6.43   0.035016287   0.06433824
+chr20  10217487  10218336  CpG:  59   173.7819873154349     C:136  2337  C:482  1838   C:5.82  C:26.22  0.058194265   0.26224157
+chr20  10433628  10434345  CpG:  71   -0.13968153023233754  C:31   2748  C:36   3733   C:1.13  C:0.96   0.0112809315  0.009643719
+chr20  10671925  10674963  CpG:  255  6.355823977093678     C:67   9459  C:153  12862  C:0.71  C:1.19   0.0070832013  0.011895506
 ```
 
-## Scoring details
-The aim of `modkit dmr` is to enable exploratory data analysis of methylation patterns. To that aim, the approach to 
-scoring methylation differences is intended to be simple and interpretable. For every region provided, within a sample, 
-we model each potentially methylated base as arising from the same distribution. In other words, we discard the relative 
-ordering of the base modification calls within a region. We then define a model for the frequency of observing each base 
-modification state. In the case of methylated versus unmodified (5mC vs C, or 6mA vs A), we use the binomial distribution
-and model the probability of methylation \\(p\\) as a beta-distributed random variable: 
+When performing single-site analysis, the following additional columns are added:
 
-\\[
-    \mathbf{X}|p \sim \text{Bin}(n, p)
-\\]
-\\[
-    p \sim \text{Beta}(\alpha, \beta)
-\\]
+| column | name                        | description                                                                           | type  |
+|--------|-----------------------------|---------------------------------------------------------------------------------------|-------|
+| 14     | MAP-based p-value           | Ratio of the posterior probability of observing the effect size over zero effect size | float |
+| 15     | effect size                 | Percent modified in sample A (col 12) minus percent modified in sample B (col 13)     | float |
+| 16     | balanced MAP-based p-value  | MAP-based p-value when all replicates are balanced                                    | float |
+| 17     | balanced effect size        | effect size when all replicates are balanced                                          | float |
+| 18     | per-replicate p-values      | MAP-based p-values for matched replicate pairs                                        | float |
+| 19     | per-replicate effect sizes  | effect sizes matched replicate pairs                                                  | float |
 
-where \\(n\\) is the number of potentially methylated bases reported on in the 
-region and \\(\mathbf{X}\\) is the vector of counts (canonical and methylated). 
+Columns 16-19 are only produced when multiple replicates are provided. Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
+For example in the abbreviated command below:
 
-In the case where there are more than two states (for example, 5hmC, 5mC, and unmodified C) we use a multinomial 
-distribution and a Dirichlet as the base distribution: 
-\\[
-    \mathbf{X}|\pi \sim \text{Mult}(n, \pi)
-\\]
+```bash
+modkit dmr pair \
+  -a ${norm_pileup_1}.gz \
+  -a ${norm_pileup_2}.gz \
+  -b ${tumor_pileup_1}.gz \
+  -b ${tumor_pileup_2}.gz \
+  ...
+```
 
-\\[
-    \pi \sim \text{Dir}(\alpha)
-\\]
+Column 18 will contain the MAP-based p-value comparing `norm_pileup_1` versus `tumor_pileup_1` and `norm_pileup_2` versus `norm_pileup_2`.
+Column 19 will contain the effect sizes, values are comma-separated.
 
-Let \\(\theta\\) be the parameters describing the posterior distribution ( \\( \alpha, \beta \\) for the binary case, 
-and \\(\alpha \\) in the general case). The `score` reported is the result of the following log marginal likelihood 
-ratio :
-
-\\[
-\text{score} = \text{log}(\frac{l_{\theta_{a}}( \mathbf{X_a} ) l_{\theta_{b}} ( \mathbf{X_b} )}{l_{\theta_{a+b}} (\mathbf{X_{a+b}} )})
-\\]
-
-Where \\(\theta_a\\) and \\(\theta_b\\) are the posterior distributions with the two conditions modeled separately, 
-and \\(\theta_{a+b}\\) is the posterior when the two conditions are modeled together. The function \\(l_{\theta}\(\mathbf{X}) \\) is 
-the log marginal likelihood of the counts under the parameters of the model \\(\theta\\).
-For all cases, we use [Jeffrey's prior](https://en.wikipedia.org/wiki/Jeffreys_prior) as the prior distribution.
