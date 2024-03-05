@@ -74,8 +74,7 @@ pub struct PairwiseDmr {
     /// tab-separated (spaces allowed in the "name" column). Requires
     /// chrom, chromStart and chromEnd. The Name column is optional. Strand
     /// is currently ignored. When omitted, methylation levels are compared at
-    /// each site in the `-a`/`control_bed_methyl` BED file (or optionally, the
-    /// `-b`/`exp_bed_methyl` file with the `--use-b` flag.
+    /// each site.
     #[arg(long, short = 'r', alias = "regions")]
     regions_bed: Option<PathBuf>,
     /// Path to reference fasta for used in the pileup/alignment.

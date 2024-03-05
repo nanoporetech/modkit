@@ -88,7 +88,7 @@ pub struct ExtractMods {
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
     /// Set the query and reference k-mer size (if a reference is provided).
-    /// Maximum number for this value is 12.
+    /// Maximum number for this value is 50.
     #[arg(long, default_value_t = 5)]
     kmer_size: usize,
     /// Ignore the BAM index (if it exists) and default to a serial scan of the

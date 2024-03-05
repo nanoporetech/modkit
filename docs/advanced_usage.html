@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html lang="en" class="sidebar-visible no-js light">
+<html lang="en" class="light" dir="ltr">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
@@ -10,7 +10,7 @@
         
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#ffffff" />
+        <meta name="theme-color" content="#ffffff">
 
         <link rel="icon" href="favicon.svg">
         <link rel="shortcut icon" href="favicon.png">
@@ -34,7 +34,7 @@
         <!-- MathJax -->
         <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
     </head>
-    <body>
+    <body class="sidebar-visible no-js">
     <div id="body-container">
         <!-- Provide site root to javascript -->
         <script>
@@ -64,42 +64,71 @@
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
             var html = document.querySelector('html');
-            html.classList.remove('no-js')
             html.classList.remove('light')
             html.classList.add(theme);
-            html.classList.add('js');
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
         </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
-            var html = document.querySelector('html');
+            var body = document.querySelector('body');
             var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
             } else {
                 sidebar = 'hidden';
             }
-            html.classList.remove('sidebar-visible');
-            html.classList.add("sidebar-" + sidebar);
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
         </script>
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.10.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.11.</strong> Perform differential methylation scoring</a></li><li class="chapter-item expanded "><a href="intro_validate.html"><strong aria-hidden="true">1.12.</strong> Validate ground truth results</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html" class="active"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.10.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.11.</strong> Perform differential methylation scoring</a></li><li class="chapter-item expanded "><a href="intro_validate.html"><strong aria-hidden="true">1.12.</strong> Validate ground truth results</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html" class="active"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="dmr_scoring_details.html"><strong aria-hidden="true">6.2.</strong> DMR model and scoring details</a></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.3.</strong> Ignoring and combining calls</a></li></ol></li></ol>
             </div>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
         </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
 
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
                                 <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky bordered">
+                <div id="menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
-                        </button>
+                        </label>
                         <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                             <i class="fa fa-paint-brush"></i>
                         </button>
@@ -155,7 +184,9 @@ modified base information (modBAMs). The various sub-commands and tools availabl
 <blockquote>
 <p>Advanced usage information.</p>
 </blockquote>
-<pre><code class="language-text">Usage: modkit &lt;COMMAND&gt;
+<pre><code class="language-text">Modkit is a bioinformatics tool for working with modified bases from Oxford Nanopore
+
+Usage: modkit &lt;COMMAND&gt;
 
 Commands:
   pileup        Tabulates base modification calls across genomic positions. This command
@@ -177,7 +208,7 @@ Commands:
   extract       Extract read-level base modification information from a modBAM into a
                     tab-separated values table.
   repair        Repair MM and ML tags in one bam with the correct tags from another. To use this
-                    command, both modBAMs _must_ be sorted by read name. The &quot;donor&quot; modBAM's reads
+                    command, both modBAMs _must_ be sorted by read name. The "donor" modBAM's reads
                     must be a superset of the acceptor's reads. Extra reads in the donor are
                     allowed, and multiple reads with the same name (secondary, etc.) are allowed in
                     the acceptor. Reads with an empty SEQ field cannot be repaired and will be
@@ -209,8 +240,8 @@ Arguments:
           Input BAM, should be sorted and have associated index available.
 
   &lt;OUT_BED&gt;
-          Output file (or directory with --bedgraph option) to write results into. Specify &quot;-&quot; or
-          &quot;stdout&quot; to direct output to stdout.
+          Output file (or directory with --bedgraph option) to write results into. Specify "-" or
+          "stdout" to direct output to stdout.
 
 Options:
       --log-filepath &lt;LOG_FILEPATH&gt;
@@ -333,9 +364,9 @@ Options:
           argument is short hand for --motif CG 0.
           
           This argument can be passed multiple times. When more than one motif is used, the
-          resulting output BED file will indicate the motif in the &quot;name&quot; field as
+          resulting output BED file will indicate the motif in the "name" field as
           &lt;mod_code&gt;,&lt;motif&gt;,&lt;offset&gt;. For example, given `--motif CGCG 2 --motif CG 0` there will
-          be output lines with name fields such as &quot;m,CG,0&quot; and &quot;m,CGCG,2&quot;. To use this option with
+          be output lines with name fields such as "m,CG,0" and "m,CGCG,2". To use this option with
           `--combine-strands`, all motifs must be reverse-complement palindromic or an error will be
           raised.
 
@@ -371,7 +402,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -445,7 +476,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -481,7 +512,7 @@ Options:
                                      canonical. [possible values: explicit, implicit]
   -t, --threads &lt;THREADS&gt;            Number of threads to use [default: 4]
       --no-implicit-probs            Don't add implicit canonical calls. This flag is important when
-                                     converting from one of the implicit modes ( `.` or `&quot;&quot;`) to
+                                     converting from one of the implicit modes ( `.` or `""`) to
                                      explicit mode (`?`). By passing this flag, the bases without
                                      associated base modification probabilities will not be assumed
                                      to be canonical. No base modification probability will be
@@ -547,7 +578,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -693,7 +724,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -831,7 +862,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -854,7 +885,7 @@ Arguments:
           associated index.
 
   &lt;OUT_PATH&gt;
-          Path to output file, &quot;stdout&quot; or &quot;-&quot; will direct output to standard out. Specifying &quot;null&quot;
+          Path to output file, "stdout" or "-" will direct output to standard out. Specifying "null"
           will not output the extract table (useful if all you need is the `--read-calls` output
           table).
 
@@ -894,8 +925,8 @@ Options:
           Hide the progress bar.
 
       --kmer-size &lt;KMER_SIZE&gt;
-          Set the query and reference k-mer size (if a reference is provided). Maxumum number for
-          this value is 12.
+          Set the query and reference k-mer size (if a reference is provided). Maximum number for
+          this value is 50.
           
           [default: 5]
 
@@ -911,7 +942,7 @@ Options:
 
       --reference &lt;REFERENCE&gt;
           Path to reference FASTA to extract reference context information from. If no reference is
-          provided, `ref_kmer` column will be &quot;.&quot; in the output. (alias: ref)
+          provided, `ref_kmer` column will be "." in the output. (alias: ref)
 
       --include-bed &lt;INCLUDE_BED&gt;
           BED file with regions to include (alias: include-positions). Implicitly only includes
@@ -993,7 +1024,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1021,7 +1052,7 @@ Options:
 </code></pre>
 <h2 id="repair"><a class="header" href="#repair">repair</a></h2>
 <pre><code class="language-text">Repair MM and ML tags in one bam with the correct tags from another. To use this command, both
-modBAMs _must_ be sorted by read name. The &quot;donor&quot; modBAM's reads must be a superset of the
+modBAMs _must_ be sorted by read name. The "donor" modBAM's reads must be a superset of the
 acceptor's reads. Extra reads in the donor are allowed, and multiple reads with the same name
 (secondary, etc.) are allowed in the acceptor. Reads with an empty SEQ field cannot be repaired and
 will be rejected. Reads where there is an ambiguous alignment of the acceptor to the donor will be
@@ -1068,7 +1099,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1077,19 +1108,19 @@ Options:
           Canonical base to evaluate. By default, this will be derived from mod codes in ground
           truth BED files. For ground truth with only canonical sites and/or ChEBI codes this values
           must be set.
-
+          
           [possible values: A, C, G, T]
 
   -q, --filter-quantile &lt;FILTER_QUANTILE&gt;
           Filter out modified base calls where the probability of the predicted variant is below
           this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
           modification calls.
-
+          
           [default: 0.1]
 
   -t, --threads &lt;THREADS&gt;
           Number of threads to use.
-
+          
           [default: 4]
 
       --suppress-progress
@@ -1262,7 +1293,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1276,7 +1307,7 @@ Options:
   -h, --help
           Print help information (use `-h` for a summary).
 </code></pre>
-<h2 id="pileup-hemi-pair"><a class="header" href="#pileup-hemi-pair">pileup-hemi <code>pair</code></a></h2>
+<h2 id="dmr-pair"><a class="header" href="#dmr-pair">dmr pair</a></h2>
 <pre><code class="language-text">Compare regions in a pair of samples (for example, tumor and normal or control and experiment). A
 sample is input as a bgzip pileup bedMethyl (produced by pileup, for example) that has an associated
 tabix index. Output is a BED file with the score column indicating the magnitude of the difference
@@ -1289,64 +1320,114 @@ Options:
           Bgzipped bedMethyl file for the first (usually control) sample. There should be a tabix
           index with the same name and .tbi next to this file or the --index-a option must be
           provided.
+
   -b &lt;EXP_BED_METHYL&gt;
           Bgzipped bedMethyl file for the second (usually experimental) sample. There should be a
           tabix index with the same name and .tbi next to this file or the --index-b option must be
           provided.
+
   -o, --out-path &lt;OUT_PATH&gt;
-          Path to file to direct output, optional, no argument will direct output to stdout.
+          Path to file to direct output, optional, no argument will direct output to stdout
+
+      --header
+          Include header in output.
+
   -r, --regions-bed &lt;REGIONS_BED&gt;
           BED file of regions over which to compare methylation levels. Should be tab-separated
-          (spaces allowed in the &quot;name&quot; column). Requires chrom, chromStart and chromEnd. The Name
+          (spaces allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name
           column is optional. Strand is currently ignored. When omitted, methylation levels are
-          compared at each site in the `-a`/`control_bed_methyl` BED file (or optionally, the
-          `-b`/`exp_bed_methyl` file with the `--use-b` flag.
-      --use-b
-          When performing site-level DMR, use the bedMethyl indicated by the -b/exp_bed_methyl
-          argument to collect bases to score.
+          compared at each site.
+
       --ref &lt;REFERENCE_FASTA&gt;
-          Path to reference fasta for the pileup.
+          Path to reference fasta for used in the pileup/alignment.
+
   -m &lt;MODIFIED_BASES&gt;
           Bases to use to calculate DMR, may be multiple. For example, to calculate differentially
           methylated regions using only cytosine modifications use --base C.
+          
       --log-filepath &lt;LOG_FILEPATH&gt;
           File to write logs to, it's recommended to use this option.
+
   -t, --threads &lt;THREADS&gt;
-          Number of threads to use [default: 4]
+          Number of threads to use.
+          
+          [default: 4]
+
       --batch-size &lt;BATCH_SIZE&gt;
           Control the  batch size. The batch size is the number of regions to load at a time. Each
           region will be processed concurrently. Loading more regions at a time will decrease IO to
           load data, but will use more memory. Default will be 50% more than the number of threads
           assigned.
+
   -k, --mask
           Respect soft masking in the reference FASTA.
+
       --suppress-progress
           Don't show progress bars.
+
   -f, --force
           Force overwrite of output file, if it already exists.
+
       --index-a &lt;INDEX_A&gt;
           Path to tabix index associated with -a (--control-bed-methyl) bedMethyl file.
+
       --index-b &lt;INDEX_B&gt;
           Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl file.
+
       --missing &lt;HANDLE_MISSING&gt;
           How to handle regions found in the `--regions` BED file. quiet =&gt; ignore regions that are
           not found in the tabix header warn =&gt; log (debug) regions that are missing fatal =&gt; log
-          (error) and exit the program when a region is missing. [default: warn] [possible values:
-          quiet, warn, fail]
+          (error) and exit the program when a region is missing.
+          
+          [default: warn]
+          [possible values: quiet, warn, fail]
+
       --min-valid-coverage &lt;MIN_VALID_COVERAGE&gt;
           Minimum valid coverage required to use an entry from a bedMethyl. See the help for pileup
-          for the specification and description of valid coverage. [default: 0]
+          for the specification and description of valid coverage.
+          
+          [default: 0]
+
+      --prior &lt;PRIOR&gt; &lt;PRIOR&gt;
+          Prior distribution for estimating MAP-based p-value. Should be two arguments for alpha and
+          beta (e.g. 1.0 1.0). See `dmr_scoring_details.md` for additional details on how the metric
+          is calculated.
+
+      --delta &lt;DELTA&gt;
+          Consider only effect sizes greater than this when calculating the MAP-based p-value.
+          
+          [default: 0.05]
+
+  -N, --n-sample-records &lt;N_SAMPLE_RECORDS&gt;
+          Sample this many reads when estimating the max coverage thresholds.
+          
+          [default: 10042]
+
+      --max-coverages &lt;MAX_COVERAGES&gt; &lt;MAX_COVERAGES&gt;
+          Max coverages to enforce when calculating estimated MAP-based p-value.
+
+      --cap-coverages
+          When using replicates, cap coverage to be equal to the maximum coverage for a single
+          sample. For example, if there are 3 replicates with max_coverage of 30, the total coverage
+          would normally be 90. Using --cap-coverages will down sample the data to 30X.
+
+  -i, --interval-size &lt;INTERVAL_SIZE&gt;
+          Interval chunk size in base pairs to process concurrently. Smaller interval chunk sizes
+          will use less memory but incur more overhead.
+          
+          [default: 100000]
+
   -h, --help
-          Print help information.
+          Print help information (use `-h` for a summary).
 </code></pre>
-<h2 id="pileup-hemi-1"><a class="header" href="#pileup-hemi-1">pileup-hemi</a></h2>
+<h2 id="dmr-multi"><a class="header" href="#dmr-multi">dmr multi</a></h2>
 <pre><code class="language-text">Compare regions between all pairs of samples (for example a trio sample set or haplotyped trio
 sample set). As with `pair` all inputs must be bgzip compressed bedMethyl files with associated
 tabix indices. Each sample must be assigned a name. Output is a directory of BED files with the
 score column indicating the magnitude of the difference in methylation between the two samples
-indicated in the file name. See the online documentation for additional details.
+indicated in the file name. See the online documentation for additional details
 
-Usage: modkit dmr multi [OPTIONS] --out-dir &lt;OUT_DIR&gt; --ref &lt;REFERENCE_FASTA&gt;
+Usage: modkit dmr multi [OPTIONS] --regions-bed &lt;REGIONS_BED&gt; --out-dir &lt;OUT_DIR&gt; --ref &lt;REFERENCE_FASTA&gt;
 
 Options:
   -s, --sample &lt;SAMPLES&gt; &lt;SAMPLES&gt;
@@ -1358,9 +1439,10 @@ Options:
           argument.
   -r, --regions-bed &lt;REGIONS_BED&gt;
           BED file of regions over which to compare methylation levels. Should be tab-separated
-          (spaces allowed in the &quot;name&quot; column). Requires chrom, chromStart and chromEnd. The Name
-          column is optional. Strand is currently ignored. When omitted, methylation levels are
-          compared at each site in common between the two bedMethyl files being compared.
+          (spaces allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name
+          column is optional. Strand is currently ignored.
+      --header
+          Include header in output.
   -o, --out-dir &lt;OUT_DIR&gt;
           Directory to place output DMR results in BED format.
   -p, --prefix &lt;PREFIX&gt;
@@ -1379,7 +1461,7 @@ Options:
       --suppress-progress
           Don't show progress bars.
   -f, --force
-          Force overwrite of output file, if it already exists
+          Force overwrite of output file, if it already exists.
       --missing &lt;HANDLE_MISSING&gt;
           How to handle regions found in the `--regions` BED file. quiet =&gt; ignore regions that are
           not found in the tabix header warn =&gt; log (debug) regions that are missing fatal =&gt; log
@@ -1389,7 +1471,7 @@ Options:
           Minimum valid coverage required to use an entry from a bedMethyl. See the help for pileup
           for the specification and description of valid coverage. [default: 0]
   -h, --help
-          Print help information
+          Print help information.
 </code></pre>
 
                     </main>
@@ -1400,7 +1482,7 @@ Options:
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next" href="troubleshooting.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="troubleshooting.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -1414,7 +1496,7 @@ Options:
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next" href="troubleshooting.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="troubleshooting.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>

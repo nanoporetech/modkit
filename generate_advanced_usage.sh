@@ -28,7 +28,7 @@ done
 for subcommand in "pair" "multi"
 do
   echo "" >> ${doc_file}
-  echo "## ${cmd}" >> ${doc_file}
+  echo "## dmr ${subcommand}" >> ${doc_file}
   echo "\`\`\`text" >> ${doc_file}
   ./target/debug/modkit dmr $subcommand --help >> ${doc_file}
   echo "\`\`\`" >> ${doc_file}
