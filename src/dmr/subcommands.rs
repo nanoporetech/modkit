@@ -127,9 +127,25 @@ pub struct PairwiseDmr {
     /// coverage.
     #[arg(long, alias = "min-coverage", default_value_t = 0)]
     min_valid_coverage: u64,
-    #[arg(long, num_args = 2, conflicts_with = "regions_bed")]
+    /// Prior distribution for estimating MAP-based p-value. Should be two
+    /// arguments for alpha and beta (e.g. 1.0 1.0). See
+    /// `dmr_scoring_details.md` for additional details on how the metric
+    /// is calculated.
+    #[arg(
+        long,
+        num_args = 2,
+        conflicts_with = "regions_bed",
+        hide_short_help = true
+    )]
     prior: Option<Vec<f64>>,
-    #[arg(long, default_value_t = 0.05, conflicts_with = "regions_bed")]
+    /// Consider only effect sizes greater than this when calculating the
+    /// MAP-based p-value.
+    #[arg(
+        long,
+        default_value_t = 0.05,
+        conflicts_with = "regions_bed",
+        hide_short_help = true
+    )]
     delta: f64,
     /// Sample this many reads when estimating the max coverage thresholds.
     #[arg(
