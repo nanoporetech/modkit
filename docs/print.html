@@ -1,17 +1,17 @@
 <!DOCTYPE HTML>
-<html lang="en" class="sidebar-visible no-js light">
+<html lang="en" class="light" dir="ltr">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
         <title>Modkit</title>
-        <meta name="robots" content="noindex" />
+        <meta name="robots" content="noindex">
 
 
         <!-- Custom HTML head -->
         
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#ffffff" />
+        <meta name="theme-color" content="#ffffff">
 
         <link rel="icon" href="favicon.svg">
         <link rel="shortcut icon" href="favicon.png">
@@ -35,7 +35,7 @@
         <!-- MathJax -->
         <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
     </head>
-    <body>
+    <body class="sidebar-visible no-js">
     <div id="body-container">
         <!-- Provide site root to javascript -->
         <script>
@@ -65,42 +65,71 @@
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
             var html = document.querySelector('html');
-            html.classList.remove('no-js')
             html.classList.remove('light')
             html.classList.add(theme);
-            html.classList.add('js');
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
         </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
-            var html = document.querySelector('html');
+            var body = document.querySelector('body');
             var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
             } else {
                 sidebar = 'hidden';
             }
-            html.classList.remove('sidebar-visible');
-            html.classList.add("sidebar-" + sidebar);
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
         </script>
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.10.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.11.</strong> Perform differential methylation scoring</a></li><li class="chapter-item expanded "><a href="intro_validate.html"><strong aria-hidden="true">1.12.</strong> Validate ground truth results</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.10.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.11.</strong> Perform differential methylation scoring</a></li><li class="chapter-item expanded "><a href="intro_validate.html"><strong aria-hidden="true">1.12.</strong> Validate ground truth results</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="dmr_scoring_details.html"><strong aria-hidden="true">6.2.</strong> DMR model and scoring details</a></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.3.</strong> Ignoring and combining calls</a></li></ol></li></ol>
             </div>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
         </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
 
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
                                 <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky bordered">
+                <div id="menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
-                        </button>
+                        </label>
                         <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                             <i class="fa fa-paint-brush"></i>
                         </button>
@@ -154,7 +183,7 @@
 <h2 id="installation"><a class="header" href="#installation">Installation</a></h2>
 <p>Pre-compiled binaries are provided for Linux from the <a href="https://github.com/nanoporetech/modkit/releases">release
 page</a>. We recommend the use of these in
-most circumstances. As a rust-based project, <code>modkit</code> can also be installed with 
+most circumstances. As a rust-based project, <code>modkit</code> can also be installed with
 <a href="https://www.rust-lang.org/learn/get-started">cargo</a>.</p>
 <pre><code class="language-bash">git clone https://github.com/nanoporetech/modkit.git
 cd modkit
@@ -187,7 +216,7 @@ an extended <a href="https://www.encodeproject.org/data-standards/wgbs/">bedMeth
 bedMethyl files tabulate the counts of base modifications from every sequencing read over
 each aligned reference genomic position. In order to create a bedMethyl table, your modBAM
 must be aligned to a reference genome. The genome sequence is only required if you are using
-the <code>--cpg</code> flag or <code>traditional</code> preset. Only <strong>primary alignments</strong> are used in generating 
+the <code>--cpg</code> flag or <code>traditional</code> preset. Only <strong>primary alignments</strong> are used in generating
 the table, it is recommended to mark duplicate alignments before running as multiple primary
 alignments can be double counted (but the behavior is logged). See <a href="./limitations.html">limitations</a>
 for details.</p>
@@ -207,7 +236,7 @@ CpG dinucleotides. This option requires a reference sequence in order to locate 
 in the reference:</p>
 <pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta
 </code></pre>
-<p>To restrict output to only certain CpGs, pass the <code>--include-bed</code> option with the CpGs to be used, 
+<p>To restrict output to only certain CpGs, pass the <code>--include-bed</code> option with the CpGs to be used,
 see <a href="./intro_include_bed.html">this page</a> for more details.</p>
 <pre><code class="language-bash">modkit pileup path/to/reads.bam output/path/pileup.bed \
   --cpg \
@@ -256,14 +285,14 @@ oligo_741_adapters  39 40 m,CGCG,2 4	-	39	40	255,0,0	4 100.00 4 0 0 0 0 0 0
 must be reverse-complement palindromic (<code>CG</code> <em>is</em> a palindrome but <code>CHH</code> is
 not).</p>
 <h3 id="partitioning-reads-based-on-sam-tag-values"><a class="header" href="#partitioning-reads-based-on-sam-tag-values">Partitioning reads based on SAM tag values</a></h3>
-<p>If have a modBAM with reads from different conditions are other SAM tag annotations (for example <code>RG</code> or <code>HP</code>) you 
-can pass the <code>--partition-tag</code> option and <code>modkit</code> will output a separate bedMethyl with counts for only the reads 
+<p>If have a modBAM with reads from different conditions are other SAM tag annotations (for example <code>RG</code> or <code>HP</code>) you
+can pass the <code>--partition-tag</code> option and <code>modkit</code> will output a separate bedMethyl with counts for only the reads
 with that tag value. For example, if you have haplotype-annotated reads with the <code>HP</code> tag, you could use a command
 like the following:</p>
 <pre><code class="language-bash">modkit pileup path/to/reads.bam output/directory/ --cpg --ref &lt;reference.fasta&gt; --partition-tag HP --prefix haplotyped
 </code></pre>
 <p>The output will be multiple files in placed in <code>output/directory/haplotyped_&lt;1|2|etc&gt;.bed</code>, multiple <code>--partition-tag</code>
-options can be passed and the output files will correspond to the observed combinations of tags found in the modBAM. 
+options can be passed and the output files will correspond to the observed combinations of tags found in the modBAM.
 For example if <code>--partition-tag RG</code> and <code>--partition-tag HP</code> are passed:</p>
 <pre><code class="language-bash">outdir/
   &lt;prefix&gt;_&lt;RG_value_1&gt;_&lt;HP_value_1&gt;.bed
@@ -273,7 +302,7 @@ For example if <code>--partition-tag RG</code> and <code>--partition-tag HP</cod
   # ... etc
 </code></pre>
 <p>Note that only tag values that can be easily turned into strings will be considered valid (e.g. numbers, characters,
-strings, etc.), array values will not be used, and will result in <code>missing</code> being used. Reads missing all of the 
+strings, etc.), array values will not be used, and will result in <code>missing</code> being used. Reads missing all of the
 SAM tags will be put in <code>ungrouped.bed</code>.</p>
 <p>For more information on the individual options see the <a href="./advanced_usage.html">Advanced Usage</a> help document.</p>
 <h2 id="description-of-bedmethyl-output"><a class="header" href="#description-of-bedmethyl-output">Description of bedMethyl output.</a></h2>
@@ -321,7 +350,7 @@ CG-&gt;CH substitution such that no modification call was produced by the baseca
 </tbody></table>
 </div>
 <h2 id="performance-considerations"><a class="header" href="#performance-considerations">Performance considerations</a></h2>
-<p>The <code>--interval-size</code>, <code>--threads</code>, <code>--chunk-size</code>, and <code>--max-depth</code> parameters can be used to tweak the parallelism and 
+<p>The <code>--interval-size</code>, <code>--threads</code>, <code>--chunk-size</code>, and <code>--max-depth</code> parameters can be used to tweak the parallelism and
 memory consumption of <code>modkit pileup</code>. The defaults should be suitable for most use cases, for more details see the
 <a href="./advanced_usage.html">advanced usage</a> and <a href="./perf_considerations.html">performance considerations</a> sections.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="updating-and-adjusting-mm-tags"><a class="header" href="#updating-and-adjusting-mm-tags">Updating and Adjusting MM tags.</a></h1>
@@ -355,12 +384,12 @@ for omission of the MM flag, however this may not be the intent of missing base
 modification probabilities for some models. The command below will add or change the <code>?</code> flag to a modBAM.</p>
 <pre><code>modkit adjust-mods input.bam output.bam --mode ambiguous
 </code></pre>
-<p>Another option is to set the flag to <code>.</code>, the &quot;implicitly canonical&quot; mode:</p>
+<p>Another option is to set the flag to <code>.</code>, the "implicitly canonical" mode:</p>
 <pre><code>modkit adjust-mods input.bam output.bam --mode implicit
 </code></pre>
 <h2 id="changing-the-base-modification-code"><a class="header" href="#changing-the-base-modification-code">Changing the base modification code.</a></h2>
 <p>Some functions in <code>modkit</code> or other tools may require the mod-codes in the MM tag be in
-the <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a>. </p>
+the <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a>.</p>
 <p>For example, the following command will change <code>C+Z,</code> tags to <code>C+m,</code> tags.</p>
 <pre><code>modkit adjust-mods input.bam output.bam --convert Z m
 </code></pre>
@@ -444,12 +473,12 @@ position within the motif.</p>
 </code></pre>
 <p>The output is directed to standard out.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="extracting-base-modification-information"><a class="header" href="#extracting-base-modification-information">Extracting base modification information</a></h1>
-<p>The <code>modkit extract</code> sub-command will produce a table containing the base modification probabilities, 
+<p>The <code>modkit extract</code> sub-command will produce a table containing the base modification probabilities,
 the read sequence context, and optionally aligned reference information.
-For <code>extract</code>, if a correct <code>MN</code> tag is found, secondary and supplementary alignments may be output with the <code>--allow-non-primary</code> flag. 
+For <code>extract</code>, if a correct <code>MN</code> tag is found, secondary and supplementary alignments may be output with the <code>--allow-non-primary</code> flag.
 See <a href="./troubleshooting.html">troubleshooting</a> for details.</p>
-<p>The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
-To only include mapped bases use the <code>--mapped</code> flag. To only include sites of interest, pass a 
+<p>The table will by default contain unmapped sections of the read (soft-clipped sections, for example).
+To only include mapped bases use the <code>--mapped</code> flag. To only include sites of interest, pass a
 BED-formatted file to the <code>--include-bed</code> option. Similarly, to exclude sites, pass a BED-formatted
 file to the <code>--exclude</code> option. One caution, the files generated by <code>modkit extract</code> can be large (2-2.5x
 the size of the BAM). You may want to either use the <code>--num-reads</code> option, the <code>--region</code> option, or
@@ -479,11 +508,11 @@ or <code>stdout</code> and filter the columns before writing to disk.</p>
 </tbody></table>
 </div>
 <h1 id="tabulating-base-modification-calls-for-each-read-position"><a class="header" href="#tabulating-base-modification-calls-for-each-read-position">Tabulating base modification <em>calls</em> for each read position</a></h1>
-<p>Passing <code>--read-calls &lt;file-path&gt;</code> option will generate a table of read-level base modification calls using the 
+<p>Passing <code>--read-calls &lt;file-path&gt;</code> option will generate a table of read-level base modification calls using the
 same <a href="./filtering.html">thresholding</a> algorithm employed by <code>modkit pileup</code>. The resultant table has, for each read,
-one row for each base modification call in that read. If a base is called as modified then <code>call_code</code> will be the 
+one row for each base modification call in that read. If a base is called as modified then <code>call_code</code> will be the
 code in the <code>MM</code> tag. If the base is called as canonical the <code>call_code</code> will be <code>-</code> (<code>A</code>, <code>C</code>, <code>G</code>, and <code>T</code> are
-reserved for &quot;any modification&quot;). The full schema of the table is below:</p>
+reserved for "any modification"). The full schema of the table is below:</p>
 <div class="table-wrapper"><table><thead><tr><th>column</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
 <tr><td>1</td><td>read_id</td><td>name of the read</td><td>str</td></tr>
 <tr><td>2</td><td>forward_read_position</td><td>0-based position on the forward-oriented read sequence</td><td>int</td></tr>
@@ -509,18 +538,18 @@ reserved for &quot;any modification&quot;). The full schema of the table is belo
 </tbody></table>
 </div>
 <h2 id="note-on-implicit-base-modification-calls"><a class="header" href="#note-on-implicit-base-modification-calls">Note on implicit base modification calls.</a></h2>
-<p>The <code>.</code> MM flag indicates that primary sequence bases without an associated base modification probability 
-should be inferred to be canonical. By default, when this flag is encountered in a modBAM, <code>modkit extract</code> will 
+<p>The <code>.</code> MM flag indicates that primary sequence bases without an associated base modification probability
+should be inferred to be canonical. By default, when this flag is encountered in a modBAM, <code>modkit extract</code> will
 output rows with the <code>inferred</code> column set to <code>true</code> and a <code>mod_qual</code> value of <code>0.0</code> for the base modifications
-called on that read. For example, if you have a <code>A+a.</code> MM tag, and there are <code>A</code> bases in the read for which 
-there aren't base modification calls (identifiable as non-0s in the MM tag) will be rows where the <code>mod_code</code> 
+called on that read. For example, if you have a <code>A+a.</code> MM tag, and there are <code>A</code> bases in the read for which
+there aren't base modification calls (identifiable as non-0s in the MM tag) will be rows where the <code>mod_code</code>
 is <code>a</code> and the <code>mod_qual</code> is 0.0.</p>
 <h2 id="note-on-non-primary-alignments"><a class="header" href="#note-on-non-primary-alignments">Note on non-primary alignments</a></h2>
 <p>If a valid <code>MN</code> tag is found, secondary and supplementary alignments can be output in the <code>modkit extract</code> tables above.
 See <a href="./troubleshooting.html">troubleshooting</a> for details on how to get valid <code>MN</code> tags.
-To have non-primary alignments appear in the output, the <code>--allow-non-primary</code> flag must be passed. 
-By default, the primary alignment will have all base modification information contained on the read, including soft-clipped and unaligned read positions. 
-If the <code>--mapped-only</code> flag is used, soft clipped sections of the read will not be included. 
+To have non-primary alignments appear in the output, the <code>--allow-non-primary</code> flag must be passed.
+By default, the primary alignment will have all base modification information contained on the read, including soft-clipped and unaligned read positions.
+If the <code>--mapped-only</code> flag is used, soft clipped sections of the read will not be included.
 For secondary and supplementary alignments, soft-clipped positions are not repeated. See <a href="./advanced_usage.html">advanced usage</a> for more details.</p>
 <h2 id="example-usages"><a class="header" href="#example-usages">Example usages:</a></h2>
 <h3 id="extract-a-table-from-an-aligned-and-indexed-bam"><a class="header" href="#extract-a-table-from-an-aligned-and-indexed-bam">Extract a table from an aligned and indexed BAM</a></h3>
@@ -542,7 +571,7 @@ modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-
 <h3 id="extract-read-level-base-modification-calls"><a class="header" href="#extract-read-level-base-modification-calls">Extract read-level base modification calls</a></h3>
 <pre><code>modkit extract &lt;input.bam&gt; null --read-calls &lt;calls.tsv&gt;
 </code></pre>
-<p>Using &quot;null&quot; in the place of the normal output will direct the normal extract output
+<p>Using "null" in the place of the normal output will direct the normal extract output
 to /dev/null, to keep this output specify a file or <code>-</code> for standard out.</p>
 <pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt; --read-calls &lt;calls.tsv&gt;
 </code></pre>
@@ -579,15 +608,15 @@ to 0 and 100%.</p>
 <pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --edge-filter 100
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="removing-modification-calls-at-the-ends-of-reads"><a class="header" href="#removing-modification-calls-at-the-ends-of-reads">Removing modification calls at the ends of reads</a></h1>
-<p>If you have reads where you know base modifications near the ends should not be used 
+<p>If you have reads where you know base modifications near the ends should not be used
 (for example, if they are in adapters), you can use the <code>--edge-filter &lt;n_basepairs&gt;</code> option.
 Two comma-separated values may be provided to asymmetrically filter out
 base modification calls from the start and end of reads. For example, 4,8 will
 filter out base modification calls in the first 4 and last 8 bases of the read. One value
-will filter symmetrically. </p>
+will filter symmetrically.</p>
 <ol>
 <li><code>pileup</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>adjust-mods</code>, will <strong>remove</strong> base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends 
+<li><code>adjust-mods</code>, will <strong>remove</strong> base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends
 from the resultant output modBAM.</li>
 <li><code>summary</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
 <li><code>sample-probs</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
@@ -610,7 +639,7 @@ All commands have the flag <code>--invert-edge-filter</code> that will <em>keep<
 <pre><code>modkit pileup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 25,10
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="narrow-output-to-specific-positions"><a class="header" href="#narrow-output-to-specific-positions">Narrow output to specific positions</a></h1>
-<p>The <code>pileup</code>, <code>sample-probs</code>, <code>summary</code>, and <code>extract</code> sub commands have a <code>--include-bed</code> (or <code>--include-positions</code>) option that will restrict analysis to only positions that overlap with the intervals contained within the BED file. </p>
+<p>The <code>pileup</code>, <code>sample-probs</code>, <code>summary</code>, and <code>extract</code> sub commands have a <code>--include-bed</code> (or <code>--include-positions</code>) option that will restrict analysis to only positions that overlap with the intervals contained within the BED file.</p>
 <p>In the case of <code>pileup</code>, <code>summary</code>, and <code>sample-probs</code>, the pass-threshold will be estimated with only base modification probabilities that are aligned to positions overlapping intervals in the BED. In the case of <code>pileup</code> and <code>extract</code> only positions will be reported if they overlap intervals in the BED.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="repair-mmml-tags-on-trimmed-reads"><a class="header" href="#repair-mmml-tags-on-trimmed-reads">Repair MM/ML tags on trimmed reads</a></h1>
 <p>The <code>modkit repair</code> command is useful when you have a BAM with reads where the
@@ -619,7 +648,7 @@ and <code>ML</code> tags invalid (for example, trimmed or hard-clipped) or the d
 been lost completely. This command requires that you have the original base
 modification calls for each read you want to repair, and it will project these
 base modification calls onto the sequences in the altered BAM.</p>
-<p>The command uses two arguments called the &quot;donor&quot; and the &quot;acceptor&quot;. The
+<p>The command uses two arguments called the "donor" and the "acceptor". The
 donor, contains the original, correct, <code>MM</code> and <code>ML</code> tags and the acceptor is
 either missing <code>MM</code> and <code>ML</code> tags or they are invalid (they will be discarded
 either way). The reads in the donor must be a superset of the reads in the
@@ -649,19 +678,19 @@ modkit repair \
     --output-bam trimmed_repaired.bam
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="make-hemi-methylation-bedmethyl-tables-with-pileup-hemi"><a class="header" href="#make-hemi-methylation-bedmethyl-tables-with-pileup-hemi">Make hemi-methylation bedMethyl tables with <code>pileup-hemi</code></a></h1>
-<p>Base modifications in DNA are inherently single-stranded, they (usually <sup class="footnote-reference"><a href="#1">1</a></sup>) don't change the base
+<p>Base modifications in DNA are inherently single-stranded, they (usually [^1]) don't change the base
 pairing of the modified base. However, it may be of interest to know the correspondence
-between the methylation state of a single base and another nearby base on the opposite strand - 
-on the same molecule. In CpG dinucleotides, this is called &quot;hemi-methylation&quot;, when one cytosine
+between the methylation state of a single base and another nearby base on the opposite strand -
+on the same molecule. In CpG dinucleotides, this is called "hemi-methylation", when one cytosine
 is methylated and the neighbor on the opposite strand is not:</p>
 <pre><code class="language-text">     m
 5'GATCGTACA
   CTAGCATGT
       -
 </code></pre>
-<p>In the above diagram, the cytosine in the fourth position on the positive strand is methylated (5mC) and the 
-cytosine in the fifth position is canonical (-), indicating a &quot;hemi-methylation&quot;.</p>
-<p>In the case of 5mC and canonical, there are 4 &quot;patterns&quot; of methylation:</p>
+<p>In the above diagram, the cytosine in the fourth position on the positive strand is methylated (5mC) and the
+cytosine in the fifth position is canonical (-), indicating a "hemi-methylation".</p>
+<p>In the case of 5mC and canonical, there are 4 "patterns" of methylation:</p>
 <pre><code class="language-text">m,m (5mC, 5mC)
 -,m (canonical, 5mC)
 m,- (5mC, canonical)
@@ -670,7 +699,7 @@ m,- (5mC, canonical)
 <p>These are all measured at the <em>single molecule</em> level, meaning each molecule must report on both strands (as
 is the case with <a href="https://www.youtube.com/watch?v=8DVMG7FEBys">duplex</a> reads). For CpGs in the example above the
 <code>MM</code> tags would be <code>C+m?</code> and <code>G-m?</code> for the top-strand and bottom-strand cytosines, respectively.</p>
-<p>The <code>modkit pileup-hemi</code> command will perform an aggregation of the methylation &quot;patterns&quot; at genomic positions. An example
+<p>The <code>modkit pileup-hemi</code> command will perform an aggregation of the methylation "patterns" at genomic positions. An example
 command to perform hemi-methylation analysis at CpGs would be</p>
 <pre><code class="language-bash">modkit pileup-hemi \
   /path/to/duplex_reads.bam \
@@ -681,7 +710,7 @@ command to perform hemi-methylation analysis at CpGs would be</p>
 </code></pre>
 <p>Many of the <code>pileup</code> options are available in <code>pileup-hemi</code> with a couple differences: :</p>
 <ol>
-<li>A motif must be provided. The <code>--cpg</code> flag is a preset to aggregate CpG hemi-methylation patterns as shown above. 
+<li>A motif must be provided. The <code>--cpg</code> flag is a preset to aggregate CpG hemi-methylation patterns as shown above.
 If a motif is provided (as an argument to <code>--motif</code>) it must be reverse-complement palindromic.</li>
 <li>A reference must be provided.</li>
 <li>Both the positive strand base modification probability and the negative strand base modification probability must be above the pass threshold.</li>
@@ -689,25 +718,25 @@ If a motif is provided (as an argument to <code>--motif</code>) it must be rever
 <p>See <a href="./advanced_usage.html">Advanced Usage</a> for details on all the options.</p>
 <h2 id="description-of-hemi-methylation-patterns"><a class="header" href="#description-of-hemi-methylation-patterns">Description of hemi-methylation patterns</a></h2>
 <p>The <code>modkit pileup-hemi</code> command aggregates a pair of base modification calls at each reference motif position
-for each double-stranded DNA molecule. The base modification &quot;pattern&quot; indicates the methylation state on each base 
-in 5-prime to 3-prime order, using the base modification code to indicate the identity of the base modification and 
-<code>-</code> to indicate canonical (unmodified). For example <code>m,-,C</code> would mean the first base (from the reference 5' direction) 
-is 5mC and the second base is unmodified and the primary base is cytosone. Similarly, <code>h,m,C</code> indicates the first base is 
+for each double-stranded DNA molecule. The base modification "pattern" indicates the methylation state on each base
+in 5-prime to 3-prime order, using the base modification code to indicate the identity of the base modification and
+<code>-</code> to indicate canonical (unmodified). For example <code>m,-,C</code> would mean the first base (from the reference 5' direction)
+is 5mC and the second base is unmodified and the primary base is cytosone. Similarly, <code>h,m,C</code> indicates the first base is
 5hmC and the second base is 5mC. The primary base called by the read is included to help disambiguate the unmodified
 patterns (<code>-,-</code>). All patterns recognized at a location will be reported in the bedMethyl output.</p>
 <h3 id="definitions-1"><a class="header" href="#definitions-1">Definitions:</a></h3>
 <ul>
-<li>N<sub>pattern</sub> - Number of call-pairs passing filters that had the pattern and primary base in column 4. E.g. <code>m,-,C</code> 
+<li>N<sub>pattern</sub> - Number of call-pairs passing filters that had the pattern and primary base in column 4. E.g. <code>m,-,C</code>
 indicates the first base in the 5' to 3' direction is 5mC, the second base is unmodified and the primary base in the reads was C.</li>
 <li>N<sub>canonical</sub> - Number of call-pairs passing filters that were classified as unmodified (i.e. the pattern is <code>-,-</code>).</li>
-<li>N<sub>other_pattern</sub> - Number of call-pairs passing filters where the pattern is different from the pattern in 
-column 4, but where the primary read base is the same. This count includes the unmodified pattern (<code>-,-</code>). <strong>Note</strong> this 
+<li>N<sub>other_pattern</sub> - Number of call-pairs passing filters where the pattern is different from the pattern in
+column 4, but where the primary read base is the same. This count includes the unmodified pattern (<code>-,-</code>). <strong>Note</strong> this
 differs from <code>pileup</code> where N<sub>other</sub> does not contain the canonical counts.</li>
 <li>N<sub>valid_cov</sub> - the valid coverage, total number of valid call-pairs.</li>
 <li>N<sub>diff</sub> - Number of reads with a primary base other than the primary base in column 4.</li>
 <li>N<sub>delete</sub> - Number of reads with a deletion at this reference position.</li>
-<li>N<sub>fail</sub> - Number of call-pairs where the probability of the at least one of the calls in the pair was below 
-the pass threshold. The threshold can be set on the command line or computed from the data (usually failing the 
+<li>N<sub>fail</sub> - Number of call-pairs where the probability of the at least one of the calls in the pair was below
+the pass threshold. The threshold can be set on the command line or computed from the data (usually failing the
 lowest 10th percentile of calls).</li>
 <li>N<sub>nocall</sub> - Number of reads where either one or both of the base modification calls was not present in the read.</li>
 </ul>
@@ -738,16 +767,21 @@ lowest 10th percentile of calls).</li>
 <li>Only one motif can be used at a time, this limitation may be removed in a later version.</li>
 <li>Partitioning on tag key:value pairs is not currently supported.</li>
 </ol>
-<p><sup class="footnote-reference"><a href="#1">1</a></sup> In biology, there are almost always exceptions to every rule!</p>
+<p>[^1] In biology, there are almost always exceptions to every rule!</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="perform-differential-methylation-scoring"><a class="header" href="#perform-differential-methylation-scoring">Perform differential methylation scoring</a></h1>
-<p>The <code>modkit dmr</code> command contains two subcommands, <code>pair</code> and <code>multi</code>, that will compare a pair
-of samples and multiple samples, respectively. The details of <code>multi</code> are the same as <code>pair</code> (
-it simply does all the pairwise comparisons), so most of the description below will focus on how
-to run <code>pair</code> and how to interpret the outputs.</p>
+<p>The <code>modkit dmr</code> command contains two subcommands, <code>pair</code> and <code>multi</code>, that will compare pairwise conditions and multiple conditions.
+The <code>pair</code> command can be used to perform differential methylation detection on single genome positions (for example CpGs) or regions provided as a BED file.
+On the other hand, <code>multi</code> can only be used to compare regions (such as CpG islands), provided as a BED file.
+There are essentially three differential methylation workflows:</p>
+<ol>
+<li>Perform differential methylation scoring with a pair of samples on regions of the genome.</li>
+<li>Perform differential methylation scoring across all pairs of samples on regions of the genome.</li>
+<li>Perform base-level differential modification detection for a pair of conditions.</li>
+</ol>
+<p>Each application is explained below. For details on the scoping of these applications see the <a href="./limitations.html">limitations</a>.</p>
 <h2 id="preparing-the-input-data"><a class="header" href="#preparing-the-input-data">Preparing the input data</a></h2>
-<p>The inputs to <code>modkit dmr</code> are two or more bedMethyl files (created by <code>modkit pileup</code>) that have
-been compressed with <a href="https://www.htslib.org/doc/bgzip.html">bgzip</a> and indexed with 
-<a href="https://www.htslib.org/doc/tabix.html">tabix</a>. An example workflow to generate the input data is shown below:</p>
+<p>The inputs to all <code>modkit dmr</code> commands are two or more bedMethyl files (created by <code>modkit pileup</code>) that have been compressed with <a href="https://www.htslib.org/doc/bgzip.html">bgzip</a> and indexed with <a href="https://www.htslib.org/doc/tabix.html">tabix</a>.
+An example of how to generate the input data is shown below:</p>
 <pre><code class="language-bash">ref=grch38.fasta
 threads=32
 
@@ -760,41 +794,40 @@ modkit pileup ${norm} ${norm_pileup} \
   --threads ${threads} \
   --log-filepath log.txt
 
-bgzip ${norm_pileup}
-tabix ${norm_pileup}.gz
+bgzip -k ${norm_pileup}
+tabix -p bed ${norm_pileup}.gz
 
+# pileup and compression can also be done in one step
 tumor=tumor_sample.bam
-tumor_pileup=tumor_pileup.bed
+tumor_pileup=tumor_pileup.bed.gz
 
-modkit pileup ${tumor} ${tumor_pileup} \
+modkit pileup ${tumor} - \
   --cpg \
   --ref ${ref} \
   --threads ${threads} \
-  --log-filepath log.txt 
+  --log-filepath log.txt | ${bgzip} -c &gt; ${tumor_pileup}
 
-bgzip ${tumor_pileup}
-tabix ${tumor_pileup}.gz
+tabix -p bed ${tumor_pileup}
 </code></pre>
-<h2 id="running-differential-methylation-scoring"><a class="header" href="#running-differential-methylation-scoring">Running differential methylation scoring</a></h2>
-<p>Once you have the two (or more) samples to be compared in the appropriate format, the final piece necessary 
-is a BED file of the regions to be compared. The <code>modkit dmr</code> functionality does not &quot;segment&quot; or otherwise
-discover regions, it scores the differences between user-provided regions. To continue with the above example
-we can get CpG Islands from the <a href="http://genome.ucsc.edu/cgi-bin/hgTables">UCSC table browser</a>. The data may not 
-always be appropriate input for <code>modkit</code>. For example, the CpG Islands track has extra columns and a header line:</p>
-<pre><code class="language-text">#bin    chrom   chromStart      chromEnd        name       length  cpgNum  gcNum   perCpg  perGc   obsExp
-1065    chr20   63004819        63007703        CpG: 272   2884    272     1869    18.9    64.8    0.9
-1065    chr20   63009128        63009816        CpG: 48    688     48      432     14      62.8    0.71
+<h2 id="1-perform-differential-methylation-scoring-of-genomic-regions-for-a-pair-of-samples"><a class="header" href="#1-perform-differential-methylation-scoring-of-genomic-regions-for-a-pair-of-samples">1. Perform differential methylation scoring of genomic regions for a pair of samples.</a></h2>
+<p>Once you have the two samples to be compared in the appropriate format, the final piece necessary is a BED file of the regions to be compared.
+Currently, the <code>modkit dmr</code> functionality does not "segment" or otherwise discover regions, however this <a href="./limitations.html">limitation</a> will be removed in a future release.
+To continue with our example we can get CpG Islands from the <a href="http://genome.ucsc.edu/cgi-bin/hgTables">UCSC table browser</a>.
+The data may not always be appropriate input for <code>modkit</code>.
+For example, the CpG Islands track has extra columns and a header line:</p>
+<pre><code class="language-text">#bin  chrom  chromStart  chromEnd  name          length  cpgNum  gcNum  perCpg  perGc  obsExp
+660   chr20  9838623     9839213   CpG:  47      590     47     383     15.9   64.9    0.76
+661   chr20  10034962    10035266  CpG:  35      304     35     228     23     75      0.85
 </code></pre>
 <p>Therefore, we need to transform the data with <code>awk</code> or similar, such as:</p>
-<pre><code class="language-bash">awk 'BEGIN{FS=&quot;\t&quot;; OFS=&quot;\t&quot;} NR&gt;1 {print $2, $3, $4, $5}' cpg_islands_ucsc.bed \
+<pre><code class="language-bash">awk 'BEGIN{FS="\t"; OFS="\t"} NR&gt;1 {print $2, $3, $4, $5}' cpg_islands_ucsc.bed \
   | bedtools sort -i - &gt;  cpg_islands_ucsc_cleaned.bed
 </code></pre>
-<p>Keeping the <code>name</code> column is optional. Sorting the regions isn't <em>strictly</em> necessary, the output will
-be in the same order as the regions file. Below is an example command to produce the scored output
-(continuing from the top example). The <code>--base</code> option tells <code>modkit dmr</code> which bases to use for scoring
-the differences, the argument should be a canonical nucleotide (<code>A</code>, <code>C</code>, <code>G</code>, or <code>T</code>) whichever primary 
-sequence base has the modifications you're interested in capturing. For example, for CpG islands the base
-we're interested in is <code>C</code>.</p>
+<p>Keeping the <code>name</code> column is optional.
+Sorting the regions isn't <em>strictly</em> necessary, the output will be in the same order as the regions file.
+Below is an example command to produce the scored output.
+The <code>--base</code> option tells <code>modkit dmr</code> which bases to use for scoring the differences, the argument should be a canonical nucleotide (<code>A</code>, <code>C</code>, <code>G</code>, or <code>T</code>) whichever primary sequence base has the modifications you're interested in capturing.
+For example, for CpG islands the base we're interested in is <code>C</code>.</p>
 <pre><code class="language-bash">regions=cpg_islands_ucsc_cleaned.bed
 dmr_result=cpg_islands_tumor_normal.bed
 
@@ -810,25 +843,14 @@ modkit dmr pair \
   --threads ${threads} \
   --log-filepath dmr.log
 </code></pre>
-<h2 id="scoring-differentially-methylated-bases-as-opposed-to-regions"><a class="header" href="#scoring-differentially-methylated-bases-as-opposed-to-regions">Scoring differentially methylated bases (as opposed to regions)</a></h2>
-<p>To score individual bases (e.g. differentially methylated CpGs), simply omit the <code>--regions</code> (<code>-r</code>) option
-when running <code>modkit dmr [pair|multi]</code>. For example the above command becomes:</p>
-<pre><code class="language-bash">dmr_result=cpg_islands_tumor_normal.bed
-
-modkit dmr pair \
-  -a ${norm_pileup}.gz \
-  --index-a ${norm_pileup}.gz.tbi \ # optional
-  -b ${tumor_pileup}.gz \
-  --index-b ${tumor_pileup}.gz.tbi \ # optional
-  -o ${dmr_result} \ # output to stdout if not present
-  --ref ${ref} \
-  --base C \  # may be repeated if multiple modifications are being used
-  --threads ${threads} \
-  --log-filepath dmr.log
+<p>The ouput of this command will be similar to</p>
+<pre><code class="language-csv">chr20  9838623   9839213   CpG:  47   257.34514203447543    C:57   1777  C:601  2091   C:3.21  C:28.74  0.032076534   0.2874223
+chr20  10034962  10035266  CpG:  35   1.294227443419004     C:7    1513  C:14   1349   C:0.46  C:1.04   0.00462657    0.010378058
 </code></pre>
-<h3 id="running-multiple-samples"><a class="header" href="#running-multiple-samples">Running multiple samples</a></h3>
-<p>The <code>modkit dmr multi</code> command runs all pairwise comparisons for more than two samples.
-The preparation of the data is identical to that for <code>dmr pair</code> (for each sample, of course). 
+<p>The full schema is described <a href="intro_dmr.html#differential-methylation-output-format">below</a>.</p>
+<h3 id="2-perform-differential-methylation-detection-on-all-pairs-of-samples-over-regions-from-the-genome"><a class="header" href="#2-perform-differential-methylation-detection-on-all-pairs-of-samples-over-regions-from-the-genome">2. Perform differential methylation detection on all pairs of samples over regions from the genome.</a></h3>
+<p>The <code>modkit dmr multi</code> command runs all pairwise comparisons for more than two samples for all regions provided in the regions BED file.
+The preparation of the data is identical to that for the <a href="intro_dmr.html#preparing-the-input-data">previous section</a> (for each sample, of course).
 An example command could be:</p>
 <pre><code class="language-bash">modkit dmr multi \
   -s ${norm_pileup_1}.gz norm1 \
@@ -847,6 +869,38 @@ An example command could be:</p>
 Unlike for <code>modkit dmr pair</code> a sample name (e.g. <code>norm1</code> and <code>tumor1</code> above) must be provided for each input
 sample. You can also use <code>--index &lt;filepath&gt; &lt;sample_name&gt;</code> to specify where the tabix index file is for each
 sample.</p>
+<h2 id="3-detecting-differential-modification-at-single-base-positions"><a class="header" href="#3-detecting-differential-modification-at-single-base-positions">3. Detecting differential modification at single base positions</a></h2>
+<p>The <code>modkit dmr pair</code> command has the ability to score individual bases (e.g. differentially methylated CpGs).
+To run single-base analysis on one or more paired samples, simply omit the <code>--regions</code> (<code>-r</code>) option when running <code>modkit dmr pair</code>.
+When performing single-base analysis the likelihood ratio score and a MAP-based p-value are available.
+For details on the likelihood ratio score and the MAP-based p-value, see the <a href="./dmr_scoring_details.html">scoring details section</a>.
+For example the above command becomes:</p>
+<pre><code class="language-bash">dmr_result=single_base_haplotype_dmr.bed
+
+modkit dmr pair \
+  -a ${hp1_pileup}.gz \
+  -b ${hp2_pileup}.gz \
+  -o ${dmr_result} \
+  --ref ${ref} \
+  --base C \
+  --threads ${threads} \
+  --log-filepath dmr.log
+</code></pre>
+<p>Multiple replicates can be provided as well by repeating the <code>-a</code> and <code>-b</code> options, such as:</p>
+<pre><code class="language-bash">dmr_result=tumor_normal_single_base_replicates.bed
+
+modkit dmr pair \
+  -a ${norm_pileup_1}.gz \
+  -a ${norm_pileup_2}.gz \
+  -b ${tumor_pileup_1}.gz \
+  -b ${tumor_pileup_2}.gz \
+  -o ${dmr_result_replicates} \
+  --ref ${ref} \
+  --base C \
+  --threads ${threads} \
+  --log-filepath dmr.log
+</code></pre>
+<p>Keep in mind that the MAP-based p-value provided in single-site analysis is based on a "modified" vs "unmodified" model, see the <a href="./dmr_scoring_details.html">scoring section</a> and <a href="./limitations.html">limitations</a> for additional details.</p>
 <h2 id="differential-methylation-output-format"><a class="header" href="#differential-methylation-output-format">Differential methylation output format</a></h2>
 <p>The output from <code>modkit dmr pair</code> (and for each pairwise comparison with <code>modkit dmr multi</code>) is (roughly)
 a BED file with the following schema:</p>
@@ -862,46 +916,39 @@ a BED file with the following schema:</p>
 <tr><td>9</td><td>sample<sub>b</sub> total</td><td>Total number of base modification calls in the region, including unmodified, for sample B</td><td>str</td></tr>
 <tr><td>10</td><td>sample<sub>a</sub> fractions</td><td>Fraction of calls for each base modification in the region, comma-separated, for sample A</td><td>str</td></tr>
 <tr><td>11</td><td>sample<sub>b</sub> fractions</td><td>Fraction of calls for each base modification in the region, comma-separated, for sample B</td><td>str</td></tr>
+<tr><td>12</td><td>sample<sub>a</sub> percent modified</td><td>percent modification (of any kind) in sample A</td><td>float</td></tr>
+<tr><td>13</td><td>sample<sub>b</sub> percent modified</td><td>percent modification (of any kind) in sample B</td><td>float</td></tr>
 </tbody></table>
 </div>
 <p>an example of the output is given below:</p>
-<pre><code class="language-text">chr10   73861   74083   chr10:73861-74083       -0.5007740865394226     h:7,m:18        950     h:8,m:16        802     h:0.74,m:1.89   h:1.00,m:2.00
-chr10   74090   74289   chr10:74090-74289       0.5533780473006118      h:8,m:5         936     h:3,m:7         853     h:0.85,m:0.53   h:0.35,m:0.82
-chr10   76139   76313   chr10:76139-76313       1.334274110255592       h:6,m:46        507     h:13,m:35       446     h:1.18,m:9.07   h:2.91,m:7.85
+<pre><code class="language-text">chr20  9838623   9839213   CpG:  47   257.34514203447543    C:57   1777  C:601  2091   C:3.21  C:28.74  0.032076534   0.2874223
+chr20  10034962  10035266  CpG:  35   1.294227443419004     C:7    1513  C:14   1349   C:0.46  C:1.04   0.00462657    0.010378058
+chr20  10172120  10172545  CpG:  35   5.013026381110649     C:43   1228  C:70   1088   C:3.50  C:6.43   0.035016287   0.06433824
+chr20  10217487  10218336  CpG:  59   173.7819873154349     C:136  2337  C:482  1838   C:5.82  C:26.22  0.058194265   0.26224157
+chr20  10433628  10434345  CpG:  71   -0.13968153023233754  C:31   2748  C:36   3733   C:1.13  C:0.96   0.0112809315  0.009643719
+chr20  10671925  10674963  CpG:  255  6.355823977093678     C:67   9459  C:153  12862  C:0.71  C:1.19   0.0070832013  0.011895506
 </code></pre>
-<h2 id="scoring-details"><a class="header" href="#scoring-details">Scoring details</a></h2>
-<p>The aim of <code>modkit dmr</code> is to enable exploratory data analysis of methylation patterns. To that aim, the approach to 
-scoring methylation differences is intended to be simple and interpretable. For every region provided, within a sample, 
-we model each potentially methylated base as arising from the same distribution. In other words, we discard the relative 
-ordering of the base modification calls within a region. We then define a model for the frequency of observing each base 
-modification state. In the case of methylated versus unmodified (5mC vs C, or 6mA vs A), we use the binomial distribution
-and model the probability of methylation \(p\) as a beta-distributed random variable: </p>
-<p>\[
-\mathbf{X}|p \sim \text{Bin}(n, p)
-\]
-\[
-p \sim \text{Beta}(\alpha, \beta)
-\]</p>
-<p>where \(n\) is the number of potentially methylated bases reported on in the 
-region and \(\mathbf{X}\) is the vector of counts (canonical and methylated). </p>
-<p>In the case where there are more than two states (for example, 5hmC, 5mC, and unmodified C) we use a multinomial 
-distribution and a Dirichlet as the base distribution: 
-\[
-\mathbf{X}|\pi \sim \text{Mult}(n, \pi)
-\]</p>
-<p>\[
-\pi \sim \text{Dir}(\alpha)
-\]</p>
-<p>Let \(\theta\) be the parameters describing the posterior distribution ( \( \alpha, \beta \) for the binary case, 
-and \(\alpha \) in the general case). The <code>score</code> reported is the result of the following log marginal likelihood 
-ratio :</p>
-<p>\[
-\text{score} = \text{log}(\frac{l_{\theta_{a}}( \mathbf{X_a} ) l_{\theta_{b}} ( \mathbf{X_b} )}{l_{\theta_{a+b}} (\mathbf{X_{a+b}} )})
-\]</p>
-<p>Where \(\theta_a\) and \(\theta_b\) are the posterior distributions with the two conditions modeled separately, 
-and \(\theta_{a+b}\) is the posterior when the two conditions are modeled together. The function \(l_{\theta}(\mathbf{X}) \) is 
-the log marginal likelihood of the counts under the parameters of the model \(\theta\).
-For all cases, we use <a href="https://en.wikipedia.org/wiki/Jeffreys_prior">Jeffrey's prior</a> as the prior distribution.</p>
+<p>When performing single-site analysis, the following additional columns are added:</p>
+<div class="table-wrapper"><table><thead><tr><th>column</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
+<tr><td>14</td><td>MAP-based p-value</td><td>Ratio of the posterior probability of observing the effect size over zero effect size</td><td>float</td></tr>
+<tr><td>15</td><td>effect size</td><td>Percent modified in sample A (col 12) minus percent modified in sample B (col 13)</td><td>float</td></tr>
+<tr><td>16</td><td>balanced MAP-based p-value</td><td>MAP-based p-value when all replicates are balanced</td><td>float</td></tr>
+<tr><td>17</td><td>balanced effect size</td><td>effect size when all replicates are balanced</td><td>float</td></tr>
+<tr><td>18</td><td>per-replicate p-values</td><td>MAP-based p-values for matched replicate pairs</td><td>float</td></tr>
+<tr><td>19</td><td>per-replicate effect sizes</td><td>effect sizes matched replicate pairs</td><td>float</td></tr>
+</tbody></table>
+</div>
+<p>Columns 16-19 are only produced when multiple replicates are provided. Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
+For example in the abbreviated command below:</p>
+<pre><code class="language-bash">modkit dmr pair \
+  -a ${norm_pileup_1}.gz \
+  -a ${norm_pileup_2}.gz \
+  -b ${tumor_pileup_1}.gz \
+  -b ${tumor_pileup_2}.gz \
+  ...
+</code></pre>
+<p>Column 18 will contain the MAP-based p-value comparing <code>norm_pileup_1</code> versus <code>tumor_pileup_1</code> and <code>norm_pileup_2</code> versus <code>norm_pileup_2</code>.
+Column 19 will contain the effect sizes, values are comma-separated.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="validating-ground-truth-results"><a class="header" href="#validating-ground-truth-results">Validating ground truth results.</a></h1>
 <p>The <code>modkit validate</code> sub-command is intended for validating results in a uniform manner from samples with known modified base content. Specifically the modified base status at any annotated reference location should be known.</p>
 <h2 id="validating-from-modbam-reads-and-bed-reference-annotation"><a class="header" href="#validating-from-modbam-reads-and-bed-reference-annotation">Validating from modBAM reads and BED reference annotation.</a></h2>
@@ -976,7 +1023,7 @@ The validate command will assume that any base from the associated modBAM file o
 <h2 id="output-file"><a class="header" href="#output-file">Output file</a></h2>
 <p>The <code>--out-filepath</code> option is provided to allow persistent storage of results in a machine-parseable format without other logging lines.
 This format outputs all contingency tables in a machine-parseable format.
-For example this contingency table <code>[[&quot;ground_truth_label&quot;,&quot;-&quot;,&quot;a&quot;],[&quot;-&quot;,9900,100],[&quot;a&quot;,100,9900]]</code> would be produced from the above example results.</p>
+For example this contingency table <code>[["ground_truth_label","-","a"],["-",9900,100],["a",100,9900]]</code> would be produced from the above example results.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="modkit-subcommand-documentation"><a class="header" href="#modkit-subcommand-documentation">modkit, subcommand documentation</a></h1>
 <p>The goal of <code>modkit</code> is to enable best-practices manipulation of BAM files containing
 modified base information (modBAMs). The various sub-commands and tools available in
@@ -985,7 +1032,9 @@ modified base information (modBAMs). The various sub-commands and tools availabl
 <blockquote>
 <p>Advanced usage information.</p>
 </blockquote>
-<pre><code class="language-text">Usage: modkit &lt;COMMAND&gt;
+<pre><code class="language-text">Modkit is a bioinformatics tool for working with modified bases from Oxford Nanopore
+
+Usage: modkit &lt;COMMAND&gt;
 
 Commands:
   pileup        Tabulates base modification calls across genomic positions. This command
@@ -1007,7 +1056,7 @@ Commands:
   extract       Extract read-level base modification information from a modBAM into a
                     tab-separated values table.
   repair        Repair MM and ML tags in one bam with the correct tags from another. To use this
-                    command, both modBAMs _must_ be sorted by read name. The &quot;donor&quot; modBAM's reads
+                    command, both modBAMs _must_ be sorted by read name. The "donor" modBAM's reads
                     must be a superset of the acceptor's reads. Extra reads in the donor are
                     allowed, and multiple reads with the same name (secondary, etc.) are allowed in
                     the acceptor. Reads with an empty SEQ field cannot be repaired and will be
@@ -1039,8 +1088,8 @@ Arguments:
           Input BAM, should be sorted and have associated index available.
 
   &lt;OUT_BED&gt;
-          Output file (or directory with --bedgraph option) to write results into. Specify &quot;-&quot; or
-          &quot;stdout&quot; to direct output to stdout.
+          Output file (or directory with --bedgraph option) to write results into. Specify "-" or
+          "stdout" to direct output to stdout.
 
 Options:
       --log-filepath &lt;LOG_FILEPATH&gt;
@@ -1163,9 +1212,9 @@ Options:
           argument is short hand for --motif CG 0.
           
           This argument can be passed multiple times. When more than one motif is used, the
-          resulting output BED file will indicate the motif in the &quot;name&quot; field as
+          resulting output BED file will indicate the motif in the "name" field as
           &lt;mod_code&gt;,&lt;motif&gt;,&lt;offset&gt;. For example, given `--motif CGCG 2 --motif CG 0` there will
-          be output lines with name fields such as &quot;m,CG,0&quot; and &quot;m,CGCG,2&quot;. To use this option with
+          be output lines with name fields such as "m,CG,0" and "m,CGCG,2". To use this option with
           `--combine-strands`, all motifs must be reverse-complement palindromic or an error will be
           raised.
 
@@ -1201,7 +1250,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1275,7 +1324,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1311,7 +1360,7 @@ Options:
                                      canonical. [possible values: explicit, implicit]
   -t, --threads &lt;THREADS&gt;            Number of threads to use [default: 4]
       --no-implicit-probs            Don't add implicit canonical calls. This flag is important when
-                                     converting from one of the implicit modes ( `.` or `&quot;&quot;`) to
+                                     converting from one of the implicit modes ( `.` or `""`) to
                                      explicit mode (`?`). By passing this flag, the bases without
                                      associated base modification probabilities will not be assumed
                                      to be canonical. No base modification probability will be
@@ -1377,7 +1426,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1523,7 +1572,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1661,7 +1710,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1684,7 +1733,7 @@ Arguments:
           associated index.
 
   &lt;OUT_PATH&gt;
-          Path to output file, &quot;stdout&quot; or &quot;-&quot; will direct output to standard out. Specifying &quot;null&quot;
+          Path to output file, "stdout" or "-" will direct output to standard out. Specifying "null"
           will not output the extract table (useful if all you need is the `--read-calls` output
           table).
 
@@ -1724,8 +1773,8 @@ Options:
           Hide the progress bar.
 
       --kmer-size &lt;KMER_SIZE&gt;
-          Set the query and reference k-mer size (if a reference is provided). Maxumum number for
-          this value is 12.
+          Set the query and reference k-mer size (if a reference is provided). Maximum number for
+          this value is 50.
           
           [default: 5]
 
@@ -1741,7 +1790,7 @@ Options:
 
       --reference &lt;REFERENCE&gt;
           Path to reference FASTA to extract reference context information from. If no reference is
-          provided, `ref_kmer` column will be &quot;.&quot; in the output. (alias: ref)
+          provided, `ref_kmer` column will be "." in the output. (alias: ref)
 
       --include-bed &lt;INCLUDE_BED&gt;
           BED file with regions to include (alias: include-positions). Implicitly only includes
@@ -1823,7 +1872,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1851,7 +1900,7 @@ Options:
 </code></pre>
 <h2 id="repair"><a class="header" href="#repair">repair</a></h2>
 <pre><code class="language-text">Repair MM and ML tags in one bam with the correct tags from another. To use this command, both
-modBAMs _must_ be sorted by read name. The &quot;donor&quot; modBAM's reads must be a superset of the
+modBAMs _must_ be sorted by read name. The "donor" modBAM's reads must be a superset of the
 acceptor's reads. Extra reads in the donor are allowed, and multiple reads with the same name
 (secondary, etc.) are allowed in the acceptor. Reads with an empty SEQ field cannot be repaired and
 will be rejected. Reads where there is an ambiguous alignment of the acceptor to the donor will be
@@ -1898,7 +1947,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -1907,19 +1956,19 @@ Options:
           Canonical base to evaluate. By default, this will be derived from mod codes in ground
           truth BED files. For ground truth with only canonical sites and/or ChEBI codes this values
           must be set.
-
+          
           [possible values: A, C, G, T]
 
   -q, --filter-quantile &lt;FILTER_QUANTILE&gt;
           Filter out modified base calls where the probability of the predicted variant is below
           this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
           modification calls.
-
+          
           [default: 0.1]
 
   -t, --threads &lt;THREADS&gt;
           Number of threads to use.
-
+          
           [default: 4]
 
       --suppress-progress
@@ -2092,7 +2141,7 @@ Options:
 
       --invert-edge-filter
           Invert the edge filter, instead of filtering out base modification calls at the ends of
-          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, &quot;4,8&quot;
+          reads, only _keep_ base modification calls at the ends of reads. E.g. if usually, "4,8"
           would remove (i.e. filter out) base modification calls in the first 4 and last 8 bases of
           the read, using this flag will keep only base modification calls in the first 4 and last 8
           bases.
@@ -2106,7 +2155,7 @@ Options:
   -h, --help
           Print help information (use `-h` for a summary).
 </code></pre>
-<h2 id="pileup-hemi-pair"><a class="header" href="#pileup-hemi-pair">pileup-hemi <code>pair</code></a></h2>
+<h2 id="dmr-pair"><a class="header" href="#dmr-pair">dmr pair</a></h2>
 <pre><code class="language-text">Compare regions in a pair of samples (for example, tumor and normal or control and experiment). A
 sample is input as a bgzip pileup bedMethyl (produced by pileup, for example) that has an associated
 tabix index. Output is a BED file with the score column indicating the magnitude of the difference
@@ -2119,64 +2168,114 @@ Options:
           Bgzipped bedMethyl file for the first (usually control) sample. There should be a tabix
           index with the same name and .tbi next to this file or the --index-a option must be
           provided.
+
   -b &lt;EXP_BED_METHYL&gt;
           Bgzipped bedMethyl file for the second (usually experimental) sample. There should be a
           tabix index with the same name and .tbi next to this file or the --index-b option must be
           provided.
+
   -o, --out-path &lt;OUT_PATH&gt;
-          Path to file to direct output, optional, no argument will direct output to stdout.
+          Path to file to direct output, optional, no argument will direct output to stdout
+
+      --header
+          Include header in output.
+
   -r, --regions-bed &lt;REGIONS_BED&gt;
           BED file of regions over which to compare methylation levels. Should be tab-separated
-          (spaces allowed in the &quot;name&quot; column). Requires chrom, chromStart and chromEnd. The Name
+          (spaces allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name
           column is optional. Strand is currently ignored. When omitted, methylation levels are
-          compared at each site in the `-a`/`control_bed_methyl` BED file (or optionally, the
-          `-b`/`exp_bed_methyl` file with the `--use-b` flag.
-      --use-b
-          When performing site-level DMR, use the bedMethyl indicated by the -b/exp_bed_methyl
-          argument to collect bases to score.
+          compared at each site.
+
       --ref &lt;REFERENCE_FASTA&gt;
-          Path to reference fasta for the pileup.
+          Path to reference fasta for used in the pileup/alignment.
+
   -m &lt;MODIFIED_BASES&gt;
           Bases to use to calculate DMR, may be multiple. For example, to calculate differentially
           methylated regions using only cytosine modifications use --base C.
+          
       --log-filepath &lt;LOG_FILEPATH&gt;
           File to write logs to, it's recommended to use this option.
+
   -t, --threads &lt;THREADS&gt;
-          Number of threads to use [default: 4]
+          Number of threads to use.
+          
+          [default: 4]
+
       --batch-size &lt;BATCH_SIZE&gt;
           Control the  batch size. The batch size is the number of regions to load at a time. Each
           region will be processed concurrently. Loading more regions at a time will decrease IO to
           load data, but will use more memory. Default will be 50% more than the number of threads
           assigned.
+
   -k, --mask
           Respect soft masking in the reference FASTA.
+
       --suppress-progress
           Don't show progress bars.
+
   -f, --force
           Force overwrite of output file, if it already exists.
+
       --index-a &lt;INDEX_A&gt;
           Path to tabix index associated with -a (--control-bed-methyl) bedMethyl file.
+
       --index-b &lt;INDEX_B&gt;
           Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl file.
+
       --missing &lt;HANDLE_MISSING&gt;
           How to handle regions found in the `--regions` BED file. quiet =&gt; ignore regions that are
           not found in the tabix header warn =&gt; log (debug) regions that are missing fatal =&gt; log
-          (error) and exit the program when a region is missing. [default: warn] [possible values:
-          quiet, warn, fail]
+          (error) and exit the program when a region is missing.
+          
+          [default: warn]
+          [possible values: quiet, warn, fail]
+
       --min-valid-coverage &lt;MIN_VALID_COVERAGE&gt;
           Minimum valid coverage required to use an entry from a bedMethyl. See the help for pileup
-          for the specification and description of valid coverage. [default: 0]
+          for the specification and description of valid coverage.
+          
+          [default: 0]
+
+      --prior &lt;PRIOR&gt; &lt;PRIOR&gt;
+          Prior distribution for estimating MAP-based p-value. Should be two arguments for alpha and
+          beta (e.g. 1.0 1.0). See `dmr_scoring_details.md` for additional details on how the metric
+          is calculated.
+
+      --delta &lt;DELTA&gt;
+          Consider only effect sizes greater than this when calculating the MAP-based p-value.
+          
+          [default: 0.05]
+
+  -N, --n-sample-records &lt;N_SAMPLE_RECORDS&gt;
+          Sample this many reads when estimating the max coverage thresholds.
+          
+          [default: 10042]
+
+      --max-coverages &lt;MAX_COVERAGES&gt; &lt;MAX_COVERAGES&gt;
+          Max coverages to enforce when calculating estimated MAP-based p-value.
+
+      --cap-coverages
+          When using replicates, cap coverage to be equal to the maximum coverage for a single
+          sample. For example, if there are 3 replicates with max_coverage of 30, the total coverage
+          would normally be 90. Using --cap-coverages will down sample the data to 30X.
+
+  -i, --interval-size &lt;INTERVAL_SIZE&gt;
+          Interval chunk size in base pairs to process concurrently. Smaller interval chunk sizes
+          will use less memory but incur more overhead.
+          
+          [default: 100000]
+
   -h, --help
-          Print help information.
+          Print help information (use `-h` for a summary).
 </code></pre>
-<h2 id="pileup-hemi-1"><a class="header" href="#pileup-hemi-1">pileup-hemi</a></h2>
+<h2 id="dmr-multi"><a class="header" href="#dmr-multi">dmr multi</a></h2>
 <pre><code class="language-text">Compare regions between all pairs of samples (for example a trio sample set or haplotyped trio
 sample set). As with `pair` all inputs must be bgzip compressed bedMethyl files with associated
 tabix indices. Each sample must be assigned a name. Output is a directory of BED files with the
 score column indicating the magnitude of the difference in methylation between the two samples
-indicated in the file name. See the online documentation for additional details.
+indicated in the file name. See the online documentation for additional details
 
-Usage: modkit dmr multi [OPTIONS] --out-dir &lt;OUT_DIR&gt; --ref &lt;REFERENCE_FASTA&gt;
+Usage: modkit dmr multi [OPTIONS] --regions-bed &lt;REGIONS_BED&gt; --out-dir &lt;OUT_DIR&gt; --ref &lt;REFERENCE_FASTA&gt;
 
 Options:
   -s, --sample &lt;SAMPLES&gt; &lt;SAMPLES&gt;
@@ -2188,9 +2287,10 @@ Options:
           argument.
   -r, --regions-bed &lt;REGIONS_BED&gt;
           BED file of regions over which to compare methylation levels. Should be tab-separated
-          (spaces allowed in the &quot;name&quot; column). Requires chrom, chromStart and chromEnd. The Name
-          column is optional. Strand is currently ignored. When omitted, methylation levels are
-          compared at each site in common between the two bedMethyl files being compared.
+          (spaces allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name
+          column is optional. Strand is currently ignored.
+      --header
+          Include header in output.
   -o, --out-dir &lt;OUT_DIR&gt;
           Directory to place output DMR results in BED format.
   -p, --prefix &lt;PREFIX&gt;
@@ -2209,7 +2309,7 @@ Options:
       --suppress-progress
           Don't show progress bars.
   -f, --force
-          Force overwrite of output file, if it already exists
+          Force overwrite of output file, if it already exists.
       --missing &lt;HANDLE_MISSING&gt;
           How to handle regions found in the `--regions` BED file. quiet =&gt; ignore regions that are
           not found in the tabix header warn =&gt; log (debug) regions that are missing fatal =&gt; log
@@ -2219,7 +2319,7 @@ Options:
           Minimum valid coverage required to use an entry from a bedMethyl. See the help for pileup
           for the specification and description of valid coverage. [default: 0]
   -h, --help
-          Print help information
+          Print help information.
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h1>
 <p>It's recommended to run all <code>modkit</code> commands with the <code>--log-filepath &lt;path-to-file&gt;</code>
@@ -2227,14 +2327,14 @@ option set. When unexpected outputs are produced inspecting this file will often
 the reason.</p>
 <h2 id="missing-secondary-and-supplementary-alignments-in-output"><a class="header" href="#missing-secondary-and-supplementary-alignments-in-output">Missing secondary and supplementary alignments in output</a></h2>
 <p>As of v0.2.4 secondary and supplementary alignments are supported in <code>adjust-mods</code>, <code>update-tags</code>, <code>call-mods</code>, and (optionally) in <code>extract</code>.
-However, in order to use these alignment records correctly, the <code>MN</code> tag must be present and correct in the record. 
+However, in order to use these alignment records correctly, the <code>MN</code> tag must be present and correct in the record.
 The <code>MN</code> tag indicates the length of the sequence corresponding to the <code>MM</code> and <code>ML</code> tags.
 As of dorado v0.5.0 the <code>MN</code> tag is output when modified base calls are produced.
-If the aligner has hard-clipped the sequence, this number will not match the sequence length and the record cannot be used. 
-Similarly, if the SEQ field is empty (sequence length zero), the record cannot be used. 
-One way to use supplementary alignments is to specify the <code>-Y</code> flag when using <a href="https://github.com/nanoporetech/dorado/">dorado</a> or <a href="https://lh3.github.io/minimap2/minimap2.html">minimap2</a>. 
-For these programs, when <code>-Y</code> is specified, the sequence will not be hardclipped in supplementary alignments and will be present in secondary alignments. 
-Other mapping algorithms that are &quot;MM tag-aware&quot; may allow hard-clipping and update the <code>MM</code> and <code>ML</code> tags, <code>modkit</code> will accept these records as long as the <code>MN</code> tag indicates the correct sequence length.</p>
+If the aligner has hard-clipped the sequence, this number will not match the sequence length and the record cannot be used.
+Similarly, if the SEQ field is empty (sequence length zero), the record cannot be used.
+One way to use supplementary alignments is to specify the <code>-Y</code> flag when using <a href="https://github.com/nanoporetech/dorado/">dorado</a> or <a href="https://lh3.github.io/minimap2/minimap2.html">minimap2</a>.
+For these programs, when <code>-Y</code> is specified, the sequence will not be hardclipped in supplementary alignments and will be present in secondary alignments.
+Other mapping algorithms that are "MM tag-aware" may allow hard-clipping and update the <code>MM</code> and <code>ML</code> tags, <code>modkit</code> will accept these records as long as the <code>MN</code> tag indicates the correct sequence length.</p>
 <h2 id="no-rows-in-modkit-pileup-output"><a class="header" href="#no-rows-in-modkit-pileup-output">No rows in <code>modkit pileup</code> output.</a></h2>
 <p>First, check the logfile, there may be many lines with a variant of</p>
 <pre><code class="language-text">record 905b4cb4-15e2-4060-9c98-866d0aff78bb has un-allowed mode
@@ -2287,6 +2387,11 @@ removed in the future with a form of dynamic de-duplication.</li>
 <li>This limitation may be removed in the future.</li>
 </ul>
 </li>
+<li>The MAP-based p-value metric (<a href="./dmr_scoring_details.html#map-based-p-value">details</a>) performs a test that there is a difference in modification (of any kind) between two conditions.
+If a position has multiple base modification calls (such as 5hmC and 5mC) the calls are summed together into a single "modified" count.
+If a position differs only in the modification <em>type</em> (such as one condition has more 5hmC and the other has more 5mC) this effect will not be captured in the MAP-based p-value. The <a href="./dmr_scoring_details.html#likelihood-ratio-scoring-details">likelihood ratio</a> test <em>does</em> capture changes in modification type.</li>
+<li>The MAP-based p-value is not available when performing DMR on regions.
+This is because there is potentially large variability in the number of modified bases and coverage over regions. This variability translates into varying degrees of statistical power and makes comparisons difficult to interpret.</li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="performance-considerations-1"><a class="header" href="#performance-considerations-1">Performance considerations</a></h1>
 <h2 id="sharding-a-large-modbam-by-region"><a class="header" href="#sharding-a-large-modbam-by-region">Sharding a large modBAM by region.</a></h2>
@@ -2294,7 +2399,7 @@ removed in the future with a form of dynamic de-duplication.</li>
 operate on a subset of records in a large BAM. If you're working in a
 distributed environment, the genome could be sharded into large sections which
 are specified to <code>modkit</code> in concurrent processes and merged afterward in a
-&quot;map-reduce&quot; pattern.</p>
+"map-reduce" pattern.</p>
 <h2 id="setting-the---interval-size-and---chunk-size-pileup"><a class="header" href="#setting-the---interval-size-and---chunk-size-pileup">Setting the <code>--interval-size</code> and <code>--chunk-size</code> (<code>pileup</code>).</a></h2>
 <p>Whenever operating on a sorted, indexed BAM, <code>modkit</code> will operate in parallel
 on disjoint spans of the genome. The length of these spans (i.e. intervals) can
@@ -2312,16 +2417,18 @@ but will consume more memory.</p>
 <ul>
 <li><a href="./filtering.html">Filtering low confidence base modification calls</a></li>
 <li><a href="./filtering.html">Removing and combining modified base types</a></li>
+<li><a href="./collapse.html">Ignoreing and combining base modification calls</a></li>
+<li><a href="./dmr_scoring_details.html">Differential methylation scoring and differential modification p-values</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="partitioning-pass-and-fail-base-modification-calls"><a class="header" href="#partitioning-pass-and-fail-base-modification-calls">Partitioning pass and fail base modification calls.</a></h1>
-<p>Base modification calls can be removed if they are low confidence based on the predicted modification probabilities. 
-In general, <code>modkit</code> will estimate a pass confidence threshold value based on the input data. 
-Threshold values for modifications on a primary sequence base can be specified on the command line with the <code>--filter-threshold</code> option. 
+<p>Base modification calls can be removed if they are low confidence based on the predicted modification probabilities.
+In general, <code>modkit</code> will estimate a pass confidence threshold value based on the input data.
+Threshold values for modifications on a primary sequence base can be specified on the command line with the <code>--filter-threshold</code> option.
 For example to set a threshold for cytosine modifications at 0.8 and adenine modifications at 0.9 provide <code>--filter-threshold C:0.8 --filter-threshold A:0.9</code>.
 Pass threshold values per base modification can also be specified.
 For example, to specify a threshold for canonical adenine at 0.8 and 6mA at 0.9 use <code>--filter-threshold A:0.8 --mod-thresholds a:0.9</code>.
 Or to specify a threshold of 0.8 for 5mC, 0.9 for 5hmC, and 0.85 for canonical cytosine: <code>--filter-threshold C:0.85 --mod-thresholds m:0.8 --mod-thresholds h:0.9</code></p>
-<p>Keep in mind that the <code>--mod-threshold</code> option will treat <code>A</code>, <code>C</code>, <code>G</code>, and <code>T</code> and &quot;any-mod&quot; as per the <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a>.</p>
+<p>Keep in mind that the <code>--mod-threshold</code> option will treat <code>A</code>, <code>C</code>, <code>G</code>, and <code>T</code> and "any-mod" as per the <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a>.</p>
 <h2 id="further-details"><a class="header" href="#further-details">Further details</a></h2>
 <ol>
 <li><a href="./filtering_details.html">Examples of how thresholds affect base modification calls.</a></li>
@@ -2384,7 +2491,7 @@ approximation gives the same value. Base modification calls with a confidence va
 not be counted.  Determination of the threshold value can be performed on the fly (by sampling) or the
 threshold value can be specified on the command line with the <code>--filter_threshold</code> flag. The <code>sample-probs</code>
 command can be used to quickly estimate the value of \(\mathcal{q}\) at various percentiles.</p>
-<h1 id="a-note-on-the-probability-of-modification--mm-flag"><a class="header" href="#a-note-on-the-probability-of-modification--mm-flag">A note on the &quot;probability of modification&quot; (<code>.</code>) MM flag.</a></h1>
+<h1 id="a-note-on-the-probability-of-modification--mm-flag"><a class="header" href="#a-note-on-the-probability-of-modification--mm-flag">A note on the "probability of modification" (<code>.</code>) MM flag.</a></h1>
 <p>The <code>.</code> flag (e.g. <code>C+m.</code>) indicates that primary sequence bases without base modification calls can be inferred to be
 canonical (<a href="https://samtools.github.io/hts-specs/SAMtags.pdf">SAM tags</a>). Some base modification callers,
 for example <a href="https://github.com/nanoporetech/dorado/"><code>dorado</code></a> have a default threshold, below which a base modification
@@ -2392,6 +2499,97 @@ probability will be omitted (meaning it will be inferred to be a canonical/unmod
 the base modification probabilities when they are very confidently canonical will not change the results from <code>modkit</code>.
 However, since the base modification probabilities are effectively changed to 100% canonical, can affect the
 estimation of the pass threshold.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="dmr-model-and-scoring-details"><a class="header" href="#dmr-model-and-scoring-details">DMR model and scoring details</a></h1>
+<h2 id="likelihood-ratio-scoring-details"><a class="header" href="#likelihood-ratio-scoring-details">Likelihood ratio scoring details</a></h2>
+<p>The aim of <code>modkit dmr</code> is to enable exploratory data analysis of methylation patterns. To that aim, the approach to
+scoring methylation differences is intended to be simple and interpretable. For every region provided, within a sample,
+we model each potentially methylated base as arising from the same distribution. In other words, we discard the relative
+ordering of the base modification calls within a region. We then define a model for the frequency of observing each base
+modification state. In the case of methylated versus unmodified (5mC vs C, or 6mA vs A), we use the binomial distribution
+and model the probability of methylation \(p\) as a beta-distributed random variable:</p>
+<p>\[
+\mathbf{X}|p \sim \text{Bin}(n, p)
+\]
+\[
+p \sim \text{Beta}(\alpha, \beta)
+\]</p>
+<p>where \(n\) is the number of potentially methylated bases reported on in the
+region and \(\mathbf{X}\) is the vector of counts (canonical and methylated).</p>
+<p>In the case where there are more than two states (for example, 5hmC, 5mC, and unmodified C) we use a multinomial
+distribution and a Dirichlet as the base distribution:
+\[
+\mathbf{X}|\pi \sim \text{Mult}(n, \pi)
+\]</p>
+<p>\[
+\pi \sim \text{Dir}(\alpha)
+\]</p>
+<p>Let \(\theta\) be the parameters describing the posterior distribution ( \( \alpha, \beta \) for the binary case,
+and \(\alpha \) in the general case). The <code>score</code> reported is the result of the following log marginal likelihood
+ratio :</p>
+<p>\[
+\text{score} = \text{log}(\frac{l_{\theta_{a}}( \mathbf{X_a} ) l_{\theta_{b}} ( \mathbf{X_b} )}{l_{\theta_{a+b}} (\mathbf{X_{a+b}} )})
+\]</p>
+<p>Where \(\theta_a\) and \(\theta_b\) are the posterior distributions with the two conditions modeled separately,
+and \(\theta_{a+b}\) is the posterior when the two conditions are modeled together. The function \(l_{\theta}(\mathbf{X}) \) is
+the log marginal likelihood of the counts under the parameters of the model \(\theta\).
+For all cases, we use <a href="https://en.wikipedia.org/wiki/Jeffreys_prior">Jeffrey's prior</a> as the prior distribution.</p>
+<h2 id="map-based-p-value"><a class="header" href="#map-based-p-value">MAP-based p-value</a></h2>
+<p>This metric models the effect size (i.e. the difference) in base modification (of any kind) between two conditions.
+For example, if one condition has 8 of 10 reads reporting modification, 80%, and the other condition has 2 of 10, 20%, then the effect size 0.6 or 60%.
+This metric only captures changes in modified versus unmodified bases, in other words, changes in modification type will not be captured by this metric.
+See the <a href="./limitations.html">limitations</a> for details.
+The DMR module in modkit uses Bernoulli trials (modified/not-modified) and a prior to calculate a posterior distribution over \(p\), the true probability that the site is modified.
+The posterior distribution over \(p\) given some observations, \(X\), is \(P(p | X)\), is a Beta distribution.
+Where \(X\) is the observations (\(N_{\text{mod}}\) and \(N_{\text{canonical}}\)), the number of reads calling a modified base and a canonical base, respectively.</p>
+<p>\[
+P(p | X) = \text{Beta}(\alpha_0 + N_{\text{mod}}, \beta_0 + N_{\text{can}})
+\]
+Where \(\alpha_0\) and \(\beta_0\) are the parameters for the prior distribution \(\text{Beta}(\alpha_0, \beta_0)\).
+The advantage to this model is that as you collect more coverage, the variance of the posterior gets smaller - you're more confident that the true value of \(p\) is near the empirical mean.
+But when you have low coverage, you keep the uncertainty around.</p>
+<p>More formally, let \(\textbf{X}\) be a Beta-distributed random variable representing the posterior distribution over \(p\) for the first condition and \(\textbf{Y}\) is the same for the second condition.
+Finally, let \(f(x)\) be the probability density of the difference \(x\) in \(\textbf{X}\) and \(\textbf{Y}\).
+Then the MAP-based p-value, \(p_{\text{MAP}}\), is the posterior odds of the effect size being zero (no difference) versus the <em>maxumum a posteriori</em> (MAP) outcome:</p>
+<p>\[
+p_{\text{MAP}} = \frac{f(0.0)}{f(x_{\text{MAP}})} \
+\]
+\[
+f(x) = PDF_{\textbf{Z}}(x) \
+\]
+\[
+\textbf{Z} = \textbf{X} - \textbf{Y} \
+\]
+\[
+\textbf{X} \sim \text{Beta}(\alpha_1, \beta_1) \
+\]
+\[
+\textbf{Y} \sim \text{Beta}(\alpha_2, \beta_2) \
+\]</p>
+<p>This metric was proposed by <a href="https://www.frontiersin.org/articles/10.3389/fpsyg.2019.02767/full">Makowski et al.</a> and can be easily visualized.
+Consider an example with a true effect size of 0.8 at two coverages, 5 reads and 10 reads.
+For an effect size of 0.8, the \(p\) for the low modification condition and the high modification condition is 0.1 and 0.9, respectively.
+This corresponds to 4 of 5 reads being called methylated in the low-coverage case, and 9 of 10 reads being called modified in the high-coverage condition.
+The reciprocal counts are used in both conditions, so 1 of 5 for the low-coverage and 1 of 10 for the high-coverage.</p>
+<ul>
+<li>Low coverage = 5: 4 of 5 modified versus 1 of 5 modified</li>
+<li>High coverage = 10: 9 of 10 modified versus 1 of 10 modified</li>
+</ul>
+<p>Starting with a prior of \(\text{Beta}(0.5, 0.5)\), we can calculate the posterior density for the two conditions:
+<img src="./images/beta_distributions.png" alt="posterior_distributions" /></p>
+<p>What we need to calculate is the probability distribution of the <em>difference</em> (the effect size) between the two conditions (high-modification and low-modification).
+This can be done using a piecewise solution described by <a href="https://www.tandfonline.com/doi/abs/10.1080/03610929308831114">Pham-Gia, Turkkan, and Eng in 1993</a>, shown below:</p>
+<p><img src="./images/estimated_map_pvalue2.png" alt="beta_diff" /></p>
+<p>The MAP-based p-value is the ratio of the circles over the triangles.
+The implementation in <code>modkit</code> takes a small short-cut however, and uses the empirical effect size \(d = \hat{p}_1 - \hat{p}_2\) instead of the <em>maximum a posteriori</em> outcome.</p>
+<p>\[
+\text{p-MAP}^{\prime} = \frac{f(0.0)}{f(d)} \
+\]</p>
+<p>\[
+d = \hat{p}_1 - \hat{p}_2 \
+\]</p>
+<p>\[
+\hat{p} = \frac{ N_{\text{mod}} }{ N_{\text{canonical}} } \
+\]</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="removing-modification-calls-from-bams"><a class="header" href="#removing-modification-calls-from-bams">Removing modification calls from BAMs.</a></h1>
 <p>There may be multiple possible base modifications to a specific canonical base.
 For example, cytosine has at least four known modified variants. As

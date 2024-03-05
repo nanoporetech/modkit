@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.5]
+### Fixes
+- [extract] Only emit mapped reads when `--region` is provided, but still emit unmapped bases in those reads unless `--mapped-only` is passed.
+- [extract] Performance improvement due to better tracking of interval boundaries.
+- [repair] Updates the `MN` tag on repaired records.
+### Adds
+- [dmr, single-site] Refactor `dmr pair` without regions (i.e. single site analysis) to increase performance.
+- [dmr, single-site] Add estimated MAP-based p-value to output.
+- [all] Allows BED3 input for all options that use `--include-bed`. Strand will be assumed to be BOTH (equivalent to '.').
+- [extract] Increases the kmer size limit to 50.
+
+
 ## [v0.2.5-rc2]
 ### Fixes
 - [all] Reads with entirely implicit canonical calls are no longer skipped for "modbase info empty" or similar.

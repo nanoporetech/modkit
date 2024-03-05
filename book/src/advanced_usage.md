@@ -9,6 +9,8 @@ modified base information (modBAMs). The various sub-commands and tools availabl
 
 
 ```text
+Modkit is a bioinformatics tool for working with modified bases from Oxford Nanopore
+
 Usage: modkit <COMMAND>
 
 Commands:
@@ -764,8 +766,8 @@ Options:
           Hide the progress bar.
 
       --kmer-size <KMER_SIZE>
-          Set the query and reference k-mer size (if a reference is provided). Maxumum number for
-          this value is 12.
+          Set the query and reference k-mer size (if a reference is provided). Maximum number for
+          this value is 50.
           
           [default: 5]
 
@@ -951,19 +953,19 @@ Options:
           Canonical base to evaluate. By default, this will be derived from mod codes in ground
           truth BED files. For ground truth with only canonical sites and/or ChEBI codes this values
           must be set.
-
+          
           [possible values: A, C, G, T]
 
   -q, --filter-quantile <FILTER_QUANTILE>
           Filter out modified base calls where the probability of the predicted variant is below
           this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
           modification calls.
-
+          
           [default: 0.1]
 
   -t, --threads <THREADS>
           Number of threads to use.
-
+          
           [default: 4]
 
       --suppress-progress
@@ -1153,7 +1155,7 @@ Options:
           Print help information (use `-h` for a summary).
 ```
 
-## pileup-hemi `pair`
+## dmr pair
 ```text
 Compare regions in a pair of samples (for example, tumor and normal or control and experiment). A
 sample is input as a bgzip pileup bedMethyl (produced by pileup, for example) that has an associated
@@ -1167,66 +1169,116 @@ Options:
           Bgzipped bedMethyl file for the first (usually control) sample. There should be a tabix
           index with the same name and .tbi next to this file or the --index-a option must be
           provided.
+
   -b <EXP_BED_METHYL>
           Bgzipped bedMethyl file for the second (usually experimental) sample. There should be a
           tabix index with the same name and .tbi next to this file or the --index-b option must be
           provided.
+
   -o, --out-path <OUT_PATH>
-          Path to file to direct output, optional, no argument will direct output to stdout.
+          Path to file to direct output, optional, no argument will direct output to stdout
+
+      --header
+          Include header in output.
+
   -r, --regions-bed <REGIONS_BED>
           BED file of regions over which to compare methylation levels. Should be tab-separated
           (spaces allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name
           column is optional. Strand is currently ignored. When omitted, methylation levels are
-          compared at each site in the `-a`/`control_bed_methyl` BED file (or optionally, the
-          `-b`/`exp_bed_methyl` file with the `--use-b` flag.
-      --use-b
-          When performing site-level DMR, use the bedMethyl indicated by the -b/exp_bed_methyl
-          argument to collect bases to score.
+          compared at each site.
+
       --ref <REFERENCE_FASTA>
-          Path to reference fasta for the pileup.
+          Path to reference fasta for used in the pileup/alignment.
+
   -m <MODIFIED_BASES>
           Bases to use to calculate DMR, may be multiple. For example, to calculate differentially
           methylated regions using only cytosine modifications use --base C.
+          
       --log-filepath <LOG_FILEPATH>
           File to write logs to, it's recommended to use this option.
+
   -t, --threads <THREADS>
-          Number of threads to use [default: 4]
+          Number of threads to use.
+          
+          [default: 4]
+
       --batch-size <BATCH_SIZE>
           Control the  batch size. The batch size is the number of regions to load at a time. Each
           region will be processed concurrently. Loading more regions at a time will decrease IO to
           load data, but will use more memory. Default will be 50% more than the number of threads
           assigned.
+
   -k, --mask
           Respect soft masking in the reference FASTA.
+
       --suppress-progress
           Don't show progress bars.
+
   -f, --force
           Force overwrite of output file, if it already exists.
+
       --index-a <INDEX_A>
           Path to tabix index associated with -a (--control-bed-methyl) bedMethyl file.
+
       --index-b <INDEX_B>
           Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl file.
+
       --missing <HANDLE_MISSING>
           How to handle regions found in the `--regions` BED file. quiet => ignore regions that are
           not found in the tabix header warn => log (debug) regions that are missing fatal => log
-          (error) and exit the program when a region is missing. [default: warn] [possible values:
-          quiet, warn, fail]
+          (error) and exit the program when a region is missing.
+          
+          [default: warn]
+          [possible values: quiet, warn, fail]
+
       --min-valid-coverage <MIN_VALID_COVERAGE>
           Minimum valid coverage required to use an entry from a bedMethyl. See the help for pileup
-          for the specification and description of valid coverage. [default: 0]
+          for the specification and description of valid coverage.
+          
+          [default: 0]
+
+      --prior <PRIOR> <PRIOR>
+          Prior distribution for estimating MAP-based p-value. Should be two arguments for alpha and
+          beta (e.g. 1.0 1.0). See `dmr_scoring_details.md` for additional details on how the metric
+          is calculated.
+
+      --delta <DELTA>
+          Consider only effect sizes greater than this when calculating the MAP-based p-value.
+          
+          [default: 0.05]
+
+  -N, --n-sample-records <N_SAMPLE_RECORDS>
+          Sample this many reads when estimating the max coverage thresholds.
+          
+          [default: 10042]
+
+      --max-coverages <MAX_COVERAGES> <MAX_COVERAGES>
+          Max coverages to enforce when calculating estimated MAP-based p-value.
+
+      --cap-coverages
+          When using replicates, cap coverage to be equal to the maximum coverage for a single
+          sample. For example, if there are 3 replicates with max_coverage of 30, the total coverage
+          would normally be 90. Using --cap-coverages will down sample the data to 30X.
+
+  -i, --interval-size <INTERVAL_SIZE>
+          Interval chunk size in base pairs to process concurrently. Smaller interval chunk sizes
+          will use less memory but incur more overhead.
+          
+          [default: 100000]
+
   -h, --help
-          Print help information.
+          Print help information (use `-h` for a summary).
 ```
 
-## pileup-hemi
+## dmr multi
 ```text
 Compare regions between all pairs of samples (for example a trio sample set or haplotyped trio
 sample set). As with `pair` all inputs must be bgzip compressed bedMethyl files with associated
 tabix indices. Each sample must be assigned a name. Output is a directory of BED files with the
 score column indicating the magnitude of the difference in methylation between the two samples
-indicated in the file name. See the online documentation for additional details.
+indicated in the file name. See the online documentation for additional details
 
-Usage: modkit dmr multi [OPTIONS] --out-dir <OUT_DIR> --ref <REFERENCE_FASTA>
+Usage: modkit dmr multi [OPTIONS] --regions-bed <REGIONS_BED> --out-dir <OUT_DIR> --ref <REFERENCE_FASTA>
 
 Options:
   -s, --sample <SAMPLES> <SAMPLES>
@@ -1239,8 +1291,9 @@ Options:
   -r, --regions-bed <REGIONS_BED>
           BED file of regions over which to compare methylation levels. Should be tab-separated
           (spaces allowed in the "name" column). Requires chrom, chromStart and chromEnd. The Name
-          column is optional. Strand is currently ignored. When omitted, methylation levels are
-          compared at each site in common between the two bedMethyl files being compared.
+          column is optional. Strand is currently ignored.
+      --header
+          Include header in output.
   -o, --out-dir <OUT_DIR>
           Directory to place output DMR results in BED format.
   -p, --prefix <PREFIX>
@@ -1259,7 +1312,7 @@ Options:
       --suppress-progress
           Don't show progress bars.
   -f, --force
-          Force overwrite of output file, if it already exists
+          Force overwrite of output file, if it already exists.
       --missing <HANDLE_MISSING>
           How to handle regions found in the `--regions` BED file. quiet => ignore regions that are
           not found in the tabix header warn => log (debug) regions that are missing fatal => log
@@ -1269,5 +1322,5 @@ Options:
           Minimum valid coverage required to use an entry from a bedMethyl. See the help for pileup
           for the specification and description of valid coverage. [default: 0]
   -h, --help
-          Print help information
+          Print help information.
 ```

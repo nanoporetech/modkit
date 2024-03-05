@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html lang="en" class="sidebar-visible no-js light">
+<html lang="en" class="light" dir="ltr">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
@@ -10,7 +10,7 @@
         
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="theme-color" content="#ffffff" />
+        <meta name="theme-color" content="#ffffff">
 
         <link rel="icon" href="favicon.svg">
         <link rel="shortcut icon" href="favicon.png">
@@ -34,7 +34,7 @@
         <!-- MathJax -->
         <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
     </head>
-    <body>
+    <body class="sidebar-visible no-js">
     <div id="body-container">
         <!-- Provide site root to javascript -->
         <script>
@@ -64,42 +64,71 @@
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
             var html = document.querySelector('html');
-            html.classList.remove('no-js')
             html.classList.remove('light')
             html.classList.add(theme);
-            html.classList.add('js');
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
         </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
 
         <!-- Hide / unhide sidebar before it is displayed -->
         <script>
-            var html = document.querySelector('html');
+            var body = document.querySelector('body');
             var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
             } else {
                 sidebar = 'hidden';
             }
-            html.classList.remove('sidebar-visible');
-            html.classList.add("sidebar-" + sidebar);
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
         </script>
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html" class="active"><strong aria-hidden="true">1.5.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.10.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.11.</strong> Perform differential methylation scoring</a></li><li class="chapter-item expanded "><a href="intro_validate.html"><strong aria-hidden="true">1.12.</strong> Validate ground truth results</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.2.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html" class="active"><strong aria-hidden="true">1.5.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.10.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.11.</strong> Perform differential methylation scoring</a></li><li class="chapter-item expanded "><a href="intro_validate.html"><strong aria-hidden="true">1.12.</strong> Validate ground truth results</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="dmr_scoring_details.html"><strong aria-hidden="true">6.2.</strong> DMR model and scoring details</a></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.3.</strong> Ignoring and combining calls</a></li></ol></li></ol>
             </div>
-            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
         </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
 
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
                                 <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky bordered">
+                <div id="menu-bar" class="menu-bar sticky">
                     <div class="left-buttons">
-                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
-                        </button>
+                        </label>
                         <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                             <i class="fa fa-paint-brush"></i>
                         </button>
@@ -148,12 +177,12 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="extracting-base-modification-information"><a class="header" href="#extracting-base-modification-information">Extracting base modification information</a></h1>
-<p>The <code>modkit extract</code> sub-command will produce a table containing the base modification probabilities, 
+<p>The <code>modkit extract</code> sub-command will produce a table containing the base modification probabilities,
 the read sequence context, and optionally aligned reference information.
-For <code>extract</code>, if a correct <code>MN</code> tag is found, secondary and supplementary alignments may be output with the <code>--allow-non-primary</code> flag. 
+For <code>extract</code>, if a correct <code>MN</code> tag is found, secondary and supplementary alignments may be output with the <code>--allow-non-primary</code> flag.
 See <a href="./troubleshooting.html">troubleshooting</a> for details.</p>
-<p>The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
-To only include mapped bases use the <code>--mapped</code> flag. To only include sites of interest, pass a 
+<p>The table will by default contain unmapped sections of the read (soft-clipped sections, for example).
+To only include mapped bases use the <code>--mapped</code> flag. To only include sites of interest, pass a
 BED-formatted file to the <code>--include-bed</code> option. Similarly, to exclude sites, pass a BED-formatted
 file to the <code>--exclude</code> option. One caution, the files generated by <code>modkit extract</code> can be large (2-2.5x
 the size of the BAM). You may want to either use the <code>--num-reads</code> option, the <code>--region</code> option, or
@@ -183,11 +212,11 @@ or <code>stdout</code> and filter the columns before writing to disk.</p>
 </tbody></table>
 </div>
 <h1 id="tabulating-base-modification-calls-for-each-read-position"><a class="header" href="#tabulating-base-modification-calls-for-each-read-position">Tabulating base modification <em>calls</em> for each read position</a></h1>
-<p>Passing <code>--read-calls &lt;file-path&gt;</code> option will generate a table of read-level base modification calls using the 
+<p>Passing <code>--read-calls &lt;file-path&gt;</code> option will generate a table of read-level base modification calls using the
 same <a href="./filtering.html">thresholding</a> algorithm employed by <code>modkit pileup</code>. The resultant table has, for each read,
-one row for each base modification call in that read. If a base is called as modified then <code>call_code</code> will be the 
+one row for each base modification call in that read. If a base is called as modified then <code>call_code</code> will be the
 code in the <code>MM</code> tag. If the base is called as canonical the <code>call_code</code> will be <code>-</code> (<code>A</code>, <code>C</code>, <code>G</code>, and <code>T</code> are
-reserved for &quot;any modification&quot;). The full schema of the table is below:</p>
+reserved for "any modification"). The full schema of the table is below:</p>
 <div class="table-wrapper"><table><thead><tr><th>column</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
 <tr><td>1</td><td>read_id</td><td>name of the read</td><td>str</td></tr>
 <tr><td>2</td><td>forward_read_position</td><td>0-based position on the forward-oriented read sequence</td><td>int</td></tr>
@@ -213,18 +242,18 @@ reserved for &quot;any modification&quot;). The full schema of the table is belo
 </tbody></table>
 </div>
 <h2 id="note-on-implicit-base-modification-calls"><a class="header" href="#note-on-implicit-base-modification-calls">Note on implicit base modification calls.</a></h2>
-<p>The <code>.</code> MM flag indicates that primary sequence bases without an associated base modification probability 
-should be inferred to be canonical. By default, when this flag is encountered in a modBAM, <code>modkit extract</code> will 
+<p>The <code>.</code> MM flag indicates that primary sequence bases without an associated base modification probability
+should be inferred to be canonical. By default, when this flag is encountered in a modBAM, <code>modkit extract</code> will
 output rows with the <code>inferred</code> column set to <code>true</code> and a <code>mod_qual</code> value of <code>0.0</code> for the base modifications
-called on that read. For example, if you have a <code>A+a.</code> MM tag, and there are <code>A</code> bases in the read for which 
-there aren't base modification calls (identifiable as non-0s in the MM tag) will be rows where the <code>mod_code</code> 
+called on that read. For example, if you have a <code>A+a.</code> MM tag, and there are <code>A</code> bases in the read for which
+there aren't base modification calls (identifiable as non-0s in the MM tag) will be rows where the <code>mod_code</code>
 is <code>a</code> and the <code>mod_qual</code> is 0.0.</p>
 <h2 id="note-on-non-primary-alignments"><a class="header" href="#note-on-non-primary-alignments">Note on non-primary alignments</a></h2>
 <p>If a valid <code>MN</code> tag is found, secondary and supplementary alignments can be output in the <code>modkit extract</code> tables above.
 See <a href="./troubleshooting.html">troubleshooting</a> for details on how to get valid <code>MN</code> tags.
-To have non-primary alignments appear in the output, the <code>--allow-non-primary</code> flag must be passed. 
-By default, the primary alignment will have all base modification information contained on the read, including soft-clipped and unaligned read positions. 
-If the <code>--mapped-only</code> flag is used, soft clipped sections of the read will not be included. 
+To have non-primary alignments appear in the output, the <code>--allow-non-primary</code> flag must be passed.
+By default, the primary alignment will have all base modification information contained on the read, including soft-clipped and unaligned read positions.
+If the <code>--mapped-only</code> flag is used, soft clipped sections of the read will not be included.
 For secondary and supplementary alignments, soft-clipped positions are not repeated. See <a href="./advanced_usage.html">advanced usage</a> for more details.</p>
 <h2 id="example-usages"><a class="header" href="#example-usages">Example usages:</a></h2>
 <h3 id="extract-a-table-from-an-aligned-and-indexed-bam"><a class="header" href="#extract-a-table-from-an-aligned-and-indexed-bam">Extract a table from an aligned and indexed BAM</a></h3>
@@ -246,7 +275,7 @@ modkit extract &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --include-
 <h3 id="extract-read-level-base-modification-calls"><a class="header" href="#extract-read-level-base-modification-calls">Extract read-level base modification calls</a></h3>
 <pre><code>modkit extract &lt;input.bam&gt; null --read-calls &lt;calls.tsv&gt;
 </code></pre>
-<p>Using &quot;null&quot; in the place of the normal output will direct the normal extract output
+<p>Using "null" in the place of the normal output will direct the normal extract output
 to /dev/null, to keep this output specify a file or <code>-</code> for standard out.</p>
 <pre><code>modkit extract &lt;input.bam&gt; &lt;output.tsv&gt; --read-calls &lt;calls.tsv&gt;
 </code></pre>
@@ -263,7 +292,7 @@ to /dev/null, to keep this output specify a file or <code>-</code> for standard 
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next" href="intro_call_mods.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="intro_call_mods.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -277,7 +306,7 @@ to /dev/null, to keep this output specify a file or <code>-</code> for standard 
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next" href="intro_call_mods.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="intro_call_mods.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
