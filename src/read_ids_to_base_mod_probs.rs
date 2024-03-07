@@ -6,6 +6,7 @@ use bio::alphabets::dna::revcomp;
 use derive_new::new;
 use indicatif::ParallelProgressIterator;
 use log::debug;
+use log_once::debug_once;
 use rayon::prelude::*;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Cigar;
@@ -204,6 +205,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                 }
             });
         let mut read_ids_to_mod_base_probs = Self::zero();
+        let mut seen_duplicates = false;
         for (record, mod_base_info) in mod_base_info_iter {
             match record_sampler.ask() {
                 Indicator::Use(token) => {
@@ -221,10 +223,11 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                     }
                     let record_name = record_name.unwrap();
                     if read_ids_to_mod_base_probs.seen(&record_name) {
-                        debug!(
-                            "record: {record_name}, already processed, \
-                             consider de-duplicating alignments."
-                        );
+                        seen_duplicates = true;
+                        // debug!(
+                        //     "record: {record_name}, already processed, \
+                        //      consider de-duplicating alignments."
+                        // );
                         continue;
                     }
                     if mod_base_info.is_empty() {
@@ -308,6 +311,13 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                 Indicator::Skip => continue,
                 Indicator::Done => break,
             }
+        }
+
+        if seen_duplicates {
+            debug_once!(
+                "encountered duplicate alignment records, consider \
+                 de-duplicating (or marking) alignments"
+            )
         }
 
         if let Some(pb) = &spinner {

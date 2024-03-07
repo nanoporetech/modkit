@@ -1065,18 +1065,21 @@ fn process_region<T: AsRef<Path>>(
         read_cache.get_records_used_and_skipped();
 
     let should_warn = !dupe_reads.is_empty();
-    for (read_id, counts) in dupe_reads {
-        let avg_times =
-            counts.iter().map(|c| *c as f32).sum::<f32>() / counts.len() as f32;
-        debug!(
-            "read {read_id} was observed multiple times, avg {avg_times} at \
-             {} positions on contig {chrom_name}, between {start_pos} and \
-             {end_pos}",
-            counts.len()
-        );
-    }
+    // for (read_id, counts) in dupe_reads {
+    //     let avg_times =
+    //         counts.iter().map(|c| *c as f32).sum::<f32>() / counts.len() as
+    // f32;     debug!(
+    //         "read {read_id} was observed multiple times, avg {avg_times} at \
+    //          {} positions on contig {chrom_name}, between {start_pos} and \
+    //          {end_pos}",
+    //         counts.len()
+    //     );
+    // }
     if should_warn {
-        debug!("consider marking duplicate alignments");
+        debug!(
+            "duplicate reads encountered in pileup, consider marking \
+             duplicate alignments"
+        );
     }
 
     Ok(ModBasePileup {
