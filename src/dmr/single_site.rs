@@ -429,19 +429,17 @@ impl SingleSiteDmrScore {
         counts_b: &[AggregatedCounts],
         position: u64,
         estimator: &PMapEstimator,
+        matched_samples: bool,
     ) -> anyhow::Result<Self> {
-        if counts_a.len() != counts_b.len() {
-            bail!(
-                "need to have same number of samples for both conditions, got \
-                 {} for a and {} for b",
+        let (replicate_epmap, replicate_effect_sizes) = if matched_samples {
+            assert_eq!(
                 counts_a.len(),
-                counts_b.len()
-            )
-        }
-
-        let (replicate_epmap, replicate_effect_sizes) = if counts_a.len() > 1 {
-            let mut replicate_epmap = Vec::with_capacity(counts_b.len());
-            let mut replicate_effect_size = Vec::with_capacity(counts_b.len());
+                counts_b.len(),
+                "matched samples need to be the same"
+            );
+            let n_samples = counts_a.len();
+            let mut replicate_epmap = Vec::with_capacity(n_samples);
+            let mut replicate_effect_size = Vec::with_capacity(n_samples);
             for (a, b) in counts_a.iter().zip(counts_b) {
                 let epmap = estimator.predict(a, b)?;
                 replicate_epmap.push(epmap.e_pmap);
@@ -602,6 +600,7 @@ fn process_batch_of_positions(
 ) -> anyhow::Result<Vec<ChromToSingleScores>> {
     let num_a_samples = sample_index.num_a_samples();
     let num_b_samples = sample_index.num_b_samples();
+    let matched_samples = num_a_samples == num_b_samples;
     let (a_lines, b_lines) =
         sample_index.read_bedmethyl_lines_organized_by_position(batch)?;
 
@@ -628,6 +627,7 @@ fn process_batch_of_positions(
                             &b_counts,
                             pos.position,
                             &pmap_estimator,
+                            matched_samples,
                         )
                     }
                 })
