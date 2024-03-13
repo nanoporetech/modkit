@@ -235,7 +235,8 @@ pub struct ModBamPileup {
     /// provided.
     #[arg(long, requires = "reference_fasta", default_value_t = false)]
     cpg: bool,
-    /// Reference sequence in FASTA format. Required for CpG motif filtering.
+    /// Reference sequence in FASTA format. Required for motif (e.g. CpG)
+    /// filtering.
     #[arg(long = "ref", alias = "reference", short = 'r')]
     reference_fasta: Option<PathBuf>,
     /// Respect soft masking in the reference FASTA.

@@ -2,6 +2,7 @@ extern crate core;
 
 pub mod adjust;
 pub mod commands;
+pub mod entropy;
 pub mod errs;
 pub mod extract;
 pub mod interval_chunks;

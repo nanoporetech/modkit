@@ -1,38 +1,17 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-use derive_new::new;
-use itertools::Itertools;
-use rustc_hash::FxHashMap;
-
-use crate::mod_bam::{BaseModCall, BaseModProbs};
-use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::mod_bam::BaseModCall;
 use crate::read_ids_to_base_mod_probs::{
-    ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
+    PositionModCalls, ReadsBaseModProfile,
 };
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util;
 use crate::util::{
     create_out_directory, get_reference_mod_strand, Kmer, Strand,
 };
 use crate::writers::TsvWriter;
-
-#[derive(new)]
-pub(crate) struct PositionModCalls {
-    query_position: usize,
-    pub(crate) ref_position: Option<i64>,
-    num_soft_clipped_start: usize,
-    num_soft_clipped_end: usize,
-    read_length: usize,
-    pub(crate) base_mod_probs: BaseModProbs,
-    q_base: u8,
-    query_kmer: Kmer,
-    pub(crate) mod_strand: Strand,
-    pub(crate) alignment_strand: Option<Strand>,
-    pub(crate) canonical_base: DnaBase,
-}
 
 impl PositionModCalls {
     fn header() -> String {
@@ -60,94 +39,6 @@ impl PositionModCalls {
             inferred{tab}\
             within_alignment{tab}\
             flag"
-        )
-    }
-
-    pub(crate) fn from_profile(
-        read_base_mod_profile: &ReadBaseModProfile,
-    ) -> Vec<Self> {
-        type Key = (usize, Strand, DnaBase);
-        let (grouped, mod_codes): (
-            HashMap<Key, Vec<&ModProfile>>,
-            HashSet<ModCodeRepr>,
-        ) = read_base_mod_profile.iter_profiles().fold(
-            (HashMap::new(), HashSet::new()),
-            |(mut acc, mut codes), x| {
-                let k = (x.query_position, x.mod_strand, x.canonical_base);
-                acc.entry(k).or_insert(Vec::new()).push(x);
-                codes.insert(x.raw_mod_code);
-                (acc, codes)
-            },
-        );
-        let mod_codes = mod_codes.into_iter().collect::<Vec<ModCodeRepr>>();
-
-        grouped
-            .into_iter()
-            .fold(
-                Vec::<Self>::new(),
-                |mut acc, ((query_pos, strand, base), mod_profile)| {
-                    let base_mod_probs =
-                        if mod_profile.iter().any(|x| x.inferred) {
-                            BaseModProbs::new_inferred_canonical(&mod_codes)
-                        } else {
-                            let mut probs = mod_profile
-                                .iter()
-                                .map(|x| (x.raw_mod_code, x.q_mod))
-                                .collect::<FxHashMap<ModCodeRepr, f32>>();
-                            for code in mod_codes.iter() {
-                                if !probs.contains_key(&code) {
-                                    probs.insert(*code, 0f32);
-                                }
-                            }
-
-                            BaseModProbs::new(probs, false)
-                        };
-                    let template = &mod_profile[0];
-                    let ref_position = template.ref_position;
-                    let num_clip_start = template.num_soft_clipped_start;
-                    let num_clip_end = template.num_soft_clipped_end;
-                    let q_base = template.q_base;
-                    let kmer = template.query_kmer;
-                    let alignment_strand = template.alignment_strand;
-
-                    let pos_mod_calls = PositionModCalls::new(
-                        query_pos,
-                        ref_position,
-                        num_clip_start,
-                        num_clip_end,
-                        template.read_length,
-                        base_mod_probs,
-                        q_base,
-                        kmer,
-                        strand,
-                        alignment_strand,
-                        base,
-                    );
-                    acc.push(pos_mod_calls);
-
-                    acc
-                },
-            )
-            .into_iter()
-            .sorted_by(|a, b| {
-                if a.alignment_strand
-                    .map(|s| s == Strand::Negative)
-                    .unwrap_or(false)
-                {
-                    b.query_position.cmp(&a.query_position)
-                } else {
-                    a.query_position.cmp(&b.query_position)
-                }
-            })
-            .collect()
-    }
-
-    fn within_alignment(&self) -> bool {
-        util::within_alignment(
-            self.query_position,
-            self.num_soft_clipped_start,
-            self.num_soft_clipped_end,
-            self.read_length,
         )
     }
 

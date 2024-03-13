@@ -18,6 +18,7 @@ use crate::command_utils::{
     using_stream,
 };
 use crate::dmr::subcommands::BedMethylDmr;
+use crate::entropy::subcommand::MethylationEntropy;
 use crate::errs::{InputError, RunError};
 use crate::extract::subcommand::ExtractMods;
 use crate::logging::init_logging;
@@ -100,6 +101,8 @@ pub enum Commands {
     /// containing the ground truth modified base status at reference
     /// positions.
     Validate(ValidateFromModbam),
+    /// Use a mod-BAM to calculate methylation entropy over genomic windows.
+    Entropy(MethylationEntropy),
 }
 
 impl Commands {
@@ -117,6 +120,7 @@ impl Commands {
             Self::Dmr(x) => x.run(),
             Self::PileupHemi(x) => x.run(),
             Self::Validate(x) => x.run(),
+            Self::Entropy(x) => x.run(),
         }
     }
 }

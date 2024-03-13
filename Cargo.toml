@@ -43,6 +43,7 @@ common_macros = "0.1.1"
 ansi_term = "0.12.1"
 memchr = "2.6.4"
 statrs = "0.16.0"
+substring = "1.4.5"
 
 [dev-dependencies]
 similar-asserts = "1.4.2"

@@ -245,6 +245,10 @@ impl RegexMotif {
     fn offset(&self) -> i32 {
         self.motif_info.offset()
     }
+
+    pub(crate) fn find_hits(&self, seq: &str) -> Vec<(usize, Strand)> {
+        find_motif_hits(seq, &self)
+    }
 }
 
 impl Display for RegexMotif {
@@ -511,7 +515,7 @@ pub fn get_masked_sequences(
 ) -> anyhow::Result<Vec<(String, u32)>> {
     let reader = FastaReader::from_file(fasta_fp)?;
 
-    let records_progress = master_progress_bar.add(get_spinner());
+    let records_progress = master_progress_bar.add(get_ticker());
     records_progress.set_message("Reading reference sequences");
 
     Ok(reader
