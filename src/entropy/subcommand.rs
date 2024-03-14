@@ -40,7 +40,7 @@ pub struct MethylationEntropy {
     /// to each other, "CGCGCGCG". On the other hand, if the window_size
     /// was set to 12, then multiple sequences with various patterns of
     /// other bases can be used CGACGATCGGCG.
-    #[arg(short = 'w', long = "window", default_value_t = 50)]
+    #[arg(short = 'w', long, default_value_t = 50)]
     window_size: usize,
     /// Do not perform any filtering, include all mod base calls in output.
     #[arg(group = "thresholds", long, default_value_t = false)]
