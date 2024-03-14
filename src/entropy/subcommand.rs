@@ -12,14 +12,14 @@ use rust_htslib::bam::{self, Read};
 use crate::command_utils::{
     get_threshold_from_options, parse_per_mod_thresholds,
 };
-use crate::entropy::{Entropy, process_entropy_window, SlidingWindows};
+use crate::entropy::{process_entropy_window, Entropy, SlidingWindows};
 use crate::errs::RunError;
 use crate::logging::init_logging;
 use crate::motif_bed::{get_masked_sequences, RegexMotif};
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{get_targets, get_ticker};
-use crate::writers::{TsvWriter};
+use crate::writers::TsvWriter;
 
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
@@ -91,7 +91,7 @@ pub struct MethylationEntropy {
     reference_fasta: PathBuf,
     /// Motif to use for entropy calculation, default will be CpG. The motif
     /// must be reverse-complement palindromic.
-    #[arg(long, action = clap::ArgAction::Append, num_args = 2)]
+    #[arg(long, num_args = 2)]
     motif: Option<Vec<String>>,
     /// Minimum coverage required at each position in the window. Windows
     /// without at least this many valid reads will be skipped, but
@@ -162,7 +162,19 @@ impl MethylationEntropy {
 
         let reference_records = get_targets(bam_reader.header(), None);
         let motif = if let Some(raw_motif_parts) = &self.motif {
-            unimplemented!("user-specified motifs")
+            let mut motifs =
+                RegexMotif::from_raw_parts(raw_motif_parts, false)?;
+            if motifs.len() == 1 {
+                let motif = motifs.remove(0);
+                if motif.is_palendrome() {
+                    info!("using user-specified motif {}", motif);
+                    motif
+                } else {
+                    bail!("motif must be reverse-complement palindromic")
+                }
+            } else {
+                bail!("cannot have more than 1 motif")
+            }
         } else {
             RegexMotif::parse_string("CG", 0).unwrap()
         };

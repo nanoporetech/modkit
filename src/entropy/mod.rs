@@ -7,8 +7,8 @@ use derive_new::new;
 use itertools::{Itertools, MinMaxResult};
 use log::{debug, info};
 use rayon::prelude::*;
-use rust_htslib::bam::{self, FetchDefinition, Read};
 use rust_htslib::bam::ext::BamRecordExtensions;
+use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
 use crate::entropy::methylation_entropy::calc_me_entropy;
@@ -346,7 +346,9 @@ impl<'a> SlidingWindows {
                     // at least 1
                     if self.curr_position == first {
                         match hits.iter().nth(1) {
-                            Some(&second_hit) => self.curr_position = second_hit,
+                            Some(&second_hit) => {
+                                self.curr_position = second_hit
+                            }
                             None => {
                                 // there was only 1
                                 self.curr_position = end;
