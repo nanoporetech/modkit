@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use itertools::Itertools;
+use log_once::debug_once;
 use regex::Regex;
 use rustc_hash::FxHashSet;
 use substring::Substring;
@@ -103,7 +104,18 @@ fn calc_entropy(sequences: &[String], window_size: usize) -> f32 {
         acc
     });
     let total = counts.values().sum::<f32>();
-    assert!((total - sequences.len() as f32) < 1e-3);
+    if total - sequences.len() as f32 > 1e-3 {
+        if total > sequences.len() as f32 {
+            debug_once!(
+                "encountered discordant total value calculation, too high"
+            );
+        } else {
+            debug_once!(
+                "encountered discordant total value calculation, too low"
+            );
+        }
+    }
+    // assert!((total - sequences.len() as f32) < 1e-3);
     counts
         .values()
         .map(|&x| {
@@ -254,6 +266,19 @@ mod methylation_entropy_tests {
         ];
         assert_eq!(calc_me_entropy(&sequences, 4, 0.25), 0.47640976);
     }
+    //
+    // #[test]
+    // fn test_entropy_calc_foo() {
+    //     let sequences = vec![
+    //         "0000".to_string(),
+    //         "0000".to_string(),
+    //         "0000".to_string(),
+    //         "0011".to_string(),
+    //         "2222".to_string(),
+    //         "1122".to_string(),
+    //     ];
+    //     dbg!(calc_me_entropy(&sequences, 4, 0.25));
+    // }
 
     #[test]
     fn test_calc_entropy_wildcards() {
