@@ -956,6 +956,12 @@ Options:
           
           [possible values: A, C, G, T]
 
+      --min-identity <MIN_ALIGNMENT_IDENTITY>
+          Only use reads with alignment identity >= this number, in Q-space (phred score).
+
+      --min-length <MIN_ALIGNMENT_LENGTH>
+          Remove reads with fewer aligned reference bases than this threshold.
+
   -q, --filter-quantile <FILTER_QUANTILE>
           Filter out modified base calls where the probability of the predicted variant is below
           this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence

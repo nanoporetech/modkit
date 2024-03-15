@@ -346,7 +346,8 @@ chr20  10671925  10674963  CpG:  255  6.355823977093678     C:67   9459  C:153  
 <tr><td>19</td><td>per-replicate effect sizes</td><td>effect sizes matched replicate pairs</td><td>float</td></tr>
 </tbody></table>
 </div>
-<p>Columns 16-19 are only produced when multiple replicates are provided. Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
+<p>Columns 16-19 are only produced when an equal number of replicates are provided.
+Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
 For example in the abbreviated command below:</p>
 <pre><code class="language-bash">modkit dmr pair \
   -a ${norm_pileup_1}.gz \
@@ -356,7 +357,16 @@ For example in the abbreviated command below:</p>
   ...
 </code></pre>
 <p>Column 18 will contain the MAP-based p-value comparing <code>norm_pileup_1</code> versus <code>tumor_pileup_1</code> and <code>norm_pileup_2</code> versus <code>norm_pileup_2</code>.
-Column 19 will contain the effect sizes, values are comma-separated.</p>
+Column 19 will contain the effect sizes, values are comma-separated.
+If you have a different number of samples for each condition, such as:</p>
+<pre><code class="language-bash">modkit dmr pair \
+  -a ${norm_pileup_1}.gz \
+  -a ${norm_pileup_2}.gz \
+  -a ${norm_pileup_3}.gz \
+  -b ${tumor_pileup_1}.gz \
+  -b ${tumor_pileup_2}.gz \
+</code></pre>
+<p>these columns will not be present.</p>
 
                     </main>
 

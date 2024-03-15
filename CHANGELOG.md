@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.6]
+### Fixes
+- [dmr, single-site] Don't require that there are equal numbers of samples for single site DMR with multiple samples. Fixes #140.
+- [dmr, pairwise, region] Protect when zero bedmethyl records are found for a region, fixes #146.
+### Adds
+- [validate] Adds on-the-fly filtering of reads by alignment identity and/or alignment length.
+
+
 ## [v0.2.5]
 ### Fixes
 - [extract] Only emit mapped reads when `--region` is provided, but still emit unmapped bases in those reads unless `--mapped-only` is passed.

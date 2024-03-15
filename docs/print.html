@@ -938,7 +938,8 @@ chr20  10671925  10674963  CpG:  255  6.355823977093678     C:67   9459  C:153  
 <tr><td>19</td><td>per-replicate effect sizes</td><td>effect sizes matched replicate pairs</td><td>float</td></tr>
 </tbody></table>
 </div>
-<p>Columns 16-19 are only produced when multiple replicates are provided. Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
+<p>Columns 16-19 are only produced when an equal number of replicates are provided.
+Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
 For example in the abbreviated command below:</p>
 <pre><code class="language-bash">modkit dmr pair \
   -a ${norm_pileup_1}.gz \
@@ -948,7 +949,16 @@ For example in the abbreviated command below:</p>
   ...
 </code></pre>
 <p>Column 18 will contain the MAP-based p-value comparing <code>norm_pileup_1</code> versus <code>tumor_pileup_1</code> and <code>norm_pileup_2</code> versus <code>norm_pileup_2</code>.
-Column 19 will contain the effect sizes, values are comma-separated.</p>
+Column 19 will contain the effect sizes, values are comma-separated.
+If you have a different number of samples for each condition, such as:</p>
+<pre><code class="language-bash">modkit dmr pair \
+  -a ${norm_pileup_1}.gz \
+  -a ${norm_pileup_2}.gz \
+  -a ${norm_pileup_3}.gz \
+  -b ${tumor_pileup_1}.gz \
+  -b ${tumor_pileup_2}.gz \
+</code></pre>
+<p>these columns will not be present.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="validating-ground-truth-results"><a class="header" href="#validating-ground-truth-results">Validating ground truth results.</a></h1>
 <p>The <code>modkit validate</code> sub-command is intended for validating results in a uniform manner from samples with known modified base content. Specifically the modified base status at any annotated reference location should be known.</p>
 <h2 id="validating-from-modbam-reads-and-bed-reference-annotation"><a class="header" href="#validating-from-modbam-reads-and-bed-reference-annotation">Validating from modBAM reads and BED reference annotation.</a></h2>
@@ -1958,6 +1968,12 @@ Options:
           must be set.
           
           [possible values: A, C, G, T]
+
+      --min-identity &lt;MIN_ALIGNMENT_IDENTITY&gt;
+          Only use reads with alignment identity &gt;= this number, in Q-space (phred score).
+
+      --min-length &lt;MIN_ALIGNMENT_LENGTH&gt;
+          Remove reads with fewer aligned reference bases than this threshold.
 
   -q, --filter-quantile &lt;FILTER_QUANTILE&gt;
           Filter out modified base calls where the probability of the predicted variant is below
