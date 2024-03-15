@@ -200,7 +200,8 @@ When performing single-site analysis, the following additional columns are added
 | 18     | per-replicate p-values      | MAP-based p-values for matched replicate pairs                                        | float |
 | 19     | per-replicate effect sizes  | effect sizes matched replicate pairs                                                  | float |
 
-Columns 16-19 are only produced when multiple replicates are provided. Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
+Columns 16-19 are only produced when an equal number of replicates are provided.
+Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
 For example in the abbreviated command below:
 
 ```bash
@@ -214,4 +215,14 @@ modkit dmr pair \
 
 Column 18 will contain the MAP-based p-value comparing `norm_pileup_1` versus `tumor_pileup_1` and `norm_pileup_2` versus `norm_pileup_2`.
 Column 19 will contain the effect sizes, values are comma-separated.
+If you have a different number of samples for each condition, such as:
+```bash
+modkit dmr pair \
+  -a ${norm_pileup_1}.gz \
+  -a ${norm_pileup_2}.gz \
+  -a ${norm_pileup_3}.gz \
+  -b ${tumor_pileup_1}.gz \
+  -b ${tumor_pileup_2}.gz \
+```
+these columns will not be present.
 
