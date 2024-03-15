@@ -244,6 +244,7 @@ impl MethylationEntropy {
         let io_threads = self.io_threads.unwrap_or(threads);
         let max_filtered =
             self.max_filtered_positions.unwrap_or(self.num_positions);
+        let drop_zeros = self.drop_zeros;
         pool.spawn(move || {
             for batch in sliding_windows {
                 let mut results = Vec::new();
@@ -255,6 +256,7 @@ impl MethylationEntropy {
                                 process_entropy_window(
                                     window,
                                     min_coverage,
+                                    drop_zeros,
                                     max_filtered,
                                     io_threads,
                                     &threshold_caller,

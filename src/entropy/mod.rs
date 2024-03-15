@@ -476,6 +476,7 @@ pub(super) struct Entropy {
 pub(super) fn process_entropy_window(
     mut entropy_windows: EntropyWindows,
     min_coverage: u32,
+    drop_zeros: bool,
     max_filtered_positions: usize,
     io_threads: usize,
     caller: &MultipleThresholdModCaller,
@@ -578,6 +579,17 @@ pub(super) fn process_entropy_window(
         .entropy_windows
         .into_par_iter()
         .map(|ew| ew.into_entropy(&chrom, chrom_id, min_coverage))
+        .filter(|r| match r {
+            Ok(entropy) => {
+                if drop_zeros {
+                    entropy.me_entropy != 0f32
+                } else {
+                    true
+                }
+            }
+            _ => true,
+        })
         .collect::<Vec<_>>();
+
     Ok(entropy_calcs)
 }
