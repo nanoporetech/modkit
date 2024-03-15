@@ -115,7 +115,7 @@ fn calc_entropy(sequences: &[String], window_size: usize) -> f32 {
             );
         }
     }
-    // assert!((total - sequences.len() as f32) < 1e-3);
+    debug_assert!((total - sequences.len() as f32) < 1f32);
     counts
         .values()
         .map(|&x| {

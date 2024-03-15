@@ -117,6 +117,13 @@ pub struct MethylationEntropy {
     /// Force overwrite output
     #[arg(long, default_value_t = false)]
     force: bool,
+    /// Omit windows with zero entropy
+    #[arg(long, default_value_t = false)]
+    drop_zeros: bool,
+    /// Maximum number of filtered positions a read is allowed to have in a
+    /// window, more than this number and the read will be discarded.
+    #[arg(long)]
+    max_filtered_positions: Option<usize>,
 }
 
 impl MethylationEntropy {
@@ -132,6 +139,12 @@ impl MethylationEntropy {
         let mut writer: Box<dyn EntropyWriter> = if let Some(out_path) =
             self.out_bed.as_ref()
         {
+            if let Some(p) = out_path.parent() {
+                if !p.exists() && !(p == std::path::Path::new("")) {
+                    info!("creating output directory {p:?}");
+                    std::fs::create_dir_all(p)?;
+                }
+            }
             let tsv_writer = TsvWriter::new_path(out_path, self.force, None)?;
             Box::new(tsv_writer)
         } else {
@@ -229,30 +242,51 @@ impl MethylationEntropy {
         let min_coverage = self.min_valid_coverage;
         let threads = self.threads;
         let io_threads = self.io_threads.unwrap_or(threads);
+        let max_filtered =
+            self.max_filtered_positions.unwrap_or(self.num_positions);
         pool.spawn(move || {
             for batch in sliding_windows {
-                let entropies = batch
-                    .into_par_iter()
-                    .map(|window| {
-                        process_entropy_window(
-                            window,
-                            min_coverage,
-                            io_threads,
-                            &threshold_caller,
-                            &bam_fp,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                match snd.send(entropies) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("failed to send on channel, {e}");
+                let mut results = Vec::new();
+                let (entropies, _) = rayon::join(
+                    || {
+                        batch
+                            .into_par_iter()
+                            .map(|window| {
+                                process_entropy_window(
+                                    window,
+                                    min_coverage,
+                                    max_filtered,
+                                    io_threads,
+                                    &threshold_caller,
+                                    &bam_fp,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                    || {
+                        results.into_iter().for_each(|entropy| {
+                            match snd.send(entropy) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    error!("failed to send on channel, {e}");
+                                }
+                            }
+                        })
+                    },
+                );
+                results = entropies;
+                results.into_iter().for_each(|entropy| {
+                    match snd.send(entropy) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("failed to send on channel, {e}");
+                        }
                     }
-                }
+                });
             }
         });
 
-        for batch_result in rcv.iter().flatten() {
+        for batch_result in rcv.iter() {
             match batch_result {
                 Ok(window_results) => {
                     for result in window_results {

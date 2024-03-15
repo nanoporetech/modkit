@@ -55,6 +55,7 @@ impl EntropyWindow {
         ref_pos_to_basemod_call: &FxHashMap<u64, BaseModCall>,
         record: &bam::Record,
         strand: &Strand,
+        max_filtered_positions: usize,
     ) {
         // check that the read fully covers the interval
         let reference_start = if record.reference_start() >= 0 {
@@ -107,6 +108,12 @@ impl EntropyWindow {
             .sorted_by(|(x, _), (y, _)| x.cmp(y))
             .map(|(_, c)| c)
             .collect::<Vec<BaseModCall>>();
+        if pattern.iter().filter(|&bmc| bmc == &BaseModCall::Filtered).count()
+            > max_filtered_positions
+        {
+            // skip when too many filtered positions
+            return;
+        }
 
         for (i, call) in pattern.iter().enumerate() {
             assert!(i < self.position_valid_coverages.len());
@@ -469,6 +476,7 @@ pub(super) struct Entropy {
 pub(super) fn process_entropy_window(
     mut entropy_windows: EntropyWindows,
     min_coverage: u32,
+    max_filtered_positions: usize,
     io_threads: usize,
     caller: &MultipleThresholdModCaller,
     bam_fp: &PathBuf,
@@ -556,9 +564,14 @@ pub(super) fn process_entropy_window(
             }
         });
 
-    for (mod_calls, strand, record, name) in record_iter {
+    for (mod_calls, strand, record, _name) in record_iter {
         entropy_windows.entropy_windows.par_iter_mut().for_each(|window| {
-            window.add_read_to_patterns(&mod_calls, &record, &strand)
+            window.add_read_to_patterns(
+                &mod_calls,
+                &record,
+                &strand,
+                max_filtered_positions,
+            )
         });
     }
     let entropy_calcs = entropy_windows
