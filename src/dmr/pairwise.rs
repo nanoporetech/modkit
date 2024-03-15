@@ -51,36 +51,49 @@ pub(super) fn get_modification_counts(
                         .collect::<Vec<&BedMethylLine>>()
                 })
                 .unwrap_or_else(|| Vec::new());
-
-            let control_counts = aggregate_counts(&filtered_a);
-            let exp_counts = aggregate_counts(&filtered_b);
-            match (control_counts, exp_counts) {
-                (Ok(control_counts), Ok(exp_counts)) => {
-                    ModificationCounts::new(
-                        control_counts,
-                        exp_counts,
-                        region_of_interest.dmr_interval,
-                    )
+            if filtered_a.is_empty() || filtered_b.is_empty() {
+                let mut message = format!(
+                    "missing bedMethy records for region {}, ",
+                    &region_of_interest.dmr_interval
+                );
+                if filtered_a.is_empty() {
+                    message.push_str("'a' has no records ");
                 }
-                (Err(e), Err(f)) => {
-                    bail!(
-                        "failed to aggregate control counts, {} and \
-                         experimental counts, {}",
-                        e.to_string(),
-                        f.to_string()
-                    )
+                if filtered_b.is_empty() {
+                    message.push_str("'b' has no records")
                 }
-                (Err(e), _) => {
-                    bail!(
-                        "failed to aggregate control counts, {}",
-                        e.to_string()
-                    )
-                }
-                (_, Err(e)) => {
-                    bail!(
-                        "failed to aggregate experiment counts, {}",
-                        e.to_string()
-                    )
+                bail!(message)
+            } else {
+                let control_counts = aggregate_counts(&filtered_a);
+                let exp_counts = aggregate_counts(&filtered_b);
+                match (control_counts, exp_counts) {
+                    (Ok(control_counts), Ok(exp_counts)) => {
+                        ModificationCounts::new(
+                            control_counts,
+                            exp_counts,
+                            region_of_interest.dmr_interval,
+                        )
+                    }
+                    (Err(e), Err(f)) => {
+                        bail!(
+                            "failed to aggregate control counts, {} and \
+                             experimental counts, {}",
+                            e.to_string(),
+                            f.to_string()
+                        )
+                    }
+                    (Err(e), _) => {
+                        bail!(
+                            "failed to aggregate control counts, {}",
+                            e.to_string()
+                        )
+                    }
+                    (_, Err(e)) => {
+                        bail!(
+                            "failed to aggregate experiment counts, {}",
+                            e.to_string()
+                        )
+                    }
                 }
             }
         })
