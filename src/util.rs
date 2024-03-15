@@ -149,6 +149,19 @@ pub(crate) fn get_tag<T>(
     parser(&tag, t).map(|v| (v, t))
 }
 
+pub(crate) fn parse_nm(record: &bam::Record) -> anyhow::Result<u32> {
+    let nm_tag = record.aux("NM".as_bytes())?;
+    match nm_tag {
+        Aux::U8(x) => Ok(x as u32),
+        Aux::U16(x) => Ok(x as u32),
+        Aux::U32(x) => Ok(x),
+        Aux::I8(x) => Ok(x as u32),
+        Aux::I16(x) => Ok(x as u32),
+        Aux::I32(x) => Ok(x as u32),
+        _ => bail!("invalid NM tag {nm_tag:?}"),
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, Default, PartialOrd, Ord)]
 pub enum Strand {
     #[default]

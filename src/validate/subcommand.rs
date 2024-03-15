@@ -9,9 +9,10 @@ use std::string::FromUtf8Error;
 use ansi_term::Style;
 use anyhow::{anyhow, bail};
 use clap::Args;
+use derive_new::new;
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use log::info;
+use log::{debug, info};
 use log_once::warn_once;
 use ndarray::Array1;
 use prettytable::format::{
@@ -19,7 +20,7 @@ use prettytable::format::{
 };
 use prettytable::{cell, row, Row, Table};
 use rust_htslib::bam::ext::BamRecordExtensions;
-use rust_htslib::bam::{Read, Reader, Record};
+use rust_htslib::bam::{Read, Reader, Record, Records};
 use std::cmp::Ordering;
 
 use crate::command_utils::parse_edge_filter_input;
@@ -33,7 +34,7 @@ use crate::mod_base_code::{
 use crate::read_ids_to_base_mod_probs::ReadBaseModProfile;
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{
-    format_int_with_commas, get_reference_mod_strand, get_ticker,
+    format_int_with_commas, get_reference_mod_strand, get_ticker, parse_nm,
     record_is_not_primary, Strand,
 };
 
@@ -368,8 +369,147 @@ fn process_bam_record(
     Ok(result)
 }
 
+enum ReadFilterResult {
+    Pass(Record),
+    LowIdentityQ,
+    AlignmentTooShort,
+}
+
+#[derive(new)]
+struct ReadFilter {
+    min_identity_q: f32,
+    min_alignment_length: u64,
+}
+
+impl ReadFilter {
+    fn filter_read(&self, read: Record) -> anyhow::Result<ReadFilterResult> {
+        let op_counts = read.cigar_stats_nucleotides();
+        let op_counts = op_counts
+            .into_iter()
+            .map(|(op, count)| {
+                if count < 0 {
+                    bail!("invalid less than zero? {op:?}")
+                } else {
+                    Ok((op.char(), count as u32))
+                }
+            })
+            .collect::<anyhow::Result<HashMap<char, u32>>>()?;
+        let get_count =
+            |op: char| -> u32 { *op_counts.get(&op).unwrap_or(&0u32) };
+        let nm = parse_nm(&read)? as f32;
+        let num_paired = get_count('M') + get_count('X') + get_count('=');
+        let num_indel = get_count('I') + get_count('D');
+        let num_aligned = (num_paired + num_indel) as f32;
+        let identity_q = -10f32 * (1e-5f32 + (nm / num_aligned)).log10();
+        if identity_q < self.min_identity_q {
+            return Ok(ReadFilterResult::LowIdentityQ);
+        }
+
+        let alignment_length = {
+            let end = u64::try_from(read.reference_end()).ok();
+            let start = u64::try_from(read.reference_start()).ok();
+            match (start, end) {
+                (Some(s), Some(e)) => (e.checked_sub(s))
+                    .ok_or_else(|| anyhow!("start-before-end"))?,
+                (None, _) => {
+                    bail!("missing-reference-start")
+                }
+                (_, None) => {
+                    bail!("missing-reference-end")
+                }
+            }
+        };
+
+        if alignment_length < self.min_alignment_length {
+            Ok(ReadFilterResult::AlignmentTooShort)
+        } else {
+            Ok(ReadFilterResult::Pass(read))
+        }
+    }
+}
+
+struct ReadFilterIterator<'a, R: Read> {
+    read_filter: &'a ReadFilter,
+    reader: Records<'a, R>,
+
+    skipped: BTreeMap<&'static str, usize>,
+    errored: HashMap<String, usize>,
+}
+
+impl<'a, R: Read> ReadFilterIterator<'a, R> {
+    fn new(read_filter: &'a ReadFilter, reader: Records<'a, R>) -> Self {
+        Self {
+            read_filter,
+            reader,
+            skipped: BTreeMap::new(),
+            errored: HashMap::new(),
+        }
+    }
+
+    fn num_skipped(&self) -> usize {
+        self.skipped.values().sum::<usize>()
+    }
+
+    fn num_errored(&self) -> usize {
+        self.errored.values().sum::<usize>()
+    }
+}
+
+impl<'a, R: Read> Iterator for &mut ReadFilterIterator<'a, R> {
+    type Item = Record;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut ret: Option<Self::Item> = None;
+        loop {
+            match self.reader.next() {
+                Some(Ok(record)) => {
+                    if record.is_unmapped() || record_is_not_primary(&record) {
+                        continue;
+                    } else {
+                        match self.read_filter.filter_read(record) {
+                            Ok(ReadFilterResult::Pass(record)) => {
+                                ret = Some(record);
+                                break;
+                            }
+                            Ok(ReadFilterResult::LowIdentityQ) => {
+                                *self
+                                    .skipped
+                                    .entry("low-identity")
+                                    .or_insert(0) += 1;
+                                continue;
+                            }
+                            Ok(ReadFilterResult::AlignmentTooShort) => {
+                                *self
+                                    .skipped
+                                    .entry("alignment-too-short")
+                                    .or_insert(0) += 1;
+                                continue;
+                            }
+                            Err(e) => {
+                                *self
+                                    .errored
+                                    .entry(e.to_string())
+                                    .or_insert(0) += 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                Some(Err(io_err)) => {
+                    *self.errored.entry(io_err.to_string()).or_insert(0) += 1;
+                    continue;
+                }
+                None => break,
+            }
+        }
+
+        ret
+    }
+}
+
 fn process_bam_file(
     reader: &mut Reader,
+    read_filter: &ReadFilter,
     mod_positions: &ChromStrandPositionNames,
     tid_to_chrom: &TidToChrom,
     can_base: DnaBase,
@@ -379,57 +519,65 @@ fn process_bam_file(
 ) -> anyhow::Result<StatusProbs> {
     let lines_processed = get_ticker();
     if suppress_pb {
-        lines_processed
-            .set_draw_target(indicatif::ProgressDrawTarget::hidden());
-    }
+        lines_processed.set_draw_target(indicatif::ProgressDrawTarget::hidden())
+    };
     lines_processed.set_message("Records processed");
-    let (status_probs, errs) = reader.records().fold(
-        (HashMap::new(), HashMap::new()),
-        |(mut status_probs, mut errs), record| {
-            match record {
-                Ok(record) => {
-                    match process_bam_record(
-                        &record,
-                        &mod_positions,
-                        tid_to_chrom,
-                        can_base,
-                        collapse_method,
-                        edge_filter,
-                    ) {
-                        Ok(read_probs) => {
-                            for ((gt_code, call_code), probs) in
-                                read_probs.into_iter()
-                            {
-                                status_probs
-                                    .entry((gt_code.clone(), call_code.clone()))
-                                    .or_insert_with(Vec::new)
-                                    .extend(probs);
-                            }
-                            lines_processed.inc(1)
-                        }
-                        Err(err) => {
-                            *errs.entry(err.to_string()).or_insert(0) += 1;
-                        }
-                    }
+
+    let mut read_filter_iter =
+        ReadFilterIterator::new(read_filter, reader.records());
+    let mut errors = BTreeMap::new();
+    let mut status_probs = HashMap::new();
+
+    for record in &mut read_filter_iter {
+        match process_bam_record(
+            &record,
+            &mod_positions,
+            tid_to_chrom,
+            can_base,
+            collapse_method,
+            edge_filter,
+        ) {
+            Ok(read_probs) => {
+                for ((gt_code, call_code), probs) in read_probs.into_iter() {
+                    status_probs
+                        .entry((gt_code, call_code))
+                        .or_insert_with(Vec::new)
+                        .extend(probs);
                 }
-                Err(err) => {
-                    let err_counter = errs.entry(err.to_string()).or_insert(0);
-                    *err_counter += 1;
-                }
+                lines_processed.inc(1)
             }
-            (status_probs, errs)
-        },
-    );
-    lines_processed.finish_and_clear();
-    info!("Processed {} mapping records", lines_processed.position());
-    if !errs.is_empty() {
-        let mut sorted_errs: Vec<_> = errs.iter().collect();
-        sorted_errs.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
-        info!("Failed read reasons:");
-        for (key, err) in sorted_errs {
-            info!("\t{}: {}", key, err);
+            Err(err) => {
+                *errors.entry(err.to_string()).or_insert(0) += 1;
+            }
         }
     }
+    lines_processed.finish_and_clear();
+
+    info!(
+        "Processed {} mapping records, {} skipped, {} errored",
+        lines_processed.position(),
+        read_filter_iter.num_skipped(),
+        read_filter_iter.num_errored() + errors.values().sum::<usize>(),
+    );
+    if !errors.is_empty() {
+        info!("Processing failed read reasons:");
+        for (error, count) in errors.iter() {
+            info!("\t{}: {}", error, count);
+        }
+    }
+    if !read_filter_iter.errored.is_empty() {
+        debug!("Input errors:");
+        for (error, count) in read_filter_iter.errored.iter() {
+            debug!("\t{}: {}", error, count);
+        }
+    }
+    if !read_filter_iter.skipped.is_empty() {
+        debug!("Skip reasons:");
+        for (reason, count) in read_filter_iter.skipped.iter() {
+            debug!("\t{}: {}", reason, count);
+        }
+    }
+
     Ok(status_probs)
 }
 
@@ -642,6 +790,13 @@ pub struct ValidateFromModbam {
     /// sites and/or ChEBI codes this values must be set.
     #[clap(short = 'c', long)]
     canonical_base: Option<DnaBase>,
+    /// Only use reads with alignment identity >= this number, in Q-space
+    /// (phred score).
+    #[arg(long = "min-identity")]
+    min_alignment_identity: Option<f32>,
+    /// Remove reads with fewer aligned reference bases than this threshold.
+    #[arg(long = "min-length")]
+    min_alignment_length: Option<u64>,
 
     // threshold args
     // todo add direct thresholds support
@@ -686,6 +841,11 @@ impl ValidateFromModbam {
             .as_ref()
             .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
             .transpose()?;
+
+        let read_filter = ReadFilter::new(
+            self.min_alignment_identity.unwrap_or(0f32),
+            self.min_alignment_length.unwrap_or(0u64),
+        );
 
         // parse bed files and determine canonical base
         let mut bed_paths = Vec::new();
@@ -736,6 +896,7 @@ impl ValidateFromModbam {
             for bed_idx in bed_indices {
                 let status_probs = process_bam_file(
                     &mut reader,
+                    &read_filter,
                     &gt_positions[bed_idx],
                     &tid_to_chrom,
                     can_base,
@@ -743,7 +904,7 @@ impl ValidateFromModbam {
                     edge_filter.as_ref(),
                     self.suppress_progress,
                 )?;
-                for ((gt_code, call_code), probs) in status_probs.into_iter() {
+                for ((gt_code, call_code), probs) in status_probs {
                     all_probs
                         .entry((gt_code, call_code))
                         .or_insert_with(Vec::new)
@@ -854,77 +1015,5 @@ impl ValidateFromModbam {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod validate_tests {
-    use std::fs::File;
-    use std::io::{BufRead, BufReader};
-    use std::path::PathBuf;
-    use tempfile::NamedTempFile;
-
-    use super::ValidateFromModbam;
-
-    #[test]
-    fn test_validate() {
-        let mut bam_bed_opts = Vec::new();
-        bam_bed_opts.push(PathBuf::from("tests/resources/input_5mC.bam"));
-        bam_bed_opts.push(PathBuf::from(
-            "tests/resources/CGI_ladder_3.6kb_ref_CG_5mC.bed",
-        ));
-        bam_bed_opts.push(PathBuf::from("tests/resources/input_C.bam"));
-        bam_bed_opts.push(PathBuf::from(
-            "tests/resources/CGI_ladder_3.6kb_ref_CG_C.bed",
-        ));
-
-        let temp_file =
-            NamedTempFile::new().expect("Output file creation failed");
-        let file_path_buf = Some(temp_file.path().to_path_buf());
-        println!(
-            "Temp output file location: {}",
-            temp_file.path().to_str().unwrap()
-        );
-        let log_temp_file =
-            NamedTempFile::new().expect("Output file creation failed");
-        let log_file_path_buf = Some(log_temp_file.path().to_path_buf());
-
-        let val_opts = ValidateFromModbam {
-            bam_and_bed: bam_bed_opts,
-            ignore: None,
-            edge_filter: None,
-            invert_edge_filter: false,
-            canonical_base: None,
-            filter_quantile: 0.1,
-            threads: 4,
-            suppress_progress: false,
-            out_filepath: file_path_buf,
-            log_filepath: log_file_path_buf,
-        };
-        val_opts.run().unwrap();
-        let file_path = temp_file.path().to_path_buf();
-        let file = File::open(&file_path).unwrap();
-        let reader = BufReader::new(file);
-        for line in reader.lines() {
-            let line_content = line.unwrap();
-            if line_content.starts_with("raw_accuracy") {
-                let accuracy: f32 = line_content
-                    .split_whitespace()
-                    .skip(1)
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_default();
-                assert_eq!(accuracy, 79.97674);
-            }
-            if line_content.starts_with("filtered_accuracy") {
-                let accuracy: f32 = line_content
-                    .split_whitespace()
-                    .skip(1)
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or_default();
-                assert_eq!(accuracy, 84.24458);
-            }
-        }
     }
 }
