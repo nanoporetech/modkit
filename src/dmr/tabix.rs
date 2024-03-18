@@ -534,6 +534,11 @@ impl SingleSiteSampleIndex {
     pub(super) fn min_valid_coverage(&self) -> u64 {
         self.multi_sample_index.min_valid_coverage
     }
+
+    #[inline]
+    pub(super) fn matched_replicate_samples(&self) -> bool {
+        self.num_a_samples() == self.num_b_samples() && self.num_a_samples() > 1
+    }
 }
 
 #[inline]

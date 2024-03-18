@@ -118,13 +118,10 @@ impl SingleSiteDmrAnalysis {
         pool: rayon::ThreadPool,
         mut writer: Box<dyn Write>,
     ) -> anyhow::Result<()> {
+        let matched_samples = self.sample_index.matched_replicate_samples();
         if self.header {
             writer.write(
-                SingleSiteDmrScore::header(
-                    self.sample_index.num_a_samples() > 1
-                        || self.sample_index.num_b_samples() > 1,
-                )
-                .as_bytes(),
+                SingleSiteDmrScore::header(matched_samples).as_bytes(),
             )?;
         }
 
@@ -390,7 +387,7 @@ struct SingleSiteDmrScore {
 }
 
 impl SingleSiteDmrScore {
-    fn header(replicates: bool) -> String {
+    fn header(matched_samples: bool) -> String {
         let mut fields = vec![
             "chrom",
             "start",
@@ -408,7 +405,7 @@ impl SingleSiteDmrScore {
             "map_pvalue",
             "effect_size",
         ];
-        if replicates {
+        if matched_samples {
             for field in [
                 "balanced_map_pvalue",
                 "balanced_effect_size",
@@ -598,9 +595,7 @@ fn process_batch_of_positions(
     sample_index: Arc<SingleSiteSampleIndex>,
     pmap_estimator: Arc<PMapEstimator>,
 ) -> anyhow::Result<Vec<ChromToSingleScores>> {
-    let num_a_samples = sample_index.num_a_samples();
-    let num_b_samples = sample_index.num_b_samples();
-    let matched_samples = num_a_samples == num_b_samples;
+    let matched_samples = sample_index.matched_replicate_samples();
     let (a_lines, b_lines) =
         sample_index.read_bedmethyl_lines_organized_by_position(batch)?;
 
@@ -617,10 +612,15 @@ fn process_batch_of_positions(
                 })
                 .map(|(pos, a_counts, b_counts)| {
                     // todo refactor this to be part of PMapEstimator
-                    if a_counts.len() != num_a_samples
-                        || b_counts.len() != num_b_samples
+                    if a_counts.len() != sample_index.num_a_samples()
+                        || b_counts.len() != sample_index.num_b_samples()
                     {
-                        bail!("don't have counts from all samples")
+                        bail!(
+                            "don't have counts from all samples, a counts: \
+                             {}, b counts: {}",
+                            a_counts.len(),
+                            b_counts.len()
+                        )
                     } else {
                         SingleSiteDmrScore::new_multi(
                             &a_counts,
