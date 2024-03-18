@@ -539,6 +539,11 @@ impl SingleSiteSampleIndex {
     pub(super) fn matched_replicate_samples(&self) -> bool {
         self.num_a_samples() == self.num_b_samples() && self.num_a_samples() > 1
     }
+
+    #[inline]
+    pub(super) fn multiple_samples(&self) -> bool {
+        self.num_a_samples() > 1 || self.num_b_samples() > 1
+    }
 }
 
 #[inline]
