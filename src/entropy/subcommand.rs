@@ -184,8 +184,8 @@ impl MethylationEntropy {
                     mean_entropy{TAB}\
                     strand{TAB}\
                     median_entropy{TAB}\
-                    max_entropy{TAB}\
                     min_entropy{TAB}\
+                    max_entropy{TAB}\
                     mean_num_reads{TAB}\
                     min_num_reads{TAB}\
                     max_num_reads{TAB}\
