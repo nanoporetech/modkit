@@ -132,7 +132,12 @@ pub(super) fn calc_me_entropy(
     constant: f32,
 ) -> f32 {
     let shannons = calc_entropy(sequences, window_size);
-    constant * shannons
+    let me_entropy = constant * shannons;
+    if me_entropy == -0f32 {
+        0f32
+    } else {
+        me_entropy
+    }
 }
 
 fn all_sequences(k: usize, alphabet: &[char]) -> Vec<String> {

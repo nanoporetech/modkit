@@ -20,6 +20,8 @@ use rust_htslib::bam::{
 
 use crate::errs::{InputError, RunError};
 
+pub(crate) const TAB: char = '\t';
+
 pub(crate) fn create_out_directory<T: AsRef<std::ffi::OsStr>>(
     raw_path: T,
 ) -> anyhow::Result<()> {

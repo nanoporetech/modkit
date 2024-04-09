@@ -4,21 +4,25 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context};
 use clap::Args;
-use indicatif::MultiProgress;
+use indicatif::{MultiProgress, ProgressBar};
 use log::{debug, error, info};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
+use rustc_hash::FxHashMap;
 
 use crate::command_utils::{
     get_threshold_from_options, parse_per_mod_thresholds,
 };
-use crate::entropy::{process_entropy_window, Entropy, SlidingWindows};
+use crate::entropy::{
+    process_entropy_window, EntropyCalculation, SlidingWindows,
+};
 use crate::errs::RunError;
 use crate::logging::init_logging;
+use crate::mod_base_code::DnaBase;
 use crate::motif_bed::{get_masked_sequences, RegexMotif};
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{get_targets, get_ticker};
+use crate::util::{get_targets, get_ticker, Strand, TAB};
 use crate::writers::TsvWriter;
 
 #[derive(Args)]
@@ -93,6 +97,19 @@ pub struct MethylationEntropy {
     /// must be reverse-complement palindromic.
     #[arg(long, num_args = 2)]
     motif: Option<Vec<String>>,
+    /// Use CpG motifs. Short hand for --motif CG 0 --combine-strands
+    #[arg(long, default_value_t = false)]
+    cpg: bool,
+    /// Primary sequence base to calculate modification entropy on.
+    #[arg(long, conflicts_with = "motif")]
+    base: Option<DnaBase>,
+    /// Regions over which to calculate descriptive statistics
+    #[arg(long = "regions")]
+    regions_fp: Option<PathBuf>,
+    /// Combine modification counts on the positive and negative strands and
+    /// report entropy on just the positive strand.
+    #[arg(long, conflicts_with_all=["base", "cpg"], default_value_t=false)]
+    combine_strands: bool,
     /// Minimum coverage required at each position in the window. Windows
     /// without at least this many valid reads will be skipped, but
     /// positions within the window with enough coverage can be used by
@@ -117,11 +134,15 @@ pub struct MethylationEntropy {
     /// Force overwrite output
     #[arg(long, default_value_t = false)]
     force: bool,
-    /// Omit windows with zero entropy
+    /// Write a header line
     #[arg(long, default_value_t = false)]
+    header: bool,
+    /// Omit windows with zero entropy
+    #[arg(long, conflicts_with = "regions_fp", default_value_t = false)]
     drop_zeros: bool,
     /// Maximum number of filtered positions a read is allowed to have in a
-    /// window, more than this number and the read will be discarded.
+    /// window, more than this number and the read will be discarded. Default
+    /// will be 50% of `num_positions`.
     #[arg(long)]
     max_filtered_positions: Option<usize>,
 }
@@ -131,6 +152,9 @@ impl MethylationEntropy {
         let _handle = init_logging(self.log_filepath.as_ref());
         if self.num_positions == 0 {
             bail!("num-positions must be at least 1")
+        }
+        if self.min_valid_coverage < 1 {
+            bail!("min-valid-coverage must be at least 1")
         }
         IdxStats::check_any_mapped_reads(&self.in_bam, None, None).context(
             "did not find any mapped reads in mod-BAM, perform alignment first",
@@ -150,6 +174,33 @@ impl MethylationEntropy {
         } else {
             Box::new(TsvWriter::new_stdout(None))
         };
+        if self.header {
+            if self.regions_fp.is_some() {
+                writer.write_line(&format!("\
+                    chrom{TAB}\
+                    start{TAB}\
+                    end{TAB}\
+                    region_name{TAB}\
+                    mean_entropy{TAB}\
+                    strand{TAB}\
+                    median_entropy{TAB}\
+                    max_entropy{TAB}\
+                    min_entropy{TAB}\
+                    mean_num_reads{TAB}\
+                    min_num_reads{TAB}\
+                    max_num_reads{TAB}\
+                    successful_window_count{TAB}\
+                    failed_window_count\n"))?;
+            } else {
+                writer.write_line(&format!("\
+                    chrom{TAB}\
+                    start{TAB}\
+                    end{TAB}\
+                    entropy{TAB}\
+                    strand{TAB}\
+                    num_reads\n"))?;
+            }
+        }
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -173,35 +224,65 @@ impl MethylationEntropy {
             .into_iter()
             .collect::<HashMap<u32, String>>();
 
-        let reference_records = get_targets(bam_reader.header(), None);
-        let motif = if let Some(raw_motif_parts) = &self.motif {
-            let mut motifs =
-                RegexMotif::from_raw_parts(raw_motif_parts, false)?;
-            if motifs.len() == 1 {
-                let motif = motifs.remove(0);
-                if motif.is_palendrome() {
-                    info!("using user-specified motif {}", motif);
-                    motif
-                } else {
-                    bail!("motif must be reverse-complement palindromic")
+        let bam_header_records = get_targets(bam_reader.header(), None);
+
+        let (motif, combine_strands) =
+            match (self.cpg, self.motif.as_ref(), self.base) {
+                (true, _, _) => {
+                    info!("using CpG motif");
+                    (RegexMotif::parse_string("CG", 0).unwrap(), true)
                 }
-            } else {
-                bail!("cannot have more than 1 motif")
-            }
-        } else {
-            RegexMotif::parse_string("CG", 0).unwrap()
-        };
+                (false, Some(raw_motif_parts), _) => {
+                    let mut motifs =
+                        RegexMotif::from_raw_parts(raw_motif_parts, false)?;
+                    if motifs.len() == 1 {
+                        let motif = motifs.remove(0);
+                        if self.combine_strands && !motif.is_palendrome() {
+                            bail!(
+                                "motif must be reverse-complement palindromic \
+                                 to combine strands"
+                            )
+                        }
+                        info!("using user-specified motif {}", motif);
+                        (motif, self.combine_strands)
+                    } else {
+                        bail!("cannot have more than 1 motif")
+                    }
+                }
+                (false, None, Some(dna_base)) => {
+                    if self.combine_strands {
+                        bail!(
+                            "cannot combine strands with single base \
+                             modifications"
+                        )
+                    }
+                    (
+                        RegexMotif::parse_string(
+                            &format!("{}", dna_base.char()),
+                            0,
+                        )?,
+                        false,
+                    )
+                }
+                _ => bail!(
+                    "invalid input options, must provide --motif, --base, or \
+                     specify --cpg"
+                ),
+            };
 
         let batch_size = (self.threads as f32 * 1.5f32).floor() as usize;
         let window_size = self.window_size;
         info!(
-            "window size is set to {}, motif length is {}",
+            "window size is set to {}, motif ({motif:?}) length is {}",
             window_size,
             motif.length()
         );
+        if combine_strands {
+            info!("combining (+)-strand and (-)-strand modification calls");
+        }
 
         let sliding_windows = pool.install(|| {
-            let names_to_tid = reference_records
+            let names_to_tid = bam_header_records
                 .iter()
                 .map(|ref_record| (ref_record.name.as_str(), ref_record.tid))
                 .collect::<HashMap<&str, u32>>();
@@ -215,14 +296,40 @@ impl MethylationEntropy {
             .map(|(seq, tid)| (tid, seq.chars().collect::<Vec<char>>()))
             .collect::<HashMap<u32, Vec<char>>>();
 
-            SlidingWindows::new(
-                reference_records,
-                reference_sequences,
-                motif,
-                self.num_positions,
-                window_size,
-                batch_size,
-            )
+            if let Some(regions_fp) = self.regions_fp.as_ref() {
+                let tid_to_name = names_to_tid
+                    .iter()
+                    .map(|(name, tid)| (*tid, *name))
+                    .collect::<FxHashMap<u32, &str>>();
+
+                let reference_sequences = reference_sequences
+                    .into_iter()
+                    .filter_map(|(tid, seq)| {
+                        tid_to_name.get(&tid).map(|name| (*name, seq))
+                    })
+                    .collect::<HashMap<&str, Vec<char>>>();
+
+                SlidingWindows::new_with_regions(
+                    &names_to_tid,
+                    reference_sequences,
+                    regions_fp,
+                    motif,
+                    combine_strands,
+                    self.num_positions,
+                    window_size,
+                    batch_size,
+                )
+            } else {
+                SlidingWindows::new(
+                    bam_header_records,
+                    reference_sequences,
+                    motif,
+                    combine_strands,
+                    self.num_positions,
+                    window_size,
+                    batch_size,
+                )
+            }
         })?;
 
         let threshold_caller = self.get_threshold_caller(&pool)?;
@@ -233,18 +340,23 @@ impl MethylationEntropy {
         let windows_failed = multi_pb.add(get_ticker());
         let batches_failed = multi_pb.add(get_ticker());
 
+        let what =
+            if self.regions_fp.is_some() { "regions" } else { "windows" };
         rows_written.set_message("rows written");
-        windows_failed.set_message("entropy windows failed");
-        skipped_windows.set_message("windows with zero coverage");
+        windows_failed.set_message(format!("{what} failed"));
+        skipped_windows.set_message(format!("{what} with zero coverage"));
         batches_failed.set_message("batches failed");
 
         let bam_fp = self.in_bam.clone();
         let min_coverage = self.min_valid_coverage;
         let threads = self.threads;
         let io_threads = self.io_threads.unwrap_or(threads);
-        let max_filtered =
-            self.max_filtered_positions.unwrap_or(self.num_positions);
-        let drop_zeros = self.drop_zeros;
+        let max_filtered = self.max_filtered_positions.unwrap_or_else(|| {
+            let max_filt_pos =
+                (self.num_positions as f32 * 0.5f32).floor() as usize;
+            info!("setting maximum filtered positions to {max_filt_pos}");
+            max_filt_pos
+        });
         pool.spawn(move || {
             for batch in sliding_windows {
                 let mut results = Vec::new();
@@ -256,7 +368,6 @@ impl MethylationEntropy {
                                 process_entropy_window(
                                     window,
                                     min_coverage,
-                                    drop_zeros,
                                     max_filtered,
                                     io_threads,
                                     &threshold_caller,
@@ -290,24 +401,15 @@ impl MethylationEntropy {
 
         for batch_result in rcv.iter() {
             match batch_result {
-                Ok(window_results) => {
-                    for result in window_results {
-                        match result {
-                            Ok(entropy) => {
-                                writer.write(entropy, &chrom_id_to_name)?;
-                                rows_written.inc(1);
-                            }
-                            Err(e) => match e {
-                                RunError::Skipped(_) => {
-                                    skipped_windows.inc(1);
-                                }
-                                _ => {
-                                    debug!("window failed, {e}");
-                                    windows_failed.inc(1);
-                                }
-                            },
-                        }
-                    }
+                Ok(entropy_calculation) => {
+                    writer.write(
+                        entropy_calculation,
+                        &chrom_id_to_name,
+                        self.drop_zeros,
+                        &rows_written,
+                        &skipped_windows,
+                        &windows_failed,
+                    )?;
                 }
                 Err(e) => {
                     debug!("batch failed, {e}");
@@ -318,8 +420,8 @@ impl MethylationEntropy {
 
         multi_pb.clear()?;
         info!(
-            "finished, {} windows processed successfully, {} windows with \
-             zero coverage, {} windows failed",
+            "finished, {} {what} processed successfully, {} windows with zero \
+             coverage, {} windows failed",
             rows_written.position(),
             skipped_windows.position(),
             windows_failed.position()
@@ -378,30 +480,214 @@ impl MethylationEntropy {
 trait EntropyWriter {
     fn write(
         &mut self,
-        entropy: Entropy,
+        entropy_calculation: EntropyCalculation,
         chrom_id_to_name: &HashMap<u32, String>,
+        drop_zeros: bool,
+        write_counter: &ProgressBar,
+        skip_counter: &ProgressBar,
+        failure_counter: &ProgressBar,
+        // todo failure causes
     ) -> anyhow::Result<()>;
+
+    fn write_line(&mut self, line: &str) -> anyhow::Result<()>;
 }
 
 impl<T: Write> EntropyWriter for TsvWriter<T> {
     fn write(
         &mut self,
-        entropy: Entropy,
+        entropy_calculation: EntropyCalculation,
         chrom_id_to_name: &HashMap<u32, String>,
+        drop_zeros: bool,
+        write_counter: &ProgressBar,
+        skip_counter: &ProgressBar,
+        failure_counter: &ProgressBar,
     ) -> anyhow::Result<()> {
-        let name =
-            chrom_id_to_name.get(&entropy.chrom_id).ok_or_else(|| {
-                anyhow!("missing chrom name for {}", &entropy.chrom_id)
-            })?;
-        let row = format!(
-            "\
-            {name}\t{}\t{}\t{}\t{}\n",
-            entropy.interval.start,
-            entropy.interval.end,
-            entropy.me_entropy,
-            entropy.num_reads
-        );
-        self.write(&row.as_bytes())?;
+        match entropy_calculation {
+            EntropyCalculation::Windows(entropy_windows) => {
+                for entropy in entropy_windows {
+                    let name = chrom_id_to_name
+                        .get(&entropy.chrom_id)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "missing chrom name for {}",
+                                &entropy.chrom_id
+                            )
+                        })?;
+                    match entropy.pos_me_entropy.as_ref() {
+                        Ok(pos_entropy) => {
+                            if (drop_zeros && !(pos_entropy.me_entropy == 0f32))
+                                || !drop_zeros
+                            {
+                                let row = format!(
+                                    "\
+                                {name}\t{}\t{}\t{}\t{}\t{}\n",
+                                    pos_entropy.interval.start,
+                                    pos_entropy.interval.end,
+                                    pos_entropy.me_entropy,
+                                    Strand::Positive.to_char(),
+                                    pos_entropy.num_reads
+                                );
+                                self.write(&row.as_bytes())?;
+                                write_counter.inc(1);
+                            }
+                        }
+                        Err(e) => {
+                            match e {
+                                RunError::Failed(e) => {
+                                    debug!("(+) window failed, {e}");
+                                    failure_counter.inc(1);
+                                }
+                                RunError::BadInput(reason) => {
+                                    debug!(
+                                        "(+) window bad input?, {}",
+                                        &reason.0
+                                    );
+                                    failure_counter.inc(1);
+                                }
+                                RunError::Skipped(_e) => {
+                                    skip_counter.inc(1);
+                                    // debug!("window {}:{}-{} skipped, {e}",
+                                    // name, entropy.interval.start,
+                                    // entropy.interval.end);
+                                }
+                            }
+                        }
+                    }
+
+                    match entropy.neg_me_entropy.as_ref() {
+                        Some(Ok(neg_entropy)) => {
+                            if (drop_zeros && !(neg_entropy.me_entropy == 0f32))
+                                || !drop_zeros
+                            {
+                                let row = format!(
+                                    "\
+                                    {name}\t{}\t{}\t{}\t{}\t{}\n",
+                                    neg_entropy.interval.start,
+                                    neg_entropy.interval.end,
+                                    neg_entropy.me_entropy,
+                                    Strand::Negative.to_char(),
+                                    neg_entropy.num_reads
+                                );
+                                self.write(&row.as_bytes())?;
+                                write_counter.inc(1);
+                            }
+                        }
+                        Some(Err(e)) => {
+                            match e {
+                                RunError::Failed(e) => {
+                                    debug!("(-) window failed, {e}");
+                                    failure_counter.inc(1);
+                                }
+                                RunError::BadInput(reason) => {
+                                    debug!(
+                                        "(-) window bad input?, {}",
+                                        &reason.0
+                                    );
+                                    failure_counter.inc(1);
+                                }
+                                RunError::Skipped(_e) => {
+                                    skip_counter.inc(1);
+                                    // debug!("window {}:{}-{} skipped, {e}",
+                                    // name, entropy.interval.start,
+                                    // entropy.interval.end);
+                                }
+                            }
+                        }
+                        None => {}
+                    }
+                }
+            }
+
+            EntropyCalculation::Region(region_entropy) => {
+                let chrom =
+                    chrom_id_to_name.get(&region_entropy.chrom_id).expect(
+                        "shouldn't have a result on a chrom without a chromId",
+                    );
+                let start = region_entropy.interval.start;
+                let end = region_entropy.interval.end;
+                let region_name = region_entropy.region_name;
+                match region_entropy.pos_entropy_stats {
+                    Ok(pos_entropy_stats) => {
+                        let row = pos_entropy_stats.to_row(
+                            &chrom,
+                            start,
+                            end,
+                            Strand::Positive,
+                            &region_name,
+                        );
+                        self.write(row.as_bytes())?;
+                        write_counter.inc(1);
+                    }
+                    Err(e) => match e {
+                        RunError::Failed(e) => {
+                            debug!("(+) region failed, {e}");
+                            failure_counter.inc(1);
+                        }
+                        RunError::BadInput(reason) => {
+                            debug!("(+) region bad input?, {}", &reason.0);
+                            failure_counter.inc(1);
+                        }
+                        RunError::Skipped(_e) => {
+                            skip_counter.inc(1);
+                            // debug!("window {}:{}-{} skipped, {e}", name,
+                            // entropy.interval.start, entropy.interval.end);
+                        }
+                    },
+                }
+                match region_entropy.neg_entropy_stats {
+                    Some(Ok(neg_entropy_stats)) => {
+                        let row = neg_entropy_stats.to_row(
+                            &chrom,
+                            start,
+                            end,
+                            Strand::Negative,
+                            &region_name,
+                        );
+                        self.write(row.as_bytes())?;
+                        write_counter.inc(1);
+                    }
+                    Some(Err(e)) => match e {
+                        RunError::Failed(e) => {
+                            debug!("(-) region failed, {e}");
+                            failure_counter.inc(1);
+                        }
+                        RunError::BadInput(reason) => {
+                            debug!("(-) region bad input?, {}", &reason.0);
+                            failure_counter.inc(1);
+                        }
+                        RunError::Skipped(_e) => {
+                            skip_counter.inc(1);
+                            // debug!("window {}:{}-{} skipped, {e}", name,
+                            // entropy.interval.start, entropy.interval.end);
+                        }
+                    },
+                    None => {}
+                }
+            }
+        }
+
+        // match (entropy.neg_me_entropy, entropy.neg_num_reads) {
+        //     (Some(ne_entropy), Some(n)) => {
+        //         if (drop_zeros && !(ne_entropy == 0f32)) || !drop_zeros {
+        //             let row = format!(
+        //                 "\
+        //                 {name}\t{}\t{}\t{}\t{}\n",
+        //                 entropy.interval.start,
+        //                 entropy.interval.end,
+        //                 ne_entropy,
+        //                 n
+        //             );
+        //             self.write(&row.as_bytes())?;
+        //         }
+        //     },
+        //     _ => {}
+        // }
+
+        Ok(())
+    }
+
+    fn write_line(&mut self, line: &str) -> anyhow::Result<()> {
+        self.write(line.as_bytes())?;
         Ok(())
     }
 }
