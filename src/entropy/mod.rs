@@ -21,12 +21,20 @@ use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::mod_base_code::ModCodeRepr;
 use crate::motif_bed::RegexMotif;
 use crate::read_ids_to_base_mod_probs::{PositionModCalls, ReadBaseModProfile};
+use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{record_is_not_primary, ReferenceRecord, Strand};
 
 mod methylation_entropy;
 pub mod subcommand;
+
+// struct GenomeWindowInfo {
+//     interval: Range<u64>,
+//     positions: Option<Vec<u64>>,
+//     patterns: Vec<Vec<BaseModCall>>,
+//
+// }
 
 #[derive(Debug)]
 pub(super) enum GenomeWindow {
@@ -163,17 +171,25 @@ impl GenomeWindow {
     }
 
     fn leftmost(&self) -> u64 {
-        std::cmp::min(
-            self.start(&Strand::Positive).unwrap_or(0),
-            self.start(&Strand::Negative).unwrap_or(0),
-        )
+        match (self.start(&Strand::Positive), self.start(&Strand::Negative)) {
+            (Some(x), Some(y)) => std::cmp::min(x, y),
+            (Some(x), None) => x,
+            (None, Some(x)) => x,
+            _ => unreachable!(
+                "should always have either a positive or negative interval!"
+            ),
+        }
     }
 
     fn rightmost(&self) -> u64 {
-        std::cmp::max(
-            self.end(&Strand::Positive).unwrap_or(0),
-            self.end(&Strand::Negative).unwrap_or(0),
-        )
+        match (self.end(&Strand::Positive), self.end(&Strand::Negative)) {
+            (Some(x), Some(y)) => std::cmp::max(x, y),
+            (Some(x), None) => x,
+            (None, Some(x)) => x,
+            _ => unreachable!(
+                "should always have either a positive or negative interval!"
+            ),
+        }
     }
 
     fn start(&self, strand: &Strand) -> Option<u64> {
@@ -350,11 +366,13 @@ impl GenomeWindow {
         // todo remove these checks after testing
         assert!(
             self.start(&strand).is_some(),
-            "start should be Some when encoding pattern"
+            "start should be Some when encoding pattern for strand \
+             {strand:?}, {patterns:?}"
         );
         assert!(
             self.end(&strand).is_some(),
-            "end should be Some when encoding patttern"
+            "end should be Some when encoding pattern for strand {strand:?}, \
+             {patterns:?}"
         );
 
         if position_valid_coverages.iter().all(|x| *x >= min_coverage) {
@@ -422,29 +440,32 @@ impl GenomeWindow {
                 read_patterns,
                 position_valid_coverages,
                 ..
-            } => self.encode_patterns(
+            } => Some(self.encode_patterns(
                 chrom,
                 Strand::Positive,
                 read_patterns,
                 &mod_code_lookup,
                 position_valid_coverages,
                 min_valid_coverage,
-            ),
+            )),
             Self::Stranded {
+                pos_interval: Some(_),
                 pos_read_patterns,
                 pos_position_valid_coverages,
                 ..
-            } => self.encode_patterns(
+            } => Some(self.encode_patterns(
                 chrom,
                 Strand::Positive,
                 pos_read_patterns,
                 &mod_code_lookup,
                 &pos_position_valid_coverages,
                 min_valid_coverage,
-            ),
+            )),
+            _ => None,
         };
         let negative_patterns = match &self {
             Self::Stranded {
+                neg_interval: Some(_),
                 neg_read_patterns,
                 neg_position_valid_coverages,
                 ..
@@ -460,7 +481,7 @@ impl GenomeWindow {
         };
 
         // todo remove this after testing or make it a result/debug conditional
-        if let Ok(patterns) = positive_encoded_patterns.as_ref() {
+        if let Some(Ok(patterns)) = positive_encoded_patterns.as_ref() {
             assert!(
                 patterns.iter().all(|x| x.len() == window_size),
                 "patterns are the wrong size {positive_encoded_patterns:?}"
@@ -470,13 +491,17 @@ impl GenomeWindow {
             assert!(neg_patterns.iter().all(|x| x.len() == window_size));
         }
 
-        let pos_me_entropy = positive_encoded_patterns.map(|patterns| {
-            let me_entropy = calc_me_entropy(&patterns, window_size, constant);
-            let num_reads = patterns.len();
-            let interval = self.start(&Strand::Positive).unwrap()
-                ..self.end(&Strand::Positive).unwrap();
-            MethylationEntropy::new(me_entropy, num_reads, interval)
+        let pos_me_entropy = positive_encoded_patterns.map(|maybe_patterns| {
+            maybe_patterns.map(|patterns| {
+                let me_entropy =
+                    calc_me_entropy(&patterns, window_size, constant);
+                let num_reads = patterns.len();
+                let interval = self.start(&Strand::Positive).unwrap()
+                    ..self.end(&Strand::Positive).unwrap();
+                MethylationEntropy::new(me_entropy, num_reads, interval)
+            })
         });
+
         let neg_me_entropy = negative_patterns.map(|maybe_patterns| {
             maybe_patterns.map(|patterns| {
                 let me_entropy =
@@ -573,13 +598,14 @@ impl GenomeWindows {
 
             for window_entropy in window_entropies.iter() {
                 match window_entropy.pos_me_entropy.as_ref() {
-                    Ok(me_entropy) => {
+                    Some(Ok(me_entropy)) => {
                         pos_entropies.push(me_entropy.me_entropy);
                         pos_num_reads.push(me_entropy.num_reads);
                     }
-                    Err(_e) => {
+                    Some(Err(_e)) => {
                         pos_num_fails += 1;
                     }
+                    None => {}
                 }
                 match window_entropy.neg_me_entropy.as_ref() {
                     Some(Ok(me_entropy)) => {
@@ -652,6 +678,7 @@ impl<'a> SlidingWindows {
     fn new_with_regions(
         names_to_tid: &HashMap<&str, u32>,
         reference_sequences: HashMap<&str, Vec<char>>,
+        index_stats: &IdxStats,
         regions_bed_fp: &PathBuf,
         motif: RegexMotif,
         combine_strands: bool,
@@ -662,7 +689,16 @@ impl<'a> SlidingWindows {
         let regions_iter = BufReader::new(File::open(regions_bed_fp)?)
             .lines()
             .map(|r| r.map_err(|e| anyhow!("failed to read line, {e}")))
-            .map(|r| r.and_then(|l| BedRegion::parse_str(&l)));
+            .map(|r| r.and_then(|l| BedRegion::parse_str(&l)))
+            .filter_ok(|bed_region| {
+                names_to_tid
+                    .get(bed_region.chrom.as_str())
+                    .and_then(|chrom_id| {
+                        index_stats.n_reads_mapped_to_contig(*chrom_id)
+                    })
+                    .map(|n_reads| n_reads > 0)
+                    .unwrap_or(false)
+            });
 
         let mut work_queue = VecDeque::new();
         let mut region_queue = VecDeque::new();
@@ -711,10 +747,7 @@ impl<'a> SlidingWindows {
                         work_queue.push_back((ref_record, sub_seq));
                         region_queue.push_back(region_name);
                     } else {
-                        add_failure(format!(
-                            "contig {} not in BAM header",
-                            &region.name
-                        ));
+                        add_failure(format!("contig not in BAM header"));
                         continue;
                     }
                 }
@@ -1029,9 +1062,9 @@ impl<'a> SlidingWindows {
             self.curr_position = pos;
             self.curr_seq = seq;
             let region_name = self.region_names.pop_front();
-            if let Some(rn) = region_name.as_ref() {
-                debug!("next region is named {rn}");
-            }
+            // if let Some(rn) = region_name.as_ref() {
+            //     debug!("next region is named {rn}");
+            // }
             self.curr_region_name = region_name;
         } else {
             assert!(self.region_names.is_empty());
@@ -1132,7 +1165,7 @@ pub(super) struct MethylationEntropy {
 #[derive(new, Debug)]
 pub(super) struct WindowEntropy {
     chrom_id: u32,
-    pos_me_entropy: Result<MethylationEntropy, RunError>,
+    pos_me_entropy: Option<Result<MethylationEntropy, RunError>>,
     neg_me_entropy: Option<Result<MethylationEntropy, RunError>>,
 }
 

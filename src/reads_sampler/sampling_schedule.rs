@@ -418,7 +418,7 @@ impl IdxStats {
             .map(|idx_stats| idx_stats.mapped_read_count > 0)
     }
 
-    fn new_from_path(
+    pub(crate) fn new_from_path(
         bam_fp: &PathBuf,
         region: Option<&Region>,
         position_filter: Option<&StrandedPositionFilter<()>>,
@@ -563,6 +563,15 @@ impl IdxStats {
 
     pub(crate) fn total(&self) -> u64 {
         self.mapped_read_count + self.unmapped_read_count
+    }
+
+    pub(crate) fn n_reads_mapped_to_contig(
+        &self,
+        contig_id: u32,
+    ) -> Option<u64> {
+        self.tid_to_mapped_read_count
+            .get(&(contig_id as i64))
+            .map(|count| *count)
     }
 }
 

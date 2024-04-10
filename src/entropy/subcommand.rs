@@ -309,9 +309,13 @@ impl MethylationEntropy {
                     })
                     .collect::<HashMap<&str, Vec<char>>>();
 
+                let idx_stats =
+                    IdxStats::new_from_path(&self.in_bam, None, None)?;
+
                 SlidingWindows::new_with_regions(
                     &names_to_tid,
                     reference_sequences,
+                    &idx_stats,
                     regions_fp,
                     motif,
                     combine_strands,
@@ -514,7 +518,7 @@ impl<T: Write> EntropyWriter for TsvWriter<T> {
                             )
                         })?;
                     match entropy.pos_me_entropy.as_ref() {
-                        Ok(pos_entropy) => {
+                        Some(Ok(pos_entropy)) => {
                             if (drop_zeros && !(pos_entropy.me_entropy == 0f32))
                                 || !drop_zeros
                             {
@@ -531,7 +535,7 @@ impl<T: Write> EntropyWriter for TsvWriter<T> {
                                 write_counter.inc(1);
                             }
                         }
-                        Err(e) => {
+                        Some(Err(e)) => {
                             match e {
                                 RunError::Failed(e) => {
                                     debug!("(+) window failed, {e}");
@@ -552,6 +556,7 @@ impl<T: Write> EntropyWriter for TsvWriter<T> {
                                 }
                             }
                         }
+                        None => {}
                     }
 
                     match entropy.neg_me_entropy.as_ref() {
@@ -620,7 +625,7 @@ impl<T: Write> EntropyWriter for TsvWriter<T> {
                     }
                     Err(e) => match e {
                         RunError::Failed(e) => {
-                            debug!("(+) region failed, {e}");
+                            // debug!("(+) region failed, {e}");
                             failure_counter.inc(1);
                         }
                         RunError::BadInput(reason) => {
@@ -648,7 +653,7 @@ impl<T: Write> EntropyWriter for TsvWriter<T> {
                     }
                     Some(Err(e)) => match e {
                         RunError::Failed(e) => {
-                            debug!("(-) region failed, {e}");
+                            // debug!("(-) region failed, {e}");
                             failure_counter.inc(1);
                         }
                         RunError::BadInput(reason) => {
@@ -665,23 +670,6 @@ impl<T: Write> EntropyWriter for TsvWriter<T> {
                 }
             }
         }
-
-        // match (entropy.neg_me_entropy, entropy.neg_num_reads) {
-        //     (Some(ne_entropy), Some(n)) => {
-        //         if (drop_zeros && !(ne_entropy == 0f32)) || !drop_zeros {
-        //             let row = format!(
-        //                 "\
-        //                 {name}\t{}\t{}\t{}\t{}\n",
-        //                 entropy.interval.start,
-        //                 entropy.interval.end,
-        //                 ne_entropy,
-        //                 n
-        //             );
-        //             self.write(&row.as_bytes())?;
-        //         }
-        //     },
-        //     _ => {}
-        // }
 
         Ok(())
     }
