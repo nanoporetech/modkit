@@ -191,17 +191,23 @@ chr20  10671925  10674963  CpG:  255  6.355823977093678     C:67   9459  C:153  
 
 When performing single-site analysis, the following additional columns are added:
 
-| column | name                        | description                                                                           | type  |
-|--------|-----------------------------|---------------------------------------------------------------------------------------|-------|
-| 14     | MAP-based p-value           | Ratio of the posterior probability of observing the effect size over zero effect size | float |
-| 15     | effect size                 | Percent modified in sample A (col 12) minus percent modified in sample B (col 13)     | float |
-| 16     | balanced MAP-based p-value  | MAP-based p-value when all replicates are balanced                                    | float |
-| 17     | balanced effect size        | effect size when all replicates are balanced                                          | float |
-| 18     | per-replicate p-values      | MAP-based p-values for matched replicate pairs                                        | float |
-| 19     | per-replicate effect sizes  | effect sizes matched replicate pairs                                                  | float |
+| column | name                       | description                                                                           | type  |
+|--------|----------------------------|---------------------------------------------------------------------------------------|-------|
+| 14     | MAP-based p-value          | Ratio of the posterior probability of observing the effect size over zero effect size | float |
+| 15     | effect size                | Percent modified in sample A (col 12) minus percent modified in sample B (col 13)     | float |
+| 16     | balanced MAP-based p-value | MAP-based p-value when all replicates are balanced                                    | float |
+| 17     | balanced effect size       | effect size when all replicates are balanced                                          | float |
+| 18     | pct_a_samples              | percent of 'a' samples used in statistical test                                       | float |
+| 19     | pct_b_samples              | percent of 'b' samples used in statistical test                                       | float |
+| 20     | per-replicate p-values     | MAP-based p-values for matched replicate pairs                                        | float |
+| 21     | per-replicate effect sizes | effect sizes matched replicate pairs                                                  | float |
 
-Columns 16-19 are only produced when an equal number of replicates are provided.
-Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
+
+Columns 16-19 are only produced when multiple samples are provided, columns 20 and 21 are only produced when there is an equal number of 'a' and 'b' samples.
+When using multiple samples, it is possible that not every sample will have a modification fraction at a position. 
+When this happens, the statistical test is still performed and the values of `pct_a_samples` and `pct_b_samples` reflect the percent of samples from each condition used in the test.
+
+Columns 20 and 21 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
 For example in the abbreviated command below:
 
 ```bash
@@ -213,9 +219,10 @@ modkit dmr pair \
   ...
 ```
 
-Column 18 will contain the MAP-based p-value comparing `norm_pileup_1` versus `tumor_pileup_1` and `norm_pileup_2` versus `norm_pileup_2`.
-Column 19 will contain the effect sizes, values are comma-separated.
+Column 20 will contain the MAP-based p-value comparing `norm_pileup_1` versus `tumor_pileup_1` and `norm_pileup_2` versus `norm_pileup_2`.
+Column 21 will contain the effect sizes, values are comma-separated.
 If you have a different number of samples for each condition, such as:
+
 ```bash
 modkit dmr pair \
   -a ${norm_pileup_1}.gz \
