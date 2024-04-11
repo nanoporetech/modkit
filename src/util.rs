@@ -73,12 +73,22 @@ fn get_subroutine_progress_bar_style() -> ProgressStyle {
     .progress_chars("##-")
 }
 
+fn get_gauge_style() -> ProgressStyle {
+    ProgressStyle::with_template("{bar:40.red/blue} {pos:>7}/{len:7} {msg}")
+        .unwrap()
+        .progress_chars("||-")
+}
+
 pub(crate) fn get_master_progress_bar(n: usize) -> ProgressBar {
     ProgressBar::new(n as u64).with_style(get_master_progress_bar_style())
 }
 
 pub(crate) fn get_subroutine_progress_bar(n: usize) -> ProgressBar {
     ProgressBar::new(n as u64).with_style(get_subroutine_progress_bar_style())
+}
+
+pub(crate) fn get_guage(n_max: usize) -> ProgressBar {
+    ProgressBar::new(n_max as u64).with_style(get_gauge_style())
 }
 
 pub(crate) fn get_aligned_pairs_forward(
