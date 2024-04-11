@@ -28,6 +28,7 @@ use crate::util::{record_is_not_primary, ReferenceRecord, Strand};
 
 mod methylation_entropy;
 pub mod subcommand;
+mod writers;
 
 // struct GenomeWindowInfo {
 //     interval: Range<u64>,
@@ -620,6 +621,8 @@ impl GenomeWindows {
                 }
             }
 
+            // todo make sure the semantics here are what I want,
+            //  should pos_entropy_stats be an Option?
             let pos_entropy_stats = DescriptiveStats::new(
                 &pos_entropies,
                 &pos_num_reads,
@@ -651,6 +654,7 @@ impl GenomeWindows {
                 pos_entropy_stats,
                 neg_entropy_stats,
                 region_name,
+                window_entropies,
             );
             EntropyCalculation::Region(region_entropy)
         } else {
@@ -1289,6 +1293,7 @@ pub(super) struct RegionEntropy {
     pos_entropy_stats: Result<DescriptiveStats, RunError>,
     neg_entropy_stats: Option<Result<DescriptiveStats, RunError>>,
     region_name: String,
+    window_entropies: Vec<WindowEntropy>,
 }
 
 pub(super) fn process_entropy_window(
