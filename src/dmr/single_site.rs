@@ -119,9 +119,17 @@ impl SingleSiteDmrAnalysis {
         mut writer: Box<dyn Write>,
     ) -> anyhow::Result<()> {
         let matched_samples = self.sample_index.matched_replicate_samples();
+        let multiple_samples = self.sample_index.multiple_samples();
+        if matched_samples {
+            info!("running with replicates and matched samples");
+        } else if multiple_samples {
+            info!("running with replicates, but not matched samples");
+        }
+
         if self.header {
             writer.write(
-                SingleSiteDmrScore::header(matched_samples).as_bytes(),
+                SingleSiteDmrScore::header(multiple_samples, matched_samples)
+                    .as_bytes(),
             )?;
         }
 
@@ -206,7 +214,15 @@ impl SingleSiteDmrAnalysis {
                 for result in results {
                     match result {
                         Ok(scores) => {
-                            writer.write(scores.to_row(&chrom).as_bytes())?;
+                            writer.write(
+                                scores
+                                    .to_row(
+                                        multiple_samples,
+                                        matched_samples,
+                                        &chrom,
+                                    )
+                                    .as_bytes(),
+                            )?;
                             success_counter.inc(1);
                             success_count += 1;
                         }
@@ -384,10 +400,12 @@ struct SingleSiteDmrScore {
     balanced_effect_size: f64,
     replicate_map_pval: Vec<f64>,
     replicate_effect_sizes: Vec<f64>,
+    pct_a_samples: usize,
+    pct_b_samples: usize,
 }
 
 impl SingleSiteDmrScore {
-    fn header(matched_samples: bool) -> String {
+    fn header(multiple_samples: bool, matched_samples: bool) -> String {
         let mut fields = vec![
             "chrom",
             "start",
@@ -405,13 +423,19 @@ impl SingleSiteDmrScore {
             "map_pvalue",
             "effect_size",
         ];
-        if matched_samples {
+        if multiple_samples {
             for field in [
                 "balanced_map_pvalue",
                 "balanced_effect_size",
-                "replicate_map_pvalues",
-                "replicate_effect_sizes",
+                "pct_a_samples",
+                "pct_b_samples",
             ] {
+                fields.push(field)
+            }
+        }
+
+        if matched_samples {
+            for field in ["replicate_map_pvalues", "replicate_effect_sizes"] {
                 fields.push(field)
             }
         }
@@ -424,28 +448,37 @@ impl SingleSiteDmrScore {
     fn new_multi(
         counts_a: &[AggregatedCounts],
         counts_b: &[AggregatedCounts],
+        sample_index: &SingleSiteSampleIndex,
         position: u64,
         estimator: &PMapEstimator,
-        matched_samples: bool,
     ) -> anyhow::Result<Self> {
-        let (replicate_epmap, replicate_effect_sizes) = if matched_samples {
-            assert_eq!(
-                counts_a.len(),
-                counts_b.len(),
-                "matched samples need to be the same"
-            );
-            let n_samples = counts_a.len();
-            let mut replicate_epmap = Vec::with_capacity(n_samples);
-            let mut replicate_effect_size = Vec::with_capacity(n_samples);
-            for (a, b) in counts_a.iter().zip(counts_b) {
-                let epmap = estimator.predict(a, b)?;
-                replicate_epmap.push(epmap.e_pmap);
-                replicate_effect_size.push(epmap.effect_size);
-            }
-            (replicate_epmap, replicate_effect_size)
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        let (replicate_epmap, replicate_effect_sizes) =
+            if sample_index.matched_replicate_samples() {
+                assert_eq!(
+                    counts_a.len(),
+                    counts_b.len(),
+                    "matched samples need to be the same"
+                );
+                let n_samples = counts_a.len();
+                let mut replicate_epmap = Vec::with_capacity(n_samples);
+                let mut replicate_effect_size = Vec::with_capacity(n_samples);
+                for (a, b) in counts_a.iter().zip(counts_b) {
+                    let epmap = estimator.predict(a, b)?;
+                    replicate_epmap.push(epmap.e_pmap);
+                    replicate_effect_size.push(epmap.effect_size);
+                }
+                (replicate_epmap, replicate_effect_size)
+            } else {
+                (Vec::new(), Vec::new())
+            };
+        let pct_a_samples = ((counts_a.len() as f32
+            / sample_index.num_a_samples() as f32)
+            * 100f32)
+            .floor() as usize;
+        let pct_b_samples = ((counts_b.len() as f32
+            / sample_index.num_b_samples() as f32)
+            * 100f32)
+            .floor() as usize;
         let balanced_counts_a = collapse_counts(counts_a, true);
         let balanced_counts_b = collapse_counts(counts_b, true);
         let epmap_balanced =
@@ -465,24 +498,26 @@ impl SingleSiteDmrScore {
             balanced_effect_size: epmap_balanced.effect_size,
             replicate_map_pval: replicate_epmap,
             replicate_effect_sizes,
+            pct_a_samples,
+            pct_b_samples,
         })
     }
 
-    fn to_row(&self, chrom: &str) -> String {
+    fn to_row(
+        &self,
+        multiple_samples: bool,
+        matched_samples: bool,
+        chrom: &str,
+    ) -> String {
         let sep = '\t';
-        if self.replicate_map_pval.is_empty() {
-            debug_assert!(
-                self.replicate_effect_sizes.is_empty(),
-                "shouldn't have effect sizes and not map-pvalues"
-            );
-            self.to_row_pair(chrom)
-        } else {
+        if matched_samples {
             let replicate_map_pvals = self.replicate_map_pval.iter().join(",");
             let replicate_effect_sizes =
                 self.replicate_effect_sizes.iter().join(",");
-
             format!(
                 "\
+            {}{sep}\
+            {}{sep}\
             {}{sep}\
             {}{sep}\
             {}{sep}\
@@ -519,15 +554,19 @@ impl SingleSiteDmrScore {
                 self.effect_size,
                 self.balanced_map_pval,
                 self.balanced_effect_size,
+                self.pct_a_samples,
+                self.pct_b_samples,
                 replicate_map_pvals,
                 replicate_effect_sizes,
             )
+        } else {
+            self.to_row_pair(multiple_samples, chrom)
         }
     }
 
-    fn to_row_pair(&self, chrom: &str) -> String {
+    fn to_row_pair(&self, multiple_samples: bool, chrom: &str) -> String {
         let sep = '\t';
-        format!(
+        let row = format!(
             "\
             {}{sep}\
             {}{sep}\
@@ -543,7 +582,7 @@ impl SingleSiteDmrScore {
             {}{sep}\
             {}{sep}\
             {}{sep}\
-            {}\n",
+            {}",
             chrom,
             self.position,
             self.position.saturating_add(1),
@@ -559,7 +598,21 @@ impl SingleSiteDmrScore {
             self.counts_b.pct_modified(),
             self.map_pval,
             self.effect_size,
-        )
+        );
+        let rest = if multiple_samples {
+            format!(
+                "\
+                {sep}{}{sep}{}{sep}{}{sep}{}\n",
+                self.balanced_map_pval,
+                self.balanced_effect_size,
+                self.pct_a_samples,
+                self.pct_b_samples
+            )
+        } else {
+            format!("\n")
+        };
+
+        format!("{row}{rest}")
     }
 }
 
@@ -595,7 +648,6 @@ fn process_batch_of_positions(
     sample_index: Arc<SingleSiteSampleIndex>,
     pmap_estimator: Arc<PMapEstimator>,
 ) -> anyhow::Result<Vec<ChromToSingleScores>> {
-    let matched_samples = sample_index.matched_replicate_samples();
     let (a_lines, b_lines) =
         sample_index.read_bedmethyl_lines_organized_by_position(batch)?;
 
@@ -612,24 +664,13 @@ fn process_batch_of_positions(
                 })
                 .map(|(pos, a_counts, b_counts)| {
                     // todo refactor this to be part of PMapEstimator
-                    if a_counts.len() != sample_index.num_a_samples()
-                        || b_counts.len() != sample_index.num_b_samples()
-                    {
-                        bail!(
-                            "don't have counts from all samples, a counts: \
-                             {}, b counts: {}",
-                            a_counts.len(),
-                            b_counts.len()
-                        )
-                    } else {
-                        SingleSiteDmrScore::new_multi(
-                            &a_counts,
-                            &b_counts,
-                            pos.position,
-                            &pmap_estimator,
-                            matched_samples,
-                        )
-                    }
+                    SingleSiteDmrScore::new_multi(
+                        &a_counts,
+                        &b_counts,
+                        &sample_index,
+                        pos.position,
+                        &pmap_estimator,
+                    )
                 })
                 .collect::<Vec<SingleSiteDmrScoreResult>>();
             (chrom, scores)
