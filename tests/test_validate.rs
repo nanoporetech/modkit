@@ -48,7 +48,7 @@ fn test_validate() {
                 .next()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or_default();
-            assert_eq!(accuracy, 84.24458);
+            assert_eq!(accuracy, 84.17161);
         }
     }
 }

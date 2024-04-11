@@ -751,8 +751,8 @@ pub struct ValidateFromModbam {
     /// modified base tags. The second is a bed file with ground truth
     /// reference positions. The name field in the ground truth bed file
     /// should be the short name (single letter code or ChEBI ID) for a
-    /// modified base or the corresponding canonical base. This argument
-    /// can be provided more than once for multiple samples.
+    /// modified base or `-` to specify a canonical base ground truth position.
+    /// This argument can be provided more than once for multiple samples.
     #[arg(
 	long,
 	action = clap::ArgAction::Append,
@@ -799,12 +799,15 @@ pub struct ValidateFromModbam {
     min_alignment_length: Option<u64>,
 
     // threshold args
-    // todo add direct thresholds support
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will
     /// filter out the 10% lowest confidence modification calls.
-    #[arg(short = 'q', long, default_value_t = 0.1)]
+    #[arg(short = 'p', long, default_value_t = 0.1)]
     filter_quantile: f32,
+    /// Specify modified base probability filter threshold value. If specified,
+    /// --filter-threshold will override --filter-quantile.
+    #[arg(long, alias = "pass_threshold")]
+    filter_threshold: Option<f32>,
 
     // misc args
     /// Number of threads to use
@@ -852,12 +855,20 @@ impl ValidateFromModbam {
         let mut bam_path_to_bed_indices: HashMap<PathBuf, Vec<usize>> =
             HashMap::new();
         for bam_and_bed in self.bam_and_bed.chunks(2) {
-            let bam_path = &bam_and_bed[0]
-                .canonicalize()
-                .map_err(|e| anyhow::anyhow!("Cannot resolve path: {}", e))?;
-            let bed_path = &bam_and_bed[1]
-                .canonicalize()
-                .map_err(|e| anyhow::anyhow!("Cannot resolve path: {}", e))?;
+            let bam_path = &bam_and_bed[0].canonicalize().map_err(|e| {
+                anyhow::anyhow!(
+                    "Cannot resolve BAM path, {}: {}",
+                    bam_and_bed[0].display(),
+                    e
+                )
+            })?;
+            let bed_path = &bam_and_bed[1].canonicalize().map_err(|e| {
+                anyhow::anyhow!(
+                    "Cannot resolve BED path, {}: {}",
+                    bam_and_bed[1].display(),
+                    e
+                )
+            })?;
 
             let bed_idx = if let Some(bed_idx) =
                 bed_paths.iter().position(|s| s == bed_path)
@@ -973,16 +984,30 @@ impl ValidateFromModbam {
         if flat_probs.iter().any(|v| v.is_nan()) {
             bail!("Failed to compare values");
         }
-        let thresh =
-            percentile_linear_interp(&flat_probs, self.filter_quantile)?;
+        let thresh = if let Some(threshold) = self.filter_threshold {
+            threshold
+        } else {
+            // Subtract 1/512 to set threshold between BAM tag enforced bins
+            percentile_linear_interp(&flat_probs, self.filter_quantile)?
+                - (1f32 / 512f32)
+        };
         info!("Call probability threshold: {:.4}", thresh);
 
         // apply threshold and print filtered table
+        let total_calls =
+            all_probs.iter().map(|(_, values)| values.len()).sum::<usize>();
         all_probs.values_mut().for_each(|probs| {
             probs.retain(|&p| p > thresh);
         });
         let filt_calls =
             all_probs.iter().map(|(_, values)| values.len()).sum::<usize>();
+        let percent_removed =
+            100.0 * (1.0 - (filt_calls as f64 / total_calls as f64));
+        info!(
+            "Percent of modified base calls removed: {:.2}%",
+            percent_removed
+        );
+
         let correct_filt_calls = all_probs
             .iter()
             .filter(|&((gt_code, call_code), _)| gt_code == call_code)
@@ -998,6 +1023,20 @@ impl ValidateFromModbam {
         info!("Filtered modified base calls contingency table");
         print_table(&all_probs, true);
         if let Some(valid_out_handle) = &mut out_handle {
+            valid_out_handle
+                .write_all(
+                    &format!("filter_threshold: {}\n", thresh).into_bytes(),
+                )
+                .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
+            valid_out_handle
+                .write_all(
+                    &format!(
+                        "percent_of_mod_called_removed: {}\n",
+                        percent_removed
+                    )
+                    .into_bytes(),
+                )
+                .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
             valid_out_handle
                 .write_all(
                     &format!("filtered_accuracy: {}\n", filt_acc).into_bytes(),
