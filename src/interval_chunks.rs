@@ -475,9 +475,36 @@ impl ReferenceIntervalsFeeder {
         if combine_strands & !multi_motif_locations.is_some() {
             bail!("cannot combine strands without a motif")
         }
-        let mut contigs = reference_records
-            .into_iter()
-            .collect::<VecDeque<ReferenceRecord>>();
+        let mut contigs = if let Some(position_filter) =
+            position_filter.as_ref()
+        {
+            reference_records
+                .into_iter()
+                .filter_map(|contig| {
+                    position_filter.contig_ends(&contig.tid).map(|(s, t)| {
+                        let length = t.checked_sub(s).unwrap_or(0u64);
+                        debug!(
+                            "narrowing record {} to {s}-{t} ({length} bases)",
+                            contig.name.as_str()
+                        );
+                        ReferenceRecord::new(
+                            contig.tid,
+                            s as u32,
+                            length as u32,
+                            contig.name,
+                        )
+                    })
+                })
+                .collect::<VecDeque<_>>()
+        } else {
+            reference_records.into_iter().collect::<VecDeque<_>>()
+        };
+
+        if contigs.len() == 1 {
+            debug!("there is a single contig to work on");
+        } else {
+            debug!("there are {} contigs to work on", contigs.len());
+        }
         let curr_contig = contigs
             .pop_front()
             .ok_or(anyhow!("should be at least 1 contig"))?;
