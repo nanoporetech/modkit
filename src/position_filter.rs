@@ -84,6 +84,31 @@ impl<T: Send + Sync + Eq + Clone> StrandedPositionFilter<T> {
                 }),
             )
     }
+
+    pub fn contig_ends(&self, contig_id: &u32) -> Option<(u64, u64)> {
+        let get_start_end = |positions: &FxHashMap<u32, GenomeLapper<T>>| -> Option<(u64, u64)> {
+            positions.get(&contig_id)
+                .and_then(|lp| {
+                    let start = lp.intervals.first().map(|iv| iv.start);
+                    let stop = lp.intervals.last().map(|iv| iv.stop);
+                    match (start, stop) {
+                        (Some(s), Some(t)) => Some((s, t)),
+                        _ => None
+                    }
+                })
+        };
+        let pos_ends = get_start_end(&self.pos_positions);
+        let neg_ends = get_start_end(&self.neg_positions);
+
+        match (pos_ends, neg_ends) {
+            (Some((a, b)), Some((c, d))) => {
+                let start = std::cmp::min(a, c);
+                let end = std::cmp::max(b, d);
+                Some((start, end))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl StrandedPositionFilter<()> {

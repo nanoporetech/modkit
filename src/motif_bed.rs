@@ -553,6 +553,11 @@ impl MotifLocations {
 
         let tid_to_motif_positions = sequences_and_ids
             .into_par_iter()
+            .filter(|(_seq, tid)| {
+                position_filter
+                    .map(|x| x.contains_chrom_id(&(*tid as i64)))
+                    .unwrap_or(true)
+            })
             .map(|(seq, tid)| {
                 let now = std::time::Instant::now();
                 let positions = find_motif_hits(&seq, &regex_motif)
