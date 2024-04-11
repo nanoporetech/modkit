@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.7]
+### Fixes
+- [dmr] Header was incorrect with multiple samples
+- [pileup] Improve performance when using `--include-bed`, only process contigs in the BED file.
+- [dmr, single-site] When using multiple samples, don't fail a position when one or more samples doesn't have a modification call at that position.
+- [extract] Expose queue size to reduce memory usage with long reads.
+- [validate] Report number of calls filtered out with thresholds.
+
+
 ## [v0.2.6]
 ### Fixes
 - [dmr, single-site] Don't require that there are equal numbers of samples for single site DMR with multiple samples. Fixes #140.
