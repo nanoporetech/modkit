@@ -36,7 +36,7 @@ use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
-    get_master_progress_bar, get_reference_mod_strand, get_spinner,
+    get_guage, get_master_progress_bar, get_reference_mod_strand,
     get_subroutine_progress_bar, get_targets, get_ticker, Region, Strand,
     KMER_SIZE,
 };
@@ -56,6 +56,10 @@ pub struct ExtractMods {
     /// Number of threads to use
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
+    /// Number of reads that can be in memory at a time. Increasing this value
+    /// will increase thread usage, at the cost of memory usage.
+    #[arg(short = 'q', long, default_value_t = 10_000)]
+    queue_size: usize,
     /// Path to file to write run log.
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
@@ -491,7 +495,11 @@ impl ExtractMods {
         let _handle = init_logging(self.log_filepath.as_ref());
 
         if self.kmer_size > KMER_SIZE {
-            bail!("kmer size must be less than or equal to 12")
+            bail!("kmer size must be less than or equal to {KMER_SIZE}")
+        }
+        let multi_prog = MultiProgress::new();
+        if self.suppress_progress {
+            multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
 
         let pool =
@@ -513,7 +521,8 @@ impl ExtractMods {
         let mut reader = get_serial_reader(&self.in_bam)?;
         let header = reader.header().to_owned();
 
-        let (snd, rcv) = bounded(100_000);
+        let queue_size = self.queue_size;
+        let (snd, rcv) = bounded(queue_size);
 
         let tid_to_name = (0..header.target_count())
             .filter_map(|tid| {
@@ -537,7 +546,7 @@ impl ExtractMods {
         let chrom_to_seq = match self.reference.as_ref() {
             Some(fp) => {
                 let reader = FastaReader::from_file(fp)?;
-                let pb = get_spinner();
+                let pb = multi_prog.add(get_ticker());
                 pb.set_message("parsing FASTA records");
                 reader
                     .records()
@@ -551,11 +560,6 @@ impl ExtractMods {
             }
             None => HashMap::new(),
         };
-
-        let multi_prog = MultiProgress::new();
-        if self.suppress_progress {
-            multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
-        }
 
         let region = self
             .region
@@ -663,6 +667,10 @@ impl ExtractMods {
         n_used.set_message("~records used");
         let n_rows = multi_prog.add(get_ticker());
         n_rows.set_message("rows written");
+        let gauge = multi_prog.add(get_guage(queue_size));
+        gauge.set_message("enqueued processed reads");
+        gauge.set_position(snd.len() as u64);
+
         reader.set_threads(self.threads)?;
         let n_reads = self.num_reads;
         let threads = self.threads;
@@ -670,6 +678,7 @@ impl ExtractMods {
         let in_bam = self.in_bam.clone();
         let kmer_size = self.kmer_size;
         let allow_non_primary = self.allow_non_primary;
+        let remove_inferred = self.ignore_implicit;
 
         pool.spawn(move || {
             // references_and_intervals is only some when we have an index
@@ -739,6 +748,14 @@ impl ExtractMods {
                                             Some(kmer_size),
                                         )
                                         .map(|reads_base_mod_profile| {
+                                            if remove_inferred {
+                                                reads_base_mod_profile
+                                                    .remove_inferred()
+                                            } else {
+                                                reads_base_mod_profile
+                                            }
+                                        })
+                                        .map(|reads_base_mod_profile| {
                                             reference_position_filter
                                                 .filter_read_base_mod_probs(
                                                     reads_base_mod_profile,
@@ -751,7 +768,11 @@ impl ExtractMods {
                                         .unwrap_or(0);
 
                                     match snd.send(batch_result) {
-                                        Ok(_) => num_reads_success,
+                                        Ok(_) => {
+                                            let n_enqueued = snd.len() as u64;
+                                            gauge.set_position(n_enqueued);
+                                            num_reads_success
+                                        }
                                         Err(e) => {
                                             error!(
                                                 "failed to send result to \
@@ -885,15 +906,9 @@ impl ExtractMods {
                 }
             };
 
-        let remove_inferred = self.ignore_implicit;
         for result in rcv {
             match result {
                 Ok(mod_profile) => {
-                    let mod_profile = if remove_inferred {
-                        mod_profile.remove_inferred()
-                    } else {
-                        mod_profile
-                    };
                     n_used.inc(mod_profile.num_reads() as u64);
                     n_failed.inc(mod_profile.num_fails as u64);
                     n_skipped.inc(mod_profile.num_skips as u64);

@@ -23,3 +23,11 @@ In general, this is a good setting for balancing parallelism and memory usage.
 Increasing the `--chunk-size` can increase parallelism (and decrease run time)
 but will consume more memory.
 
+## Memory usage in `modkit extract`.
+
+Transforming reads into a table with `modkit extract` can produce large files (especially with long reads).
+Before the data can be written to disk, however, it is enqueued in memory and can potentially create a large memory burden.
+There are a few ways to decrease the amount of memory `modkit extract` will use in these cases:
+1. Lower the `--queue-size`, this decreased the number of batches that will be held in flight.
+2. Use `--ignore-index` this will force `modkit extract` to run a serial scan of the mod-BAM.
+3. Decrease the `--interval-size`, this will decrease the size of the batches.
