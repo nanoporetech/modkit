@@ -934,12 +934,16 @@ chr20  10671925  10674963  CpG:  255  6.355823977093678     C:67   9459  C:153  
 <tr><td>15</td><td>effect size</td><td>Percent modified in sample A (col 12) minus percent modified in sample B (col 13)</td><td>float</td></tr>
 <tr><td>16</td><td>balanced MAP-based p-value</td><td>MAP-based p-value when all replicates are balanced</td><td>float</td></tr>
 <tr><td>17</td><td>balanced effect size</td><td>effect size when all replicates are balanced</td><td>float</td></tr>
-<tr><td>18</td><td>per-replicate p-values</td><td>MAP-based p-values for matched replicate pairs</td><td>float</td></tr>
-<tr><td>19</td><td>per-replicate effect sizes</td><td>effect sizes matched replicate pairs</td><td>float</td></tr>
+<tr><td>18</td><td>pct_a_samples</td><td>percent of 'a' samples used in statistical test</td><td>float</td></tr>
+<tr><td>19</td><td>pct_b_samples</td><td>percent of 'b' samples used in statistical test</td><td>float</td></tr>
+<tr><td>20</td><td>per-replicate p-values</td><td>MAP-based p-values for matched replicate pairs</td><td>float</td></tr>
+<tr><td>21</td><td>per-replicate effect sizes</td><td>effect sizes matched replicate pairs</td><td>float</td></tr>
 </tbody></table>
 </div>
-<p>Columns 16-19 are only produced when an equal number of replicates are provided.
-Columns 18 and 19 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
+<p>Columns 16-19 are only produced when multiple samples are provided, columns 20 and 21 are only produced when there is an equal number of 'a' and 'b' samples.
+When using multiple samples, it is possible that not every sample will have a modification fraction at a position.
+When this happens, the statistical test is still performed and the values of <code>pct_a_samples</code> and <code>pct_b_samples</code> reflect the percent of samples from each condition used in the test.</p>
+<p>Columns 20 and 21 have the replicate pairwise MAP-based p-values and effect sizes which are calculated based on their order provided on the command line.
 For example in the abbreviated command below:</p>
 <pre><code class="language-bash">modkit dmr pair \
   -a ${norm_pileup_1}.gz \
@@ -948,8 +952,8 @@ For example in the abbreviated command below:</p>
   -b ${tumor_pileup_2}.gz \
   ...
 </code></pre>
-<p>Column 18 will contain the MAP-based p-value comparing <code>norm_pileup_1</code> versus <code>tumor_pileup_1</code> and <code>norm_pileup_2</code> versus <code>norm_pileup_2</code>.
-Column 19 will contain the effect sizes, values are comma-separated.
+<p>Column 20 will contain the MAP-based p-value comparing <code>norm_pileup_1</code> versus <code>tumor_pileup_1</code> and <code>norm_pileup_2</code> versus <code>norm_pileup_2</code>.
+Column 21 will contain the effect sizes, values are comma-separated.
 If you have a different number of samples for each condition, such as:</p>
 <pre><code class="language-bash">modkit dmr pair \
   -a ${norm_pileup_1}.gz \
@@ -2429,6 +2433,15 @@ limit the total number of <em>intervals</em> computed on in parallel. By default
 In general, this is a good setting for balancing parallelism and memory usage.
 Increasing the <code>--chunk-size</code> can increase parallelism (and decrease run time)
 but will consume more memory.</p>
+<h2 id="memory-usage-in-modkit-extract"><a class="header" href="#memory-usage-in-modkit-extract">Memory usage in <code>modkit extract</code>.</a></h2>
+<p>Transforming reads into a table with <code>modkit extract</code> can produce large files (especially with long reads).
+Before the data can be written to disk, however, it is enqueued in memory and can potentially create a large memory burden.
+There are a few ways to decrease the amount of memory <code>modkit extract</code> will use in these cases:</p>
+<ol>
+<li>Lower the <code>--queue-size</code>, this decreased the number of batches that will be held in flight.</li>
+<li>Use <code>--ignore-index</code> this will force <code>modkit extract</code> to run a serial scan of the mod-BAM.</li>
+<li>Decrease the <code>--interval-size</code>, this will decrease the size of the batches.</li>
+</ol>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="algorithm-details"><a class="header" href="#algorithm-details">Algorithm details</a></h1>
 <ul>
 <li><a href="./filtering.html">Filtering low confidence base modification calls</a></li>

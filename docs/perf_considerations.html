@@ -196,6 +196,15 @@ limit the total number of <em>intervals</em> computed on in parallel. By default
 In general, this is a good setting for balancing parallelism and memory usage.
 Increasing the <code>--chunk-size</code> can increase parallelism (and decrease run time)
 but will consume more memory.</p>
+<h2 id="memory-usage-in-modkit-extract"><a class="header" href="#memory-usage-in-modkit-extract">Memory usage in <code>modkit extract</code>.</a></h2>
+<p>Transforming reads into a table with <code>modkit extract</code> can produce large files (especially with long reads).
+Before the data can be written to disk, however, it is enqueued in memory and can potentially create a large memory burden.
+There are a few ways to decrease the amount of memory <code>modkit extract</code> will use in these cases:</p>
+<ol>
+<li>Lower the <code>--queue-size</code>, this decreased the number of batches that will be held in flight.</li>
+<li>Use <code>--ignore-index</code> this will force <code>modkit extract</code> to run a serial scan of the mod-BAM.</li>
+<li>Decrease the <code>--interval-size</code>, this will decrease the size of the batches.</li>
+</ol>
 
                     </main>
 
