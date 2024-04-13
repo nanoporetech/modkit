@@ -19,7 +19,7 @@ use crate::mod_base_code::DnaBase;
 use crate::motif_bed::{get_masked_sequences, RegexMotif};
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{get_targets, get_ticker};
+use crate::util::{get_master_progress_bar, get_targets, get_ticker};
 
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
@@ -280,6 +280,8 @@ impl MethylationEntropy {
             .map(|(seq, tid)| (tid, seq.chars().collect::<Vec<char>>()))
             .collect::<HashMap<u32, Vec<char>>>();
 
+            let idx_stats = IdxStats::new_from_path(&self.in_bam, None, None)?;
+
             if let Some(regions_fp) = self.regions_fp.as_ref() {
                 let tid_to_name = names_to_tid
                     .iter()
@@ -292,9 +294,6 @@ impl MethylationEntropy {
                         tid_to_name.get(&tid).map(|name| (*name, seq))
                     })
                     .collect::<HashMap<&str, Vec<char>>>();
-
-                let idx_stats =
-                    IdxStats::new_from_path(&self.in_bam, None, None)?;
 
                 SlidingWindows::new_with_regions(
                     &names_to_tid,
@@ -310,6 +309,7 @@ impl MethylationEntropy {
             } else {
                 SlidingWindows::new(
                     bam_header_records,
+                    &idx_stats,
                     reference_sequences,
                     motif,
                     combine_strands,
@@ -323,17 +323,6 @@ impl MethylationEntropy {
         let threshold_caller = self.get_threshold_caller(&pool)?;
 
         let (snd, rcv) = crossbeam::channel::bounded(10_000);
-        let rows_written = multi_pb.add(get_ticker());
-        let skipped_windows = multi_pb.add(get_ticker());
-        let windows_failed = multi_pb.add(get_ticker());
-        let batches_failed = multi_pb.add(get_ticker());
-
-        let what =
-            if self.regions_fp.is_some() { "regions" } else { "windows" };
-        rows_written.set_message("rows written");
-        windows_failed.set_message(format!("{what} failed"));
-        skipped_windows.set_message(format!("{what} with zero coverage"));
-        batches_failed.set_message("batches failed");
 
         let bam_fp = self.in_bam.clone();
         let min_coverage = self.min_valid_coverage;
@@ -345,12 +334,36 @@ impl MethylationEntropy {
             info!("setting maximum filtered positions to {max_filt_pos}");
             max_filt_pos
         });
+
+        let genome_prog = multi_pb
+            .add(get_master_progress_bar(sliding_windows.total_length()));
+        let rows_written = multi_pb.add(get_ticker());
+        let skipped_windows = multi_pb.add(get_ticker());
+        let windows_failed = multi_pb.add(get_ticker());
+        let batches_failed = multi_pb.add(get_ticker());
+
+        let what =
+            if self.regions_fp.is_some() { "regions" } else { "windows" };
+
+        genome_prog.set_message("genome positions processed");
+        rows_written.set_message("rows written");
+        windows_failed.set_message(format!("{what} failed"));
+        skipped_windows.set_message(format!("{what} with zero coverage"));
+        batches_failed.set_message("batches failed");
+
         pool.spawn(move || {
             for batch in sliding_windows {
+                let n_pos = batch
+                    .iter()
+                    .map(|gw| {
+                        let r = gw.get_range();
+                        r.end - r.start
+                    })
+                    .sum::<u64>();
                 let mut results = Vec::new();
                 let (entropies, _) = rayon::join(
                     || {
-                        batch
+                        let rs = batch
                             .into_par_iter()
                             .map(|window| {
                                 process_entropy_window(
@@ -362,7 +375,9 @@ impl MethylationEntropy {
                                     &bam_fp,
                                 )
                             })
-                            .collect::<Vec<_>>()
+                            .collect::<Vec<_>>();
+                        genome_prog.inc(n_pos);
+                        rs
                     },
                     || {
                         results.into_iter().for_each(|entropy| {

@@ -678,7 +678,7 @@ struct SlidingWindows {
     done: bool,
 }
 
-impl<'a> SlidingWindows {
+impl SlidingWindows {
     fn new_with_regions(
         names_to_tid: &HashMap<&str, u32>,
         reference_sequences: HashMap<&str, Vec<char>>,
@@ -826,6 +826,7 @@ impl<'a> SlidingWindows {
 
     fn new(
         bam_header_records: Vec<ReferenceRecord>,
+        index_stats: &IdxStats,
         mut reference_sequences: HashMap<u32, Vec<char>>,
         motif: RegexMotif,
         combine_strands: bool,
@@ -835,6 +836,12 @@ impl<'a> SlidingWindows {
     ) -> anyhow::Result<Self> {
         let mut work_queue = bam_header_records
             .into_iter()
+            .filter(|reference_record| {
+                index_stats
+                    .n_reads_mapped_to_contig(reference_record.tid)
+                    .map(|count| count > 0)
+                    .unwrap_or(false)
+            })
             .filter_map(|record| {
                 match reference_sequences.remove(&record.tid) {
                     Some(seq) => Some((record, seq)),
@@ -1074,6 +1081,11 @@ impl<'a> SlidingWindows {
             assert!(self.region_names.is_empty());
             self.done = true
         }
+    }
+
+    pub(super) fn total_length(&self) -> usize {
+        self.work_queue.iter().map(|(_, s)| s.len()).sum::<usize>()
+            + self.curr_seq.len()
     }
 }
 
