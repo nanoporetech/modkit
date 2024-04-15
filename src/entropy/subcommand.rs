@@ -1,31 +1,37 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use clap::Args;
 use indicatif::MultiProgress;
 use log::{debug, error, info};
 use rayon::prelude::*;
-use rust_htslib::bam::{self, Read};
-use rustc_hash::FxHashMap;
 
-use crate::command_utils::{
-    get_threshold_from_options, parse_per_mod_thresholds,
-};
+use crate::command_utils::parse_per_mod_thresholds;
 use crate::entropy::writers::{EntropyWriter, RegionsWriter, WindowsWriter};
 use crate::entropy::{process_entropy_window, SlidingWindows};
 use crate::logging::init_logging;
 use crate::mod_base_code::DnaBase;
-use crate::motif_bed::{get_masked_sequences, RegexMotif};
-use crate::reads_sampler::sampling_schedule::IdxStats;
+use crate::monoid::Moniod;
+use crate::motif_bed::RegexMotif;
+use crate::reads_sampler::sampling_schedule::{
+    IdxStats, ReferenceSequencesLookup,
+};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{get_master_progress_bar, get_targets, get_ticker};
+use crate::thresholds::{
+    get_modbase_probs_from_bam, log_calculated_thresholds,
+    percentile_linear_interp,
+};
+use crate::util::{get_master_progress_bar, get_ticker};
 
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
 pub struct MethylationEntropy {
-    /// Input mod-BAM
-    in_bam: PathBuf,
+    /// Input mod-BAM, may be repeated multiple times to calculate entropy
+    /// across all input mod-BAMs.
+    #[arg(short = 's', long = "in-bam", required = true)]
+    in_bams: Vec<PathBuf>,
     /// Output BED file, if using `--region` this must be a directory.
     #[arg(short = 'o', long)]
     out_bed: Option<PathBuf>,
@@ -49,6 +55,15 @@ pub struct MethylationEntropy {
     /// Do not perform any filtering, include all mod base calls in output.
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
+    /// Sample this many reads when estimating the filtering threshold. Reads
+    /// will be sampled evenly across aligned genome. If a region is
+    /// specified, either with the --region option or the --sample-region
+    /// option, then reads will be sampled evenly across the region given.
+    /// This option is useful for large BAM files. In practice, 10-50
+    /// thousand reads is sufficient to estimate the model output
+    /// distribution and determine the filtering threshold.
+    #[arg(long, default_value_t = 10_042)]
+    num_reads: usize,
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will
     /// filter out the 10% lowest confidence modification calls.
@@ -93,6 +108,9 @@ pub struct MethylationEntropy {
     /// Reference sequence in FASTA format.
     #[arg(long = "ref", alias = "reference")]
     reference_fasta: PathBuf,
+    /// Respect soft masking in the reference FASTA.
+    #[arg(long, requires = "reference_fasta", default_value_t = false)]
+    mask: bool,
     /// Motif to use for entropy calculation, default will be CpG. The motif
     /// must be reverse-complement palindromic.
     #[arg(long, num_args = 2)]
@@ -116,15 +134,6 @@ pub struct MethylationEntropy {
     /// neighboring windows.
     #[arg(long = "min-coverage", default_value_t = 3)]
     min_valid_coverage: u32,
-    /// Respect soft masking in the reference FASTA.
-    #[arg(
-        long,
-        short = 'k',
-        requires = "reference_fasta",
-        default_value_t = false,
-        hide_short_help = true
-    )]
-    mask: bool,
     /// Send debug logs to this file, setting this file is recommended.
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
@@ -138,7 +147,7 @@ pub struct MethylationEntropy {
     #[arg(long, default_value_t = false)]
     header: bool,
     /// Omit windows with zero entropy
-    #[arg(long, conflicts_with = "regions_fp", default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     drop_zeros: bool,
     /// Maximum number of filtered positions a read is allowed to have in a
     /// window, more than this number and the read will be discarded. Default
@@ -156,9 +165,15 @@ impl MethylationEntropy {
         if self.min_valid_coverage < 1 {
             bail!("min-valid-coverage must be at least 1")
         }
-        IdxStats::check_any_mapped_reads(&self.in_bam, None, None).context(
-            "did not find any mapped reads in mod-BAM, perform alignment first",
-        )?;
+        for bam_fp in self.in_bams.iter() {
+            IdxStats::check_any_mapped_reads(&bam_fp, None, None)
+                .with_context(|| {
+                    format!(
+                        "did not find any mapped reads in {bam_fp:?}, perform \
+                         alignment first"
+                    )
+                })?;
+        }
 
         let mut writer: Box<dyn EntropyWriter> =
             match (self.out_bed.as_ref(), self.regions_fp.is_some()) {
@@ -193,22 +208,21 @@ impl MethylationEntropy {
         if self.suppress_progress {
             multi_pb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
-        let bam_reader = bam::IndexedReader::from_path(&self.in_bam)?;
-        let chrom_id_to_name = bam_reader
-            .header()
-            .target_names()
-            .iter()
-            .enumerate()
-            .map(|(id, raw_name)| {
-                let chrom_id = id as u32;
-                String::from_utf8(raw_name.to_vec())
-                    .map(|name| (chrom_id, name))
-            })
-            .collect::<Result<Vec<(u32, String)>, _>>()?
-            .into_iter()
-            .collect::<HashMap<u32, String>>();
-
-        let bam_header_records = get_targets(bam_reader.header(), None);
+        // let bam_reader = bam::IndexedReader::from_path(&self.in_bam)?;
+        // let chrom_id_to_name = bam_reader
+        //     .header()
+        //     .target_names()
+        //     .iter()
+        //     .enumerate()
+        //     .map(|(id, raw_name)| {
+        //         let chrom_id = id as u32;
+        //         String::from_utf8(raw_name.to_vec())
+        //             .map(|name| (chrom_id, name))
+        //     })
+        //     .collect::<Result<Vec<(u32, String)>, _>>()?
+        //     .into_iter()
+        //     .collect::<HashMap<u32, String>>();
+        // let bam_header_records = get_targets(bam_reader.header(), None);
 
         let (motif, combine_strands) =
             match (self.cpg, self.motif.as_ref(), self.base) {
@@ -265,40 +279,48 @@ impl MethylationEntropy {
             info!("combining (+)-strand and (-)-strand modification calls");
         }
 
-        let sliding_windows = pool.install(|| {
-            let names_to_tid = bam_header_records
-                .iter()
-                .map(|ref_record| (ref_record.name.as_str(), ref_record.tid))
-                .collect::<HashMap<&str, u32>>();
-            let reference_sequences = get_masked_sequences(
-                &self.reference_fasta,
-                &names_to_tid,
-                self.mask,
-                &multi_pb,
-            )?
-            .into_par_iter()
-            .map(|(seq, tid)| (tid, seq.chars().collect::<Vec<char>>()))
-            .collect::<HashMap<u32, Vec<char>>>();
+        let reference_sequence_lookup = ReferenceSequencesLookup::new(
+            &self.in_bams,
+            &self.reference_fasta,
+            self.mask,
+            &multi_pb,
+        )?;
+        let chrom_id_to_name =
+            reference_sequence_lookup.get_chrom_id_to_name_lookup();
 
-            let idx_stats = IdxStats::new_from_path(&self.in_bam, None, None)?;
+        let sliding_windows = pool.install(|| {
+            // let names_to_tid = bam_header_records
+            //     .iter()
+            //     .map(|ref_record| (ref_record.name.as_str(), ref_record.tid))
+            //     .collect::<HashMap<&str, u32>>();
+            // let reference_sequences = get_masked_sequences(
+            //     &self.reference_fasta,
+            //     &names_to_tid,
+            //     self.mask,
+            //     &multi_pb,
+            // )?
+            // .into_par_iter()
+            // .map(|(seq, tid)| (tid, seq.chars().collect::<Vec<char>>()))
+            // .collect::<HashMap<u32, Vec<char>>>();
+            //
+            // let idx_stats = IdxStats::new_from_path(&self.in_bam, None,
+            // None)?;
 
             if let Some(regions_fp) = self.regions_fp.as_ref() {
-                let tid_to_name = names_to_tid
-                    .iter()
-                    .map(|(name, tid)| (*tid, *name))
-                    .collect::<FxHashMap<u32, &str>>();
-
-                let reference_sequences = reference_sequences
-                    .into_iter()
-                    .filter_map(|(tid, seq)| {
-                        tid_to_name.get(&tid).map(|name| (*name, seq))
-                    })
-                    .collect::<HashMap<&str, Vec<char>>>();
+                // let tid_to_name = names_to_tid
+                //     .iter()
+                //     .map(|(name, tid)| (*tid, *name))
+                //     .collect::<FxHashMap<u32, &str>>();
+                //
+                // let reference_sequences = reference_sequences
+                //     .into_iter()
+                //     .filter_map(|(tid, seq)| {
+                //         tid_to_name.get(&tid).map(|name| (*name, seq))
+                //     })
+                //     .collect::<HashMap<&str, Vec<char>>>();
 
                 SlidingWindows::new_with_regions(
-                    &names_to_tid,
-                    reference_sequences,
-                    &idx_stats,
+                    reference_sequence_lookup,
                     regions_fp,
                     motif,
                     combine_strands,
@@ -308,9 +330,7 @@ impl MethylationEntropy {
                 )
             } else {
                 SlidingWindows::new(
-                    bam_header_records,
-                    &idx_stats,
-                    reference_sequences,
+                    reference_sequence_lookup,
                     motif,
                     combine_strands,
                     self.num_positions,
@@ -320,11 +340,12 @@ impl MethylationEntropy {
             }
         })?;
 
-        let threshold_caller = self.get_threshold_caller(&pool)?;
+        let threshold_caller =
+            self.get_threshold_caller(&pool).map(|c| Arc::new(c))?;
 
         let (snd, rcv) = crossbeam::channel::bounded(10_000);
 
-        let bam_fp = self.in_bam.clone();
+        let bam_fps = self.in_bams.clone();
         let min_coverage = self.min_valid_coverage;
         let threads = self.threads;
         let io_threads = self.io_threads.unwrap_or(threads);
@@ -371,8 +392,8 @@ impl MethylationEntropy {
                                     min_coverage,
                                     max_filtered,
                                     io_threads,
-                                    &threshold_caller,
-                                    &bam_fp,
+                                    threshold_caller.clone(),
+                                    &bam_fps,
                                 )
                             })
                             .collect::<Vec<_>>();
@@ -458,23 +479,43 @@ impl MethylationEntropy {
             ))
         } else {
             pool.install(|| {
-                get_threshold_from_options(
-                    &self.in_bam,
-                    self.threads,
-                    1_000_000,
-                    None,
-                    1042,
-                    self.no_filtering,
-                    self.filter_percentile,
-                    None,
-                    None,
-                    per_mod_thresholds,
-                    None,
-                    None,
-                    None,
-                    true,
-                    self.suppress_progress,
-                )
+                let num_reads = self.num_reads / self.in_bams.len();
+                let mut agg = HashMap::new();
+                for in_bam in self.in_bams.iter() {
+                    let per_base_thresholds = get_modbase_probs_from_bam(
+                        in_bam,
+                        self.threads,
+                        1_000_000,
+                        None,
+                        Some(num_reads),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        true,
+                        self.suppress_progress,
+                    )?;
+                    agg.op_mut(per_base_thresholds);
+                }
+                let per_base_thresholds = agg
+                    .iter_mut()
+                    .map(|(dna_base, mod_base_probs)| {
+                        mod_base_probs
+                            .par_sort_by(|x, y| x.partial_cmp(y).unwrap());
+                        let threshold = percentile_linear_interp(
+                            &mod_base_probs,
+                            self.filter_percentile,
+                        )?;
+                        Ok((*dna_base, threshold))
+                    })
+                    .collect::<anyhow::Result<HashMap<DnaBase, f32>>>()?;
+                log_calculated_thresholds(&per_base_thresholds);
+                Ok(MultipleThresholdModCaller::new(
+                    per_base_thresholds,
+                    per_mod_thresholds.unwrap_or(HashMap::new()),
+                    0f32,
+                ))
             })
         }
     }

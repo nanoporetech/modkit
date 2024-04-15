@@ -1,14 +1,18 @@
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::RecordSampler;
-use crate::util::{reader_is_bam, Region};
+use crate::util::{get_ticker, reader_is_bam, ReferenceRecord, Region};
 use anyhow::{anyhow, bail, Context};
 use derive_new::new;
+use indexmap::IndexSet;
+use indicatif::{MultiProgress, ProgressIterator};
 use itertools::Itertools;
 use log::{debug, error};
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Display, Formatter};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 /// Count is an exact count, Sample is a fraction to sample
@@ -572,6 +576,164 @@ impl IdxStats {
         self.tid_to_mapped_read_count
             .get(&(contig_id as i64))
             .map(|count| *count)
+    }
+
+    pub(crate) fn contig_has_mapped_reads(&self, contig_id: u32) -> bool {
+        self.n_reads_mapped_to_contig(contig_id)
+            .map(|count| count > 0)
+            .unwrap_or(false)
+    }
+}
+
+pub(crate) struct ReferenceSequencesLookup {
+    reference_sequence_names: IndexSet<String>,
+    id_to_tid: HashMap<usize, u32>,
+    tid_to_id: HashMap<u32, usize>,
+    reference_sequences: HashMap<usize, Vec<char>>,
+}
+
+impl ReferenceSequencesLookup {
+    pub(crate) fn new(
+        bam_fps: &[PathBuf],
+        reference_fasta_fp: &PathBuf,
+        mask: bool,
+        multi_progress: &MultiProgress,
+    ) -> anyhow::Result<Self> {
+        if bam_fps.is_empty() {
+            bail!("need at least 1 mod-BAM filepath")
+        }
+        let n_targets = bam_fps
+            .iter()
+            .map(|fp| {
+                let tmp_reader = bam::IndexedReader::from_path(fp)?;
+                Ok(tmp_reader.header().target_count())
+            })
+            .collect::<anyhow::Result<HashSet<u32>>>()?;
+        if n_targets.len() != 1 {
+            bail!(
+                "headers are different between input BAM files, alignments \
+                 must all be to the same reference"
+            )
+        }
+        // todo add more checks that the headers are all the same
+
+        let fasta_reader =
+            bio::io::fasta::Reader::from_file(reference_fasta_fp)
+                .context("failed to create reference fasta reader")?;
+        let mut reference_sequence_names = IndexSet::new();
+        let mut id_to_tid = HashMap::new();
+        let mut tid_to_id = HashMap::new();
+        let idxs = bam_fps
+            .iter()
+            .map(|fp| IdxStats::new_from_path(fp, None, None))
+            .collect::<anyhow::Result<Vec<IdxStats>>>()?;
+        let reader = bam::IndexedReader::from_path(&bam_fps[0])?;
+        let header = reader.header();
+        for raw_contig_name in header.target_names() {
+            if let Some(tid) = header.tid(raw_contig_name) {
+                if idxs.iter().any(|idx| idx.contig_has_mapped_reads(tid)) {
+                    let contig_name =
+                        String::from_utf8_lossy(raw_contig_name).to_string();
+                    reference_sequence_names.insert(contig_name);
+                    let id = reference_sequence_names.len() - 1usize;
+                    id_to_tid.insert(id, tid);
+                    tid_to_id.insert(tid, id);
+                }
+            }
+        }
+        assert_eq!(reference_sequence_names.len(), id_to_tid.len());
+        assert_eq!(id_to_tid.len(), tid_to_id.len());
+
+        let records_progress = multi_progress.add(get_ticker());
+        let reference_sequences =
+            fasta_reader
+                .records()
+                .progress_with(records_progress)
+                .filter_map(|res| res.ok())
+                .filter_map(|record| {
+                    let name = record.id();
+                    let seq = String::from_utf8(record.seq().to_vec())
+                        .map(|s| if mask { s } else { s.to_ascii_uppercase() });
+                    match seq {
+                        Ok(s) => {
+                            if let Some(id) =
+                                reference_sequence_names.get_index_of(name)
+                            {
+                                let nts = s.chars().collect::<Vec<char>>();
+                                Some((id, nts))
+                            } else {
+                                None
+                            }
+                        }
+                        Err(e) => {
+                            debug!(
+                                "failed to parse FASTA sequence {name}, {e}"
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect::<HashMap<usize, Vec<char>>>();
+
+        Ok(Self {
+            reference_sequence_names,
+            reference_sequences,
+            tid_to_id,
+            id_to_tid,
+        })
+    }
+
+    pub(crate) fn get_chrom_id_to_name_lookup(&self) -> HashMap<u32, String> {
+        self.tid_to_id
+            .iter()
+            .map(|(tid, id)| {
+                let name = self
+                    .reference_sequence_names
+                    .get_index(*id)
+                    .expect(&format!("should get name at {id}"))
+                    .to_owned();
+                (*tid, name)
+            })
+            .collect()
+    }
+
+    pub(crate) fn name_to_chrom_id(&self, name: &str) -> Option<u32> {
+        self.reference_sequence_names
+            .get_index_of(name)
+            .map(|id| *self.id_to_tid.get(&id).unwrap())
+    }
+
+    pub(crate) fn get_subsequence_by_name(
+        &self,
+        name: &str,
+        interval: Range<usize>,
+    ) -> anyhow::Result<Vec<char>> {
+        if let Some(id) = self.reference_sequence_names.get_index_of(name) {
+            let seq = &self.reference_sequences.get(&id).unwrap();
+            let subseq = seq[interval].iter().copied().collect::<Vec<char>>();
+            Ok(subseq)
+        } else {
+            bail!("seq {name} not in used references")
+        }
+    }
+
+    pub(crate) fn into_reference_sequences(
+        self,
+    ) -> VecDeque<(ReferenceRecord, Vec<char>)> {
+        let mut reference_sequences = self.reference_sequences;
+        self.reference_sequence_names
+            .into_iter()
+            .enumerate()
+            .map(|(id, name)| {
+                let seq = reference_sequences
+                    .remove(&id)
+                    .expect("reference sequences and names not in sync");
+                let tid = *self.id_to_tid.get(&id).unwrap();
+                let reference_record =
+                    ReferenceRecord::new(tid, 0u32, seq.len() as u32, name);
+                (reference_record, seq)
+            })
+            .collect()
     }
 }
 

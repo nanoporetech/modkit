@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use derive_new::new;
@@ -21,7 +22,7 @@ use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::mod_base_code::ModCodeRepr;
 use crate::motif_bed::RegexMotif;
 use crate::read_ids_to_base_mod_probs::{PositionModCalls, ReadBaseModProfile};
-use crate::reads_sampler::sampling_schedule::IdxStats;
+use crate::reads_sampler::sampling_schedule::ReferenceSequencesLookup;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{record_is_not_primary, ReferenceRecord, Strand};
@@ -216,28 +217,29 @@ impl GenomeWindow {
     fn add_read_to_patterns(
         &mut self,
         ref_pos_to_basemod_call: &FxHashMap<u64, BaseModCall>,
-        record: &bam::Record,
-        strand: &Strand,
+        reference_start: i64,
+        reference_end: i64,
+        strand: Strand,
         max_filtered_positions: usize,
     ) {
         // check that the read fully covers the interval
-        let reference_start = if record.reference_start() >= 0 {
-            Some(record.reference_start() as u64)
+        let reference_start = if reference_start >= 0 {
+            Some(reference_start as u64)
         } else {
             None
         };
         let reference_end = if reference_start
-            .map(|x| record.reference_end() > x as i64)
+            .map(|x| reference_end > x as i64)
             .unwrap_or(false)
         {
-            Some(record.reference_end() as u64)
+            Some(reference_end as u64)
         } else {
             None
         };
 
         let overlaps = reference_start
             .and_then(|s| reference_end.map(|t| (s, t)))
-            .map(|(s, t)| match (self.start(strand), self.end(strand)) {
+            .map(|(s, t)| match (self.start(&strand), self.end(&strand)) {
                 (Some(wind_start), Some(wind_end)) => {
                     s <= wind_start && t >= wind_end
                 }
@@ -318,10 +320,10 @@ impl GenomeWindow {
         for (i, call) in pattern.iter().enumerate() {
             match call {
                 BaseModCall::Filtered => {}
-                _ => self.inc_coverage(i, strand),
+                _ => self.inc_coverage(i, &strand),
             }
         }
-        self.add_pattern(strand, pattern);
+        self.add_pattern(&strand, pattern);
     }
 
     fn get_mod_code_lookup(&self) -> FxHashMap<ModCodeRepr, char> {
@@ -680,9 +682,10 @@ struct SlidingWindows {
 
 impl SlidingWindows {
     fn new_with_regions(
-        names_to_tid: &HashMap<&str, u32>,
-        reference_sequences: HashMap<&str, Vec<char>>,
-        index_stats: &IdxStats,
+        reference_sequences_lookup: ReferenceSequencesLookup,
+        // names_to_tid: &HashMap<&str, u32>,
+        // reference_sequences: HashMap<&str, Vec<char>>,
+        // index_stats: &IdxStats,
         regions_bed_fp: &PathBuf,
         motif: RegexMotif,
         combine_strands: bool,
@@ -692,18 +695,41 @@ impl SlidingWindows {
     ) -> anyhow::Result<Self> {
         let regions_iter = BufReader::new(File::open(regions_bed_fp)?)
             .lines()
+            // change the lines into Errors
             .map(|r| r.map_err(|e| anyhow!("failed to read line, {e}")))
+            // Parse the lines
             .map(|r| r.and_then(|l| BedRegion::parse_str(&l)))
-            .filter_ok(|bed_region| {
-                names_to_tid
-                    .get(bed_region.chrom.as_str())
-                    .and_then(|chrom_id| {
-                        index_stats.n_reads_mapped_to_contig(*chrom_id)
-                    })
-                    .map(|n_reads| n_reads > 0)
-                    .unwrap_or(false)
+            // grab the subsequences, also collect up the errors for invalid BED
+            // lines
+            .map(|r| {
+                r.and_then(|bed_region| {
+                    let start = bed_region.interval.start;
+                    let end = bed_region.interval.end;
+                    let interval = start..end;
+                    reference_sequences_lookup
+                        .get_subsequence_by_name(
+                            bed_region.chrom.as_str(),
+                            interval,
+                        )
+                        .map(|seq| (bed_region, seq))
+                })
+            })
+            .map_ok(|(bed_region, seq)| {
+                let tid = reference_sequences_lookup
+                    .name_to_chrom_id(bed_region.chrom.as_str())
+                    .unwrap();
+                let start = bed_region.interval.start as u32;
+                let length = bed_region.length() as u32;
+                let chrom_name = bed_region.chrom;
+                let region_name = bed_region.name;
+                let reference_record =
+                    ReferenceRecord::new(tid, start, length, chrom_name);
+                (reference_record, region_name, seq)
             });
 
+        // accumulators for the above iterator, could have done this all in a
+        // fold, but with 3 accumulators this is easier to look at and
+        // ends up being the same thing
         let mut work_queue = VecDeque::new();
         let mut region_queue = VecDeque::new();
         let mut failures = HashMap::new();
@@ -714,46 +740,46 @@ impl SlidingWindows {
 
         for res in regions_iter {
             match res {
-                Ok(region) => {
-                    if let Some(seq) =
-                        reference_sequences.get(region.chrom.as_str())
-                    {
-                        let length = region.length();
-                        let region_name = region.name;
-                        let chrom_name = region.chrom;
-                        let start = region.interval.start as u32;
-                        let end = region.interval.end;
-                        if end >= seq.len() {
-                            debug!(
-                                "region {chrom_name}:{start}-{end} \
-                                 ({region_name}) beyond length of contig {}",
-                                seq.len()
-                            );
-                            add_failure(format!(
-                                "region beyond length of contig"
-                            ));
-                            continue;
-                        }
-
-                        let sub_seq = seq[region.interval]
-                            .iter()
-                            .copied()
-                            .collect::<Vec<char>>();
-                        let tid = names_to_tid
-                            .get(chrom_name.as_str())
-                            .expect("should have tid");
-                        let ref_record = ReferenceRecord::new(
-                            *tid,
-                            start,
-                            length as u32,
-                            chrom_name,
-                        );
-                        work_queue.push_back((ref_record, sub_seq));
-                        region_queue.push_back(region_name);
-                    } else {
-                        add_failure(format!("contig not in BAM header"));
-                        continue;
-                    }
+                Ok((reference_record, region_name, subseq)) => {
+                    work_queue.push_back((reference_record, subseq));
+                    region_queue.push_back(region_name);
+                    // if let Some(seq) =
+                    //     reference_sequences.get(region.chrom.as_str())
+                    // {
+                    //     // let length = region.length();
+                    //     // let region_name = region.name;
+                    //     // let chrom_name = region.chrom;
+                    //     // let start = region.interval.start as u32;
+                    //     // let end = region.interval.end;
+                    //     // if end >= seq.len() {
+                    //     //     debug!(
+                    //     //         "region {chrom_name}:{start}-{end} \
+                    //     //          ({region_name}) beyond length of contig
+                    // {}",     //         seq.len()
+                    //     //     );
+                    //     //     add_failure(format!(
+                    //     //         "region beyond length of contig"
+                    //     //     ));
+                    //     //     continue;
+                    //     // }
+                    //
+                    //     // let sub_seq = seq[region.interval]
+                    //     //     .iter()
+                    //     //     .copied()
+                    //     //     .collect::<Vec<char>>();
+                    //     // let tid = names_to_tid
+                    //     //     .get(chrom_name.as_str())
+                    //     //     .expect("should have tid");
+                    //     // let ref_record = ReferenceRecord::new(
+                    //     //     *tid,
+                    //     //     start,
+                    //     //     length as u32,
+                    //     //     chrom_name,
+                    //     // );
+                    // } else {
+                    //     add_failure(format!("contig not in BAM header"));
+                    //     continue;
+                    // }
                 }
                 Err(e) => {
                     add_failure(e.to_string());
@@ -825,30 +851,33 @@ impl SlidingWindows {
     }
 
     fn new(
-        bam_header_records: Vec<ReferenceRecord>,
-        index_stats: &IdxStats,
-        mut reference_sequences: HashMap<u32, Vec<char>>,
+        reference_sequence_lookup: ReferenceSequencesLookup,
+        // bam_header_records: Vec<ReferenceRecord>,
+        // index_stats: &IdxStats,
+        // mut reference_sequences: HashMap<u32, Vec<char>>,
         motif: RegexMotif,
         combine_strands: bool,
         num_positions: usize,
         window_size: usize,
         batch_size: usize,
     ) -> anyhow::Result<Self> {
-        let mut work_queue = bam_header_records
-            .into_iter()
-            .filter(|reference_record| {
-                index_stats
-                    .n_reads_mapped_to_contig(reference_record.tid)
-                    .map(|count| count > 0)
-                    .unwrap_or(false)
-            })
-            .filter_map(|record| {
-                match reference_sequences.remove(&record.tid) {
-                    Some(seq) => Some((record, seq)),
-                    None => None,
-                }
-            })
-            .collect::<VecDeque<_>>();
+        let mut work_queue =
+            reference_sequence_lookup.into_reference_sequences();
+        // let mut work_queue = bam_header_records
+        //     .into_iter()
+        //     .filter(|reference_record| {
+        //         index_stats
+        //             .n_reads_mapped_to_contig(reference_record.tid)
+        //             .map(|count| count > 0)
+        //             .unwrap_or(false)
+        //     })
+        //     .filter_map(|record| {
+        //         match reference_sequences.remove(&record.tid) {
+        //             Some(seq) => Some((record, seq)),
+        //             None => None,
+        //         }
+        //     })
+        //     .collect::<VecDeque<_>>();
 
         let (curr_contig, curr_seq, curr_position) = loop {
             let (curr_record, curr_seq) =
@@ -1063,23 +1092,39 @@ impl SlidingWindows {
     }
 
     fn update_current_contig(&mut self) {
-        if let Some((record, seq, pos)) =
-            self.work_queue.pop_front().and_then(|(ref_record, seq)| {
-                Self::find_start_position(&seq, &self.motif)
-                    .map(|pos| (ref_record, seq, pos))
-            })
-        {
-            self.curr_contig = record;
-            self.curr_position = pos;
-            self.curr_seq = seq;
-            let region_name = self.region_names.pop_front();
-            // if let Some(rn) = region_name.as_ref() {
-            //     debug!("next region is named {rn}");
-            // }
-            self.curr_region_name = region_name;
-        } else {
-            assert!(self.region_names.is_empty());
-            self.done = true
+        'search: loop {
+            if let Some((record, seq)) = self.work_queue.pop_front() {
+                match Self::find_start_position(&seq, &self.motif) {
+                    Some(start_pos) => {
+                        self.curr_contig = record;
+                        self.curr_position = start_pos;
+                        self.curr_seq = seq;
+                        let region_name = self.region_names.pop_front();
+                        self.curr_region_name = region_name;
+                        break 'search;
+                    }
+                    None => {
+                        if let Some(region_name) = self.region_names.pop_front()
+                        {
+                            debug!(
+                                "skipping region {region_name}, no valid \
+                                 positions for motif {}",
+                                &self.motif.raw_motif
+                            )
+                        } else {
+                            debug!(
+                                "skipping {}, no valid positions for motif {}",
+                                &record.name, &self.motif.raw_motif
+                            )
+                        }
+                        continue;
+                    }
+                }
+            } else {
+                assert!(self.region_names.is_empty());
+                self.done = true;
+                break 'search;
+            }
         }
     }
 
@@ -1308,21 +1353,24 @@ pub(super) struct RegionEntropy {
     window_entropies: Vec<WindowEntropy>,
 }
 
-pub(super) fn process_entropy_window(
-    mut entropy_windows: GenomeWindows,
-    min_coverage: u32,
-    max_filtered_positions: usize,
-    io_threads: usize,
-    caller: &MultipleThresholdModCaller,
+#[derive(new)]
+struct Message {
+    mod_calls: FxHashMap<u64, BaseModCall>,
+    reference_start: i64,
+    reference_end: i64,
+    strand: Strand,
+    // _name: String,
+}
+
+fn process_bam_fp(
     bam_fp: &PathBuf,
-) -> anyhow::Result<EntropyCalculation> {
+    fetch_definition: FetchDefinition,
+    caller: Arc<MultipleThresholdModCaller>,
+    io_threads: usize,
+) -> anyhow::Result<Vec<Message>> {
     let mut reader = bam::IndexedReader::from_path(bam_fp)?;
     reader.set_threads(io_threads)?;
-    let header = reader.header();
-    let chrom_id = entropy_windows.chrom_id;
-    let chrom = String::from_utf8_lossy(header.tid2name(chrom_id)).to_string();
-    let fd = entropy_windows.get_fetch_definition();
-    reader.fetch(fd)?;
+    reader.fetch(fetch_definition)?;
 
     let record_iter = reader
         .records()
@@ -1347,67 +1395,211 @@ pub(super) fn process_entropy_window(
                     None
                 }
             }
-        })
-        .filter_map(|(modbase_info, record, name)| {
-            match ReadBaseModProfile::process_record(
-                &record,
-                &name,
-                modbase_info,
-                None,
-                None,
-                1,
-            ) {
-                Ok(profile) => {
-                    let position_calls =
-                        PositionModCalls::from_profile(&profile);
-                    let strands = position_calls
-                        .iter()
-                        .map(|p| p.mod_strand)
-                        .collect::<HashSet<Strand>>();
-                    if strands.len() > 1 {
-                        debug!("duplex not yet supported");
-                        None
-                    } else {
-                        let strand = if record.is_reverse() {
-                            Strand::Negative
-                        } else {
-                            Strand::Positive
-                        };
-                        let mod_calls = position_calls
-                            .into_iter()
-                            .filter_map(|p| {
-                                match (p.ref_position, p.alignment_strand) {
-                                    (Some(ref_pos), Some(aln_strand)) => {
-                                        Some((p, ref_pos, aln_strand))
-                                    }
-                                    _ => None,
-                                }
-                            })
-                            .map(|(p, ref_pos, _alignment_strand)| {
-                                let mod_base_call = caller
-                                    .call(&p.canonical_base, &p.base_mod_probs);
-                                (ref_pos as u64, mod_base_call)
-                            })
-                            .collect::<FxHashMap<u64, BaseModCall>>();
-                        Some((mod_calls, strand, record, name))
-                    }
-                }
-                Err(e) => {
-                    debug!("read {name} failed to extract modbase info, {e}");
-                    None
-                }
-            }
         });
 
-    for (mod_calls, strand, record, _name) in record_iter {
-        entropy_windows.entropy_windows.par_iter_mut().for_each(|window| {
-            window.add_read_to_patterns(
-                &mod_calls,
-                &record,
-                &strand,
-                max_filtered_positions,
+    let mut messages = Vec::new();
+    for (modbase_info, record, name) in record_iter {
+        match ReadBaseModProfile::process_record(
+            &record,
+            &name,
+            modbase_info,
+            None,
+            None,
+            1,
+        ) {
+            Ok(profile) => {
+                let position_calls = PositionModCalls::from_profile(&profile);
+                let strands = position_calls
+                    .iter()
+                    .map(|p| p.mod_strand)
+                    .collect::<HashSet<Strand>>();
+                if strands.len() > 1 {
+                    debug!("duplex not yet supported");
+                } else {
+                    let strand = if record.is_reverse() {
+                        Strand::Negative
+                    } else {
+                        Strand::Positive
+                    };
+                    let mod_calls = position_calls
+                        .into_iter()
+                        .filter_map(|p| {
+                            match (p.ref_position, p.alignment_strand) {
+                                (Some(ref_pos), Some(aln_strand)) => {
+                                    Some((p, ref_pos, aln_strand))
+                                }
+                                _ => None,
+                            }
+                        })
+                        .map(|(p, ref_pos, _alignment_strand)| {
+                            let mod_base_call = caller
+                                .call(&p.canonical_base, &p.base_mod_probs);
+                            (ref_pos as u64, mod_base_call)
+                        })
+                        .collect::<FxHashMap<u64, BaseModCall>>();
+                    let msg = Message::new(
+                        mod_calls,
+                        record.reference_start(),
+                        record.reference_end(),
+                        strand,
+                    );
+                    messages.push(msg);
+                    // Some((mod_calls, strand, record, name))
+                }
+            }
+            Err(e) => {
+                debug!("read {name} failed to extract modbase info, {e}");
+                // None
+            }
+        };
+    }
+    Ok(messages)
+}
+
+// fn process_records_to_chan<'a, T: Read>(reader: bam::Records<T>, snd:
+// crossbeam::channel::Sender<Message>, caller: Arc<MultipleThresholdModCaller>)
+// {     let record_iter = reader
+//         .filter_map(|r| {
+//             debug!("first iteration!");
+//             r.ok()
+//         })
+//         .filter(|record| {
+//             !record.is_unmapped()
+//                 && !(record_is_not_primary(&record)
+//                 || record.seq_len() == 0)
+//         })
+//         .filter_map(|record| {
+//             String::from_utf8(record.qname().to_vec())
+//                 .ok()
+//                 .map(|name| (record, name)) })
+//         .filter_map(|(record, name)| {
+//             match ModBaseInfo::new_from_record(&record) {
+//                 Ok(modbase_info) => Some((modbase_info, record, name)),
+//                 Err(run_error) => {
+//                     debug!(
+//                             "read {name}, failed to parse modbase info, \
+//                              {run_error}"
+//                         );
+//                     None
+//                 }
+//             }
+//         });
+//
+//     debug!("about to process records");
+//     for (modbase_info, record, name) in record_iter {
+//         debug!("got record {name}");
+//         match ReadBaseModProfile::process_record(
+//             &record,
+//             &name,
+//             modbase_info,
+//             None,
+//             None,
+//             1,
+//         ) {
+//             Ok(profile) => {
+//                 debug!("got a profile");
+//                 let position_calls =
+//                     PositionModCalls::from_profile(&profile);
+//                 let strands = position_calls
+//                     .iter()
+//                     .map(|p| p.mod_strand)
+//                     .collect::<HashSet<Strand>>();
+//                 if strands.len() > 1 {
+//                     debug!("duplex not yet supported");
+//                 } else {
+//                     let strand = if record.is_reverse() {
+//                         Strand::Negative
+//                     } else {
+//                         Strand::Positive
+//                     };
+//                     let mod_calls = position_calls
+//                         .into_iter()
+//                         .filter_map(|p| {
+//                             match (p.ref_position, p.alignment_strand) {
+//                                 (Some(ref_pos), Some(aln_strand)) => {
+//                                     Some((p, ref_pos, aln_strand))
+//                                 }
+//                                 _ => None,
+//                             }
+//                         })
+//                         .map(|(p, ref_pos, _alignment_strand)| {
+//                             let mod_base_call = caller.call(
+//                                 &p.canonical_base,
+//                                 &p.base_mod_probs,
+//                             );
+//                             (ref_pos as u64, mod_base_call)
+//                         })
+//                         .collect::<FxHashMap<u64, BaseModCall>>();
+//                     let msg = Message::new(
+//                         mod_calls,
+//                         record.reference_start(),
+//                         record.reference_end(),
+//                         strand,
+//                         name,
+//                     );
+//                     debug!("sending message!");
+//                     snd.send(msg).expect("should send");
+//                     // Some((mod_calls, strand, record, name))
+//                 }
+//             }
+//             Err(e) => {
+//                 debug!(
+//                         "read {name} failed to extract modbase info, {e}"
+//                     );
+//                 // None
+//             }
+//         };
+//     }
+// }
+
+pub(super) fn process_entropy_window(
+    mut entropy_windows: GenomeWindows,
+    min_coverage: u32,
+    max_filtered_positions: usize,
+    io_threads: usize,
+    caller: Arc<MultipleThresholdModCaller>,
+    bam_fps: &[PathBuf],
+) -> anyhow::Result<EntropyCalculation> {
+    let bam_fp = &bam_fps[0];
+    let reader = bam::IndexedReader::from_path(bam_fp)?;
+    let header = reader.header();
+    let chrom_id = entropy_windows.chrom_id;
+    let chrom = String::from_utf8_lossy(header.tid2name(chrom_id)).to_string();
+    drop(reader);
+
+    let results = bam_fps
+        .into_par_iter()
+        .map(|fp| {
+            process_bam_fp(
+                fp,
+                entropy_windows.get_fetch_definition(),
+                caller.clone(),
+                io_threads,
             )
-        });
+        })
+        .collect::<Vec<anyhow::Result<Vec<Message>>>>();
+
+    for message_result in results {
+        match message_result {
+            Ok(messages) => {
+                for message in messages {
+                    entropy_windows.entropy_windows.par_iter_mut().for_each(
+                        |window| {
+                            window.add_read_to_patterns(
+                                &message.mod_calls,
+                                message.reference_start,
+                                message.reference_end,
+                                message.strand,
+                                max_filtered_positions,
+                            )
+                        },
+                    );
+                }
+            }
+            Err(e) => {
+                debug!("failed to run bam {e}");
+            }
+        }
     }
 
     Ok(entropy_windows.into_entropy_calculation(&chrom, chrom_id, min_coverage))
@@ -1433,8 +1625,8 @@ impl BedRegion {
         let (rest, name) = if n_parts == 3 {
             (rest, format!("{chrom}:{start}-{stop}"))
         } else {
-            let (rest, _) = multispace1(rest)?;
-            crate::parsing_utils::consume_string(rest)?
+            let (rest, _leading_tab) = multispace1(rest)?;
+            crate::parsing_utils::consume_string_spaces(rest)?
         };
 
         let interval = (start as usize)..(stop as usize);
@@ -1471,5 +1663,11 @@ mod entropy_mod_tests {
         assert_eq!(&bed_region.chrom, "chr1");
         assert_eq!(bed_region.interval, 100usize..101);
         assert_eq!(&bed_region.name, "foo");
+
+        let raw = "chr20\t279148\t279507\tCpG: 39";
+        let bed_region = BedRegion::parse_str(raw).expect("should parse");
+        assert_eq!(&bed_region.chrom, "chr20");
+        assert_eq!(bed_region.interval, 279148usize..279507);
+        assert_eq!(&bed_region.name, "CpG: 39");
     }
 }

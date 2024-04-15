@@ -30,8 +30,7 @@ fn write_entropy_windows<T: Write>(
                     || !drop_zeros
                 {
                     let row = format!(
-                        "\
-                                {name}\t{}\t{}\t{}\t{}\t{}\n",
+                        "{name}\t{}\t{}\t{}\t{}\t{}\n",
                         pos_entropy.interval.start,
                         pos_entropy.interval.end,
                         pos_entropy.me_entropy,

@@ -13,7 +13,7 @@ path = "src/lib.rs"
 [dependencies]
 rust-htslib = "0.43.1"
 bio = "1.0.0"
-indexmap = "1.9.2"
+indexmap = "2.2.6"
 rustc-hash = "1.1.0"
 pulp = "0.10.3"
 clap = { version = "4.0.29", features = ["derive", "wrap_help"]}
