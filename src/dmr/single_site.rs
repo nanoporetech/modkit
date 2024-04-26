@@ -452,25 +452,22 @@ impl SingleSiteDmrScore {
         position: u64,
         estimator: &PMapEstimator,
     ) -> anyhow::Result<Self> {
-        let (replicate_epmap, replicate_effect_sizes) =
-            if sample_index.matched_replicate_samples() {
-                assert_eq!(
-                    counts_a.len(),
-                    counts_b.len(),
-                    "matched samples need to be the same"
-                );
-                let n_samples = counts_a.len();
-                let mut replicate_epmap = Vec::with_capacity(n_samples);
-                let mut replicate_effect_size = Vec::with_capacity(n_samples);
-                for (a, b) in counts_a.iter().zip(counts_b) {
-                    let epmap = estimator.predict(a, b)?;
-                    replicate_epmap.push(epmap.e_pmap);
-                    replicate_effect_size.push(epmap.effect_size);
-                }
-                (replicate_epmap, replicate_effect_size)
-            } else {
-                (Vec::new(), Vec::new())
-            };
+        let (replicate_epmap, replicate_effect_sizes) = if sample_index
+            .matched_replicate_samples()
+            && counts_a.len() == counts_b.len()
+        {
+            let n_samples = counts_a.len();
+            let mut replicate_epmap = Vec::with_capacity(n_samples);
+            let mut replicate_effect_size = Vec::with_capacity(n_samples);
+            for (a, b) in counts_a.iter().zip(counts_b) {
+                let epmap = estimator.predict(a, b)?;
+                replicate_epmap.push(epmap.e_pmap);
+                replicate_effect_size.push(epmap.effect_size);
+            }
+            (replicate_epmap, replicate_effect_size)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let pct_a_samples = ((counts_a.len() as f32
             / sample_index.num_a_samples() as f32)
             * 100f32)
@@ -511,9 +508,17 @@ impl SingleSiteDmrScore {
     ) -> String {
         let sep = '\t';
         if matched_samples {
-            let replicate_map_pvals = self.replicate_map_pval.iter().join(",");
+            let replicate_map_pvals = if self.replicate_map_pval.is_empty() {
+                "-".to_string()
+            } else {
+                self.replicate_map_pval.iter().join(",")
+            };
             let replicate_effect_sizes =
-                self.replicate_effect_sizes.iter().join(",");
+                if self.replicate_effect_sizes.is_empty() {
+                    "-".to_string()
+                } else {
+                    self.replicate_effect_sizes.iter().join(",")
+                };
             format!(
                 "\
             {}{sep}\
