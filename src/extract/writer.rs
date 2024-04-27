@@ -86,22 +86,24 @@ impl PositionModCalls {
             .fold(
                 Vec::<Self>::new(),
                 |mut acc, ((query_pos, strand, base), mod_profile)| {
-                    let base_mod_probs =
-                        if mod_profile.iter().any(|x| x.inferred) {
-                            BaseModProbs::new_inferred_canonical(&mod_codes)
-                        } else {
-                            let mut probs = mod_profile
-                                .iter()
-                                .map(|x| (x.raw_mod_code, x.q_mod))
-                                .collect::<FxHashMap<ModCodeRepr, f32>>();
-                            for code in mod_codes.iter() {
-                                if !probs.contains_key(&code) {
-                                    probs.insert(*code, 0f32);
-                                }
+                    let base_mod_probs = if mod_profile
+                        .iter()
+                        .any(|x| x.inferred)
+                    {
+                        BaseModProbs::new_inferred_canonical(mod_codes.iter())
+                    } else {
+                        let mut probs = mod_profile
+                            .iter()
+                            .map(|x| (x.raw_mod_code, x.q_mod))
+                            .collect::<FxHashMap<ModCodeRepr, f32>>();
+                        for code in mod_codes.iter() {
+                            if !probs.contains_key(&code) {
+                                probs.insert(*code, 0f32);
                             }
+                        }
 
-                            BaseModProbs::new(probs, false)
-                        };
+                        BaseModProbs::new(probs, false)
+                    };
                     let template = &mod_profile[0];
                     let ref_position = template.ref_position;
                     let num_clip_start = template.num_soft_clipped_start;
