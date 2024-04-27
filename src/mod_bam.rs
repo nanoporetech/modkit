@@ -335,11 +335,14 @@ impl BaseModProbs {
         }
     }
 
-    pub fn new_inferred_canonical<T: Into<ModCodeRepr> + Copy>(
-        mod_codes: &[T],
+    pub fn new_inferred_canonical<
+        'a,
+        T: Into<ModCodeRepr> + Copy + Hash + 'a,
+        IT: Iterator<Item = &'a T>,
+    >(
+        mod_codes: IT,
     ) -> Self {
-        let probs =
-            mod_codes.iter().map(|code| ((*code).into(), 0f32)).collect();
+        let probs = mod_codes.map(|code| ((*code).into(), 0f32)).collect();
         Self { probs, inferred: true }
     }
 
@@ -370,7 +373,7 @@ impl BaseModProbs {
     }
 
     fn iter_codes(&self) -> impl Iterator<Item = &ModCodeRepr> {
-        self.probs.iter().map(|(code, _)| code)
+        self.probs.keys()
     }
 
     // todo(arand): these methods should be removed/renamed to be more useful
@@ -786,24 +789,22 @@ impl SeqPosBaseModProbs {
     }
 
     // adds the implicit canonical calls when the mode is appropriate.
-    fn add_implicit_mod_calls(self, delta_list: &[u32]) -> Self {
+    fn add_implicit_mod_calls(
+        self,
+        delta_list: &[u32],
+        all_mod_codes: &HashSet<ModCodeRepr>,
+    ) -> Self {
         if self.skip_mode == SkipMode::ProbModified
             || self.skip_mode == SkipMode::ImplicitProbModified
         {
-            let all_mod_codes = self
-                .pos_to_base_mod_probs
-                .values()
-                .map(|base_mod_probs| base_mod_probs.iter_codes())
-                .flatten()
-                .unique()
-                .copied()
-                .collect::<Vec<ModCodeRepr>>();
             let (probs, _) = delta_list.iter().enumerate().fold(
                 (self.pos_to_base_mod_probs, 0u32),
                 |(mut acc, cum_sum), (pos, d)| {
                     if *d > cum_sum {
                         acc.entry(pos).or_insert_with(|| {
-                            BaseModProbs::new_inferred_canonical(&all_mod_codes)
+                            BaseModProbs::new_inferred_canonical(
+                                all_mod_codes.iter(),
+                            )
                         });
                     }
                     (acc, *d)
@@ -944,13 +945,19 @@ pub fn format_mm_ml_tag(
             && (skip_mode == SkipMode::ProbModified
                 || skip_mode == SkipMode::ImplicitProbModified)
         {
-            continue;
-        }
-        for (mod_base_code, mod_base_prob) in mod_base_probs.iter_probs() {
-            let entry = mod_code_to_position
-                .entry((*mod_base_code, strand))
-                .or_insert(Vec::new());
-            entry.push((position, *mod_base_prob));
+            // add mod codes so that they are added later
+            for mod_base_code in mod_base_probs.iter_codes() {
+                mod_code_to_position
+                    .entry((*mod_base_code, strand))
+                    .or_insert_with(|| Vec::new());
+            }
+        } else {
+            for (mod_base_code, mod_base_prob) in mod_base_probs.iter_probs() {
+                let entry = mod_code_to_position
+                    .entry((*mod_base_code, strand))
+                    .or_insert(Vec::new());
+                entry.push((position, *mod_base_prob));
+            }
         }
     }
 
@@ -978,13 +985,21 @@ pub fn format_mm_ml_tag(
         {
             positions_and_probs
                 .sort_by(|(x_pos, _), (y_pos, _)| x_pos.cmp(&y_pos));
-            let header = format!(
-                "{}{}{}{},", // C+m?,
-                canonical_base,
-                strand.to_char(),
-                mod_code,
-                skip_mode_label
-            );
+            let header = {
+                let mut header = format!(
+                    "{}{}{}{}", // C+m?,
+                    canonical_base,
+                    strand.to_char(),
+                    mod_code,
+                    skip_mode_label
+                );
+
+                if !positions_and_probs.is_empty() {
+                    // don't want to add this comma if there aren't any probs..
+                    header.push(',');
+                }
+                header
+            };
             let positions = positions_and_probs
                 .iter()
                 .map(|(pos, _prob)| *pos)
@@ -1136,6 +1151,7 @@ impl ModBaseInfo {
         let mut pos_seq_base_mod_probs = HashMap::new();
         let mut converters = HashMap::new();
         let mut neg_seq_base_mod_probs = HashMap::new();
+        let mut strand_observed_mod_codes = HashMap::new();
         let mut pointer = 0usize;
         for raw_mm in mm.split(';').filter(|raw_mm| !raw_mm.is_empty()) {
             let base_mod_positions = BaseModPositions::parse(raw_mm)?;
@@ -1147,13 +1163,26 @@ impl ModBaseInfo {
                         base_mod_positions.canonical_base,
                     )
                 });
+            let strand = if base_mod_positions.is_positive_strand() {
+                Strand::Positive
+            } else {
+                Strand::Negative
+            };
+            for mod_code in base_mod_positions.mod_base_codes.iter() {
+                strand_observed_mod_codes
+                    .entry(strand)
+                    .or_insert(HashMap::new())
+                    .entry(base_mod_positions.canonical_base)
+                    .or_insert(HashSet::new())
+                    .insert(*mod_code);
+            }
+
             let base_mod_probs = get_base_mod_probs(
                 &base_mod_positions,
                 &raw_ml,
                 pointer,
                 &converter,
             )?;
-
             let seq_base_mod_probs = if base_mod_positions.is_positive_strand()
             {
                 &mut pos_seq_base_mod_probs
@@ -1177,10 +1206,20 @@ impl ModBaseInfo {
             pointer += base_mod_positions.delta_list.len()
                 * base_mod_positions.stride();
         }
-        let pos_seq_base_mod_probs =
-            Self::add_implicit_calls(pos_seq_base_mod_probs, &converters);
-        let neg_seq_base_mod_probs =
-            Self::add_implicit_calls(neg_seq_base_mod_probs, &converters);
+        let pos_seq_base_mod_probs = Self::add_implicit_calls(
+            pos_seq_base_mod_probs,
+            &converters,
+            strand_observed_mod_codes
+                .get(&Strand::Positive)
+                .unwrap_or(&HashMap::new()),
+        );
+        let neg_seq_base_mod_probs = Self::add_implicit_calls(
+            neg_seq_base_mod_probs,
+            &converters,
+            strand_observed_mod_codes
+                .get(&Strand::Negative)
+                .unwrap_or(&HashMap::new()),
+        );
 
         Ok(Self {
             pos_seq_base_mod_probs,
@@ -1238,6 +1277,7 @@ impl ModBaseInfo {
     fn add_implicit_calls(
         base_to_seq_base_mod_probs: HashMap<char, SeqPosBaseModProbs>,
         converters: &HashMap<char, DeltaListConverter>,
+        all_mod_codes: &HashMap<char, HashSet<ModCodeRepr>>,
     ) -> HashMap<char, SeqPosBaseModProbs> {
         base_to_seq_base_mod_probs
             .into_iter()
@@ -1247,6 +1287,7 @@ impl ModBaseInfo {
                         .get(&primary_base)
                         .expect("somehow missing delta list for {primary_base}")
                         .cumulative_counts,
+                    all_mod_codes.get(&primary_base).unwrap_or(&HashSet::new()),
                 );
                 (primary_base, corrected)
             })
@@ -1815,9 +1856,11 @@ mod mod_bam_tests {
         );
         assert_eq!(mm, "C+m.,1,1,0;");
         assert_eq!(ml, vec![25, 230, 51]);
+        let mod_codes =
+            vec![ModCodeRepr::Code('m')].into_iter().collect::<HashSet<_>>();
 
         let seq_pos_base_mod_probs = seq_pos_base_mod_probs
-            .add_implicit_mod_calls(&converter.cumulative_counts);
+            .add_implicit_mod_calls(&converter.cumulative_counts, &mod_codes);
         let (mm, ml) = format_mm_ml_tag(
             seq_pos_base_mod_probs.clone(),
             Strand::Positive,
