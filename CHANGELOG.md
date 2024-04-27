@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.8-rc1]
+### Fixes
+- [dmr] Don't crash when using matched samples, but not all samples have modification counts at a position. Fixes #165.
+- [update-tags] Correctly handle implicit tags when there are no probs, i.e. `C+h` -> `C+h.`., fixes #160.
+
 ## [v0.2.7]
 ### Fixes
 - [dmr] Header was incorrect with multiple samples
