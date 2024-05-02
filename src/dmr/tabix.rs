@@ -7,10 +7,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context};
 use log::debug;
 use noodles::csi::{
-    binning_index::index::reference_sequence::bin::Chunk as IndexChunk,
-    BinningIndex,
+    index::reference_sequence::bin::Chunk as IndexChunk, Index as CsiIndex,
 };
-use noodles::tabix::Index as CsiIndex;
+
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
