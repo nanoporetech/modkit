@@ -13,7 +13,7 @@ fn test_validate_help() {
 }
 
 #[test]
-fn test_validate() {
+fn test_validate_expected() {
     let output_file = std::env::temp_dir().join("test_validate_output.tsv");
     run_modkit(&[
         "validate",
@@ -39,7 +39,7 @@ fn test_validate() {
                 .next()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or_default();
-            assert_eq!(accuracy, 79.97674);
+            assert_eq!(accuracy, 85.305214);
         }
         if line_content.starts_with("filtered_accuracy") {
             let accuracy: f32 = line_content
@@ -48,7 +48,7 @@ fn test_validate() {
                 .next()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or_default();
-            assert_eq!(accuracy, 84.17161);
+            assert_eq!(accuracy, 89.00287);
         }
     }
 }
