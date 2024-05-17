@@ -596,35 +596,43 @@ fn balance_ground_truth(status_probs: &mut StatusProbs) -> anyhow::Result<()> {
         .min()
         .ok_or_else(|| anyhow!("No minimum value found"))?;
     let totals_and_limits = gt_totals
-        .into_iter()
+        .iter()
         .map(|(gt_mod_repr, gt_total)| {
             let elements_to_remove =
                 gt_total.checked_sub(gt_target_size).unwrap_or(0);
-            (gt_mod_repr, (gt_total, elements_to_remove))
+            (*gt_mod_repr, (*gt_total, elements_to_remove))
         })
         .collect::<HashMap<BaseStatus, (usize, usize)>>();
 
-    for ((gt_mod, _), probs) in status_probs.iter_mut() {
-        if probs.len() <= gt_target_size {
-            continue;
-        }
-        if let Some((gt_total, elements_to_remove)) =
-            totals_and_limits.get(gt_mod)
-        {
-            let n_obs = probs.len();
-            let ratio = n_obs as f32 / *gt_total as f32;
-            let samp_target_size =
-                n_obs - (ratio * (*elements_to_remove) as f32).round() as usize;
-            let keepers =
-                Array1::linspace(0.0, (n_obs - 1) as f64, samp_target_size + 2)
-                    .into_iter()
-                    .skip(1)
-                    .take(samp_target_size)
-                    .map(|x| x.round() as usize)
-                    .filter_map(|idx| probs.get(idx).copied())
-                    .collect::<Vec<f32>>();
-            *probs = keepers;
-        }
+    for (gt_total, elements_to_remove, probs) in
+        status_probs.iter_mut().filter_map(|((gt_mod, _), probs)| {
+            let (gt_total, elements_to_remove) =
+            // this is a safe unwrap because totals_and_limits
+            // has the same keys as gt_totals, which has the same
+            // keys as status_probs
+                totals_and_limits.get(gt_mod).unwrap();
+            if *gt_total > gt_target_size {
+                Some((gt_total, elements_to_remove, probs))
+            } else {
+                None
+            }
+        })
+    {
+        let n_obs = probs.len();
+        let ratio = n_obs as f32 / *gt_total as f32;
+        let samp_target_size =
+            n_obs - (ratio * (*elements_to_remove) as f32).round() as usize;
+        // Keep the number of probabilities specified . Keep these in a
+        // stratified manner assuming a sorted input using linspace.
+        let keepers =
+            Array1::linspace(0.0, (n_obs - 1) as f64, samp_target_size + 2)
+                .into_iter()
+                .skip(1)
+                .take(samp_target_size)
+                .map(|x| x.round() as usize)
+                .filter_map(|idx| probs.get(idx).copied())
+                .collect::<Vec<f32>>();
+        *probs = keepers;
     }
     Ok(())
 }
@@ -950,6 +958,8 @@ impl ValidateFromModbam {
 
         info!("Balancing ground truth call totals");
         balance_ground_truth(&mut all_probs)?;
+        info!("Balanced counts summary");
+        print_table(&all_probs, false);
         let total_calls =
             all_probs.iter().map(|(_, values)| values.len()).sum::<usize>();
         let correct_calls = all_probs
