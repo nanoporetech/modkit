@@ -80,6 +80,69 @@ pub struct PairwiseDmr {
     /// Path to reference fasta for used in the pileup/alignment.
     #[arg(long = "ref")]
     reference_fasta: PathBuf,
+    /// Run segmentation, output segmented differentially methylated regions to
+    /// this file.
+    #[arg(long = "segment", conflicts_with = "regions_bed")]
+    segmentation_fp: Option<PathBuf>,
+
+    /// Maximum number of base pairs between modified bases for them to be
+    /// segmented together.
+    #[arg(long, requires = "segmentation_fp", default_value_t = 5000)]
+    max_gap_size: u64,
+    /// Prior probability of a differentially methylated position
+    #[arg(
+        long,
+        requires = "segmentation_fp",
+        default_value_t = 0.1,
+        hide_short_help = true
+    )]
+    dmr_prior: f64,
+    /// Maximum probability of continuing a differentially methylated block,
+    /// decay will be dynamic based on proximity to the next position.
+    #[arg(
+        long,
+        requires = "segmentation_fp",
+        default_value_t = 0.9,
+        hide_short_help = true
+    )]
+    diff_stay: f64,
+    /// Significance factor, effective p-value necessary to favor the
+    /// "Different" state.
+    #[arg(
+        long,
+        requires = "segmentation_fp",
+        default_value_t = 0.01,
+        hide_short_help = true
+    )]
+    significance_factor: f64,
+    /// Use logarithmic decay for "Different" stay probability
+    #[arg(
+        long,
+        requires = "segmentation_fp",
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    log_transition_decay: bool,
+    /// After this many base pairs, the transition probability will become the
+    /// prior probability of encountering a differentially modified
+    /// position.
+    #[arg(
+        long,
+        requires = "segmentation_fp",
+        default_value_t = 500,
+        hide_short_help = true
+    )]
+    decay_distance: u32,
+    /// Preset HMM segmentation parameters for higher propensity to switch from
+    /// "Same" to "Different" state. Results will be shorter segments, but
+    /// potentially higher sensitivity.
+    #[arg(
+        long,
+        requires = "segmentation_fp",
+        conflicts_with_all=["log_transition_decay", "significance_factor", "diff_stay", "dmr_prior"],
+        default_value_t=false
+    )]
+    fine_grained: bool,
     /// Bases to use to calculate DMR, may be multiple. For example, to
     /// calculate differentially methylated regions using only cytosine
     /// modifications use --base C.
@@ -294,6 +357,11 @@ impl PairwiseDmr {
 
         if self.is_single_site() {
             info!("running single-site analysis");
+            let linear_transitions = if self.fine_grained {
+                false
+            } else {
+                !self.log_transition_decay
+            };
             return SingleSiteDmrAnalysis::new(
                 sample_index,
                 genome_positions,
@@ -307,9 +375,20 @@ impl PairwiseDmr {
                 self.delta,
                 self.n_sample_records,
                 self.header,
+                self.segmentation_fp.as_ref(),
                 &mpb,
             )?
-            .run(mpb, pool, writer);
+            .run(
+                mpb,
+                pool,
+                self.max_gap_size,
+                self.dmr_prior,
+                self.diff_stay,
+                self.significance_factor,
+                self.decay_distance,
+                linear_transitions,
+                writer,
+            );
         }
 
         let sample_index = Arc::new(sample_index);

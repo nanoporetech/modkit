@@ -337,7 +337,7 @@ impl ReferenceRecord {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(new, Debug, Eq, PartialEq)]
 pub struct Region {
     pub name: String,
     pub start: u32,

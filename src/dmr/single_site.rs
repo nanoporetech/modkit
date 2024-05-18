@@ -1,11 +1,14 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::fs::File;
 use std::io::Write;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{bail, Context};
-use indicatif::MultiProgress;
+use derive_new::new;
+use indicatif::{MultiProgress, ProgressBar};
 use itertools::Itertools;
 use log::{debug, error, info};
 use rayon::prelude::*;
@@ -17,10 +20,12 @@ use crate::dmr::tabix::{
 };
 use crate::dmr::util::DmrBatchOfPositions;
 use crate::genome_positions::GenomePositions;
+use crate::hmm::{HmmModel, States};
 use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::BorrowingMoniod;
 use crate::thresholds::percentile_linear_interp;
-use crate::util::{get_subroutine_progress_bar, get_ticker};
+use crate::util::{get_subroutine_progress_bar, get_ticker, Region};
+use crate::writers::TsvWriter;
 
 pub(super) struct SingleSiteDmrAnalysis {
     sample_index: Arc<SingleSiteSampleIndex>,
@@ -29,6 +34,7 @@ pub(super) struct SingleSiteDmrAnalysis {
     batch_size: usize,
     interval_size: u64,
     header: bool,
+    segmentation_fp: Option<PathBuf>,
 }
 
 impl SingleSiteDmrAnalysis {
@@ -45,6 +51,7 @@ impl SingleSiteDmrAnalysis {
         rope: f64,
         sample_n: usize,
         header: bool,
+        segmentation_fp: Option<&PathBuf>,
         progress: &MultiProgress,
     ) -> anyhow::Result<Self> {
         let sample_index =
@@ -109,6 +116,7 @@ impl SingleSiteDmrAnalysis {
             batch_size,
             interval_size,
             header,
+            segmentation_fp: segmentation_fp.cloned(),
         })
     }
 
@@ -116,6 +124,12 @@ impl SingleSiteDmrAnalysis {
         &self,
         multi_progress_bar: MultiProgress,
         pool: rayon::ThreadPool,
+        max_gap_size: u64,
+        dmr_prior: f64,
+        diff_stay: f64,
+        significance_factor: f64,
+        decay_distance: u32,
+        linear_transitions: bool,
         mut writer: Box<dyn Write>,
     ) -> anyhow::Result<()> {
         let matched_samples = self.sample_index.matched_replicate_samples();
@@ -133,14 +147,26 @@ impl SingleSiteDmrAnalysis {
             )?;
         }
 
-        let batch_iter = SingleSiteBatches::new(
-            self.sample_index.clone(),
-            self.genome_positions.clone(),
-            self.batch_size,
-            self.interval_size,
-        )?;
+        let mut segmenter: Box<dyn DmrSegmenter> =
+            if let Some(segmentation_fp) = &self.segmentation_fp {
+                Box::new(HmmDmrSegmenter::new(
+                    segmentation_fp,
+                    max_gap_size,
+                    dmr_prior,
+                    diff_stay,
+                    0.3f64,
+                    -0.1f64,
+                    significance_factor,
+                    linear_transitions,
+                    decay_distance,
+                    &multi_progress_bar,
+                )?)
+            } else {
+                Box::new(DummySegmenter::new())
+            };
 
-        let (snd, rcv) = crossbeam::channel::bounded(1000);
+        let (scores_snd, scores_rcv) = crossbeam::channel::bounded(1000);
+        // let (segment_snd, segment_rcv) = crossbeam::channel::bounded(1000);
         let processed_batches = multi_progress_bar.add(get_ticker());
         let failure_counter = multi_progress_bar.add(get_ticker());
         let success_counter = multi_progress_bar.add(get_ticker());
@@ -148,6 +174,13 @@ impl SingleSiteDmrAnalysis {
         processed_batches.set_message("batches processed");
         failure_counter.set_message("sites failed");
         success_counter.set_message("sites processed successfully");
+
+        let batch_iter = SingleSiteBatches::new(
+            self.sample_index.clone(),
+            self.genome_positions.clone(),
+            self.batch_size,
+            self.interval_size,
+        )?;
 
         let sample_index = self.sample_index.clone();
         let pmap_estimator = self.pmap_estimator.clone();
@@ -184,7 +217,7 @@ impl SingleSiteDmrAnalysis {
                     || {
                         results.into_iter().for_each(
                             |chrom_to_scores: Vec<ChromToSingleScores>| {
-                                match snd.send(chrom_to_scores) {
+                                match scores_snd.send(chrom_to_scores) {
                                     Ok(_) => processed_batches.inc(1),
                                     Err(e) => {
                                         error!(
@@ -197,19 +230,22 @@ impl SingleSiteDmrAnalysis {
                     },
                 );
                 results = super_batch_results;
-                results.into_iter().for_each(|chrom_to_scores| {
-                    match snd.send(chrom_to_scores) {
+                results.into_iter().for_each(
+                    |chrom_to_scores| match scores_snd.send(chrom_to_scores) {
                         Ok(_) => processed_batches.inc(1),
                         Err(e) => {
                             error!("failed to send on channel, {e}");
                         }
-                    }
-                });
+                    },
+                );
             }
         });
 
         let mut success_count = 0usize;
-        for batch_result in rcv {
+        for batch_result in scores_rcv {
+            if let Err(e) = segmenter.add(&batch_result) {
+                debug!("segmentation error, {e}");
+            }
             for (chrom, results) in batch_result {
                 for result in results {
                     match result {
@@ -235,8 +271,12 @@ impl SingleSiteDmrAnalysis {
             }
         }
 
+        if let Err(e) = segmenter.run_current_chunk() {
+            debug!("segmentation error, {e}")
+        }
         success_counter.finish_and_clear();
         failure_counter.finish_and_clear();
+        segmenter.clean_up()?;
 
         info!(
             "finished, processed {} sites successfully, {} failed",
@@ -271,6 +311,7 @@ impl SingleSiteBatches {
             .contig_sizes()
             .filter(|(name, _)| sample_index.has_contig(name))
             .map(|(name, length)| (name.to_owned(), (0u64..(length as u64))))
+            .sorted_by(|(a, _), (b, _)| a.cmp(b))
             .collect::<VecDeque<(String, Range<u64>)>>();
 
         if let Some((curr_contig, curr_contig_range)) =
@@ -398,6 +439,7 @@ struct SingleSiteDmrScore {
     effect_size: f64,
     balanced_map_pval: f64,
     balanced_effect_size: f64,
+    balanced_score: f64,
     replicate_map_pval: Vec<f64>,
     replicate_effect_sizes: Vec<f64>,
     pct_a_samples: usize,
@@ -480,6 +522,8 @@ impl SingleSiteDmrScore {
         let balanced_counts_b = collapse_counts(counts_b, true);
         let epmap_balanced =
             estimator.predict(&balanced_counts_a, &balanced_counts_b)?;
+        let balanced_llr_score =
+            llk_ratio(&balanced_counts_a, &balanced_counts_b)?;
         let collapsed_a = collapse_counts(counts_a, false);
         let collapsed_b = collapse_counts(counts_b, false);
         let epmap = estimator.predict(&collapsed_a, &collapsed_b)?;
@@ -493,6 +537,7 @@ impl SingleSiteDmrScore {
             effect_size: epmap.effect_size,
             balanced_map_pval: epmap_balanced.e_pmap,
             balanced_effect_size: epmap_balanced.effect_size,
+            balanced_score: balanced_llr_score,
             replicate_map_pval: replicate_epmap,
             replicate_effect_sizes,
             pct_a_samples,
@@ -789,4 +834,343 @@ fn calculate_max_coverages(
 
     info!("calculated max coverage for a: {a_max_cov} and b: {b_max_cov}");
     Ok([a_max_cov, b_max_cov])
+}
+
+trait DmrSegmenter {
+    fn add(&mut self, dmr_scores: &[ChromToSingleScores])
+        -> anyhow::Result<()>;
+    fn run_current_chunk(&mut self) -> anyhow::Result<()>;
+    fn clean_up(&mut self) -> anyhow::Result<()>;
+}
+
+#[derive(new)]
+struct DummySegmenter {}
+
+impl DmrSegmenter for DummySegmenter {
+    fn add(
+        &mut self,
+        _dmr_scores: &[ChromToSingleScores],
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn run_current_chunk(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn clean_up(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+struct HmmDmrSegmenter {
+    writer: TsvWriter<File>,
+    hmm: HmmModel,
+    curr_region_scores: Vec<f64>,
+    curr_region_positions: Vec<u64>,
+    curr_counts_a: BTreeMap<u64, AggregatedCounts>,
+    curr_counts_b: BTreeMap<u64, AggregatedCounts>,
+    curr_chrom: Option<String>,
+    curr_end: Option<u64>,
+    max_gap_size: u64,
+    size_gauge: ProgressBar,
+    segments_written: ProgressBar,
+}
+
+impl DmrSegmenter for HmmDmrSegmenter {
+    fn add(
+        &mut self,
+        dmr_scores: &[ChromToSingleScores],
+    ) -> anyhow::Result<()> {
+        for (chrom, scores) in dmr_scores.iter() {
+            if let Some(curr_chrom) = self.curr_chrom.as_ref() {
+                if chrom == curr_chrom {
+                    let min_pos = scores.iter().find_map(|r| match r {
+                        Ok(score) => Some(score.position),
+                        Err(_) => None,
+                    });
+                    match (min_pos, self.curr_end) {
+                        (Some(pos), Some(end)) => {
+                            if pos
+                                .checked_sub(end)
+                                .map(|x| x < self.max_gap_size)
+                                .unwrap_or(false)
+                            {
+                                // within limits, add to current
+                                self.append_scores(&scores);
+                            } else {
+                                // next chunk is too far away, run current and
+                                // reset
+                                self.run_current_chunk()?;
+                                self.append_scores(&scores);
+                            }
+                        }
+                        (Some(_pos), None) => {
+                            // maybe this never happens?
+                            // don't have any data, append
+                            self.append_scores(&scores);
+                        }
+                        (None, _) => {
+                            // nothing to do
+                            debug!("no valid results..");
+                        }
+                    }
+                } else {
+                    // finish current chunk and add this chunk to current
+                    self.run_current_chunk()?;
+                    // update chrom
+                    self.curr_chrom = Some(chrom.to_string());
+                    // update scores
+                    assert_eq!(
+                        self.curr_chrom.as_ref(),
+                        Some(chrom),
+                        "chroms arent' the same?"
+                    );
+                    self.append_scores(&scores);
+                }
+            } else {
+                self.curr_chrom = Some(chrom.to_string());
+                assert_eq!(
+                    self.curr_chrom.as_ref(),
+                    Some(chrom),
+                    "chroms arent' the same?"
+                );
+                self.append_scores(&scores);
+            }
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn run_current_chunk(&mut self) -> anyhow::Result<()> {
+        if self.curr_region_scores.is_empty() {
+            debug!("no scores to run");
+            assert!(
+                self.curr_region_positions.is_empty(),
+                "should not have positions and no scores"
+            );
+            return Ok(());
+        }
+        assert_eq!(
+            self.curr_region_positions.len(),
+            self.curr_region_scores.len(),
+            "scores and positions should be the same length"
+        );
+
+        // these expects and asserts are safe because this method is only called
+        // when self.curr_chrom is some
+        let region =
+            self.current_chunk_region().expect("region should not be None");
+        assert!(self.curr_chrom.is_some());
+        let start_time = std::time::Instant::now();
+        let path = self.hmm.viterbi_path(
+            &self.curr_region_scores,
+            &self.curr_region_positions,
+        );
+        let took = start_time.elapsed();
+        debug!(
+            "segmenting {} ({} scores), took {took:?}",
+            region.to_string(),
+            self.curr_region_scores.len()
+        );
+        let integrated_path =
+            path_to_region_labels(&path, &self.curr_region_positions);
+        for (start, end, state) in integrated_path.iter() {
+            let counts_a = self.get_counts_a(*start, *end);
+            let counts_b = self.get_counts_b(*start, *end);
+            let score = llk_ratio(&counts_a, &counts_b)?;
+            let frac_mod_a = counts_a.pct_modified();
+            let frac_mod_b = counts_b.pct_modified();
+            let effect_size = frac_mod_a - frac_mod_b;
+            let num_sites = self.curr_counts_a.range(*start..*end).count();
+
+            let sep = '\t';
+            let row = format!(
+                "{}{sep}\
+                {start}{sep}\
+                {end}{sep}\
+                {state}{sep}\
+                {score}{sep}\
+                {num_sites}{sep}\
+                {}{sep}\
+                {}{sep}\
+                {}{sep}\
+                {}{sep}\
+                {frac_mod_a}{sep}\
+                {frac_mod_b}{sep}\
+                {effect_size}\n",
+                self.curr_chrom.as_ref().unwrap(),
+                counts_a.string_counts(),
+                counts_b.string_counts(),
+                counts_a.string_percentages(),
+                counts_b.string_percentages(),
+            );
+            self.writer.write(row.as_bytes())?;
+        }
+        debug!("wrote {} segments", integrated_path.len());
+
+        // reset everything
+        self.curr_region_positions = Vec::new();
+        self.curr_region_scores = Vec::new();
+        self.curr_counts_a = BTreeMap::new();
+        self.curr_counts_b = BTreeMap::new();
+        self.curr_end = None;
+        self.segments_written.inc(integrated_path.len() as u64);
+        self.size_gauge.set_position(0u64);
+        Ok(())
+    }
+
+    fn clean_up(&mut self) -> anyhow::Result<()> {
+        self.size_gauge.finish_and_clear();
+        self.segments_written.finish_and_clear();
+        debug!(
+            "HMM segmenter finished, wrote {} segments",
+            self.segments_written.position()
+        );
+        Ok(())
+    }
+}
+
+impl HmmDmrSegmenter {
+    fn new(
+        out_fp: &PathBuf,
+        max_gap_size: u64,
+        dmr_prior: f64,
+        diff_stay: f64,
+        same_state_factor: f64,
+        diff_state_factor: f64,
+        significance_factor: f64,
+        linear_transitions: bool,
+        decay_distance: u32,
+        multi_progress: &MultiProgress,
+    ) -> anyhow::Result<Self> {
+        let hmm = HmmModel::new(
+            dmr_prior,
+            diff_stay,
+            same_state_factor,
+            diff_state_factor,
+            significance_factor,
+            decay_distance,
+            linear_transitions,
+        )?;
+        let writer = TsvWriter::new_path(out_fp, true, None)?;
+        let size_gauge = multi_progress.add(get_ticker());
+        let segments_written = multi_progress.add(get_ticker());
+        size_gauge.set_message("[segmenter] current region size");
+        segments_written.set_message("[segmenter] segments finished");
+
+        Ok(Self {
+            writer,
+            hmm,
+            max_gap_size,
+            curr_region_scores: Vec::new(),
+            curr_region_positions: Vec::new(),
+            curr_counts_a: BTreeMap::new(),
+            curr_counts_b: BTreeMap::new(),
+            curr_chrom: None,
+            curr_end: None,
+            size_gauge,
+            segments_written,
+        })
+    }
+
+    fn append_scores(&mut self, scores: &[anyhow::Result<SingleSiteDmrScore>]) {
+        let mut rightmost = 0u64;
+        for score in scores.iter().filter_map(|r| r.as_ref().ok()) {
+            self.curr_region_scores.push(score.score);
+            self.curr_region_positions.push(score.position);
+            let check = self
+                .curr_counts_a
+                .insert(score.position, score.counts_a.clone());
+            assert!(check.is_none());
+            let check = self
+                .curr_counts_b
+                .insert(score.position, score.counts_b.clone());
+            assert!(check.is_none());
+            rightmost = std::cmp::max(rightmost, score.position);
+        }
+        // check, todo remove after testing
+        if let Some(end) = self.curr_end {
+            if rightmost > 0u64 {
+                assert!(
+                    end < rightmost,
+                    "results were not sorted? {end} {rightmost}",
+                );
+            }
+        }
+        self.curr_end = Some(rightmost);
+        self.size_gauge.set_position(self.curr_region_positions.len() as u64);
+    }
+
+    #[inline]
+    fn current_chunk_start(&self) -> Option<&u64> {
+        // todo can make this a .first()
+        self.curr_region_positions.iter().min()
+    }
+
+    #[inline]
+    fn current_chunk_region(&self) -> Option<Region> {
+        match (
+            self.curr_chrom.as_ref(),
+            self.current_chunk_start(),
+            self.curr_end,
+        ) {
+            (Some(chrom), Some(&start), Some(end)) => {
+                Some(Region::new(chrom.to_string(), start as u32, end as u32))
+            }
+            _ => None,
+        }
+    }
+
+    fn get_counts_a(&self, start: u64, stop: u64) -> AggregatedCounts {
+        Self::get_counts_range(start..stop, &self.curr_counts_a)
+    }
+
+    fn get_counts_b(&self, start: u64, stop: u64) -> AggregatedCounts {
+        Self::get_counts_range(start..stop, &self.curr_counts_b)
+    }
+
+    fn get_counts_range(
+        r: Range<u64>,
+        counts: &BTreeMap<u64, AggregatedCounts>,
+    ) -> AggregatedCounts {
+        counts.range(r).map(|(_, counts)| counts).fold(
+            AggregatedCounts::zero(),
+            |mut agg, x| {
+                agg.op_mut(x);
+                agg
+            },
+        )
+    }
+}
+
+fn path_to_region_labels(
+    path: &[States],
+    positions: &[u64],
+) -> Vec<(u64, u64, States)> {
+    assert_eq!(path.len(), positions.len() - 1);
+    if path.is_empty() {
+        return Vec::new();
+    } else {
+        let mut curr_state = *path.first().unwrap();
+        let mut curr_position = *positions.first().unwrap();
+        let mut last_position = curr_position + 1;
+        let mut agg = Vec::new();
+        for (state, &pos) in path.iter().zip(positions).skip(1) {
+            let position = pos;
+            if state != &curr_state {
+                let bedline = (curr_position, last_position, curr_state);
+                agg.push(bedline);
+                curr_position = position;
+                last_position = position + 1;
+                curr_state = *state;
+            } else {
+                last_position = position + 1;
+            }
+        }
+        let final_bedline = (curr_position, last_position, curr_state);
+        agg.push(final_bedline);
+
+        agg
+    }
 }
