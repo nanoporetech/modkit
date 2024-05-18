@@ -13,6 +13,7 @@
     - [Make hemi-methylation bedMethyl tables](./intro_pileup_hemi.md)
     - [Perform differential methylation scoring](./intro_dmr.md)
     - [Validate ground truth results](./intro_validate.md)
+    - [Find highly modified motif sequences](./intro_find_motifs.md)
 - [Extended subcommand help](./advanced_usage.md)
 - [Troubleshooting](./troubleshooting.md)
 - [Current limitations](./limitations.md)

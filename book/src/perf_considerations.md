@@ -31,3 +31,15 @@ There are a few ways to decrease the amount of memory `modkit extract` will use 
 1. Lower the `--queue-size`, this decreased the number of batches that will be held in flight.
 2. Use `--ignore-index` this will force `modkit extract` to run a serial scan of the mod-BAM.
 3. Decrease the `--interval-size`, this will decrease the size of the batches.
+
+
+## Parallelism in `find-motifs` and when to `--skip-search`
+The [search algorithm](./intro_find_motifs.md#simple-description-of-the-search-algorithm) takes advantage of parallelism at nearly every step and therefore hugely benefits from running with as many threads as possible (specified with `--threads`).
+This horizontal scalability is most easily seen in the secondary search step where (by default) `129536` individual "seed sequences" are evaluated for potential refinement.
+If you find that this search is taking a very long time (indicated by the progress bar message "<mod_code> seeds searched") you may consider one of the following:
+
+- Increase the `--exhaustive-seed-min-log-odds` parameter, this will decrease the number of seeds passed on to the refinement step (which is more computationally expensive).
+- Decrease the `--exhaustive-seed-len` to 2 or decrease the `--context-size`, this will exponentially decrease the number of seeds to be searched.
+
+You may also decide to run `--skip-search` first and inspect the results.
+
