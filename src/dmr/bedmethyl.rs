@@ -123,6 +123,10 @@ impl BedMethylLine {
 
         StrandedPosition { position: self.start(), strand, value: dna_base }
     }
+
+    pub(crate) fn frac_modified(&self) -> f32 {
+        self.count_methylated as f32 / self.valid_coverage as f32
+    }
 }
 
 pub(super) fn aggregate_counts2(
@@ -339,5 +343,16 @@ mod bedmethylline_tests {
             .filter(|l| l.raw_mod_code == ModCodeRepr::Code('m'))
             .collect::<Vec<BedMethylLine>>();
         assert!(aggregate_counts2(&filtered_bm_lines).is_err());
+    }
+
+    #[test]
+    fn test_frac_modified() {
+        let fp = "tests/resources/head_21839.bed";
+        let mut reader = BufReader::new(File::open(fp).unwrap());
+        let expected = vec![0f32, 0.07692308f32, 0f32];
+        for (i, line) in reader.lines().map(|r| r.unwrap()).enumerate() {
+            let record = BedMethylLine::parse(&line).unwrap();
+            assert_eq!(record.frac_modified(), expected[i]);
+        }
     }
 }

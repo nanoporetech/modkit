@@ -20,6 +20,7 @@ use crate::command_utils::{
 use crate::dmr::subcommands::BedMethylDmr;
 use crate::errs::{InputError, RunError};
 use crate::extract::subcommand::ExtractMods;
+use crate::find_motifs::subcommand::EntryFindMotifs;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS,
@@ -100,6 +101,9 @@ pub enum Commands {
     /// containing the ground truth modified base status at reference
     /// positions.
     Validate(ValidateFromModbam),
+    /// Find sequence motifs in a bedMethyl pileup that are enriched for base
+    /// modification.
+    FindMotifs(EntryFindMotifs),
 }
 
 impl Commands {
@@ -117,6 +121,7 @@ impl Commands {
             Self::Dmr(x) => x.run(),
             Self::PileupHemi(x) => x.run(),
             Self::Validate(x) => x.run(),
+            Self::FindMotifs(x) => x.run(),
         }
     }
 }

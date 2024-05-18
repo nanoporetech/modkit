@@ -4,6 +4,7 @@ pub mod adjust;
 pub mod commands;
 pub mod errs;
 pub mod extract;
+pub mod find_motifs;
 pub mod interval_chunks;
 pub mod logging;
 pub mod mod_bam;

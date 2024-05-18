@@ -184,6 +184,10 @@ impl DnaBase {
             Self::T => 'T',
         }
     }
+
+    pub(crate) fn as_byte(&self) -> u8 {
+        self.char() as u8
+    }
 }
 
 impl ParseChar for DnaBase {

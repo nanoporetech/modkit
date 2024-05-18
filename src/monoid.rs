@@ -185,6 +185,61 @@ where
     }
 }
 
+impl<A> Moniod for FxHashMap<A, u32>
+where
+    A: Eq + Hash,
+{
+    fn zero() -> Self {
+        FxHashMap::default()
+    }
+
+    fn op(self, other: Self) -> Self {
+        let mut agg = self;
+        for (k, v) in other {
+            *agg.entry(k).or_insert(0) += v;
+        }
+        agg
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        for (k, v) in other {
+            *self.entry(k).or_insert(0u32) += v;
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<A, B> Moniod for FxHashMap<A, B>
+where
+    A: Eq + Hash,
+    B: Moniod,
+{
+    fn zero() -> Self {
+        FxHashMap::default()
+    }
+
+    fn op(self, other: Self) -> Self {
+        let mut agg = self;
+        for (k, v) in other {
+            agg.entry(k).or_insert(B::zero()).op_mut(v);
+        }
+        agg
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        for (k, v) in other {
+            self.entry(k).or_insert(B::zero()).op_mut(v)
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 impl<A, B> BorrowingMoniod for FxHashMap<A, HashSet<B>>
 where
     A: Copy + Eq + Hash,
@@ -214,6 +269,7 @@ where
 #[cfg(test)]
 mod moniod_tests {
     use crate::monoid::Moniod;
+    use rustc_hash::FxHashMap;
     use std::collections::HashMap;
 
     #[test]
@@ -247,5 +303,32 @@ mod moniod_tests {
 
         assert_eq!(e.get("foo").unwrap(), &expected);
         assert_eq!(e.get("bar").unwrap(), &b);
+    }
+
+    #[test]
+    fn test_monoid_op_counts() {
+        let xs: Vec<Vec<u8>> =
+            vec![vec![1, 1, 1, 2], vec![1, 0, 2, 2], vec![0, 2, 2, 2]];
+        let counts = xs
+            .iter()
+            .map(|x| {
+                x.iter().enumerate().fold(
+                    FxHashMap::<u8, FxHashMap<usize, u32>>::default(),
+                    |mut counter, (pos, elem)| {
+                        *counter
+                            .entry(*elem)
+                            .or_insert(FxHashMap::default())
+                            .entry(pos)
+                            .or_insert(0u32) += 1u32;
+                        counter
+                    },
+                )
+            })
+            .reduce(|a, b| a.op(b))
+            .unwrap();
+        assert_eq!(*counts.get(&0).unwrap().get(&0usize).unwrap(), 1);
+        assert_eq!(*counts.get(&0).unwrap().get(&1usize).unwrap(), 1);
+        assert_eq!(*counts.get(&1).unwrap().get(&0usize).unwrap(), 2);
+        assert!(counts.get(&2).unwrap().get(&0usize).is_none());
     }
 }
