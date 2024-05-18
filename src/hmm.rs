@@ -52,9 +52,9 @@ impl DpCell {
         Self::new_full(f64::NEG_INFINITY)
     }
 
-    fn total_probability(&self) -> f64 {
-        rv::misc::logsumexp(&self.inner)
-    }
+    // fn total_probability(&self) -> f64 {
+    //     rv::misc::logsumexp(&self.inner)
+    // }
 
     fn get_value(&self, state: States) -> f64 {
         self.inner[state as usize]
