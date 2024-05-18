@@ -31,7 +31,7 @@ log4rs = { version = "1.2.0", features = ["file_appender", "json_encoder"] }
 memchr = "2.6.4"
 ndarray = "0.15.6"
 nom = "7.1.3"
-noodles = { version = "0.69.0", features = ["tabix", "core", "bgzf", "csi", "tabix"] }
+noodles = { version = "0.50.0", features = ["tabix", "core", "bgzf", "csi", "tabix"] }
 prettytable-rs = "0.10.0"
 pulp = "0.18.10"
 rand = "0.8.5"

@@ -15,7 +15,7 @@ use log_once::debug_once;
 use nom::character::complete::one_of;
 use nom::multi::many0;
 use nom::IResult;
-use noodles::csi::binning_index::index::reference_sequence::bin::Chunk as IndexChunk;
+use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dmr::tabix::MultiSampleIndex;
@@ -503,7 +503,7 @@ mod dmr_util_tests {
     use std::collections::BTreeSet;
 
     use noodles::bgzf::VirtualPosition;
-    use noodles::csi::binning_index::index::reference_sequence::bin::Chunk as IndexChunk;
+    use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 
     use crate::dmr::util::{parse_roi_bed, DmrInterval, ProtoIndexChunk};
     use crate::position_filter::Iv;
