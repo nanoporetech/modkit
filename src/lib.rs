@@ -22,6 +22,7 @@ pub(crate) mod command_utils;
 pub mod dmr;
 /// Contains functions for genome arithmatic/overlaps, etc.
 pub(crate) mod genome_positions;
+mod hmm;
 pub(crate) mod parsing_utils;
 mod read_cache;
 mod read_ids_to_base_mod_probs;

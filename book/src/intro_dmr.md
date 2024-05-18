@@ -93,7 +93,7 @@ chr20  10034962  10035266  CpG:  35   1.294227443419004     C:7    1513  C:14   
 
 The full schema is described [below](#differential-methylation-output-format).
 
-### 2. Perform differential methylation detection on all pairs of samples over regions from the genome.
+## 2. Perform differential methylation detection on all pairs of samples over regions from the genome.
 The `modkit dmr multi` command runs all pairwise comparisons for more than two samples for all regions provided in the regions BED file.
 The preparation of the data is identical to that for the [previous section](#preparing-the-input-data) (for each sample, of course).
 An example command could be:
@@ -225,4 +225,46 @@ modkit dmr pair \
   -b ${tumor_pileup_2}.gz \
 ```
 these columns will not be present.
+
+
+## Segmenting on differential methylation
+
+When running `modkit dmr` without `--regions` (i.e. [single-site analysis](#3-detecting-differential-modification-at-single-base-positions)) you can generate regions of differential methylation on-the-fly using the segmenting [hidden Markov model](./dmr_scoring_details.html#dmr-segmentation-hidden-markov-model) (HMM).
+To run segmenting on the fly, add the `--segments $segments_bed_fp` option to the command such as:
+
+
+```bash
+dmr_result=single_base_haplotype_dmr.bed
+dmr_segments=single_base_segements.bed
+
+modkit dmr pair \
+  -a ${hp1_pileup}.gz \
+  -b ${hp2_pileup}.gz \
+  -o ${dmr_result} \
+  --segments ${dmr_segments} \ # indicates to run segmentation
+  --ref ${ref} \
+  --base C \
+  --threads ${threads} \
+  --log-filepath dmr.log
+```
+
+The default settings for the HMM are to run in "coarse-grained" mode which will more eagerly join neighboring sites, potentially at the cost of including sites that are not differentially modified within "Different" blocks.
+To activate "fine-grained" mode, pass the `--fine-grained` flag. 
+The output schema for the segments is:
+
+| column | name                         | description                                                                               | type  |
+|--------|------------------------------|-------------------------------------------------------------------------------------------|-------|
+| 1      | chrom                        | name of reference sequence from bedMethyl input samples                                   | str   |
+| 2      | start position               | 0-based start position, from `--regions` argument                                         | int   |
+| 3      | end position                 | 0-based exclusive end position, from `--regions` argument                                 | int   |
+| 4      | state-name                   | "different" when sites are differentially modified, "same" otherwise                      | str   |
+| 5      | score                        | Difference score, more positive values have increased difference                          | float |
+| 6      | N_<sub>sites<\sub>           | Number of sites (bedmethyl records) in the segment                                        | float |
+| 7      | sample<sub>a</sub> counts    | Counts of each base modification in the region, comma-separated, for sample A             | str   |
+| 8      | sample<sub>a</sub> total     | Total number of base modification calls in the region, including unmodified, for sample A | str   |
+| 9      | sample<sub>b</sub> counts    | Counts of each base modification in the region, comma-separated, for sample B             | str   |
+| 10     | sample<sub>b</sub> total     | Total number of base modification calls in the region, including unmodified, for sample B | str   |
+| 11     | sample<sub>a</sub> fractions | Fraction of calls for each base modification in the region, comma-separated, for sample A | str   |
+| 12     | sample<sub>b</sub> fractions | Fraction of calls for each base modification in the region, comma-separated, for sample B | str   |
+| 13     | effect size                  | Percent modified in sample A (col 12) minus percent modified in sample B (col 13)         | float |
 

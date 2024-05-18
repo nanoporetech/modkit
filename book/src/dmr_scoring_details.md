@@ -90,7 +90,7 @@ Starting with a prior of \\(\text{Beta}(0.5, 0.5)\\), we can calculate the poste
 ![posterior_distributions](./images/beta_distributions.png)
 
 What we need to calculate is the probability distribution of the _difference_ (the effect size) between the two conditions (high-modification and low-modification).
-This can be done using a piecewise solution described by [Pham-Gia, Turkkan, and Eng in 1993](https://www.tandfonline.com/doi/abs/10.1080/03610929308831114), shown below:
+This distribution can be done using a piecewise solution described by [Pham-Gia, Turkkan, and Eng in 1993](https://www.tandfonline.com/doi/abs/10.1080/03610929308831114), the distribution is shown below:
 
 ![beta_diff](./images/estimated_map_pvalue2.png)
 
@@ -107,4 +107,53 @@ d = \hat{p}_1 - \hat{p}_2 \\
 
 \\[
 \hat{p} = \frac{ N_{\text{mod}} }{ N_{\text{canonical}} } \\
+\\]
+
+## DMR segmentation hidden Markov model
+
+When performing "single-site" analysis with `modkit dmr pair` (by omitting the `--regions` option) you can optionally run the "segmentation" model at the same time by passing the `--segment` option with a filepath to write the segments to. 
+The model is a simple 2-state hidden Markov model, shown below, where the two hidden states, "Different" and "Same" indicate that the position is either differentially methylated or not.
+<div style="text-align: center;">
+
+![hmm](./images/hmm2.png "2-state segmenting HMM")
+
+</div>
+The model is run over the intersection of the modified positions in a [pileup](https://nanoporetech.github.io/modkit/intro_bedmethyl.html#description-of-bedmethyl-output) for which there is enough coverage, from one or more samples.
+
+## Transition parameters
+There are two transition probability parameters, \\(p\\) and \\(d\\).
+The \\(p\\) parameter is the probability of transitioning to the "Different" state, and can be roughly though of as the probability of a given site being differentially modified without any information about the site. 
+The \\(d\\) parameter is the maximum probability of remaining in the "Different" state, it is a maximum because the value of \\(d\\) will change dynamically depending on the proximity of the next modified site.
+The model proposes that modified bases in close proximity will share modification characteristics. 
+Specifically, when a site is differentially modified the probability of the next site also being differentially modified depends on how close the next site happens to be. 
+For example, if a CpG dinucleotide is differentially modified and is immediately followed by another CpG (sequence is `CGCG`) we have the maximum expectation that the following site is also differentially modified.
+However, as the next site becomes farther away (say the next site is one thousand base pairs away, `CG[N x 1000]CG`) these sites are not likely correlated and the probability of the next site being differentially modified decreases towards \\(p\\).
+The chart below shows how the probability of staying in the "Different" state, \\(d\\), decreases as the distance to the next modified base increases.
+
+<div style="text-align: center;">
+
+![hmm](./images/dynamic_probs.png "dynamic transition probabilities")
+
+</div>
+
+In this case, the maximum value of \\(d\\) is 0.9, \\(p\\) is 0.1, and the `decay_distance` is 500 base pairs (these also happen to be the defaults).
+This can be seen as the maximum value of both curves is 0.9, and the minimum value, reached at 500 base pairs, is 0.1.
+These parameters can be set with the `--diff-stay`, `--dmr-prior`, and `--decay-distance`, parameters, respectively.
+The two curves represent two different ways of interpolating the decay between the minimum (1) and the `decay_distance`, `linear` and `logistic`.
+The `--log-transition-decay` flag will use the orange curve whereas the default is to use the blue curve.
+
+In general, these settings don't need to be adjusted.
+However, if you want very fine-grained segmentation, use the `--fine-grained` option which will produce smaller regions but also decrease the rate at which sites are classified as "Different" when they are in fact not different.
+
+## Emission parameters
+The emissions of the model are derived from the [likelihood ratio score](https://nanoporetech.github.io/modkit/dmr_scoring_details.html#likelihood-ratio-scoring-details).
+One advantage to using this score is that differences in methylation type (i.e. changes from 5hmC to 5mC) will be modeled and detected.
+The score is transformed into a probability by \\( p = e^{\text{-score}} \\).
+The full description of the emission probabilities for the two states is:
+
+\\[
+    p_{\text{Same}} = e^{\text{-score}}
+\\]
+\\[
+    p_{\text{Different}} = 1 - p_{\text{same}}
 \\]

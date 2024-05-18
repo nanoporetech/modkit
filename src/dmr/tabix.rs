@@ -178,6 +178,7 @@ impl MultiSampleIndex {
     #[inline]
     fn read_bedmethyl_lines_from_batch(
         &self,
+        // todo needs documentation of what this data structure is
         chunks: &FxHashMap<usize, BTreeSet<ProtoIndexChunk>>,
     ) -> anyhow::Result<FxHashMap<usize, FxHashMap<String, Vec<BedMethylLine>>>>
     {
