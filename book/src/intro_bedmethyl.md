@@ -169,7 +169,7 @@ CG->CH substitution such that no modification call was produced by the basecalle
 | 8      | end position                 | included for compatibility                                                      | int   |
 | 9      | color                        | included for compatibility, always 255,0,0                                      | str   |
 | 10     | N<sub>valid_cov</sub>        | See definitions above.                                                          | int   |
-| 11     | percent modified             | N<sub>mod</sub> / N<sub>valid_cov</sub>                                         | float |
+| 11     | percent modified             | (N<sub>mod</sub> / N<sub>valid_cov</sub>) * 100                                 | float |
 | 12     | N<sub>mod</sub>              | See definitions above.                                                          | int   |
 | 13     | N<sub>canonical</sub>        | See definitions above.                                                          | int   |
 | 14     | N<sub>other_mod</sub>        | See definitions above.                                                          | int   |

@@ -43,7 +43,7 @@ fn write_entropy_windows<T: Write>(
             }
             Some(Err(e)) => {
                 match e {
-                    RunError::Failed(e) => {
+                    RunError::Failed(_e) => {
                         // debug!("(+) window failed, {e}");
                         failure_counter.inc(1);
                     }
@@ -81,7 +81,7 @@ fn write_entropy_windows<T: Write>(
             }
             Some(Err(e)) => {
                 match e {
-                    RunError::Failed(e) => {
+                    RunError::Failed(_e) => {
                         // debug!("(-) window failed, {e}");
                         failure_counter.inc(1);
                     }
