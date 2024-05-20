@@ -111,8 +111,7 @@ pub struct MethylationEntropy {
     /// Respect soft masking in the reference FASTA.
     #[arg(long, requires = "reference_fasta", default_value_t = false)]
     mask: bool,
-    /// Motif to use for entropy calculation, default will be CpG. The motif
-    /// must be reverse-complement palindromic.
+    /// Motif to use for entropy calculation, default will be CpG.
     #[arg(long, num_args = 2)]
     motif: Option<Vec<String>>,
     /// Use CpG motifs. Short hand for --motif CG 0 --combine-strands

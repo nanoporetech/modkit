@@ -27,23 +27,23 @@ The human-readable tables are always output to the log and terminal, the machine
 
 | column | name       | description                                                                                                              | type  |
 |--------|------------|--------------------------------------------------------------------------------------------------------------------------|-------|
-| 1      | mod_code   | Code specifying the modification found in the motif                                                                      | str   |
-| 2      | motif      | Sequence of identified motif using [IUPAC](https://www.bioinformatics.org/sms/iupac.html) codes                          | str   |
+| 1      | mod_code   | code specifying the modification found in the motif                                                                      | str   |
+0 2      | motif      | sequence of identified motif using [IUPAC](https://www.bioinformatics.org/sms/iupac.html) codes                          | str   |
 | 3      | offset     | 0-based offset into the motif sequence of the modified base                                                              | int   |
-| 4      | frac_mod   | Fraction of time this sequence is found in the _high modified_ set col-5 / (col-5 + col-6)                               | float |
-| 5      | high_count | Number of occurances of this sequence in the _high-modified_ set                                                         | int   |
-| 6      | low_count  | Number of occurances of this sequence in the _low-modified_ set                                                          | int   |
-| 7      | mid_count  | Number of occurances of this sequence in the _mid-modified_ set                                                          | int   |
+| 4      | frac_mod   | fraction of time this sequence is found in the _high modified_ set col-5 / (col-5 + col-6)                               | float |
+| 5      | high_count | number of occurances of this sequence in the _high-modified_ set                                                         | int   |
+| 6      | low_count  | number of occurances of this sequence in the _low-modified_ set                                                          | int   |
+| 7      | mid_count  | number of occurances of this sequence in the _mid-modified_ set                                                          | int   |
 
 ### Human-readable table
 
 | column | name       | description                                                                                                              | type  |
 |--------|------------|--------------------------------------------------------------------------------------------------------------------------|-------|
-| 1      | motif      | Human-readable representation of the motif sequence with the modification code in brackets                               | str   |
-| 2      | frac_mod   | Fraction of time this sequence is found in the _high modified_ set col-3 / (col-3 + col-4)                               | float |
-| 3      | high_count | Number of occurances of this sequence in the _high-modified_ set                                                         | int   |
-| 4      | low_count  | Number of occurances of this sequence in the _low-modified_ set                                                          | int   |
-| 5      | mid_count  | Number of occurances of this sequence in the _mid-modified_ set                                                          | int   |
+| 1      | motif      | human-readable representation of the motif sequence with the modification code in brackets                               | str   |
+| 2      | frac_mod   | fraction of time this sequence is found in the _high modified_ set col-3 / (col-3 + col-4)                               | float |
+| 3      | high_count | number of occurances of this sequence in the _high-modified_ set                                                         | int   |
+| 4      | low_count  | number of occurances of this sequence in the _low-modified_ set                                                          | int   |
+| 5      | mid_count  | number of occurances of this sequence in the _mid-modified_ set                                                          | int   |
 
 ## Specifying known motifs
 
@@ -53,8 +53,8 @@ Using this option will add two columns to the above tables:
 
 | name                | description                                                                                                | type |
 |---------------------|------------------------------------------------------------------------------------------------------------|------|
-| status              | Equal, Subset, Superset, or Disjoint describes the relationship of the discovered motif to the known motif | str  |
-| closest_known_motif | Of all motifs specified with `--known-motif` the one that is most similar to the discovered motif          | str  |
+| status              | equal, Subset, Superset, or Disjoint describes the relationship of the discovered motif to the known motif | str  |
+| closest_known_motif | of all motifs specified with `--known-motif` the one that is most similar to the discovered motif          | str  |
 
 If any of the known motifs are not found during the search process an additional table is also emitted in machine- and human-readable versions.
 
@@ -62,27 +62,27 @@ If any of the known motifs are not found during the search process an additional
 
 | column | name                | description                                                                                                        | type  |
 |--------|---------------------|--------------------------------------------------------------------------------------------------------------------|-------|
-| 1      | mod_code            | Code specifying the modification found in the motif                                                                | str   |
-| 2      | motif               | Sequence of identified motif using [IUPAC](https://www.bioinformatics.org/sms/iupac.html) codes                    | str   |
+| 1      | mod_code            | code specifying the modification found in the motif                                                                | str   |
+| 2      | motif               | sequence of identified motif using [IUPAC](https://www.bioinformatics.org/sms/iupac.html) codes                    | str   |
 | 3      | offset              | 0-based offset into the motif sequence of the modified base                                                        | int   |
-| 4      | frac_mod            | Fraction of time this sequence is found in the _high modified_ set col-5 / (col-5 + col-6)                         | float |
-| 5      | high_count          | Number of occurances of this sequence in the _high-modified_ set                                                   | int   |
-| 6      | low_count           | Number of occurances of this sequence in the _low-modified_ set                                                    | int   |
-| 7      | mid_count           | Number of occurances of this sequence in the _mid-modified_ set                                                    | int   |
-| 8      | status              | Equal, Subset, Superset, or Disjoint describes the relationship of the known motif to the closest discovered motif | str   |
-| 9      | closest_found_motif | Which of the discovered motifs is most simuilar to the known motif                                                 | str   |
+| 4      | frac_mod            | fraction of time this sequence is found in the _high modified_ set col-5 / (col-5 + col-6)                         | float |
+| 5      | high_count          | number of occurances of this sequence in the _high-modified_ set                                                   | int   |
+| 6      | low_count           | number of occurances of this sequence in the _low-modified_ set                                                    | int   |
+| 7      | mid_count           | number of occurances of this sequence in the _mid-modified_ set                                                    | int   |
+| 8      | status              | equal, Subset, Superset, or Disjoint describes the relationship of the known motif to the closest discovered motif | str   |
+| 9      | closest_found_motif | which of the discovered motifs is most simuilar to the known motif                                                 | str   |
 
 ### Human-readable table
 
 | column | name                | description                                                                                                        | type  |
 |--------|---------------------|--------------------------------------------------------------------------------------------------------------------|-------|
-| 1      | motif               | Human-readable representation of the motif sequence with the modification code in brackets                         | str   |
-| 2      | frac_mod            | Fraction of time this sequence is found in the _high modified_ set col-3 / (col-3 + col-4)                         | float |
-| 3      | high_count          | Number of occurances of this sequence in the _high-modified_ set                                                   | int   |
-| 4      | low_count           | Number of occurances of this sequence in the _low-modified_ set                                                    | int   |
-| 5      | mid_count           | Number of occurances of this sequence in the _mid-modified_ set                                                    | int   |
-| 6      | status              | Equal, Subset, Superset, or Disjoint describes the relationship of the known motif to the closest discovered motif | str   |
-| 7      | closest_found_motif | Which of the discovered motifs is most simuilar to the known motif                                                 | str   |
+| 1      | motif               | human-readable representation of the motif sequence with the modification code in brackets                         | str   |
+| 2      | frac_mod            | fraction of time this sequence is found in the _high modified_ set col-3 / (col-3 + col-4)                         | float |
+| 3      | high_count          | number of occurances of this sequence in the _high-modified_ set                                                   | int   |
+| 4      | low_count           | number of occurances of this sequence in the _low-modified_ set                                                    | int   |
+| 5      | mid_count           | number of occurances of this sequence in the _mid-modified_ set                                                    | int   |
+| 6      | status              | equal, Subset, Superset, or Disjoint describes the relationship of the known motif to the closest discovered motif | str   |
+| 7      | closest_found_motif | which of the discovered motifs is most simuilar to the known motif                                                 | str   |
 
 ## Simple description of the search algorithm
 

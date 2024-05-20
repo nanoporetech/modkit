@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.3.0]
+### Fixes
+- [validate] Fix bug where observations were not being balanced correctly.
+- [dmr] Revert noodles to 0.50.0, partially fixes #178.
+### Adds
+- [find-motifs] Add command to find motif sequences that are enriched for base modification.
+- [entropy] Add command to calculate methylation entropy.
+- [dmr] Add `--segment` option to categorize modified positions into contiguous "same" and "different" groups.
+- [pileup] Add `--header` option to emit a column header.
+### Deprecations
+- [pileup] Change output to _always_ be all-tab delimited, next version will error with `--only-tabs` flag.
+
 ## [v0.2.8-rc1]
 ### Fixes
 - [dmr] Don't crash when using matched samples, but not all samples have modification counts at a position. Fixes #165.

@@ -1,0 +1,296 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Calculating methylation entropy - Modkit</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="custom.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.2.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.3.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.4.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.5.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.6.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.7.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.8.</strong> Narrow output to specific positions</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.10.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.11.</strong> Perform differential methylation scoring</a></li><li class="chapter-item expanded "><a href="intro_validate.html"><strong aria-hidden="true">1.12.</strong> Validate ground truth results</a></li><li class="chapter-item expanded "><a href="intro_find_motifs.html"><strong aria-hidden="true">1.13.</strong> Find highly modified motif sequences</a></li><li class="chapter-item expanded "><a href="intro_entropy.html" class="active"><strong aria-hidden="true">1.14.</strong> Calculating methylation entropy</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">4.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">5.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">6.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">6.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">6.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">6.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="dmr_scoring_details.html"><strong aria-hidden="true">6.2.</strong> DMR model and scoring details</a></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">6.3.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Modkit</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="calculating-methylation-entropy"><a class="header" href="#calculating-methylation-entropy">Calculating methylation entropy</a></h1>
+<p>The <code>modkit entropy</code> command will calculate the methylation entropy in genomic windows of defined length across the genome, optionally summarizing these calculations for regions.
+Methylation entropy (ME) is a measure of the "information content" in the patterns of methylation reported by the sequencing reads, it could also be thought of as a measure of the randomness in the epialleles (an "epiallele" is the DNA modification at a given position).
+This metric was originally proposed by <a href="https://academic.oup.com/nar/article/39/10/4099/1303103#82681132">Xie et al.</a> and has been shown to correlation with <a href="https://academic.oup.com/nar/article/51/5/2046/7033790">regulation</a>, <a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-023-02866-4">aging</a>, and <a href="https://journals.sagepub.com/doi/full/10.1177/1176935119828776">cancer</a>.
+Unlike the <code>pileup</code> method in <code>modkit</code> which aggregates the modification calls per genomic position, <code>modkit entropy</code> looks at the co-occurrence of methylation status on individual reads and so the input is a modBAM not a pileup.
+To quote <a href="https://doi.org/10.1371/journal.pcbi.1010946">Lee et al.</a>, "This information is important because such ‘phased’ methylation states can inform us about the epigenetic diversity of cell populations as well as the local regulation states of the epigenome".
+Probably the simplest visual description of methylation entropy is the following, a version of which appears in many of the methods papers:</p>
+<div style="text-align: center;">
+<p><img src="./images/me.png" alt="methylation_entropy_background" /></p>
+</div>
+<p>Citation: <a href="https://github.com/dohlee/metheor/blob/master/img/me.png">Lee et al.</a></p>
+<h2 id="calculate-entropy-in-windows-across-the-genome"><a class="header" href="#calculate-entropy-in-windows-across-the-genome">Calculate entropy in windows across the genome</a></h2>
+<pre><code class="language-bash">modkit entropy --in-bam ${mod_bam} \
+ -o ${output_entropy_bedgraph} \
+ --ref ${ref} \
+ --threads 32 \
+ --log-filepath modkit_entropy.log
+</code></pre>
+<p>When the output file, <code>-o</code>, is omitted the output will be to stdout.</p>
+<h3 id="output-schema"><a class="header" href="#output-schema">Output schema</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>column</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
+<tr><td>1</td><td>chrom</td><td>contig name</td><td>string</td></tr>
+<tr><td>2</td><td>start</td><td>start of interval</td><td>int</td></tr>
+<tr><td>3</td><td>end</td><td>end of interval</td><td>int</td></tr>
+<tr><td>4</td><td>entropy</td><td>methylation entropy</td><td>float</td></tr>
+<tr><td>5</td><td>num_reads</td><td>number of reads used</td><td>int</td></tr>
+</tbody></table>
+</div>
+<h2 id="calculating-entropy-in-bed-specified-regions"><a class="header" href="#calculating-entropy-in-bed-specified-regions">Calculating entropy in BED-specified regions</a></h2>
+<p>The command can also summarize the methylation entropy in regions by using the <code>--regions</code> option, for example:</p>
+<pre><code class="language-bash">modkit entropy \
+ --in-bam ${mod_bam} \
+ -o ${output_directory} \
+ --regions ${regions_bed_file} \  # BED3 or BED4 file of regions
+ --cpg \  # specify CpG dinucleotides and combine strands
+ --ref ${ref} \
+ --threads 32 \
+ --log-filepath modkit_entropy.log
+</code></pre>
+<p>The output must now be a directory (specified with <code>-o</code>), a bedGraph with the entropy over the windows with the regions as well as a summary of the methylation entropy in the regions will be output.
+By default these files will be <code>regions.bed</code> and <code>windows.bedgraph</code>.</p>
+<h2 id="specifying-motifs-or-primary-sequence-bases"><a class="header" href="#specifying-motifs-or-primary-sequence-bases">Specifying motifs or primary sequence bases</a></h2>
+<p>Similar to <code>pileup</code> you can specify a motif on the command line with <code>--motif</code> and optionally combine the counts across the positive and negative strands with <code>--combine-strands</code>.
+If you specify a primary sequence base (with <code>--base</code>) or a motif (with <code>--motif</code>) that is not reverse-complement palindromic <code>modkit</code> will output methylation entropy per-strand.</p>
+<p>For example if you want to calculate m6A entropy in DRACH motifs:</p>
+<pre><code class="language-bash">${modkit} entropy ${bam} \
+  -o ${output} \
+  --regions ${regions} \
+  --ref ${ref} \
+  --motif DRACH 2 \
+  --threads 32 \
+  --log-filepath modkit_entropy.log \
+</code></pre>
+<p>When performing transcriptome analysis, it's recommended to make a regions BED file of all of the transcripts so that you can rank which transcripts have highest entropy.</p>
+<h2 id="calculation-of-methylation-entropy"><a class="header" href="#calculation-of-methylation-entropy">Calculation of methylation entropy</a></h2>
+<p>The calculation of methylation entropy has been described in the papers linked above. Formally, methylation entropy in <code>modkit</code> is calculated as:</p>
+<p>\[
+\text{ME} = \frac{-1}{N} \sum_{\textbf{N}} Pr(n_i) * \text{log}_{2}Pr(n_i)
+\]</p>
+<p>Where \( \textbf{N} \) is the set of all methylation patterns and \( Pr(n_i) \) is the empirical probability of that pattern.
+To account for the fact that modkit <a href="./filtering_numeric_details.html">filters</a> base modification calls when they are below a certain confidence level, filtered positions are given a "wildcard" assignment and can match any epiallele at that position.
+The entropy calculation implementation in <code>modkit</code> will assign a fractional count to each pattern that the read matches.
+For example, suppose a read with epiallele <code>m*mm</code> meaning there are 4 positions in the window (5mC) and this read reports 5mC, followed by a filtered call, and 2 more 5mC calls.
+This read will match to patterns <code>[mhmm mmmm mCmm]</code> (<code>m</code> = 5mC, <code>h</code> = 5hmC, and <code>C</code> is canonical cytosine).
+When the <code>--num-positions</code> parameter gets large the number of potential patterns becomes large.
+Most patterns will probably not have any reads matching to them, so instead of enumerating all possible patterns modkit uses a prefix trie to find all patterns represented in the reads while accounting for filtered positions.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="intro_find_motifs.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="advanced_usage.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="intro_find_motifs.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="advanced_usage.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

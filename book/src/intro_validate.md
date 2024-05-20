@@ -75,8 +75,8 @@ These fields are as follows:
 | 1      | chrom          | name of reference sequence     | str |
 | 2      | start position | 0-based start position         | int |
 | 3      | end position   | 0-based exclusive end position | int |
-| 4      | mod code       | Modified base code             | str |
-| 6      | strand         | Strand (e.g. +,-,.)            | str |
+| 4      | mod code       | modified base code             | str |
+| 6      | strand         | strand (e.g. +,-,.)            | str |
 
 The 5th column is ignored in the validate command.
 

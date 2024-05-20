@@ -48,6 +48,9 @@ Commands:
                     schema can be found in the online documentation.
   validate      Validate results from a set of mod-BAM files and associated BED files containing
                     the ground truth modified base status at reference positions.
+  find-motifs   Find sequence motifs in a bedMethyl pileup that are enriched for base
+                    modification.
+  entropy       Use a mod-BAM to calculate methylation entropy over genomic windows.
   help          Print this message or the help of the given subcommand(s).
 
 Options:
@@ -201,7 +204,7 @@ Options:
           Only output counts at CpG motifs. Requires a reference sequence to be provided.
 
   -r, --ref <REFERENCE_FASTA>
-          Reference sequence in FASTA format. Required for CpG motif filtering.
+          Reference sequence in FASTA format. Required for motif (e.g. CpG) filtering.
 
   -k, --mask
           Respect soft masking in the reference FASTA.
@@ -235,16 +238,25 @@ Options:
           bases.
 
       --only-tabs
-          For bedMethyl output, separate columns with only tabs. The default is to use tabs for the
-          first 10 fields and spaces thereafter. The default behavior is more likely to be
-          compatible with genome viewers. Enabling this option may make it easier to parse the
-          output with tabular data handlers that expect a single kind of separator.
+          **Deprecated** The default output has all tab-delimiters. For bedMethyl output, separate
+          columns with only tabs. The default is to use tabs for the first 10 fields and spaces
+          thereafter. The default behavior is more likely to be compatible with genome viewers.
+          Enabling this option may make it easier to parse the output with tabular data handlers
+          that expect a single kind of separator.
+
+      --mixed-delim
+          Output bedMethyl where the delimiter of columns past column 10 are space-delimited instead
+          of tab-delimited. This option can be useful for some browsers and parsers that don't
+          expect the extra columns of the bedMethyl format.
 
       --bedgraph
           Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html. For
           this setting, specify a directory for output files to be make in. Two files for each
           modification will be produced, one for the positive strand and one for the negative
           strand. So for 5mC (m) and 5hmC (h) there will be 4 files produced.
+
+      --with-header
+          Output a header with the bedMethyl.
 
       --prefix <PREFIX>
           Prefix to prepend on bedgraph output file names. Without this option the files will be
@@ -736,6 +748,12 @@ Options:
           
           [default: 4]
 
+  -q, --queue-size <QUEUE_SIZE>
+          Number of reads that can be in memory at a time. Increasing this value will increase
+          thread usage, at the cost of memory usage.
+          
+          [default: 10000]
+
       --log-filepath <LOG_FILEPATH>
           Path to file to write run log, setting this file is recommended.
 
@@ -927,8 +945,8 @@ Options:
           Argument accepts 2 values. The first value is the BAM file path with modified base tags.
           The second is a bed file with ground truth reference positions. The name field in the
           ground truth bed file should be the short name (single letter code or ChEBI ID) for a
-          modified base or the corresponding canonical base. This argument can be provided more than
-          once for multiple samples.
+          modified base or `-` to specify a canonical base ground truth position. This argument can
+          be provided more than once for multiple samples.
 
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base modification probability
@@ -968,6 +986,10 @@ Options:
           modification calls.
           
           [default: 0.1]
+
+      --filter-threshold <FILTER_THRESHOLD>
+          Specify modified base probability filter threshold value. If specified, --filter-threshold
+          will override --filter-quantile.
 
   -t, --threads <THREADS>
           Number of threads to use.
@@ -1152,10 +1174,209 @@ Options:
           bases.
 
       --only-tabs
-          Separate bedMethyl columns with only tabs. The default is to use tabs for the first 10
-          fields and spaces thereafter. The default behavior is more likely to be compatible with
-          genome viewers. Enabling this option may make it easier to parse the output with tabular
-          data handlers that expect a single kind of separator.
+          **Deprecated** The default output has all tab-delimiters. For bedMethyl output, separate
+          columns with only tabs. The default is to use tabs for the first 10 fields and spaces
+          thereafter. The default behavior is more likely to be compatible with genome viewers.
+          Enabling this option may make it easier to parse the output with tabular data handlers
+          that expect a single kind of separator.
+
+      --mixed-delim
+          Output bedMethyl where the delimiter of columns past column 10 are space-delimited instead
+          of tab-delimited. This option can be useful for some browsers and parsers that don't
+          expect the extra columns of the bedMethyl format.
+
+  -h, --help
+          Print help information (use `-h` for a summary).
+```
+
+## find-motifs
+```text
+Find sequence motifs in a bedMethyl pileup that are enriched for base modification
+
+Usage: modkit find-motifs [OPTIONS] --in-bedmethyl <IN_BEDMETHYL> --ref <REFERENCE_FASTA>
+
+Options:
+  -i, --in-bedmethyl <IN_BEDMETHYL>
+          Input bedmethyl table, can be used directly from modkit pileup.
+  -o, --out-table <OUT_TABLE>
+          Optionally output a machine-parsable TSV (human-readable table will always be output to
+          the log).
+      --known-motifs-table <OUT_KNOWN_TABLE>
+          Optionally output machine parsable table with known motif modification frequencies that
+          were not found during search.
+  -t, --threads <THREADS>
+          Number of threads to use. [default: 4]
+  -r, --ref <REFERENCE_FASTA>
+          Reference sequence in FASTA format used for the pileup. Reference sequence in FASTA format
+          used for the pileup.
+      --low-thresh <LOW_THRESHOLD>
+          Fraction modified threshold below which consider a genome location to be "low
+          modification". [default: 0.2]
+      --high-thresh <HIGH_THRESHOLD>
+          Fraction modified threshold above which consider a genome location to be "high
+          modification" or enriched for modification. [default: 0.6]
+      --min-log-odds <MIN_LOG_ODDS>
+          Minimum log-odds to consider a motif sequence to be enriched. [default: 1.5]
+      --exhaustive-seed-min-log-odds <EXHAUSTIVE_SEED_MIN_LOG_ODDS>
+          Minimum log-odds to consider a motif sequence to be enriched when performing exhaustive
+          search. [default: 2.5]
+      --exhaustive-seed-len <EXHAUSTIVE_SEED_LEN>
+          Exhaustive search seed length, increasing this value increases computational time. [default:
+          3]
+      --skip-search
+          Skip the exhaustive search phase, saves time but the results may be less sensitive.
+      --min-coverage <MIN_COVERAGE>
+          Minimum coverage in the bedMethyl to consider a record valid. [default: 5]
+      --context-size <CONTEXT_SIZE> <CONTEXT_SIZE>
+          Upstream and downstream number of bases to search for a motif sequence around a modified
+          base. Example: --context-size 12 12 [default: 12 12]
+      --init-context-size <INIT_CONTEXT_SIZE> <INIT_CONTEXT_SIZE>
+          Initial "fixed" seed window size in base pairs around the modified base. Example:
+          --init-context-size 2 2 [default: 2 2]
+      --min-sites <MIN_SITES>
+          Minimum number of total sites in the genome required for a motif to be considered. [default:
+          300]
+      --min-frac-mod <FRAC_SITES_THRESH>
+          Minimum fraction of sites in the genome to be "high-modification" for a motif to be
+          considered. [default: 0.85]
+      --known-motif <KNOWN_MOTIFS> <KNOWN_MOTIFS> <KNOWN_MOTIFS>
+          Gather enrichment information for a known motif as well as compare to discovered motifs.
+          Format should be <sequence> <offset> <mod_code>.
+      --mod-code <MOD_CODES>
+          Specify which modification codes to process, default will process all modification codes
+          found in the input bedMethyl file.
+      --force-override-spec
+          Force override SAM specification of association of modification codes to primary sequence
+          bases.
+      --log-filepath <LOG_FILEPATH>
+          Output log to this file.
+      --suppress-progress
+          Disable the progress bars.
+  -h, --help
+          Print help information.
+```
+
+## entropy
+```text
+Use a mod-BAM to calculate methylation entropy over genomic windows.
+
+Usage: modkit entropy [OPTIONS] --in-bam <IN_BAMS> --ref <REFERENCE_FASTA>
+
+Options:
+  -s, --in-bam <IN_BAMS>
+          Input mod-BAM, may be repeated multiple times to calculate entropy across all input
+          mod-BAMs.
+
+  -o, --out-bed <OUT_BED>
+          Output BED file, if using `--region` this must be a directory.
+
+      --prefix <PREFIX>
+          Only used with `--regions`, prefix files in output directory with this string.
+
+  -n, --num-positions <NUM_POSITIONS>
+          Number of modified positions to consider at a time.
+          
+          [default: 4]
+
+  -w, --window-size <WINDOW_SIZE>
+          Maximum length interval that "num_positions" modified bases can occur in. The maximum
+          window size decides how dense the positions are packed. For example, consider that the
+          num_positions is equal to 4, the motif is CpG, and the window_size is equal to 8, this
+          configuration would require that the modified positions are immediately adjacent to each
+          other, "CGCGCGCG". On the other hand, if the window_size was set to 12, then multiple
+          sequences with various patterns of other bases can be used CGACGATCGGCG.
+          
+          [default: 50]
+
+      --no-filtering
+          Do not perform any filtering, include all mod base calls in output.
+
+      --num-reads <NUM_READS>
+          Sample this many reads when estimating the filtering threshold. Reads will be sampled
+          evenly across aligned genome. If a region is specified, either with the --region option or
+          the --sample-region option, then reads will be sampled evenly across the region given.
+          This option is useful for large BAM files. In practice, 10-50 thousand reads is sufficient
+          to estimate the model output distribution and determine the filtering threshold.
+          
+          [default: 10042]
+
+  -p, --filter-percentile <FILTER_PERCENTILE>
+          Filter out modified base calls where the probability of the predicted variant is below
+          this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
+          modification calls.
+          
+          [default: 0.1]
+
+      --filter-threshold <FILTER_THRESHOLD>
+          Specify the filter threshold globally or for the canonical calls. When specified, base
+          modification call probabilities will be required to be greater than or equal to this
+          number. If `--mod-thresholds` is also specified, _this_ value will be used for canonical
+          calls.
+
+      --mod-thresholds <MOD_THRESHOLDS>
+          Specify a passing threshold to use for a base modification, independent of the threshold
+          for the primary sequence base or the default. For example, to set the pass threshold for
+          5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
+          usual and used for canonical cytosine and other modifications unless the
+          `--filter-threshold` option is also passed. See the online documentation for more details.
+
+  -t, --threads <THREADS>
+          Number of threads to use.
+          
+          [default: 4]
+
+      --io-threads <IO_THREADS>
+          Number of BAM-reading threads to use.
+
+      --ref <REFERENCE_FASTA>
+          Reference sequence in FASTA format.
+
+      --mask
+          Respect soft masking in the reference FASTA.
+
+      --motif <MOTIF> <MOTIF>
+          Motif to use for entropy calculation, default will be CpG.
+
+      --cpg
+          Use CpG motifs. Short hand for --motif CG 0 --combine-strands
+
+      --base <BASE>
+          Primary sequence base to calculate modification entropy on.
+          
+          [possible values: A, C, G, T]
+
+      --regions <REGIONS_FP>
+          Regions over which to calculate descriptive statistics.
+
+      --combine-strands
+          Combine modification counts on the positive and negative strands and report entropy on
+          just the positive strand.
+
+      --min-coverage <MIN_VALID_COVERAGE>
+          Minimum coverage required at each position in the window. Windows without at least this
+          many valid reads will be skipped, but positions within the window with enough coverage can
+          be used by neighboring windows.
+          
+          [default: 3]
+
+      --log-filepath <LOG_FILEPATH>
+          Send debug logs to this file, setting this file is recommended.
+
+      --suppress-progress
+          Hide progress bars.
+
+      --force
+          Force overwrite output.
+
+      --header
+          Write a header line.
+
+      --drop-zeros
+          Omit windows with zero entropy.
+
+      --max-filtered-positions <MAX_FILTERED_POSITIONS>
+          Maximum number of filtered positions a read is allowed to have in a window, more than this
+          number and the read will be discarded. Default will be 50% of `num_positions`.
 
   -h, --help
           Print help information (use `-h` for a summary).
@@ -1195,6 +1416,43 @@ Options:
 
       --ref <REFERENCE_FASTA>
           Path to reference fasta for used in the pileup/alignment.
+
+      --segment <SEGMENTATION_FP>
+          Run segmentation, output segmented differentially methylated regions to this file.
+
+      --max-gap-size <MAX_GAP_SIZE>
+          Maximum number of base pairs between modified bases for them to be segmented together.
+          
+          [default: 5000]
+
+      --dmr-prior <DMR_PRIOR>
+          Prior probability of a differentially methylated position.
+          
+          [default: 0.1]
+
+      --diff-stay <DIFF_STAY>
+          Maximum probability of continuing a differentially methylated block, decay will be dynamic
+          based on proximity to the next position.
+          
+          [default: 0.9]
+
+      --significance-factor <SIGNIFICANCE_FACTOR>
+          Significance factor, effective p-value necessary to favor the "Different" state.
+          
+          [default: 0.01]
+
+      --log-transition-decay
+          Use logarithmic decay for "Different" stay probability.
+
+      --decay-distance <DECAY_DISTANCE>
+          After this many base pairs, the transition probability will become the prior probability
+          of encountering a differentially modified position.
+          
+          [default: 500]
+
+      --fine-grained
+          Preset HMM segmentation parameters for higher propensity to switch from "Same" to
+          "Different" state. Results will be shorter segments, but potentially higher sensitivity.
 
   -m <MODIFIED_BASES>
           Bases to use to calculate DMR, may be multiple. For example, to calculate differentially

@@ -168,13 +168,13 @@ a BED file with the following schema:
 | 2      | start position                      | 0-based start position, from `--regions` argument                                         | int   |
 | 3      | end position                        | 0-based exclusive end position, from `--regions` argument                                 | int   |
 | 4      | name                                | `name` column from `--regions` BED, or `chr:start-stop` if absent                         | str   |
-| 5      | score                               | Difference score, more positive values have increased difference                          | float |
-| 6      | sample<sub>a</sub> counts           | Counts of each base modification in the region, comma-separated, for sample A             | str   |
-| 7      | sample<sub>a</sub> total            | Total number of base modification calls in the region, including unmodified, for sample A | str   |
-| 8      | sample<sub>b</sub> counts           | Counts of each base modification in the region, comma-separated, for sample B             | str   |
-| 9      | sample<sub>b</sub> total            | Total number of base modification calls in the region, including unmodified, for sample B | str   |
-| 10     | sample<sub>a</sub> fractions        | Fraction of calls for each base modification in the region, comma-separated, for sample A | str   |
-| 11     | sample<sub>b</sub> fractions        | Fraction of calls for each base modification in the region, comma-separated, for sample B | str   |
+| 5      | score                               | difference score, more positive values have increased difference                          | float |
+| 6      | sample<sub>a</sub> counts           | counts of each base modification in the region, comma-separated, for sample A             | str   |
+| 7      | sample<sub>a</sub> total            | total number of base modification calls in the region, including unmodified, for sample A | str   |
+| 8      | sample<sub>b</sub> counts           | counts of each base modification in the region, comma-separated, for sample B             | str   |
+| 9      | sample<sub>b</sub> total            | total number of base modification calls in the region, including unmodified, for sample B | str   |
+| 10     | sample<sub>a</sub> fractions        | fraction of calls for each base modification in the region, comma-separated, for sample A | str   |
+| 11     | sample<sub>b</sub> fractions        | fraction of calls for each base modification in the region, comma-separated, for sample B | str   |
 | 12     | sample<sub>a</sub> percent modified | percent modification (of any kind) in sample A                                            | float |
 | 13     | sample<sub>b</sub> percent modified | percent modification (of any kind) in sample B                                            | float |
 
@@ -193,13 +193,13 @@ When performing single-site analysis, the following additional columns are added
 
 | column | name                       | description                                                                           | type  |
 |--------|----------------------------|---------------------------------------------------------------------------------------|-------|
-| 14     | MAP-based p-value          | Ratio of the posterior probability of observing the effect size over zero effect size | float |
-| 15     | effect size                | Percent modified in sample A (col 12) minus percent modified in sample B (col 13)     | float |
-| 16     | balanced MAP-based p-value | MAP-based p-value when all replicates are balanced                                    | float |
+| 14     | MAP-based p-value          | ratio of the posterior probability of observing the effect size over zero effect size | float |
+| 15     | effect size                | percent modified in sample A (col 12) minus percent modified in sample B (col 13)     | float |
+| 16     | balanced MAP-based p-value | mAP-based p-value when all replicates are balanced                                    | float |
 | 17     | balanced effect size       | effect size when all replicates are balanced                                          | float |
 | 18     | pct_a_samples              | percent of 'a' samples used in statistical test                                       | float |
 | 19     | pct_b_samples              | percent of 'b' samples used in statistical test                                       | float |
-| 20     | per-replicate p-values     | MAP-based p-values for matched replicate pairs                                        | float |
+| 20     | per-replicate p-values     | mAP-based p-values for matched replicate pairs                                        | float |
 | 21     | per-replicate effect sizes | effect sizes matched replicate pairs                                                  | float |
 
 
@@ -265,13 +265,13 @@ The output schema for the segments is:
 | 2      | start position               | 0-based start position, from `--regions` argument                                         | int   |
 | 3      | end position                 | 0-based exclusive end position, from `--regions` argument                                 | int   |
 | 4      | state-name                   | "different" when sites are differentially modified, "same" otherwise                      | str   |
-| 5      | score                        | Difference score, more positive values have increased difference                          | float |
-| 6      | N_<sub>sites<\sub>           | Number of sites (bedmethyl records) in the segment                                        | float |
-| 7      | sample<sub>a</sub> counts    | Counts of each base modification in the region, comma-separated, for sample A             | str   |
-| 8      | sample<sub>a</sub> total     | Total number of base modification calls in the region, including unmodified, for sample A | str   |
-| 9      | sample<sub>b</sub> counts    | Counts of each base modification in the region, comma-separated, for sample B             | str   |
-| 10     | sample<sub>b</sub> total     | Total number of base modification calls in the region, including unmodified, for sample B | str   |
-| 11     | sample<sub>a</sub> fractions | Fraction of calls for each base modification in the region, comma-separated, for sample A | str   |
-| 12     | sample<sub>b</sub> fractions | Fraction of calls for each base modification in the region, comma-separated, for sample B | str   |
-| 13     | effect size                  | Percent modified in sample A (col 12) minus percent modified in sample B (col 13)         | float |
+| 5      | score                        | difference score, more positive values have increased difference                          | float |
+| 6      | N_<sub>sites<\sub>           | number of sites (bedmethyl records) in the segment                                        | float |
+| 7      | sample<sub>a</sub> counts    | counts of each base modification in the region, comma-separated, for sample A             | str   |
+| 8      | sample<sub>a</sub> total     | total number of base modification calls in the region, including unmodified, for sample A | str   |
+| 9      | sample<sub>b</sub> counts    | counts of each base modification in the region, comma-separated, for sample B             | str   |
+| 10     | sample<sub>b</sub> total     | total number of base modification calls in the region, including unmodified, for sample B | str   |
+| 11     | sample<sub>a</sub> fractions | fraction of calls for each base modification in the region, comma-separated, for sample A | str   |
+| 12     | sample<sub>b</sub> fractions | fraction of calls for each base modification in the region, comma-separated, for sample B | str   |
+| 13     | effect size                  | percent modified in sample A (col 12) minus percent modified in sample B (col 13)         | float |
 
