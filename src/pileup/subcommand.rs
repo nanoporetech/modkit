@@ -288,18 +288,28 @@ pub struct ModBamPileup {
     invert_edge_filter: bool,
 
     // output args
+    /// **Deprecated** The default output has all tab-delimiters.
     /// For bedMethyl output, separate columns with only tabs. The default is
     /// to use tabs for the first 10 fields and spaces thereafter. The
     /// default behavior is more likely to be compatible with genome viewers.
     /// Enabling this option may make it easier to parse the output with
     /// tabular data handlers that expect a single kind of separator.
+    #[arg(long, hide_short_help = true,
+        conflicts_with_all = ["bedgraph", "mixed_delimiters"],
+    default_value_t = false)]
+    only_tabs: bool,
+    /// Output bedMethyl where the delimiter of columns past column 10 are
+    /// space-delimited instead of tab-delimited. This option can be useful
+    /// for some browsers and parsers that don't expect the extra columns
+    /// of the bedMethyl format.
     #[arg(
-        long,
+        long = "mixed-delim",
+        alias = "mixed-delimiters",
         conflicts_with = "bedgraph",
         default_value_t = false,
         hide_short_help = true
     )]
-    only_tabs: bool,
+    mixed_delimiters: bool,
     /// Output bedGraph format, see https://genome.ucsc.edu/goldenPath/help/bedgraph.html.
     /// For this setting, specify a directory for output files to be make in.
     /// Two files for each modification will be produced, one for the positive
@@ -312,6 +322,14 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     bedgraph: bool,
+    /// Output a header with the bedMethyl
+    #[arg(
+        long,
+        alias = "include_header",
+        conflicts_with_all = ["bedgraph", "partition_tag", "mixed_delimiters"],
+        default_value_t = false,
+    )]
+    with_header: bool,
     /// Prefix to prepend on bedgraph output file names. Without this option
     /// the files will be <mod_code>_<strand>.bedgraph
     #[arg(long)]
@@ -327,6 +345,15 @@ pub struct ModBamPileup {
 impl ModBamPileup {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        if self.only_tabs {
+            warn!(
+                "--only-tabs is deprecated. The default output format will \
+                 have only tabs. In the next version, passing this flag will \
+                 cause an error. To get the old version of the format use \
+                 --mixed-delim"
+            );
+        }
+
         // do this first so we fail when the file isn't readable
         let header =
             bam::IndexedReader::from_path(&self.in_bam).map(|reader| {
@@ -510,20 +537,28 @@ impl ModBamPileup {
                 )?),
                 (false, true) => Box::new(PartitioningBedMethylWriter::new(
                     &self.out_bed,
-                    self.only_tabs,
+                    !self.mixed_delimiters,
                     self.prefix.as_ref(),
                 )?),
                 (false, false) => match out_fp_str.as_str() {
                     "stdout" | "-" => {
                         let writer = BufWriter::new(std::io::stdout());
-                        Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+                        Box::new(BedMethylWriter::new(
+                            writer,
+                            self.mixed_delimiters,
+                            self.with_header,
+                        )?)
                     }
                     _ => {
                         create_out_directory(&out_fp_str)?;
                         let fh = std::fs::File::create(out_fp_str)
                             .context("failed to make output file")?;
                         let writer = BufWriter::new(fh);
-                        Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+                        Box::new(BedMethylWriter::new(
+                            writer,
+                            self.mixed_delimiters,
+                            self.with_header,
+                        )?)
                     }
                 },
             };
@@ -1031,18 +1066,44 @@ pub struct DuplexModBamPileup {
     invert_edge_filter: bool,
 
     // output args
-    /// Separate bedMethyl columns with only tabs. The default is
+    /// **Deprecated** The default output has all tab-delimiters.
+    /// For bedMethyl output, separate columns with only tabs. The default is
     /// to use tabs for the first 10 fields and spaces thereafter. The
     /// default behavior is more likely to be compatible with genome viewers.
     /// Enabling this option may make it easier to parse the output with
     /// tabular data handlers that expect a single kind of separator.
-    #[arg(long, default_value_t = false, hide_short_help = true)]
+    #[arg(
+        long,
+        hide_short_help = true,
+        conflicts_with = "mixed_delimiters",
+        default_value_t = false
+    )]
     only_tabs: bool,
+    /// Output bedMethyl where the delimiter of columns past column 10 are
+    /// space-delimited instead of tab-delimited. This option can be useful
+    /// for some browsers and parsers that don't expect the extra columns
+    /// of the bedMethyl format.
+    #[arg(
+        long = "mixed-delim",
+        conflicts_with = "only_tabs",
+        alias = "mixed-delimiters",
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    mixed_delimiters: bool,
 }
 
 impl DuplexModBamPileup {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        if self.only_tabs {
+            warn!(
+                "--only-tabs is deprecated. The default output format will \
+                 have only tabs. In the next version, passing this flag will \
+                 cause an error. To get the old version of the format use \
+                 --mixed-delim"
+            );
+        }
         // do this first so we fail when the file isn't readable
         let header =
             bam::IndexedReader::from_path(&self.in_bam).map(|reader| {
@@ -1191,10 +1252,18 @@ impl DuplexModBamPileup {
                 let fh = std::fs::File::create(out_fp)
                     .context("failed to make output file")?;
                 let writer = BufWriter::new(fh);
-                Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+                Box::new(BedMethylWriter::new(
+                    writer,
+                    self.mixed_delimiters,
+                    false,
+                )?)
             } else {
                 let writer = BufWriter::new(std::io::stdout());
-                Box::new(BedMethylWriter::new(writer, !self.only_tabs))
+                Box::new(BedMethylWriter::new(
+                    writer,
+                    self.mixed_delimiters,
+                    false,
+                )?)
             };
 
         let pool = rayon::ThreadPoolBuilder::new()

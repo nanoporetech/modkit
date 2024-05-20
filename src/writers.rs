@@ -32,8 +32,41 @@ pub struct BedMethylWriter<T: Write> {
 }
 
 impl<T: Write + Sized> BedMethylWriter<T> {
-    pub fn new(buf_writer: BufWriter<T>, tabs_and_spaces: bool) -> Self {
-        Self { buf_writer, tabs_and_spaces }
+    fn header() -> String {
+        let fields = [
+            "chrom",
+            "chromStart",
+            "chromEnd",
+            "name",
+            "score",
+            "strand",
+            "thickStart",
+            "thickEnd",
+            "color",
+            "valid_coverage",
+            "percent_modified",
+            "count_modified",
+            "count_canonical",
+            "count_other_mode",
+            "count_delete",
+            "count_fail",
+            "count_diff",
+            "count_nocall",
+        ];
+        let fields = fields.join("\t");
+        format!("{fields}\n")
+    }
+
+    pub fn new(
+        mut buf_writer: BufWriter<T>,
+        tabs_and_spaces: bool,
+        with_header: bool,
+    ) -> anyhow::Result<Self> {
+        if with_header {
+            buf_writer.write(Self::header().as_bytes())?;
+        }
+
+        Ok(Self { buf_writer, tabs_and_spaces })
     }
 
     #[inline]
