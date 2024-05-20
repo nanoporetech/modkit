@@ -24,6 +24,7 @@ fn test_pileup_hemi_hm() {
         "--region",
         "chr20:22,613,835-22,640,468",
         "--no-filtering",
+        "--mixed-delim",
     ];
 
     run_modkit(&args).unwrap();
@@ -47,6 +48,7 @@ fn test_pileup_hemi_preset() {
         "--cpg",
         "--region",
         "chr20:22,613,835-22,640,468",
+        "--mixed-delim",
     ];
 
     run_modkit(&args).unwrap();

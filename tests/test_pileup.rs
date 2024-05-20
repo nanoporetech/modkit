@@ -198,6 +198,7 @@ fn test_pileup_with_region() {
         "-i",
         "25", // use small interval to make sure chunking works
         "--no-filtering",
+        "--mixed-delim",
         "--region",
         "oligo_1512_adapters:0-50",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
@@ -219,6 +220,7 @@ fn test_pileup_duplex_reads() {
         "pileup",
         "tests/resources/duplex_modbam.sorted.bam",
         temp_file.to_str().unwrap(),
+        "--mixed-delim",
         "--region",
         "chr17",
         "--no-filtering",
@@ -239,6 +241,7 @@ fn test_pileup_cpg_motif_filtering() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         temp_file.to_str().unwrap(),
         "--no-filtering",
+        "--mixed-delim",
         "--cpg",
         "--ref",
         "tests/resources/CGI_ladder_3.6kb_ref.fa",
@@ -266,6 +269,7 @@ fn test_pileup_cpg_motif_filtering_strand_combine() {
             interval_size,
             "--cpg",
             "--combine-strands",
+            "--mixed-delim",
             "--ref",
             "tests/resources/CGI_ladder_3.6kb_ref.fa",
         ])
@@ -290,6 +294,7 @@ fn test_pileup_presets_traditional_same_as_options() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         preset_temp_file.to_str().unwrap(),
         "--no-filtering",
+        "--mixed-delim",
         "--preset",
         "traditional",
         "--ref",
@@ -303,6 +308,7 @@ fn test_pileup_presets_traditional_same_as_options() {
         options_temp_file.to_str().unwrap(),
         "--cpg",
         "--no-filtering",
+        "--mixed-delim",
         "--ignore",
         "h",
         "--combine-strands",
@@ -364,6 +370,7 @@ fn test_pileup_edge_filter_regression() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         edge_filter_bed.to_str().unwrap(),
         "--no-filtering",
+        "--mixed-delim",
         "--edge-filter",
         "50",
     ])
@@ -391,6 +398,7 @@ fn test_pileup_edge_filter_regression() {
         "pileup",
         adjusted_bam.to_str().unwrap(),
         edge_filter_bed_2.to_str().unwrap(),
+        "--mixed-delim",
         "--no-filtering",
         "--edge-filter",
         "50",
@@ -421,6 +429,7 @@ fn test_pileup_edge_filter_asymmetric_regression() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         edge_filter_bed.to_str().unwrap(),
         "--no-filtering",
+        "--mixed-delim",
         "--edge-filter",
         "50,50",
     ])
@@ -439,6 +448,7 @@ fn test_pileup_edge_filter_asymmetric_regression() {
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         edge_filter_bed.to_str().unwrap(),
         "--no-filtering",
+        "--mixed-delim",
         "--edge-filter",
         "50,0",
     ])
@@ -473,6 +483,7 @@ fn test_pileup_edge_filter_asymmetric_regression() {
         adjusted_bam.to_str().unwrap(),
         edge_filter_bed_2.to_str().unwrap(),
         "--no-filtering",
+        "--mixed-delim",
     ])
     .context(
         "test_pileup_edge_filter_asymmetric_regression failed to make pileup \
@@ -630,6 +641,7 @@ fn test_pileup_with_filt_position_filter() {
         std::env::temp_dir().join("test_pileup_with_filt_position_filter.bed");
     run_modkit(&[
         "pileup",
+        "--mixed-delim",
         "-i",
         "25", // use small interval to make sure chunking works
         "-p",
@@ -653,6 +665,7 @@ fn test_pileup_with_filter_positions_and_traditional() {
         .join("test_pileup_with_filter_positions_and_traditional.bed");
     run_modkit(&[
         "pileup",
+        "--mixed-delimiters",
         "-i",
         "25", // use small interval to make sure chunking works
         "-p",
@@ -731,6 +744,7 @@ fn test_pileup_motifs_cg0_cgcg2() {
         temp_file.to_str().unwrap(),
         "--motif", "CG", "0",
         "--motif", "CGCG", "2",
+        "--mixed-delim",
         "--no-filtering",
         "--ref", "tests/resources/CGI_ladder_3.6kb_ref.fa",
         "--region", "oligo_741_adapters:22-62",
@@ -748,6 +762,7 @@ fn test_pileup_motifs_cg0_cgcg2() {
         temp_file.to_str().unwrap(),
         "--motif", "CG", "0",
         "--motif", "CGCG", "2",
+        "--mixed-delim",
         "--no-filtering",
         "--ref", "tests/resources/CGI_ladder_3.6kb_ref.fa",
         "--region", "oligo_741_adapters:22-62",
@@ -770,6 +785,7 @@ fn test_pileup_motifs_cg0_cgcg2_combined() {
         temp_file.to_str().unwrap(),
         "--motif", "CG", "0",
         "--motif", "CGCG", "2",
+        "--mixed-delim",
         "--no-filtering",
         "--combine-strands",
         "--ref", "tests/resources/CGI_ladder_3.6kb_ref.fa",
@@ -788,6 +804,7 @@ fn test_pileup_motifs_cg0_cgcg2_combined() {
         temp_file.to_str().unwrap(),
         "--motif", "CG", "0",
         "--motif", "CGCG", "2",
+        "--mixed-delim",
         "--no-filtering",
         "--combine-strands",
         "--ref", "tests/resources/CGI_ladder_3.6kb_ref.fa",
@@ -873,4 +890,25 @@ fn test_pileup_chebi_code_same_output() {
             .collect::<Vec<BedMethylLine>>();
         assert_eq!(expected, observed);
     }
+}
+
+#[test]
+fn test_pileup_with_header() {
+    let temp_file = std::env::temp_dir().join("test_pileup_nofilt.bed");
+    let args = [
+        "pileup",
+        "-i",
+        "25", // use small interval to make sure chunking works
+        "--no-filtering",
+        "--with-header",
+        "tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+    ];
+
+    run_modkit(&args).unwrap();
+
+    check_against_expected_text_file(
+        temp_file.to_str().unwrap(),
+        "tests/resources/pileup_with_header.bed",
+    );
 }
