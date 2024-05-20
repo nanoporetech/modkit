@@ -44,6 +44,7 @@ rust-lapper = "1.1.0"
 rustc-hash = "1.1.0"
 rv = "=0.16.0"
 statrs = "0.16.0"
+substring = "1.4.5"
 
 [dev-dependencies]
 assert_approx_eq = "1.1.0"

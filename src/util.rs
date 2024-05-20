@@ -20,6 +20,8 @@ use rust_htslib::bam::{
 
 use crate::errs::{InputError, RunError};
 
+pub(crate) const TAB: char = '\t';
+
 pub(crate) fn create_out_directory<T: AsRef<std::ffi::OsStr>>(
     raw_path: T,
 ) -> anyhow::Result<()> {
@@ -325,6 +327,7 @@ pub(crate) fn get_targets(
 
 #[derive(Debug, new)]
 pub struct ReferenceRecord {
+    // todo make this usize and unify all of the "Genome types"
     pub tid: u32,
     pub start: u32,
     pub(crate) length: u32,
@@ -711,6 +714,23 @@ pub fn within_alignment(
         })
 }
 
+pub fn format_int_with_commas(val: isize) -> String {
+    let mut num = val
+        .abs()
+        .to_string()
+        .as_bytes()
+        .rchunks(3)
+        .rev()
+        .map(str::from_utf8)
+        .collect::<Result<Vec<&str>, _>>()
+        .unwrap()
+        .join(",");
+    if val < 0 {
+        num = format!("-{num}")
+    }
+    num
+}
+
 #[cfg(test)]
 mod utils_tests {
     use anyhow::Context;
@@ -763,21 +783,4 @@ mod utils_tests {
             vec![SamTag::parse(['H', 'P']), SamTag::parse(['R', 'G'])];
         assert_eq!(parsed, expected);
     }
-}
-
-pub fn format_int_with_commas(val: isize) -> String {
-    let mut num = val
-        .abs()
-        .to_string()
-        .as_bytes()
-        .rchunks(3)
-        .rev()
-        .map(str::from_utf8)
-        .collect::<Result<Vec<&str>, _>>()
-        .unwrap()
-        .join(",");
-    if val < 0 {
-        num = format!("-{num}")
-    }
-    num
 }

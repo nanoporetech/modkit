@@ -14,6 +14,7 @@
     - [Perform differential methylation scoring](./intro_dmr.md)
     - [Validate ground truth results](./intro_validate.md)
     - [Find highly modified motif sequences](./intro_find_motifs.md)
+    - [Calculating methylation entropy](./intro_entropy.md)
 - [Extended subcommand help](./advanced_usage.md)
 - [Troubleshooting](./troubleshooting.md)
 - [Current limitations](./limitations.md)

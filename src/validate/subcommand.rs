@@ -24,14 +24,13 @@ use rust_htslib::bam::{Read, Reader, Record, Records};
 use std::cmp::Ordering;
 
 use crate::command_utils::parse_edge_filter_input;
-use crate::extract::writer::PositionModCalls;
 use crate::logging::init_logging;
 use crate::mod_bam::BaseModCall;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, ModBaseInfo};
 use crate::mod_base_code::{
     DnaBase, ModCodeRepr, ANY_MOD_CODES, MOD_CODE_TO_DNA_BASE,
 };
-use crate::read_ids_to_base_mod_probs::ReadBaseModProfile;
+use crate::read_ids_to_base_mod_probs::{PositionModCalls, ReadBaseModProfile};
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{
     format_int_with_commas, get_reference_mod_strand, get_ticker, parse_nm,

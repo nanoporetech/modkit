@@ -18,6 +18,7 @@ use crate::command_utils::{
     using_stream,
 };
 use crate::dmr::subcommands::BedMethylDmr;
+use crate::entropy::subcommand::MethylationEntropy;
 use crate::errs::{InputError, RunError};
 use crate::extract::subcommand::ExtractMods;
 use crate::find_motifs::subcommand::EntryFindMotifs;
@@ -104,6 +105,8 @@ pub enum Commands {
     /// Find sequence motifs in a bedMethyl pileup that are enriched for base
     /// modification.
     FindMotifs(EntryFindMotifs),
+    /// Use a mod-BAM to calculate methylation entropy over genomic windows.
+    Entropy(MethylationEntropy),
 }
 
 impl Commands {
@@ -122,6 +125,7 @@ impl Commands {
             Self::PileupHemi(x) => x.run(),
             Self::Validate(x) => x.run(),
             Self::FindMotifs(x) => x.run(),
+            Self::Entropy(x) => x.run(),
         }
     }
 }
