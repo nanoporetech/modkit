@@ -25,12 +25,14 @@ pub const ANY_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('C');
 // Adenine mods
 pub const SIX_METHYL_ADENINE: ModCodeRepr = ModCodeRepr::Code('a');
 pub const ANY_ADENINE: ModCodeRepr = ModCodeRepr::Code('A');
+pub const INOSINE: ModCodeRepr = ModCodeRepr::ChEbi(17596);
 
 // Thymine(/Uracil) mods
 pub const HYDROXY_METHYL_URACIL: ModCodeRepr = ModCodeRepr::Code('g');
 pub const FORMYL_URACIL: ModCodeRepr = ModCodeRepr::Code('e');
 pub const CARBOXY_URACIL: ModCodeRepr = ModCodeRepr::Code('b');
 pub const ANY_THYMINE: ModCodeRepr = ModCodeRepr::Code('T');
+pub const PSEUDOURIDINE: ModCodeRepr = ModCodeRepr::ChEbi(17802);
 
 // Guanine mods
 pub const OXO_GUANINE: ModCodeRepr = ModCodeRepr::Code('o');
@@ -38,7 +40,7 @@ pub const ANY_GUANINE: ModCodeRepr = ModCodeRepr::Code('G');
 
 pub const ANY_MOD_CODES: [ModCodeRepr; 4] =
     [ANY_ADENINE, ANY_CYTOSINE, ANY_GUANINE, ANY_THYMINE];
-pub const SUPPORTED_CODES: [ModCodeRepr; 14] = [
+pub const SUPPORTED_CODES: [ModCodeRepr; 16] = [
     METHYL_CYTOSINE,
     HYDROXY_METHYL_CYTOSINE,
     FORMYL_CYTOSINE,
@@ -47,10 +49,12 @@ pub const SUPPORTED_CODES: [ModCodeRepr; 14] = [
     ANY_CYTOSINE,
     SIX_METHYL_ADENINE,
     ANY_ADENINE,
+    INOSINE,
     HYDROXY_METHYL_URACIL,
     FORMYL_URACIL,
     CARBOXY_URACIL,
     ANY_THYMINE,
+    PSEUDOURIDINE,
     OXO_GUANINE,
     ANY_GUANINE,
 ];
@@ -66,9 +70,11 @@ lazy_static! {
             ANY_CYTOSINE => DnaBase::C,
             SIX_METHYL_ADENINE => DnaBase::A,
             ANY_ADENINE => DnaBase::A,
+            INOSINE => DnaBase::A,
             HYDROXY_METHYL_URACIL => DnaBase::T,
             FORMYL_URACIL => DnaBase::T,
             CARBOXY_URACIL => DnaBase::T,
+            PSEUDOURIDINE => DnaBase::T,
             ANY_THYMINE => DnaBase::T,
             OXO_GUANINE => DnaBase::G,
             ANY_GUANINE => DnaBase::G,
