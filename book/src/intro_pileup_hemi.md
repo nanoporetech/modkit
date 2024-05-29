@@ -84,20 +84,20 @@ patterns (`-,-`). All patterns recognized at a location will be reported in the 
 | 2      | start position            | 0-based start position                                                                            | int   |
 | 3      | end position              | 0-based exclusive end position                                                                    | int   |
 | 4      | methylation pattern       | comma-separated pair of modification codes `-` means canonical, followed by the primary read base | str   |
-| 5      | score                     | Equal to N<sub>valid_cov</sub>.                                                                   | int   |
+| 5      | score                     | equal to N<sub>valid_cov</sub>                                                                    | int   |
 | 6      | strand                    | always '.' because strand information is combined                                                 | str   |
 | 7      | start position            | included for compatibility                                                                        | int   |
 | 8      | end position              | included for compatibility                                                                        | int   |
 | 9      | color                     | included for compatibility, always 255,0,0                                                        | str   |
-| 10     | N<sub>valid_cov</sub>     | See definitions above.                                                                            | int   |
+| 10     | N<sub>valid_cov</sub>     | see definitions above                                                                             | int   |
 | 11     | fraction modified         | N<sub>pattern</sub> / N<sub>valid_cov</sub>                                                       | float |
-| 12     | N<sub>pattern</sub>       | See definitions above.                                                                            | int   |
-| 13     | N<sub>canonical</sub>     | See definitions above.                                                                            | int   |
-| 14     | N<sub>other_pattern</sub> | See definitions above.                                                                            | int   |
-| 15     | N<sub>delete</sub>        | See definitions above.                                                                            | int   |
-| 16     | N<sub>fail</sub>          | See definitions above.                                                                            | int   |
-| 17     | N<sub>diff</sub>          | See definitions above.                                                                            | int   |
-| 18     | N<sub>nocall</sub>        | See definitions above.                                                                            | int   |
+| 12     | N<sub>pattern</sub>       | see definitions above                                                                             | int   |
+| 13     | N<sub>canonical</sub>     | see definitions above                                                                             | int   |
+| 14     | N<sub>other_pattern</sub> | see definitions above                                                                             | int   |
+| 15     | N<sub>delete</sub>        | see definitions above                                                                             | int   |
+| 16     | N<sub>fail</sub>          | see definitions above                                                                             | int   |
+| 17     | N<sub>diff</sub>          | see definitions above                                                                             | int   |
+| 18     | N<sub>nocall</sub>        | see definitions above                                                                             | int   |
 
 
 ## Limitations

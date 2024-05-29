@@ -1,7 +1,7 @@
 # Summarizing a modBAM.
 
-The `modkit summary` sub-command is intended for collecting read-level statistics on
-either a sample of reads, a region, or an entire modBam.
+The `modkit summary` sub-command is intended for collecting read-level statistics on either a sample of reads, a region, or an entire modBam.
+It is important to note that the default behavior of `modkit summary` is to take a sample of the reads to get a quick estimate.
 
 ## Summarize the base modification calls in a modBAM.
 

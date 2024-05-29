@@ -28,7 +28,7 @@ The human-readable tables are always output to the log and terminal, the machine
 | column | name       | description                                                                                                              | type  |
 |--------|------------|--------------------------------------------------------------------------------------------------------------------------|-------|
 | 1      | mod_code   | code specifying the modification found in the motif                                                                      | str   |
-0 2      | motif      | sequence of identified motif using [IUPAC](https://www.bioinformatics.org/sms/iupac.html) codes                          | str   |
+| 2      | motif      | sequence of identified motif using [IUPAC](https://www.bioinformatics.org/sms/iupac.html) codes                          | str   |
 | 3      | offset     | 0-based offset into the motif sequence of the modified base                                                              | int   |
 | 4      | frac_mod   | fraction of time this sequence is found in the _high modified_ set col-5 / (col-5 + col-6)                               | float |
 | 5      | high_count | number of occurances of this sequence in the _high-modified_ set                                                         | int   |

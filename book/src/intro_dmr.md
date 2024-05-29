@@ -195,11 +195,11 @@ When performing single-site analysis, the following additional columns are added
 |--------|----------------------------|---------------------------------------------------------------------------------------|-------|
 | 14     | MAP-based p-value          | ratio of the posterior probability of observing the effect size over zero effect size | float |
 | 15     | effect size                | percent modified in sample A (col 12) minus percent modified in sample B (col 13)     | float |
-| 16     | balanced MAP-based p-value | mAP-based p-value when all replicates are balanced                                    | float |
+| 16     | balanced MAP-based p-value | MAP-based p-value when all replicates are balanced                                    | float |
 | 17     | balanced effect size       | effect size when all replicates are balanced                                          | float |
 | 18     | pct_a_samples              | percent of 'a' samples used in statistical test                                       | float |
 | 19     | pct_b_samples              | percent of 'b' samples used in statistical test                                       | float |
-| 20     | per-replicate p-values     | mAP-based p-values for matched replicate pairs                                        | float |
+| 20     | per-replicate p-values     | MAP-based p-values for matched replicate pairs                                        | float |
 | 21     | per-replicate effect sizes | effect sizes matched replicate pairs                                                  | float |
 
 
@@ -257,6 +257,7 @@ modkit dmr pair \
 
 The default settings for the HMM are to run in "coarse-grained" mode which will more eagerly join neighboring sites, potentially at the cost of including sites that are not differentially modified within "Different" blocks.
 To activate "fine-grained" mode, pass the `--fine-grained` flag. 
+
 The output schema for the segments is:
 
 | column | name                         | description                                                                               | type  |
@@ -266,7 +267,7 @@ The output schema for the segments is:
 | 3      | end position                 | 0-based exclusive end position, from `--regions` argument                                 | int   |
 | 4      | state-name                   | "different" when sites are differentially modified, "same" otherwise                      | str   |
 | 5      | score                        | difference score, more positive values have increased difference                          | float |
-| 6      | N_<sub>sites<\sub>           | number of sites (bedmethyl records) in the segment                                        | float |
+| 6      | N-sites                      | number of sites (bedmethyl records) in the segment                                        | float |
 | 7      | sample<sub>a</sub> counts    | counts of each base modification in the region, comma-separated, for sample A             | str   |
 | 8      | sample<sub>a</sub> total     | total number of base modification calls in the region, including unmodified, for sample A | str   |
 | 9      | sample<sub>b</sub> counts    | counts of each base modification in the region, comma-separated, for sample B             | str   |
