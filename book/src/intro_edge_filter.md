@@ -23,7 +23,7 @@ All commands have the flag `--invert-edge-filter` that will _keep_ only base mod
 
 ## Example usages
 
-### call mods with the estimated threshold and ignore modification calls within 100 base pairs of the ends of the reads
+### Call mods with the estimated threshold and ignore modification calls within 100 base pairs of the ends of the reads
 ```
 modkit call-mods <in.bam> <out.bam> --edge-filter 100
 ```
