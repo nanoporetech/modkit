@@ -593,8 +593,8 @@ impl EntryFindMotifs {
                 ]
             } else {
                 row![
-                    mod_code, motif, offset, motif, offset, frac_mod,
-                    high_count, low_count, mid_count
+                    mod_code, motif, offset, frac_mod, high_count, low_count,
+                    mid_count,
                 ]
             };
 
