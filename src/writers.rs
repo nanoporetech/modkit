@@ -555,6 +555,15 @@ impl TsvWriter<File> {
     }
 }
 
+impl<W: Write> OutWriter<String> for TsvWriter<W> {
+    fn write(&mut self, item: String) -> anyhow::Result<u64> {
+        self.buf_writer
+            .write(item.as_bytes())
+            .map(|b| b as u64)
+            .map_err(|e| anyhow!("{e}"))
+    }
+}
+
 impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
     fn write(&mut self, item: ModSummary) -> AnyhowResult<u64> {
         warn!(

@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
 
 use crate::mod_bam::BaseModCall;
 use crate::read_ids_to_base_mod_probs::{
@@ -11,7 +9,7 @@ use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
     create_out_directory, get_reference_mod_strand, Kmer, Strand,
 };
-use crate::writers::TsvWriter;
+use crate::writers::{OutWriter, TsvWriter};
 
 impl PositionModCalls {
     fn header() -> String {
@@ -49,7 +47,19 @@ impl PositionModCalls {
         caller: &MultipleThresholdModCaller,
         reference_seqs: &HashMap<String, Vec<u8>>,
         flag: u16,
-    ) -> String {
+        pass_only: bool,
+        skip_inferred: bool,
+    ) -> Option<String> {
+        let filtered = caller.call(&self.canonical_base, &self.base_mod_probs)
+            == BaseModCall::Filtered;
+        let inferred = self.base_mod_probs.inferred;
+        if filtered && pass_only {
+            return None;
+        }
+        if inferred && skip_inferred {
+            return None;
+        }
+
         let tab = '\t';
         let missing = ".".to_string();
         let chrom_name_label = chrom_name.unwrap_or(&missing).to_owned();
@@ -94,12 +104,9 @@ impl PositionModCalls {
         } else {
             self.canonical_base.char()
         };
-        let filtered = caller.call(&self.canonical_base, &self.base_mod_probs)
-            == BaseModCall::Filtered;
-        let inferred = self.base_mod_probs.inferred;
         let within_alignment = chrom_name.is_some() && self.within_alignment();
 
-        format!(
+        Some(format!(
             "\
             {read_id}{tab}\
             {forward_read_position}{tab}\
@@ -122,7 +129,7 @@ impl PositionModCalls {
             {inferred}{tab}\
             {within_alignment}{tab}\
             {flag}\n"
-        )
+        ))
     }
 }
 
@@ -136,8 +143,9 @@ pub struct TsvWriterWithContigNames<W: Write> {
     tid_to_name: HashMap<u32, String>,
     name_to_seq: HashMap<String, Vec<u8>>,
     number_of_written_reads: usize,
-    read_calls_writer: Option<TsvWriter<File>>,
+    read_calls_writer: Option<Box<dyn OutWriter<String>>>,
     caller: MultipleThresholdModCaller,
+    pass_only: bool,
 }
 
 impl<W: Write> TsvWriterWithContigNames<W> {
@@ -145,16 +153,40 @@ impl<W: Write> TsvWriterWithContigNames<W> {
         output_writer: TsvWriter<W>,
         tid_to_name: HashMap<u32, String>,
         name_to_seq: HashMap<String, Vec<u8>>,
-        read_calls_path: Option<&PathBuf>,
+        read_calls_path: Option<&String>,
         caller: MultipleThresholdModCaller,
         force: bool,
+        pass_only: bool,
+        no_headers: bool,
     ) -> anyhow::Result<Self> {
-        let read_calls_writer = read_calls_path
-            .map(|fp| {
-                create_out_directory(fp)?;
-                TsvWriter::new_path(fp, force, Some(PositionModCalls::header()))
-            })
-            .transpose()?;
+        let read_calls_writer: Option<Box<dyn OutWriter<String>>> =
+            read_calls_path.map(|s| {
+                let calls_writer: Box<dyn OutWriter<String>> = match s.as_str()
+                {
+                    "stdout" | "-" => {
+                        let header = if no_headers {
+                            None
+                        } else {
+                            Some(PositionModCalls::header())
+                        };
+                        let writer = TsvWriter::new_stdout(header);
+                        Box::new(writer)
+                    }
+                    fp @ _ => {
+                        create_out_directory(fp)
+                            .expect("should create directory");
+                        let writer = TsvWriter::new_file(
+                            fp,
+                            force,
+                            Some(PositionModCalls::header()),
+                        )
+                        .expect("should make writer");
+                        Box::new(writer)
+                    }
+                };
+                calls_writer
+            });
+        // .transpose()?;
         Ok(Self {
             tsv_writer: output_writer,
             tid_to_name,
@@ -162,6 +194,7 @@ impl<W: Write> TsvWriterWithContigNames<W> {
             number_of_written_reads: 0,
             read_calls_writer,
             caller,
+            pass_only,
         })
     }
 }
@@ -194,16 +227,17 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
             if let Some(read_calls_writer) = self.read_calls_writer.as_mut() {
                 let position_calls = PositionModCalls::from_profile(&profile);
                 for call in position_calls {
-                    read_calls_writer.write(
-                        call.to_row(
-                            &profile.record_name,
-                            chrom_name,
-                            &self.caller,
-                            &self.name_to_seq,
-                            profile.flag,
-                        )
-                        .as_bytes(),
-                    )?;
+                    call.to_row(
+                        &profile.record_name,
+                        chrom_name,
+                        &self.caller,
+                        &self.name_to_seq,
+                        profile.flag,
+                        self.pass_only,
+                        false,
+                    )
+                    .map(|s| read_calls_writer.write(s))
+                    .transpose()?;
                 }
             }
             self.number_of_written_reads += 1;

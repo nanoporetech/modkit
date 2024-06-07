@@ -1,5 +1,4 @@
 use clap::Parser;
-use log::error;
 use mod_kit::commands::Commands;
 
 #[derive(Parser)]
@@ -19,9 +18,9 @@ fn main() -> Result<(), String> {
         );
     }
     if let Err(err) = cli.command.run() {
-        error!("Error! {err}");
+        eprintln!("> Error! {err}");
         for cause in err.chain().skip(1) {
-            error!(" caused by {cause}")
+            eprintln!(" caused by {cause}")
         }
         std::process::exit(1);
     }
