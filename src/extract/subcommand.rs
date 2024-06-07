@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::bail;
@@ -21,7 +22,7 @@ use crate::command_utils::{
 use crate::errs::RunError;
 use crate::extract::writer::{OutwriterWithMemory, TsvWriterWithContigNames};
 use crate::interval_chunks::{ReferenceIntervalsFeeder, WithPrevEnd};
-use crate::logging::init_logging;
+use crate::logging::init_logging_smart;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::Moniod;
@@ -105,9 +106,23 @@ pub struct ExtractMods {
     /// online documentation for details on thresholds). Passing
     /// this option will cause `modkit` to estimate the pass thresholds from
     /// the data unless a `--filter-threshold` value is passed to the
-    /// command.
-    #[arg(long, alias = "read-calls", hide_short_help = true)]
-    read_calls_path: Option<PathBuf>,
+    /// command. Use 'stdout' to stream this table to stdout, but note
+    /// that you cannot stream this table and the raw extract table to
+    /// stdout.
+    #[arg(long, alias = "read-calls")]
+    read_calls_path: Option<String>,
+    /// Only output base modification calls that pass the minimum confidence
+    /// threshold. (alias: pass)
+    #[arg(
+        long,
+        alias = "pass",
+        requires = "read_calls_path",
+        default_value_t = false
+    )]
+    pass_only: bool,
+    /// Don't print the header lines in the output tables.
+    #[arg(long, default_value_t = false)]
+    no_headers: bool,
 
     /// Path to reference FASTA to extract reference context information from.
     /// If no reference is provided, `ref_kmer` column will be "." in the
@@ -492,13 +507,33 @@ impl ExtractMods {
     }
 
     pub(crate) fn run(&self) -> anyhow::Result<()> {
-        let _handle = init_logging(self.log_filepath.as_ref());
+        let stream_calls = self
+            .read_calls_path
+            .as_ref()
+            .map(|s| using_stream(s))
+            .unwrap_or(false);
+        let stream_out = using_stream(self.out_path.as_str());
+        if stream_calls && stream_out {
+            bail!(
+                "cannot stream read calls and raw extract table, set output \
+                 to 'null' to discard normal output"
+            )
+        }
+        let quiet_term = if stream_calls || stream_out {
+            std::io::stdout().is_terminal()
+        } else {
+            false
+        };
+
+        let _handle =
+            init_logging_smart(self.log_filepath.as_ref(), quiet_term);
 
         if self.kmer_size > KMER_SIZE {
             bail!("kmer size must be less than or equal to {KMER_SIZE}")
         }
+
         let multi_prog = MultiProgress::new();
-        if self.suppress_progress {
+        if self.suppress_progress || quiet_term {
             multi_prog.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
 
@@ -861,11 +896,12 @@ impl ExtractMods {
             }
         });
 
+        let output_header =
+            if self.no_headers { None } else { Some(ModProfile::header()) };
         let mut writer: Box<dyn OutwriterWithMemory<ReadsBaseModProfile>> =
             match self.out_path.as_str() {
                 "stdout" | "-" => {
-                    let tsv_writer =
-                        TsvWriter::new_stdout(Some(ModProfile::header()));
+                    let tsv_writer = TsvWriter::new_stdout(output_header);
                     let writer = TsvWriterWithContigNames::new(
                         tsv_writer,
                         tid_to_name,
@@ -873,6 +909,8 @@ impl ExtractMods {
                         self.read_calls_path.as_ref(),
                         caller,
                         self.force,
+                        self.pass_only,
+                        self.no_headers,
                     )?;
                     Box::new(writer)
                 }
@@ -885,6 +923,8 @@ impl ExtractMods {
                         self.read_calls_path.as_ref(),
                         caller,
                         self.force,
+                        self.pass_only,
+                        self.no_headers,
                     )?;
                     Box::new(writer)
                 }
@@ -892,7 +932,7 @@ impl ExtractMods {
                     let tsv_writer = TsvWriter::new_file(
                         &self.out_path,
                         self.force,
-                        Some(ModProfile::header()),
+                        output_header,
                     )?;
                     let writer = TsvWriterWithContigNames::new(
                         tsv_writer,
@@ -901,6 +941,8 @@ impl ExtractMods {
                         self.read_calls_path.as_ref(),
                         caller,
                         self.force,
+                        self.pass_only,
+                        self.no_headers,
                     )?;
                     Box::new(writer)
                 }
