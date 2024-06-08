@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.3.1rc1]
+### Fixes
+- [find-motifs] Bug where error would be reported when output tables are specified. Fixes #195
+### Adds
+- [extract] Allows streaming read calls table directly to stdout.
+
+
 ## [v0.3.0]
 ### Fixes
 - [validate] Fix bug where observations were not being balanced correctly.
