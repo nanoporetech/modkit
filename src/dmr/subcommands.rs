@@ -583,16 +583,15 @@ impl MultiSampleDmr {
                     let name = raw[1].to_string();
                     if fp.exists() {
                         let specified_index_fp = index_fps.get(&name);
-                        if let Ok(handler) =
-                            IndexHandler::new_infer_index_filepath(
-                                &fp,
-                                specified_index_fp,
-                            )
-                        {
-                            Some((name, handler))
-                        } else {
-                            error!("failed to load {name}");
-                            None
+                        match IndexHandler::new_infer_index_filepath(
+                            &fp,
+                            specified_index_fp,
+                        ) {
+                            Ok(handler) => Some((name, handler)),
+                            Err(e) => {
+                                error!("failed to load {name}, {e}");
+                                None
+                            }
                         }
                     } else {
                         error!("bedMethyl for {name} at {} not found", &raw[0]);
