@@ -1,6 +1,8 @@
-use anyhow::bail;
 use std::fmt::{Display, Formatter};
 use std::ops::Range;
+
+use anyhow::bail;
+use log_once::debug_once;
 
 const STATE_NUM: usize = 2usize;
 
@@ -252,6 +254,12 @@ impl HmmModel {
 
     #[inline]
     fn emission_probs(&self, p: f64, state: States) -> f64 {
+        let p = if p == 0f64 {
+            debug_once!("encountered 0 prob");
+            1e-5
+        } else {
+            p
+        };
         assert!(p <= 1f64, "p {p} cannot be greater than 1");
         let (factor, p) = match state {
             States::Same => (self.same_state_factor, p.ln()),
@@ -400,5 +408,17 @@ impl Projection {
             )
         }
         prob
+    }
+}
+
+#[cfg(test)]
+mod hmm_tests {
+    use crate::hmm::HmmModel;
+
+    #[test]
+    fn test_prob_to_factor() {
+        let sig_fact = 0.01;
+        let fact = HmmModel::prob_to_factor(sig_fact).unwrap();
+        dbg!(fact);
     }
 }
