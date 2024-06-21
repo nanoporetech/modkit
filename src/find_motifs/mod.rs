@@ -433,11 +433,23 @@ impl<'a> KmerMask<'a> {
 struct PositionBools {
     high_bools: FxHashMap<(usize, RawBase), BitVec<usize, Lsb0>>,
     low_bools: FxHashMap<(usize, RawBase), BitVec<usize, Lsb0>>,
+    n_high: usize,
+    n_low: usize,
     high_total: u32,
     low_total: u32,
 }
 
 impl PositionBools {
+    #[inline]
+    fn get_high_empty(&self) -> BitVec {
+        bitvec![usize, Lsb0; 0; self.n_high]
+    }
+
+    #[inline]
+    fn get_low_empty(&self) -> BitVec {
+        bitvec![usize, Lsb0; 0; self.n_low]
+    }
+
     fn get_counts(
         &self,
         kmer: &[RawBase],
@@ -448,7 +460,10 @@ impl PositionBools {
             .zip(positions.iter())
             .map(|(b, p)| {
                 let k = (*p, *b);
-                self.high_bools.get(&k).unwrap().clone()
+                self.high_bools
+                    .get(&k)
+                    .map(|b| b.clone())
+                    .unwrap_or(self.get_high_empty())
             })
             .reduce(|acc, next| acc & next)
             .unwrap()
@@ -459,7 +474,10 @@ impl PositionBools {
             .zip(positions.iter())
             .map(|(b, p)| {
                 let k = (*p, *b);
-                self.low_bools.get(&k).unwrap().clone()
+                self.low_bools
+                    .get(&k)
+                    .map(|b| b.clone())
+                    .unwrap_or(self.get_low_empty())
             })
             .reduce(|acc, next| acc & next)
             .unwrap()
@@ -536,12 +554,27 @@ impl<'a> KmerSubset<'a> {
         let now = std::time::Instant::now();
         let high_bools = self.get_bools(true, focus_position);
         let low_bools = self.get_bools(false, focus_position);
+
+        debug_assert_eq!(
+            high_bools.values().map(|bs| bs.len()).unique().count(),
+            1
+        );
+        debug_assert_eq!(
+            low_bools.values().map(|bs| bs.len()).unique().count(),
+            1
+        );
+
+        let n_high = high_bools.values().next().map(|b| b.len()).unwrap_or(0);
+        let n_low = low_bools.values().next().map(|b| b.len()).unwrap_or(0);
+
         let took = now.elapsed().as_micros();
         debug!("creating bool tables took {took} ms");
         let high_total = self.high_mod_table.values().sum::<u32>();
         let low_total = self.low_mod_table.values().sum::<u32>();
 
-        PositionBools::new(high_bools, low_bools, high_total, low_total)
+        PositionBools::new(
+            high_bools, low_bools, n_high, n_low, high_total, low_total,
+        )
     }
 
     #[inline]
