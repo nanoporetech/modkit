@@ -1,6 +1,14 @@
 use crate::common::{check_against_expected_text_file, run_modkit};
 use anyhow::{anyhow, Context};
-use mod_kit::mod_bam::{parse_raw_mod_tags, ModBaseInfo};
+use mod_kit::dmr::bedmethyl::BedMethylLine;
+use mod_kit::errs::RunError;
+use mod_kit::mod_bam::{
+    parse_raw_mod_tags, BaseModCall, ModBaseInfo, SeqPosBaseModProbs,
+};
+use mod_kit::mod_base_code::{
+    DnaBase, ModCodeRepr, ParseChar, METHYL_CYTOSINE, SIX_METHYL_ADENINE,
+};
+use mod_kit::threshold_mod_caller::MultipleThresholdModCaller;
 use rust_htslib::bam::{self, Read};
 use std::collections::HashMap;
 use std::fs::File;
@@ -52,16 +60,34 @@ pub fn check_two_bams_mod_probs_are_the_same(
     Ok(())
 }
 
+fn get_mod_probs(fp: &str) -> HashMap<String, ModBaseInfo> {
+    let mut reader = bam::Reader::from_path(fp).unwrap();
+    reader
+        .records()
+        .map(|r| r.unwrap())
+        .filter_map(|rec| match ModBaseInfo::new_from_record(&rec) {
+            Err(RunError::Skipped(_)) => None,
+            Err(_) => panic!("should extract modbase info"),
+            Ok(modbase_info) => Some((
+                rec.qname().iter().map(|b| *b as char).collect::<String>(),
+                modbase_info,
+            )),
+        })
+        .collect()
+}
+
 #[test]
-fn test_call_mods_basic_regression() {
+fn test_call_mods_thresholds_correctly() {
     // Tests BAM against one checked by eye. Canary test, there has been a
     // change in the algorithm if this tests fails, but not necessarily
     // because it's broken
     let mod_call_out_bam =
         std::env::temp_dir().join("test_call_mods_same_positions_mod_call.bam");
+    let test_bam_fp = "tests/resources/ecoli_reg.sorted.bam";
+    let uncalled_mod_probs = get_mod_probs(test_bam_fp);
     run_modkit(&[
         "call-mods",
-        "tests/resources/ecoli_reg.sorted.bam",
+        &test_bam_fp,
         mod_call_out_bam.to_str().unwrap(),
         "--filter-threshold",
         "A:0.65",
@@ -73,11 +99,73 @@ fn test_call_mods_basic_regression() {
         "m:0.95",
     ])
     .unwrap();
-    check_two_bams_mod_probs_are_the_same(
-        mod_call_out_bam.to_str().unwrap(),
-        "tests/resources/ecoli_reg.call_mods.bam",
-    )
-    .unwrap();
+    let called_mod_probs = get_mod_probs(mod_call_out_bam.to_str().unwrap());
+    let canonical_thresholds =
+        HashMap::from([(DnaBase::C, 0.85), (DnaBase::A, 0.65)]);
+    let per_mod_thresholds =
+        HashMap::from([(SIX_METHYL_ADENINE, 0.95), (METHYL_CYTOSINE, 0.95)]);
+
+    let caller = MultipleThresholdModCaller::new(
+        canonical_thresholds.clone(),
+        per_mod_thresholds.clone(),
+        0.0,
+    );
+
+    fn check_probs(
+        called: &SeqPosBaseModProbs,
+        uncalled: &SeqPosBaseModProbs,
+        caller: &MultipleThresholdModCaller,
+        primary_base: &DnaBase,
+        canonical_threshold: f32,
+        mod_thresholds: &HashMap<ModCodeRepr, f32>,
+    ) -> bool {
+        uncalled.pos_to_base_mod_probs.iter().all(
+            |(position, base_mod_probs)| {
+                let base_mod_call = called
+                    .pos_to_base_mod_probs
+                    .get(position)
+                    .map(|x| x.argmax_base_mod_call());
+                match caller.call(primary_base, base_mod_probs) {
+                    BaseModCall::Canonical(p) => {
+                        p >= canonical_threshold
+                            && base_mod_call.unwrap().is_canonical()
+                    }
+                    BaseModCall::Modified(p, code) => {
+                        let mod_threshold = mod_thresholds.get(&code).unwrap();
+                        p >= *mod_threshold
+                            && base_mod_call.unwrap().is_match_modcall(&code)
+                    }
+                    BaseModCall::Filtered => base_mod_call.is_none(),
+                }
+            },
+        )
+    }
+
+    for (read_id, mod_base_info) in called_mod_probs {
+        let uncalled_info = uncalled_mod_probs.get(&read_id).unwrap();
+
+        assert!(mod_base_info.neg_seq_base_mod_probs.is_empty());
+        assert!(uncalled_info.neg_seq_base_mod_probs.is_empty());
+
+        for (primary_base, uncalled_probs) in
+            uncalled_info.pos_seq_base_mod_probs.iter()
+        {
+            let called_probs = mod_base_info
+                .pos_seq_base_mod_probs
+                .get(&primary_base)
+                .unwrap();
+            let dna_base = DnaBase::parse_char(*primary_base).unwrap();
+            let can_thresh = *canonical_thresholds.get(&dna_base).unwrap();
+            assert!(check_probs(
+                &called_probs,
+                &uncalled_probs,
+                &caller,
+                &dna_base,
+                can_thresh,
+                &per_mod_thresholds
+            ))
+        }
+    }
 }
 
 #[test]
@@ -124,11 +212,25 @@ fn test_call_mods_keeps_all_mod_calls() {
 fn test_call_mods_same_pileup() {
     // tests that the pileup generated from a pre-thresholded BAM is equivalent
     // to one where the thresholds are used _during_ pileup
+    let update_tags_bam = std::env::temp_dir()
+        .join("test_call_mods_same_pileup_updated_tags.bam");
+    run_modkit(&[
+        "update-tags",
+        "tests/resources/ecoli_reg.sorted.bam",
+        update_tags_bam.to_str().unwrap(),
+        "--no-implicit-probs",
+        "--mode",
+        "explicit",
+    ])
+    .unwrap();
+    bam::index::build(update_tags_bam.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
     let mod_call_out_bam =
         std::env::temp_dir().join("test_call_mods_same_pileup.bam");
     run_modkit(&[
         "call-mods",
-        "tests/resources/ecoli_reg.sorted.bam",
+        update_tags_bam.to_str().unwrap(),
         mod_call_out_bam.to_str().unwrap(),
         "--filter-threshold",
         "A:0.65",
@@ -151,11 +253,13 @@ fn test_call_mods_same_pileup() {
         "--no-filtering",
     ])
     .unwrap();
+    println!("calls first {mod_called_pileup:?}");
     let in_situ_threshold_pileup =
         std::env::temp_dir().join("test_call_mods_same_pileup-2.bed");
+    println!("in situ {in_situ_threshold_pileup:?}");
     run_modkit(&[
         "pileup",
-        "tests/resources/ecoli_reg.sorted.bam",
+        update_tags_bam.to_str().unwrap(),
         in_situ_threshold_pileup.to_str().unwrap(),
         "--filter-threshold",
         "A:0.65",
@@ -167,10 +271,21 @@ fn test_call_mods_same_pileup() {
         "m:0.95",
     ])
     .unwrap();
-    check_against_expected_text_file(
-        mod_called_pileup.to_str().unwrap(),
-        in_situ_threshold_pileup.to_str().unwrap(),
-    );
+
+    let parse_bedmethyl_fp = |fp: &PathBuf| -> Vec<BedMethylLine> {
+        let mut reader = BufReader::new(File::open(fp).unwrap());
+        reader
+            .lines()
+            .map(|l| BedMethylLine::parse(l.unwrap().as_str()).unwrap())
+            .collect()
+    };
+
+    let called_records = parse_bedmethyl_fp(&mod_called_pileup);
+    let in_situ_records = parse_bedmethyl_fp(&in_situ_threshold_pileup);
+    assert_eq!(called_records.len(), in_situ_records.len());
+    for (x, y) in called_records.into_iter().zip(in_situ_records) {
+        assert_eq!(x, y, "{x:?}=/={y:?}");
+    }
 }
 
 #[test]

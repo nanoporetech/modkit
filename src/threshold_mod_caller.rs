@@ -1,4 +1,4 @@
-use crate::mod_bam::{BaseModCall, BaseModProbs, SeqPosBaseModProbs};
+use crate::mod_bam::{BaseModCall, BaseModProbs, SeqPosBaseModProbs, SkipMode};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use derive_new::new;
 use rustc_hash::FxHashMap;
@@ -91,12 +91,13 @@ impl MultipleThresholdModCaller {
         }
     }
 
+    /// Convert the base modification probabilities into "calls" where
+    /// the probabilities are set to 1.0 for the predicted class.
     pub fn call_seq_pos_mod_probs(
         &self,
         canonical_base: &DnaBase,
         seq_pos_mod_probs: SeqPosBaseModProbs,
     ) -> anyhow::Result<SeqPosBaseModProbs> {
-        let skip_mode = seq_pos_mod_probs.get_skip_mode();
         let pos_to_base_mod_probs = seq_pos_mod_probs
             .pos_to_base_mod_probs
             .into_iter()
@@ -106,7 +107,11 @@ impl MultipleThresholdModCaller {
             })
             .collect::<FxHashMap<usize, BaseModProbs>>();
 
-        Ok(SeqPosBaseModProbs::new(skip_mode, pos_to_base_mod_probs))
+        // This method changes the "mode" to explicit (?) since base
+        // modification probabilities below the threshold will be
+        // dropped, so it's invalid to call them canonical as would be
+        // implied with Implicit mode.
+        Ok(SeqPosBaseModProbs::new(SkipMode::Explicit, pos_to_base_mod_probs))
     }
 
     pub fn iter_thresholds(&self) -> impl Iterator<Item = (&DnaBase, &f32)> {

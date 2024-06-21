@@ -1,4 +1,3 @@
-use nom::AsBytes;
 use std::collections::HashMap;
 
 use mod_kit::mod_bam::MN_TAG;

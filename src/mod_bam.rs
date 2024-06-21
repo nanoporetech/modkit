@@ -319,6 +319,22 @@ impl PartialOrd for BaseModCall {
     }
 }
 
+impl BaseModCall {
+    pub fn is_canonical(&self) -> bool {
+        match self {
+            BaseModCall::Canonical(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_match_modcall(&self, mod_code: &ModCodeRepr) -> bool {
+        match self {
+            BaseModCall::Modified(_, code) => code == mod_code,
+            _ => false,
+        }
+    }
+}
+
 #[derive(new, Debug, PartialEq, Clone)]
 pub struct BaseModProbs {
     probs: FxHashMap<ModCodeRepr, f32>,
@@ -744,10 +760,10 @@ fn combine_positions_to_probs(
 #[derive(PartialEq, Debug, Clone, new)]
 pub struct SeqPosBaseModProbs {
     /// The `.` or `?` or implied mode, see `SkipMode`.
-    skip_mode: SkipMode,
+    pub skip_mode: SkipMode,
     /// Mapping of _forward_ sequence position to the predicted base
     /// modification probabilities for that position.
-    pub(crate) pos_to_base_mod_probs: FxHashMap<usize, BaseModProbs>,
+    pub pos_to_base_mod_probs: FxHashMap<usize, BaseModProbs>,
 }
 
 impl SeqPosBaseModProbs {
@@ -1126,8 +1142,8 @@ pub fn parse_raw_mod_tags(
 }
 
 pub struct ModBaseInfo {
-    pos_seq_base_mod_probs: HashMap<char, SeqPosBaseModProbs>,
-    neg_seq_base_mod_probs: HashMap<char, SeqPosBaseModProbs>,
+    pub pos_seq_base_mod_probs: HashMap<char, SeqPosBaseModProbs>,
+    pub neg_seq_base_mod_probs: HashMap<char, SeqPosBaseModProbs>,
     converters: HashMap<char, DeltaListConverter>,
     pub mm_style: &'static str,
     pub ml_style: &'static str,
