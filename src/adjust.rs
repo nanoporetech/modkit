@@ -63,9 +63,9 @@ pub fn adjust_mod_probs(
                         })?;
                 }
                 (Some(_), Err(e)) => {
-                    let e = e.context(format!(
-                        "failed to parse DNA base, cannot use threshold."
-                    ));
+                    let e = e.context(
+                        "failed to parse DNA base, cannot use threshold.",
+                    );
                     return Err(RunError::new_input_error(e.to_string()));
                 }
                 _ => {}
