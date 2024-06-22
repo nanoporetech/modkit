@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context};
 use log::debug;
+use log_once::debug_once;
 use noodles::csi::{
     index::reference_sequence::bin::Chunk as IndexChunk, Index as CsiIndex,
 };
-
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
@@ -19,7 +19,7 @@ use crate::dmr::util::{
     n_choose_2, DmrBatch, DmrBatchOfPositions, ProtoIndexChunk,
 };
 use crate::genome_positions::StrandedPosition;
-use crate::mod_base_code::DnaBase;
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
 
 pub(super) type ChromToBedmethylLines = FxHashMap<String, Vec<BedMethylLine>>;
@@ -100,6 +100,7 @@ impl IndexHandler {
         &self,
         chunks: &[IndexChunk],
         min_valid_coverage: u64,
+        code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
     ) -> anyhow::Result<Vec<BedMethylLine>> {
         let mut reader =
             File::open(&self.bedmethyl_fp).map(noodles::bgzf::Reader::new)?;
@@ -145,10 +146,10 @@ impl IndexHandler {
             .into_iter()
             .filter(|bml| bml.valid_coverage >= min_valid_coverage)
             .filter(|bml| {
-                if bml.check_mod_code_supported() {
+                if code_lookup.contains_key(&bml.raw_mod_code) {
                     true
                 } else {
-                    debug!(
+                    debug_once!(
                         "encountered illegal mod-code for DMR, {}",
                         bml.raw_mod_code
                     );
@@ -165,15 +166,17 @@ impl IndexHandler {
 
 pub(super) struct MultiSampleIndex {
     index_handlers: Vec<IndexHandler>,
+    pub code_lookup: FxHashMap<ModCodeRepr, DnaBase>,
     min_valid_coverage: u64,
 }
 
 impl MultiSampleIndex {
     pub(super) fn new(
         handlers: Vec<IndexHandler>,
+        code_lookup: FxHashMap<ModCodeRepr, DnaBase>,
         min_valid_coverage: u64,
     ) -> Self {
-        Self { index_handlers: handlers, min_valid_coverage }
+        Self { index_handlers: handlers, min_valid_coverage, code_lookup }
     }
 
     #[inline]
@@ -200,7 +203,11 @@ impl MultiSampleIndex {
             .map(|(sample_id, handler, chunks)| {
                 // actually read the bedmethyl here
                 let grouped_by_chrom = handler
-                    .read_bedmethyl(&chunks, self.min_valid_coverage)
+                    .read_bedmethyl(
+                        &chunks,
+                        self.min_valid_coverage,
+                        &self.code_lookup,
+                    )
                     .map(|bedmethyl_lines| {
                         // group the bedmethyl lines by contig
                         // in case this batch has more than one contigs'
@@ -402,6 +409,7 @@ impl SingleSiteSampleIndex {
 
     fn organize_bedmethy_lines(
         sample: SampleToBedMethyLines,
+        code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
     ) -> anyhow::Result<ChromToAggregatedCountsByPosition> {
         let mut agg = FxHashMap::default();
 
@@ -415,9 +423,11 @@ impl SingleSiteSampleIndex {
                         .fold(
                             || BTreeMap::new(),
                             |mut agg, l| {
-                                agg.entry(l.get_stranded_position())
-                                    .or_insert(Vec::new())
-                                    .push(l);
+                                agg.entry(
+                                    l.get_stranded_position(&code_lookup),
+                                )
+                                .or_insert(Vec::new())
+                                .push(l);
                                 agg
                             },
                         )
@@ -464,6 +474,7 @@ impl SingleSiteSampleIndex {
     fn intersect_bedmethyl_lines_with_sites(
         dmr_batch: &DmrBatchOfPositions,
         bedmethyl_lines: SampleToBedMethyLines,
+        code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
     ) -> SampleToBedMethyLines {
         bedmethyl_lines
             .into_iter()
@@ -476,7 +487,7 @@ impl SingleSiteSampleIndex {
                             .filter(|l| {
                                 dmr_batch.contains_position(
                                     &chrom,
-                                    &l.get_stranded_position(),
+                                    &l.get_stranded_position(&code_lookup),
                                 )
                             })
                             .collect::<Vec<BedMethylLine>>();
@@ -504,10 +515,12 @@ impl SingleSiteSampleIndex {
         let filt_lines_a = Self::intersect_bedmethyl_lines_with_sites(
             &dmr_batch,
             bedmethyl_lines_a,
+            &self.multi_sample_index.code_lookup,
         );
         let filt_lines_b = Self::intersect_bedmethyl_lines_with_sites(
             &dmr_batch,
             bedmethyl_lines_b,
+            &self.multi_sample_index.code_lookup,
         );
 
         Ok((filt_lines_a, filt_lines_b))
@@ -520,8 +533,14 @@ impl SingleSiteSampleIndex {
         let (bedmethyl_lines_a, bedmethyl_lines_b) =
             self.read_bedmethyl_lines_filtered_by_position(&dmr_batch)?;
 
-        let counts_a = Self::organize_bedmethy_lines(bedmethyl_lines_a)?;
-        let counts_b = Self::organize_bedmethy_lines(bedmethyl_lines_b)?;
+        let counts_a = Self::organize_bedmethy_lines(
+            bedmethyl_lines_a,
+            &self.multi_sample_index.code_lookup,
+        )?;
+        let counts_b = Self::organize_bedmethy_lines(
+            bedmethyl_lines_b,
+            &self.multi_sample_index.code_lookup,
+        )?;
         Ok((counts_a, counts_b))
     }
 

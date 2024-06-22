@@ -221,6 +221,7 @@ mod methylation_entropy_tests {
             }
         }
     }
+
     #[test]
     fn test_calc_entropy() {
         let sequences = vec![

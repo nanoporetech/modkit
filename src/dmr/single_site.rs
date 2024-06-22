@@ -166,7 +166,6 @@ impl SingleSiteDmrAnalysis {
             };
 
         let (scores_snd, scores_rcv) = crossbeam::channel::bounded(1000);
-        // let (segment_snd, segment_rcv) = crossbeam::channel::bounded(1000);
         let processed_batches = multi_progress_bar.add(get_ticker());
         let failure_counter = multi_progress_bar.add(get_ticker());
         let success_counter = multi_progress_bar.add(get_ticker());
@@ -206,8 +205,8 @@ impl SingleSiteDmrAnalysis {
                                     Ok(chrom_to_scores) => {
                                         Some(chrom_to_scores)
                                     }
-                                    Err(_e) => {
-                                        // error!("batch failed, {e}");
+                                    Err(e) => {
+                                        debug!("batch failed, {e}");
                                         None
                                     }
                                 }
@@ -1007,7 +1006,7 @@ impl DmrSegmenter for HmmDmrSegmenter {
             );
             self.writer.write(row.as_bytes())?;
         }
-        debug!("wrote {} segments", integrated_path.len());
+        debug!("wrote {} segment(s)", integrated_path.len());
 
         // reset everything
         self.curr_region_positions = Vec::new();

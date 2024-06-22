@@ -27,8 +27,8 @@ where
 pub(crate) struct GenomePositions {
     /// these are the bases we care to compare, i.e. C and A for 5mC and
     /// 6mA, respectively.
-    positive_strand_bases: FxHashSet<char>,
-    negative_strand_bases: FxHashSet<char>,
+    pub positive_strand_bases: FxHashSet<char>,
+    pub negative_strand_bases: FxHashSet<char>,
     /// this is the reference genome - we'll search it on the fly to
     /// reduce memory consumption.
     contigs: FxHashMap<String, Vec<char>>,

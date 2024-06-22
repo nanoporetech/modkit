@@ -314,8 +314,7 @@ pub(crate) fn get_targets(
                     )),
                     None => {
                         debug!(
-                            "> no size information for {chrom_name} (tid: \
-                             {tid})"
+                            "no size information for {chrom_name} (tid: {tid})"
                         );
                         None
                     }

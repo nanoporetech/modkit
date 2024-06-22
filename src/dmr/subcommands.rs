@@ -4,11 +4,12 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context};
+use anyhow::{anyhow, bail, Context};
 use clap::{Args, Subcommand};
 use indicatif::{MultiProgress, ProgressIterator};
 use itertools::Itertools;
 use log::{debug, error, info};
+use rustc_hash::FxHashMap;
 
 use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::single_site::SingleSiteDmrAnalysis;
@@ -16,7 +17,7 @@ use crate::dmr::tabix::{IndexHandler, MultiSampleIndex};
 use crate::dmr::util::{parse_roi_bed, HandleMissing, RoiIter};
 use crate::genome_positions::GenomePositions;
 use crate::logging::init_logging;
-use crate::mod_base_code::DnaBase;
+use crate::mod_base_code::{DnaBase, ModCodeRepr, MOD_CODE_TO_DNA_BASE};
 use crate::util::{
     create_out_directory, get_master_progress_bar, get_subroutine_progress_bar,
     get_ticker,
@@ -146,8 +147,22 @@ pub struct PairwiseDmr {
     /// Bases to use to calculate DMR, may be multiple. For example, to
     /// calculate differentially methylated regions using only cytosine
     /// modifications use --base C.
-    #[arg(short, alias = "base")]
+    #[arg(short, long="base", alias = "modified-bases", action=clap::ArgAction::Append)]
     modified_bases: Vec<char>,
+    /// Extra assignments of modification codes to their respective primary
+    /// bases. In general, modkit dmr will use the SAM specification to
+    /// know which modification codes are appropriate to use for a given
+    /// primary base. For example "h" is the code for 5hmC, so is appropriate
+    /// for cytosine bases, but not adenine bases. However, if your
+    /// bedMethyl file contains custom codes or codes that are not part of
+    /// the specification, you can specify which primary base they
+    /// belong to here with --assign-code x:C meaning associate modification
+    /// code "x" with cytosine (C) primary sequence bases. If a code is
+    /// encountered that is not part of the specification, the bedMethyl
+    /// record will not be used, this will be logged.
+    #[arg(long="assign-code", action=clap::ArgAction::Append)]
+    mod_code_assignments: Option<Vec<String>>,
+
     /// File to write logs to, it's recommended to use this option.
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
@@ -243,26 +258,86 @@ pub struct PairwiseDmr {
 }
 
 impl PairwiseDmr {
-    fn check_modified_bases(&self) -> anyhow::Result<()> {
-        Self::validate_modified_bases(&self.modified_bases)
+    fn check_modified_bases(
+        &self,
+    ) -> anyhow::Result<FxHashMap<ModCodeRepr, DnaBase>> {
+        Self::validate_modified_bases(
+            &self.modified_bases,
+            self.mod_code_assignments.as_ref(),
+        )
     }
 
     fn is_single_site(&self) -> bool {
         self.regions_bed.is_none()
     }
 
-    fn validate_modified_bases(bases: &[char]) -> anyhow::Result<()> {
+    fn parse_raw_assignments(
+        raw_mod_code_assignments: Option<&Vec<String>>,
+    ) -> anyhow::Result<FxHashMap<ModCodeRepr, DnaBase>> {
+        if let Some(raw_assignments) = raw_mod_code_assignments {
+            let user_assignments = raw_assignments.iter().try_fold(
+                FxHashMap::default(),
+                |mut acc, next| {
+                    if next.contains(':') {
+                        let parts = next.split(':').collect::<Vec<&str>>();
+                        if parts.len() != 2 {
+                            bail!(
+                                "invalid assignment {next}, should be \
+                                 <code>:<DNA>, such as m:C"
+                            )
+                        } else {
+                            let dna_base = parts[1]
+                                .parse::<char>()
+                                .map_err(|e| {
+                                    anyhow!(
+                                        "invalid DNA base, should be single \
+                                         letter, {e}"
+                                    )
+                                })
+                                .and_then(|raw| DnaBase::parse(raw))?;
+                            let mod_code = ModCodeRepr::parse(parts[0])?;
+                            debug!(
+                                "assigning modification code {mod_code:?} to \
+                                 {dna_base:?}"
+                            );
+                            acc.insert(mod_code, dna_base);
+                            Ok(acc)
+                        }
+                    } else {
+                        bail!(
+                            "invalid assignment {next}, should be \
+                             <code>:<DNA>, such as m:C"
+                        )
+                    }
+                },
+            )?;
+            Ok(MOD_CODE_TO_DNA_BASE
+                .clone()
+                .into_iter()
+                .chain(user_assignments.into_iter())
+                .collect())
+        } else {
+            Ok(MOD_CODE_TO_DNA_BASE.clone())
+        }
+    }
+
+    fn validate_modified_bases(
+        bases: &[char],
+        raw_mod_code_assignments: Option<&Vec<String>>,
+    ) -> anyhow::Result<FxHashMap<ModCodeRepr, DnaBase>> {
         if bases.is_empty() {
             bail!("need to specify at least 1 modified base")
         }
         for b in bases.iter() {
             match *b {
-                'A' | 'C' | 'G' | 'T' => {}
+                'A' | 'C' | 'G' | 'T' => {
+                    debug!("using primary sequence base {b}");
+                }
                 _ => bail!("modified base needs to be A, C, G, or T."),
             }
         }
 
-        Ok(())
+        Self::parse_raw_assignments(raw_mod_code_assignments)
     }
 
     pub fn run(&self) -> anyhow::Result<()> {
@@ -274,13 +349,13 @@ impl PairwiseDmr {
         {
             bail!("need to provide at least 1 'a' sample and 'b' sample")
         }
+        let code_lookup = self.check_modified_bases()?;
 
         let mpb = MultiProgress::new();
         if self.suppress_progress {
             mpb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
 
-        self.check_modified_bases()?;
         let modified_bases = self
             .modified_bases
             .iter()
@@ -322,8 +397,11 @@ impl PairwiseDmr {
             .chain(b_handlers)
             .collect::<Vec<IndexHandler>>();
 
-        let sample_index =
-            MultiSampleIndex::new(handlers, self.min_valid_coverage);
+        let sample_index = MultiSampleIndex::new(
+            handlers,
+            code_lookup,
+            self.min_valid_coverage,
+        );
 
         let writer: Box<dyn Write> = {
             match self.out_path.as_ref() {
@@ -481,8 +559,21 @@ pub struct MultiSampleDmr {
     /// Bases to use to calculate DMR, may be multiple. For example, to
     /// calculate differentially methylated regions using only cytosine
     /// modifications use --base C.
-    #[arg(short, alias = "base")]
+    #[arg(short, long="base", alias = "modified-bases", action=clap::ArgAction::Append)]
     modified_bases: Vec<char>,
+    /// Extra assignments of modification codes to their respective primary
+    /// bases. In general, modkit dmr will use the SAM specification to
+    /// know which modification codes are appropriate to use for a given
+    /// primary base. For example "h" is the code for 5hmC, so is appropriate
+    /// for cytosine bases, but not adenine bases. However, if your
+    /// bedMethyl file contains custom codes or codes that are not part of
+    /// the specification, you can specify which primary base they
+    /// belong to here with --assign-code x:C meaning associate modification
+    /// code "x" with cytosine (C) primary sequence bases. If a code is
+    /// encountered that is not part of the specification, the bedMethyl
+    /// record will not be used, this will be logged.
+    #[arg(long="assign-code", action=clap::ArgAction::Append)]
+    mod_code_assignments: Option<Vec<String>>,
     /// File to write logs to, it's recommended to use this option.
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
@@ -541,8 +632,10 @@ impl MultiSampleDmr {
             info!("creating directory at {:?}", &self.out_dir);
             std::fs::create_dir_all(&self.out_dir)?;
         }
-
-        PairwiseDmr::validate_modified_bases(&self.modified_bases)?;
+        let code_lookup = PairwiseDmr::validate_modified_bases(
+            &self.modified_bases,
+            self.mod_code_assignments.as_ref(),
+        )?;
         let index_fps = self
             .indices
             .chunks(2)
@@ -618,8 +711,12 @@ impl MultiSampleDmr {
                 (names, handlers)
             },
         );
-        let sample_index =
-            MultiSampleIndex::new(handlers, self.min_valid_coverage);
+
+        let sample_index = MultiSampleIndex::new(
+            handlers,
+            code_lookup,
+            self.min_valid_coverage,
+        );
 
         let genome_positions = GenomePositions::new_from_sequences(
             &motifs,
