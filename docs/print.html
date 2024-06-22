@@ -898,6 +898,14 @@ modkit dmr pair \
   --log-filepath dmr.log
 </code></pre>
 <p>Keep in mind that the MAP-based p-value provided in single-site analysis is based on a "modified" vs "unmodified" model, see the <a href="./dmr_scoring_details.html">scoring section</a> and <a href="./limitations.html">limitations</a> for additional details.</p>
+<h3 id="note-about-modification-codes"><a class="header" href="#note-about-modification-codes">Note about modification codes</a></h3>
+<p>The <code>modkit dmr</code> commands require the <code>--base</code> option to determine which genome positions to compare, i.e. <code>--base C</code> tells <code>modkit</code> to compare methylation at cytosine bases.
+You may use this option multiple times to compare methylation at multiple primary sequence bases.
+It is possible that, during <code>pileup</code> a read will have a mismatch and a modification call, such as a C-&gt;A mismatch and a 6mA call on that A, and you may not want to use that 6mA call when calculating the differential methylation metrics.
+To filter out bedMethyl records like this, <code>modkit</code> uses the <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">SAM specification</a> (page 9) of modification codes to determine which modification codes apply to which primary sequence bases.
+For example, <code>h</code> is 5hmC and applies to cytosine bases, <code>a</code> is 6mA and applies to adenine bases.
+However, <code>modkit pileup</code> does not require that you use modification codes only in the specification.
+If your bedMethyl has records with custom modification codes or codes that aren't in the specification yet, use <code>--assign-code &lt;mod_code&gt;:&lt;primary_base&gt;</code> to indicate the code applies to a given primary sequence base.</p>
 <h2 id="differential-methylation-output-format"><a class="header" href="#differential-methylation-output-format">Differential methylation output format</a></h2>
 <p>The output from <code>modkit dmr pair</code> (and for each pairwise comparison with <code>modkit dmr multi</code>) is (roughly)
 a BED file with the following schema:</p>
@@ -2026,7 +2034,15 @@ Options:
           row for each base modification call in that read using the same thresholding algorithm as
           in pileup, or summary (see online documentation for details on thresholds). Passing this
           option will cause `modkit` to estimate the pass thresholds from the data unless a
-          `--filter-threshold` value is passed to the command. (alias: --read-calls)
+          `--filter-threshold` value is passed to the command. Use 'stdout' to stream this table to
+          stdout, but note that you cannot stream this table and the raw extract table to stdout.
+
+      --pass-only
+          Only output base modification calls that pass the minimum confidence threshold. (alias:
+          pass)
+
+      --no-headers
+          Don't print the header lines in the output tables.
 
       --reference &lt;REFERENCE&gt;
           Path to reference FASTA to extract reference context information from. If no reference is
@@ -2632,7 +2648,7 @@ Options:
           compared at each site.
 
       --ref &lt;REFERENCE_FASTA&gt;
-          Path to reference fasta for used in the pileup/alignment.
+          Path to reference fasta for used in the pileup/alignment
 
       --segment &lt;SEGMENTATION_FP&gt;
           Run segmentation, output segmented differentially methylated regions to this file.
@@ -2671,10 +2687,20 @@ Options:
           Preset HMM segmentation parameters for higher propensity to switch from "Same" to
           "Different" state. Results will be shorter segments, but potentially higher sensitivity.
 
-  -m &lt;MODIFIED_BASES&gt;
+  -m, --base &lt;MODIFIED_BASES&gt;
           Bases to use to calculate DMR, may be multiple. For example, to calculate differentially
           methylated regions using only cytosine modifications use --base C.
-          
+
+      --assign-code &lt;MOD_CODE_ASSIGNMENTS&gt;
+          Extra assignments of modification codes to their respective primary bases. In general,
+          modkit dmr will use the SAM specification to know which modification codes are appropriate
+          to use for a given primary base. For example "h" is the code for 5hmC, so is appropriate
+          for cytosine bases, but not adenine bases. However, if your bedMethyl file contains custom
+          codes or codes that are not part of the specification, you can specify which primary base
+          they belong to here with --assign-code x:C meaning associate modification code "x" with
+          cytosine (C) primary sequence bases. If a code is encountered that is not part of the
+          specification, the bedMethyl record will not be used, this will be logged.
+
       --log-filepath &lt;LOG_FILEPATH&gt;
           File to write logs to, it's recommended to use this option.
 
@@ -2779,9 +2805,18 @@ Options:
           Prefix files in directory with this label.
       --ref &lt;REFERENCE_FASTA&gt;
           Path to reference fasta for the pileup.
-  -m &lt;MODIFIED_BASES&gt;
+  -m, --base &lt;MODIFIED_BASES&gt;
           Bases to use to calculate DMR, may be multiple. For example, to calculate differentially
           methylated regions using only cytosine modifications use --base C.
+      --assign-code &lt;MOD_CODE_ASSIGNMENTS&gt;
+          Extra assignments of modification codes to their respective primary bases. In general,
+          modkit dmr will use the SAM specification to know which modification codes are appropriate
+          to use for a given primary base. For example "h" is the code for 5hmC, so is appropriate
+          for cytosine bases, but not adenine bases. However, if your bedMethyl file contains custom
+          codes or codes that are not part of the specification, you can specify which primary base
+          they belong to here with --assign-code x:C meaning associate modification code "x" with
+          cytosine (C) primary sequence bases. If a code is encountered that is not part of the
+          specification, the bedMethyl record will not be used, this will be logged.
       --log-filepath &lt;LOG_FILEPATH&gt;
           File to write logs to, it's recommended to use this option.
   -t, --threads &lt;THREADS&gt;

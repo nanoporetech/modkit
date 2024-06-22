@@ -158,6 +158,16 @@ modkit dmr pair \
 
 Keep in mind that the MAP-based p-value provided in single-site analysis is based on a "modified" vs "unmodified" model, see the [scoring section](./dmr_scoring_details.md) and [limitations](./limitations.md) for additional details.
 
+### Note about modification codes
+The `modkit dmr` commands require the `--base` option to determine which genome positions to compare, i.e. `--base C` tells `modkit` to compare methylation at cytosine bases.
+You may use this option multiple times to compare methylation at multiple primary sequence bases.
+It is possible that, during `pileup` a read will have a mismatch and a modification call, such as a C->A mismatch and a 6mA call on that A, and you may not want to use that 6mA call when calculating the differential methylation metrics.
+To filter out bedMethyl records like this, `modkit` uses the [SAM specification](https://samtools.github.io/hts-specs/SAMtags.pdf) (page 9) of modification codes to determine which modification codes apply to which primary sequence bases.
+For example, `h` is 5hmC and applies to cytosine bases, `a` is 6mA and applies to adenine bases.
+However, `modkit pileup` does not require that you use modification codes only in the specification.
+If your bedMethyl has records with custom modification codes or codes that aren't in the specification yet, use `--assign-code <mod_code>:<primary_base>` to indicate the code applies to a given primary sequence base.
+
+
 ## Differential methylation output format
 The output from `modkit dmr pair` (and for each pairwise comparison with `modkit dmr multi`) is (roughly)
 a BED file with the following schema:

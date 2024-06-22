@@ -309,6 +309,14 @@ modkit dmr pair \
   --log-filepath dmr.log
 </code></pre>
 <p>Keep in mind that the MAP-based p-value provided in single-site analysis is based on a "modified" vs "unmodified" model, see the <a href="./dmr_scoring_details.html">scoring section</a> and <a href="./limitations.html">limitations</a> for additional details.</p>
+<h3 id="note-about-modification-codes"><a class="header" href="#note-about-modification-codes">Note about modification codes</a></h3>
+<p>The <code>modkit dmr</code> commands require the <code>--base</code> option to determine which genome positions to compare, i.e. <code>--base C</code> tells <code>modkit</code> to compare methylation at cytosine bases.
+You may use this option multiple times to compare methylation at multiple primary sequence bases.
+It is possible that, during <code>pileup</code> a read will have a mismatch and a modification call, such as a C-&gt;A mismatch and a 6mA call on that A, and you may not want to use that 6mA call when calculating the differential methylation metrics.
+To filter out bedMethyl records like this, <code>modkit</code> uses the <a href="https://samtools.github.io/hts-specs/SAMtags.pdf">SAM specification</a> (page 9) of modification codes to determine which modification codes apply to which primary sequence bases.
+For example, <code>h</code> is 5hmC and applies to cytosine bases, <code>a</code> is 6mA and applies to adenine bases.
+However, <code>modkit pileup</code> does not require that you use modification codes only in the specification.
+If your bedMethyl has records with custom modification codes or codes that aren't in the specification yet, use <code>--assign-code &lt;mod_code&gt;:&lt;primary_base&gt;</code> to indicate the code applies to a given primary sequence base.</p>
 <h2 id="differential-methylation-output-format"><a class="header" href="#differential-methylation-output-format">Differential methylation output format</a></h2>
 <p>The output from <code>modkit dmr pair</code> (and for each pairwise comparison with <code>modkit dmr multi</code>) is (roughly)
 a BED file with the following schema:</p>
