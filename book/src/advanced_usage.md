@@ -797,7 +797,15 @@ Options:
           row for each base modification call in that read using the same thresholding algorithm as
           in pileup, or summary (see online documentation for details on thresholds). Passing this
           option will cause `modkit` to estimate the pass thresholds from the data unless a
-          `--filter-threshold` value is passed to the command. (alias: --read-calls)
+          `--filter-threshold` value is passed to the command. Use 'stdout' to stream this table to
+          stdout, but note that you cannot stream this table and the raw extract table to stdout.
+
+      --pass-only
+          Only output base modification calls that pass the minimum confidence threshold. (alias:
+          pass)
+
+      --no-headers
+          Don't print the header lines in the output tables.
 
       --reference <REFERENCE>
           Path to reference FASTA to extract reference context information from. If no reference is
@@ -1415,7 +1423,7 @@ Options:
           compared at each site.
 
       --ref <REFERENCE_FASTA>
-          Path to reference fasta for used in the pileup/alignment.
+          Path to reference fasta for used in the pileup/alignment
 
       --segment <SEGMENTATION_FP>
           Run segmentation, output segmented differentially methylated regions to this file.
@@ -1454,10 +1462,20 @@ Options:
           Preset HMM segmentation parameters for higher propensity to switch from "Same" to
           "Different" state. Results will be shorter segments, but potentially higher sensitivity.
 
-  -m <MODIFIED_BASES>
+  -m, --base <MODIFIED_BASES>
           Bases to use to calculate DMR, may be multiple. For example, to calculate differentially
           methylated regions using only cytosine modifications use --base C.
-          
+
+      --assign-code <MOD_CODE_ASSIGNMENTS>
+          Extra assignments of modification codes to their respective primary bases. In general,
+          modkit dmr will use the SAM specification to know which modification codes are appropriate
+          to use for a given primary base. For example "h" is the code for 5hmC, so is appropriate
+          for cytosine bases, but not adenine bases. However, if your bedMethyl file contains custom
+          codes or codes that are not part of the specification, you can specify which primary base
+          they belong to here with --assign-code x:C meaning associate modification code "x" with
+          cytosine (C) primary sequence bases. If a code is encountered that is not part of the
+          specification, the bedMethyl record will not be used, this will be logged.
+
       --log-filepath <LOG_FILEPATH>
           File to write logs to, it's recommended to use this option.
 
@@ -1564,9 +1582,18 @@ Options:
           Prefix files in directory with this label.
       --ref <REFERENCE_FASTA>
           Path to reference fasta for the pileup.
-  -m <MODIFIED_BASES>
+  -m, --base <MODIFIED_BASES>
           Bases to use to calculate DMR, may be multiple. For example, to calculate differentially
           methylated regions using only cytosine modifications use --base C.
+      --assign-code <MOD_CODE_ASSIGNMENTS>
+          Extra assignments of modification codes to their respective primary bases. In general,
+          modkit dmr will use the SAM specification to know which modification codes are appropriate
+          to use for a given primary base. For example "h" is the code for 5hmC, so is appropriate
+          for cytosine bases, but not adenine bases. However, if your bedMethyl file contains custom
+          codes or codes that are not part of the specification, you can specify which primary base
+          they belong to here with --assign-code x:C meaning associate modification code "x" with
+          cytosine (C) primary sequence bases. If a code is encountered that is not part of the
+          specification, the bedMethyl record will not be used, this will be logged.
       --log-filepath <LOG_FILEPATH>
           File to write logs to, it's recommended to use this option.
   -t, --threads <THREADS>

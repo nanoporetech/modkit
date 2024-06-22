@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.3.1]
+### Fixes
+- [call-mods] Always change model to "explicit", dropped base modification probabilities should not be interpreted as canonical.
+- [dmr, segment] Add pseudo-count to avoid -inf in HMM.
+- [find-motifs] Fix crash in exhaustive search.
+### Adds
+- [dmr] Allow specification of mod code-to-primary base on the command line with `--assign-code`.
+
 ## [v0.3.1rc1]
 ### Fixes
 - [find-motifs] Bug where error would be reported when output tables are specified. Fixes #195
