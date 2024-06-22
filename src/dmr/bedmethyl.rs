@@ -11,9 +11,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dmr::llr_model::AggregatedCounts;
 use crate::genome_positions::StrandedPosition;
-use crate::mod_base_code::{
-    DnaBase, ModCodeRepr, MOD_CODE_TO_DNA_BASE, SUPPORTED_CODES,
-};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::parsing_utils::{
     consume_char, consume_digit, consume_float, consume_string,
     consume_string_from_list,
@@ -85,10 +83,6 @@ impl BedMethylLine {
         self.interval.stop
     }
 
-    pub fn check_mod_code_supported(&self) -> bool {
-        SUPPORTED_CODES.contains(&self.raw_mod_code)
-    }
-
     pub fn check_base(
         &self,
         dna_base: DnaBase,
@@ -108,17 +102,19 @@ impl BedMethylLine {
         }
     }
 
-    /// panics if mod code isn't in
-    /// [`crate::mod_base_code::MOD_CODE_TO_DNA_BASE`]
-    pub(crate) fn get_stranded_position(&self) -> StrandedPosition<DnaBase> {
+    /// panics if mod code isn't in `code_lookup`
+    pub(crate) fn get_stranded_position(
+        &self,
+        code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
+    ) -> StrandedPosition<DnaBase> {
         let strand = match self.strand {
             StrandRule::Positive | StrandRule::Both => Strand::Positive,
             StrandRule::Negative => Strand::Negative,
         };
         let dna_base = if strand == Strand::Negative {
-            MOD_CODE_TO_DNA_BASE.get(&self.raw_mod_code).unwrap().complement()
+            code_lookup.get(&self.raw_mod_code).unwrap().complement()
         } else {
-            *MOD_CODE_TO_DNA_BASE.get(&self.raw_mod_code).unwrap()
+            *code_lookup.get(&self.raw_mod_code).unwrap()
         };
 
         StrandedPosition { position: self.start(), strand, value: dna_base }
@@ -244,7 +240,7 @@ mod bedmethylline_tests {
 
     use crate::dmr::bedmethyl::{aggregate_counts2, BedMethylLine};
     use crate::genome_positions::GenomePositions;
-    use crate::mod_base_code::{DnaBase, ModCodeRepr};
+    use crate::mod_base_code::{DnaBase, ModCodeRepr, MOD_CODE_TO_DNA_BASE};
     use crate::position_filter::Iv;
 
     #[test]
@@ -333,7 +329,10 @@ mod bedmethylline_tests {
         let bedmethyl_lines = BufReader::new(fh)
             .lines()
             .map(|l| BedMethylLine::parse(&l.unwrap()).unwrap())
-            .filter(|l| positions.contains(&l.get_stranded_position()))
+            .filter(|l| {
+                positions
+                    .contains(&l.get_stranded_position(&MOD_CODE_TO_DNA_BASE))
+            })
             .collect::<Vec<BedMethylLine>>();
         let counts = aggregate_counts2(&bedmethyl_lines).unwrap();
         assert_eq!(&counts.string_counts(), "h:2,m:4");

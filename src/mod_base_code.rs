@@ -1,11 +1,11 @@
+use std::cmp::Ordering;
+use std::fmt::{Display, Formatter};
+
 use anyhow::{anyhow, Result as AnyhowResult};
 use clap::ValueEnum;
 use common_macros::hash_map;
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-
 use lazy_static::lazy_static;
+use rustc_hash::FxHashMap;
 
 pub trait ParseChar {
     fn parse_char(c: char) -> AnyhowResult<Self>
@@ -33,6 +33,7 @@ pub const FORMYL_URACIL: ModCodeRepr = ModCodeRepr::Code('e');
 pub const CARBOXY_URACIL: ModCodeRepr = ModCodeRepr::Code('b');
 pub const ANY_THYMINE: ModCodeRepr = ModCodeRepr::Code('T');
 pub const PSEUDOURIDINE: ModCodeRepr = ModCodeRepr::ChEbi(17802);
+pub const DEOXY_URACIL: ModCodeRepr = ModCodeRepr::ChEbi(16450);
 
 // Guanine mods
 pub const OXO_GUANINE: ModCodeRepr = ModCodeRepr::Code('o');
@@ -40,7 +41,7 @@ pub const ANY_GUANINE: ModCodeRepr = ModCodeRepr::Code('G');
 
 pub const ANY_MOD_CODES: [ModCodeRepr; 4] =
     [ANY_ADENINE, ANY_CYTOSINE, ANY_GUANINE, ANY_THYMINE];
-pub const SUPPORTED_CODES: [ModCodeRepr; 16] = [
+pub const SUPPORTED_CODES: [ModCodeRepr; 17] = [
     METHYL_CYTOSINE,
     HYDROXY_METHYL_CYTOSINE,
     FORMYL_CYTOSINE,
@@ -57,11 +58,12 @@ pub const SUPPORTED_CODES: [ModCodeRepr; 16] = [
     PSEUDOURIDINE,
     OXO_GUANINE,
     ANY_GUANINE,
+    DEOXY_URACIL,
 ];
 
 lazy_static! {
-    pub static ref MOD_CODE_TO_DNA_BASE: HashMap<ModCodeRepr, DnaBase> = {
-        hash_map! {
+    pub static ref MOD_CODE_TO_DNA_BASE: FxHashMap<ModCodeRepr, DnaBase> = {
+        let hm = hash_map! {
             METHYL_CYTOSINE => DnaBase::C,
             HYDROXY_METHYL_CYTOSINE => DnaBase::C,
             FORMYL_CYTOSINE => DnaBase::C,
@@ -78,7 +80,9 @@ lazy_static! {
             ANY_THYMINE => DnaBase::T,
             OXO_GUANINE => DnaBase::G,
             ANY_GUANINE => DnaBase::G,
-        }
+            DEOXY_URACIL => DnaBase::T,
+        };
+        hm.into_iter().collect()
     };
 }
 

@@ -1,6 +1,16 @@
 use crate::common::{check_against_expected_text_file, run_modkit};
+use std::fs::File;
+use std::io::{BufRead, Write};
 
 mod common;
+
+#[test]
+fn test_dmr_helps() {
+    let _ = run_modkit(&["dmr", "pair", "--help"])
+        .expect("failed to run modkit dmr pair help");
+    let _ = run_modkit(&["dmr", "multi", "--help"])
+        .expect("failed to run modkit dmr multi help");
+}
 
 #[test]
 fn test_dmr_regression() {

@@ -31,9 +31,11 @@ pub(super) fn get_modification_counts(
                     lines
                         .iter()
                         .filter(|l| {
-                            region_of_interest
-                                .positions
-                                .contains(&l.get_stranded_position())
+                            region_of_interest.positions.contains(
+                                &l.get_stranded_position(
+                                    &sample_index.code_lookup,
+                                ),
+                            )
                         })
                         .collect::<Vec<&BedMethylLine>>()
                 })
@@ -44,9 +46,11 @@ pub(super) fn get_modification_counts(
                     lines
                         .iter()
                         .filter(|l| {
-                            region_of_interest
-                                .positions
-                                .contains(&l.get_stranded_position())
+                            region_of_interest.positions.contains(
+                                &l.get_stranded_position(
+                                    &sample_index.code_lookup,
+                                ),
+                            )
                         })
                         .collect::<Vec<&BedMethylLine>>()
                 })
