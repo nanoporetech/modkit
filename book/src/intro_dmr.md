@@ -172,21 +172,21 @@ If your bedMethyl has records with custom modification codes or codes that aren'
 The output from `modkit dmr pair` (and for each pairwise comparison with `modkit dmr multi`) is (roughly)
 a BED file with the following schema:
 
-| column | name                                | description                                                                               | type  |
-|--------|-------------------------------------|-------------------------------------------------------------------------------------------|-------|
-| 1      | chrom                               | name of reference sequence from bedMethyl input samples                                   | str   |
-| 2      | start position                      | 0-based start position, from `--regions` argument                                         | int   |
-| 3      | end position                        | 0-based exclusive end position, from `--regions` argument                                 | int   |
-| 4      | name                                | `name` column from `--regions` BED, or `chr:start-stop` if absent                         | str   |
-| 5      | score                               | difference score, more positive values have increased difference                          | float |
-| 6      | sample<sub>a</sub> counts           | counts of each base modification in the region, comma-separated, for sample A             | str   |
-| 7      | sample<sub>a</sub> total            | total number of base modification calls in the region, including unmodified, for sample A | str   |
-| 8      | sample<sub>b</sub> counts           | counts of each base modification in the region, comma-separated, for sample B             | str   |
-| 9      | sample<sub>b</sub> total            | total number of base modification calls in the region, including unmodified, for sample B | str   |
-| 10     | sample<sub>a</sub> fractions        | fraction of calls for each base modification in the region, comma-separated, for sample A | str   |
-| 11     | sample<sub>b</sub> fractions        | fraction of calls for each base modification in the region, comma-separated, for sample B | str   |
-| 12     | sample<sub>a</sub> percent modified | percent modification (of any kind) in sample A                                            | float |
-| 13     | sample<sub>b</sub> percent modified | percent modification (of any kind) in sample B                                            | float |
+| column | name                                 | description                                                                               | type  |
+|--------|--------------------------------------|-------------------------------------------------------------------------------------------|-------|
+| 1      | chrom                                | name of reference sequence from bedMethyl input samples                                   | str   |
+| 2      | start position                       | 0-based start position, from `--regions` argument                                         | int   |
+| 3      | end position                         | 0-based exclusive end position, from `--regions` argument                                 | int   |
+| 4      | name                                 | `name` column from `--regions` BED, or `chr:start-stop` if absent                         | str   |
+| 5      | score                                | difference score, more positive values have increased difference                          | float |
+| 6      | sample<sub>a</sub> counts            | counts of each base modification in the region, comma-separated, for sample A             | str   |
+| 7      | sample<sub>a</sub> total             | total number of base modification calls in the region, including unmodified, for sample A | str   |
+| 8      | sample<sub>b</sub> counts            | counts of each base modification in the region, comma-separated, for sample B             | str   |
+| 9      | sample<sub>b</sub> total             | total number of base modification calls in the region, including unmodified, for sample B | str   |
+| 10     | sample<sub>a</sub> percents          | percent of calls for each base modification in the region, comma-separated, for sample A  | str   |
+| 11     | sample<sub>b</sub> percents          | percent of calls for each base modification in the region, comma-separated, for sample B  | str   |
+| 12     | sample<sub>a</sub> fraction modified | fraction modification (of any kind) in sample A                                           | float |
+| 13     | sample<sub>b</sub> fraction modified | fraction modification (of any kind) in sample B                                           | float |
 
 an example of the output is given below:
 
@@ -270,19 +270,19 @@ To activate "fine-grained" mode, pass the `--fine-grained` flag.
 
 The output schema for the segments is:
 
-| column | name                                | description                                                                               | type  |
-|--------|-------------------------------------|-------------------------------------------------------------------------------------------|-------|
-| 1      | chrom                               | name of reference sequence from bedMethyl input samples                                   | str   |
-| 2      | start position                      | 0-based start position, from `--regions` argument                                         | int   |
-| 3      | end position                        | 0-based exclusive end position, from `--regions` argument                                 | int   |
-| 4      | state-name                          | "different" when sites are differentially modified, "same" otherwise                      | str   |
-| 5      | score                               | difference score, more positive values have increased difference                          | float |
-| 6      | N-sites                             | number of sites (bedmethyl records) in the segment                                        | float |
-| 7      | sample<sub>a</sub> counts           | counts of each base modification in the region, comma-separated, for sample A             | str   |
-| 8      | sample<sub>b</sub> counts           | counts of each base modification in the region, comma-separated, for sample B             | str   |
-| 9      | sample<sub>a</sub> fractions        | fraction of calls for each base modification in the region, comma-separated, for sample A | str   |
-| 10     | sample<sub>b</sub> fractions        | fraction of calls for each base modification in the region, comma-separated, for sample B | str   |
-| 11     | sample<sub>a</sub> percent modified | percent modification (of any kind) in sample A                                            | float |
-| 12     | sample<sub>b</sub> percent modified | percent modification (of any kind) in sample B                                            | float |
-| 13     | effect size                         | percent modified in sample A (col 11) minus percent modified in sample B (col 12)         | float |
+| column | name                                 | description                                                                               | type  |
+|--------|--------------------------------------|-------------------------------------------------------------------------------------------|-------|
+| 1      | chrom                                | name of reference sequence from bedMethyl input samples                                   | str   |
+| 2      | start position                       | 0-based start position, from `--regions` argument                                         | int   |
+| 3      | end position                         | 0-based exclusive end position, from `--regions` argument                                 | int   |
+| 4      | state-name                           | "different" when sites are differentially modified, "same" otherwise                      | str   |
+| 5      | score                                | difference score, more positive values have increased difference                          | float |
+| 6      | N-sites                              | number of sites (bedmethyl records) in the segment                                        | float |
+| 7      | sample<sub>a</sub> counts            | counts of each base modification in the region, comma-separated, for sample A             | str   |
+| 8      | sample<sub>b</sub> counts            | counts of each base modification in the region, comma-separated, for sample B             | str   |
+| 9      | sample<sub>a</sub> percents          | percent of calls for each base modification in the region, comma-separated, for sample A  | str   |
+| 10     | sample<sub>b</sub> percents          | percent of calls for each base modification in the region, comma-separated, for sample B  | str   |
+| 11     | sample<sub>a</sub> fraction modified | percent modification (of any kind) in sample A                                            | float |
+| 12     | sample<sub>b</sub> fraction modified | percent modification (of any kind) in sample B                                            | float |
+| 13     | effect size                          | percent modified in sample A (col 11) minus percent modified in sample B (col 12)         | float |
 

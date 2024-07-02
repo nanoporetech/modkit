@@ -919,10 +919,10 @@ a BED file with the following schema:</p>
 <tr><td>7</td><td>sample<sub>a</sub> total</td><td>total number of base modification calls in the region, including unmodified, for sample A</td><td>str</td></tr>
 <tr><td>8</td><td>sample<sub>b</sub> counts</td><td>counts of each base modification in the region, comma-separated, for sample B</td><td>str</td></tr>
 <tr><td>9</td><td>sample<sub>b</sub> total</td><td>total number of base modification calls in the region, including unmodified, for sample B</td><td>str</td></tr>
-<tr><td>10</td><td>sample<sub>a</sub> fractions</td><td>fraction of calls for each base modification in the region, comma-separated, for sample A</td><td>str</td></tr>
-<tr><td>11</td><td>sample<sub>b</sub> fractions</td><td>fraction of calls for each base modification in the region, comma-separated, for sample B</td><td>str</td></tr>
-<tr><td>12</td><td>sample<sub>a</sub> percent modified</td><td>percent modification (of any kind) in sample A</td><td>float</td></tr>
-<tr><td>13</td><td>sample<sub>b</sub> percent modified</td><td>percent modification (of any kind) in sample B</td><td>float</td></tr>
+<tr><td>10</td><td>sample<sub>a</sub> percents</td><td>percent of calls for each base modification in the region, comma-separated, for sample A</td><td>str</td></tr>
+<tr><td>11</td><td>sample<sub>b</sub> percents</td><td>percent of calls for each base modification in the region, comma-separated, for sample B</td><td>str</td></tr>
+<tr><td>12</td><td>sample<sub>a</sub> fraction modified</td><td>fraction modification (of any kind) in sample A</td><td>float</td></tr>
+<tr><td>13</td><td>sample<sub>b</sub> fraction modified</td><td>fraction modification (of any kind) in sample B</td><td>float</td></tr>
 </tbody></table>
 </div>
 <p>an example of the output is given below:</p>
@@ -996,10 +996,10 @@ To activate "fine-grained" mode, pass the <code>--fine-grained</code> flag.</p>
 <tr><td>6</td><td>N-sites</td><td>number of sites (bedmethyl records) in the segment</td><td>float</td></tr>
 <tr><td>7</td><td>sample<sub>a</sub> counts</td><td>counts of each base modification in the region, comma-separated, for sample A</td><td>str</td></tr>
 <tr><td>8</td><td>sample<sub>b</sub> counts</td><td>counts of each base modification in the region, comma-separated, for sample B</td><td>str</td></tr>
-<tr><td>9</td><td>sample<sub>a</sub> fractions</td><td>fraction of calls for each base modification in the region, comma-separated, for sample A</td><td>str</td></tr>
-<tr><td>10</td><td>sample<sub>b</sub> fractions</td><td>fraction of calls for each base modification in the region, comma-separated, for sample B</td><td>str</td></tr>
-<tr><td>11</td><td>sample<sub>a</sub> percent modified</td><td>percent modification (of any kind) in sample A</td><td>float</td></tr>
-<tr><td>12</td><td>sample<sub>b</sub> percent modified</td><td>percent modification (of any kind) in sample B</td><td>float</td></tr>
+<tr><td>9</td><td>sample<sub>a</sub> percents</td><td>percent of calls for each base modification in the region, comma-separated, for sample A</td><td>str</td></tr>
+<tr><td>10</td><td>sample<sub>b</sub> percents</td><td>percent of calls for each base modification in the region, comma-separated, for sample B</td><td>str</td></tr>
+<tr><td>11</td><td>sample<sub>a</sub> fraction modified</td><td>percent modification (of any kind) in sample A</td><td>float</td></tr>
+<tr><td>12</td><td>sample<sub>b</sub> fraction modified</td><td>percent modification (of any kind) in sample B</td><td>float</td></tr>
 <tr><td>13</td><td>effect size</td><td>percent modified in sample A (col 11) minus percent modified in sample B (col 12)</td><td>float</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="validating-ground-truth-results"><a class="header" href="#validating-ground-truth-results">Validating ground truth results.</a></h1>
