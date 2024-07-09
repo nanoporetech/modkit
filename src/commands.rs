@@ -302,6 +302,7 @@ impl Adjust {
             self.fail_fast,
             "Adjusting modBAM",
             self.suppress_progress,
+            false,
         )?;
         Ok(())
     }
@@ -1075,6 +1076,9 @@ pub struct CallMods {
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
+    /// Filter base modification probabilities, but don't make hard calls.
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    filter_only: bool,
 
     // processing args
     /// Number of threads to use while processing chunks concurrently.
@@ -1278,6 +1282,7 @@ impl CallMods {
             self.fail_fast,
             "Calling Mods",
             self.suppress_progress,
+            !self.filter_only,
         )?;
 
         Ok(())

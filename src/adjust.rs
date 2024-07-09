@@ -16,6 +16,7 @@ pub fn adjust_mod_probs(
     methods: &[CollapseMethod],
     caller: Option<&MultipleThresholdModCaller>,
     edge_filter: Option<&EdgeFilter>,
+    call_mods: bool,
 ) -> Result<bam::Record, RunError> {
     let mod_base_info = ModBaseInfo::new_from_record(&record)?;
     let mm_style = mod_base_info.mm_style;
@@ -56,11 +57,25 @@ pub fn adjust_mod_probs(
             // call mods
             match (caller, DnaBase::parse(base)) {
                 (Some(caller), Ok(dna_base)) => {
-                    seq_pos_mod_probs = caller
-                        .call_seq_pos_mod_probs(&dna_base, seq_pos_mod_probs)
-                        .map_err(|e| {
-                            RunError::new_input_error(e.to_string())
-                        })?;
+                    if call_mods {
+                        seq_pos_mod_probs = caller
+                            .call_seq_pos_mod_probs(
+                                &dna_base,
+                                seq_pos_mod_probs,
+                            )
+                            .map_err(|e| {
+                                RunError::new_input_error(e.to_string())
+                            })?;
+                    } else {
+                        seq_pos_mod_probs = caller
+                            .filter_seq_pos_mod_probs(
+                                &dna_base,
+                                seq_pos_mod_probs,
+                            )
+                            .map_err(|e| {
+                                RunError::new_input_error(e.to_string())
+                            })?;
+                    }
                 }
                 (Some(_), Err(e)) => {
                     let e = e.context(
@@ -118,6 +133,7 @@ pub fn adjust_modbam(
     fail_fast: bool,
     verb: &'static str,
     suppress_progress: bool,
+    call_mods: bool,
 ) -> anyhow::Result<()> {
     let spinner = get_spinner();
     if suppress_progress {
@@ -136,6 +152,7 @@ pub fn adjust_modbam(
                 &collapse_methods,
                 threshold_caller,
                 edge_filter,
+                call_mods,
             ) {
                 Err(RunError::BadInput(InputError(err)))
                 | Err(RunError::Failed(err)) => {
