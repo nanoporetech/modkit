@@ -16,7 +16,7 @@ pub fn adjust_mod_probs(
     methods: &[CollapseMethod],
     caller: Option<&MultipleThresholdModCaller>,
     edge_filter: Option<&EdgeFilter>,
-    call_mods: bool,
+    filter_only: bool,
 ) -> Result<bam::Record, RunError> {
     let mod_base_info = ModBaseInfo::new_from_record(&record)?;
     let mm_style = mod_base_info.mm_style;
@@ -31,7 +31,8 @@ pub fn adjust_mod_probs(
     for (base, strand, seq_pos_mod_probs) in mod_prob_iter {
         let converter = converters.get(&base).unwrap();
         // edge filter
-        let filtered_seq_pos_mod_probs = if let Some(edge_filter) = edge_filter
+        let trimmed_seq_pos_base_mod_probs = if let Some(edge_filter) =
+            edge_filter
         {
             // remove the positions at the ends, also update to Ambiguous mode
             match seq_pos_mod_probs
@@ -49,7 +50,7 @@ pub fn adjust_mod_probs(
         } else {
             Some(seq_pos_mod_probs)
         };
-        if let Some(mut seq_pos_mod_probs) = filtered_seq_pos_mod_probs {
+        if let Some(mut seq_pos_mod_probs) = trimmed_seq_pos_base_mod_probs {
             // collapse/convert
             for method in methods {
                 seq_pos_mod_probs = seq_pos_mod_probs.into_collapsed(method);
@@ -57,9 +58,9 @@ pub fn adjust_mod_probs(
             // call mods
             match (caller, DnaBase::parse(base)) {
                 (Some(caller), Ok(dna_base)) => {
-                    if call_mods {
+                    if filter_only {
                         seq_pos_mod_probs = caller
-                            .call_seq_pos_mod_probs(
+                            .filter_seq_pos_mod_probs(
                                 &dna_base,
                                 seq_pos_mod_probs,
                             )
@@ -68,7 +69,7 @@ pub fn adjust_mod_probs(
                             })?;
                     } else {
                         seq_pos_mod_probs = caller
-                            .filter_seq_pos_mod_probs(
+                            .call_seq_pos_mod_probs(
                                 &dna_base,
                                 seq_pos_mod_probs,
                             )
@@ -133,7 +134,7 @@ pub fn adjust_modbam(
     fail_fast: bool,
     verb: &'static str,
     suppress_progress: bool,
-    call_mods: bool,
+    filter_only: bool,
 ) -> anyhow::Result<()> {
     let spinner = get_spinner();
     if suppress_progress {
@@ -152,7 +153,7 @@ pub fn adjust_modbam(
                 &collapse_methods,
                 threshold_caller,
                 edge_filter,
-                call_mods,
+                filter_only,
             ) {
                 Err(RunError::BadInput(InputError(err)))
                 | Err(RunError::Failed(err)) => {
