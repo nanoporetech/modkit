@@ -478,23 +478,14 @@ pub(super) fn parse_roi_bed<P: AsRef<Path>>(
     }
 }
 
-fn factorial(n: usize) -> anyhow::Result<usize> {
-    if n < 1 {
-        bail!("n must be > 1")
-    } else {
-        Ok((1..=n).product())
-    }
-}
-
-pub(super) fn n_choose_2(n: usize) -> anyhow::Result<usize> {
-    if n < 2 {
-        bail!("n must be > 2")
-    } else if n == 2 {
-        Ok(1)
-    } else {
-        let numerator = factorial(n)?;
-        let denom = 2 * factorial(n - 2)?;
-        Ok(numerator / denom)
+pub(crate) fn n_choose_2(n: usize) -> anyhow::Result<usize> {
+    match n {
+        0 | 1 => bail!("n must be >= 2"),
+        2 => Ok(1),
+        _ => {
+            let numerator = n * (n - 1usize);
+            Ok(numerator / 2usize)
+        }
     }
 }
 
