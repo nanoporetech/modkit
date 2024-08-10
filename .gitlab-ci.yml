@@ -129,30 +129,47 @@ manual_build_modkit_linux:
   
 
 # TODO change `dist` directory to modkit_v{CRATE_VERSION}_{GIT_SHA}
-.pack_up_dist_centos: &pack_up_dist_centos |
+.pack_up_dist: &pack_up_dist |
+  CRATE_VER="v"$(cargo r -- --version | cut -f 2 -d ' ')
+  short_sha=${CI_COMMIT_SHA:0:7}
+  echo "> version, ${CRATE_VER}, sha ${short_sha}"
+  dist_dir=dist_modkit_${CRATE_VER}_${short_sha}
   ls target/release/modkit
-  mkdir dist
-  cp README.md dist/
-  cp LICENCE.txt dist/
-  cp target/release/modkit dist/
-  cp -r docs dist/
-  echo "contents if distribution $(ls dist/)"
-  tar -cvzf modkit_centos7_x86_64.tar.gz dist/
-  ls modkit_centos7_x86_64.tar.gz
+  mkdir ${dist_dir}
 
-manual_build_modkit_linux_centos:
-  <<: *centos7_image
+  cp README.md ${dist_dir}
+  cp LICENCE.txt ${dist_dir}
+  cp target/release/modkit ${dist_dir}
+  cp -r docs ${dist_dir}
+  echo "contents if distribution $(ls ${dist_dir})"
+  tar -cvzf modkit_u16_x86_64.tar.gz ${dist_dir}
+  ls modkit_u16_x86_64.tar.gz
+
+manual_build_modkit_u16:
+  <<: *ub16_image
   when: manual
   script:
-    - yum groupinstall 'Development Tools' -y
-    - yum install perl-IPC-Cmd -y
-    - yum install wget -y
-    - *install_rust_centos7
-    - *build_with_cmake_around
-    - *pack_up_dist_centos
+    - *install_rust_1604
+    - cargo build --release
+    - ls -al
+    - *pack_up_dist
   artifacts:
     paths:
-      - modkit_centos7_x86_64.tar.gz
+      - modkit_u16_x86_64.tar.gz
+
+# manual_build_modkit_linux_centos:
+#   <<: *centos7_image
+#   when: manual
+#   script:
+#     - yum groupinstall 'Development Tools' -y
+#     - yum install perl-IPC-Cmd -y
+#     - yum install wget -y
+#     - *install_rust_centos7
+#     - *build_with_cmake_around
+#     - *pack_up_dist_centos
+#   artifacts:
+#     paths:
+#       - modkit_centos7_x86_64.tar.gz
 
 deploy_linux_artefact:
   <<: *rust_image
