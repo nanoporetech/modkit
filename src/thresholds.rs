@@ -31,12 +31,12 @@ pub(crate) fn percentile_linear_interp(
             Ok(xs[xs.len() - 1])
         } else {
             assert!(q < 1.0);
-            let l = xs.len() as f32;
+            let l = (xs.len() - 1usize) as f32;
             let left = (l * q).floor();
-            let right = (l * q).ceil();
+            let right = (l * q).ceil() as usize;
             let g = (l * q).fract();
             let y0 = xs[left as usize];
-            let y1 = xs[right as usize];
+            let y1 = xs[right];
             let y = y0 * (1f32 - g) + y1 * g;
             Ok(y)
         }
@@ -191,4 +191,16 @@ pub fn get_modbase_probs_from_bam(
         suppress_progress,
     )
     .map(|x| x.mle_probs_per_base())
+}
+
+#[cfg(test)]
+mod thresolds_tests {
+    use super::percentile_linear_interp;
+
+    #[test]
+    fn test_thresholds_oob() {
+        let xs = (0..10usize).map(|i| i as f32).collect::<Vec<f32>>();
+        percentile_linear_interp(&xs, 0.95)
+            .expect("should calculate percentile");
+    }
 }
