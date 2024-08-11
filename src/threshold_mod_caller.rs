@@ -91,6 +91,18 @@ impl MultipleThresholdModCaller {
         }
     }
 
+    #[inline]
+    fn filter_probs(
+        &self,
+        canonical_base: &DnaBase,
+        base_mod_probs: BaseModProbs,
+    ) -> Option<BaseModProbs> {
+        match self.call(canonical_base, &base_mod_probs) {
+            BaseModCall::Filtered => None,
+            _ => Some(base_mod_probs),
+        }
+    }
+
     /// Convert the base modification probabilities into "calls" where
     /// the probabilities are set to 1.0 for the predicted class.
     pub fn call_seq_pos_mod_probs(
@@ -103,6 +115,27 @@ impl MultipleThresholdModCaller {
             .into_iter()
             .filter_map(|(q_pos, probs)| {
                 self.call_probs(canonical_base, probs)
+                    .map(|probs| (q_pos, probs))
+            })
+            .collect::<FxHashMap<usize, BaseModProbs>>();
+
+        // This method changes the "mode" to explicit (?) since base
+        // modification probabilities below the threshold will be
+        // dropped, so it's invalid to call them canonical as would be
+        // implied with Implicit mode.
+        Ok(SeqPosBaseModProbs::new(SkipMode::Explicit, pos_to_base_mod_probs))
+    }
+
+    pub fn filter_seq_pos_mod_probs(
+        &self,
+        canonical_base: &DnaBase,
+        seq_pos_base_mod_probs: SeqPosBaseModProbs,
+    ) -> anyhow::Result<SeqPosBaseModProbs> {
+        let pos_to_base_mod_probs = seq_pos_base_mod_probs
+            .pos_to_base_mod_probs
+            .into_iter()
+            .filter_map(|(q_pos, probs)| {
+                self.filter_probs(canonical_base, probs)
                     .map(|probs| (q_pos, probs))
             })
             .collect::<FxHashMap<usize, BaseModProbs>>();

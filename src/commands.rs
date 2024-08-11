@@ -7,9 +7,12 @@ use clap::{Args, Subcommand, ValueEnum};
 use histo_fp::Histogram;
 use itertools::Itertools;
 use log::{debug, info};
-use rust_htslib::bam;
-use rust_htslib::bam::record::{Aux, AuxArray};
-use rust_htslib::bam::Read;
+use rust_htslib::bam::{
+    self,
+    record::{Aux, AuxArray},
+    Read,
+};
+use rust_htslib::tpool;
 
 use crate::adjust::adjust_modbam;
 use crate::command_utils::{
@@ -159,7 +162,7 @@ fn get_sampling_options(
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
 pub struct Adjust {
-    /// BAM file to collapse mod call from. Can be a path to a file or one of
+    /// Input BAM file, can be a path to a file or one of
     /// `-` or `stdin` to specify a stream from standard input.
     in_bam: String,
     /// File path to new BAM file to be created. Can be a path to a file or one
@@ -183,7 +186,7 @@ pub struct Adjust {
     fail_fast: bool,
     /// Convert one mod-tag to another, summing the probabilities together if
     /// the retained mod tag is already present.
-    #[arg(group = "prob_args", long, action = clap::ArgAction::Append, num_args = 2)]
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, conflicts_with_all=["ignore", "filter_probs"])]
     convert: Option<Vec<String>>,
     /// Discard base modification calls that are this many bases from the start
     /// or the end of the read. Two comma-separated values may be provided
@@ -203,21 +206,111 @@ pub struct Adjust {
     /// Output SAM format instead of BAM.
     #[arg(long, default_value_t = false)]
     output_sam: bool,
+
+    // filtering options
+    // sampling args
+    /// Filter out the lowest confidence base modification probabilities.
+    #[arg(long, default_value_t = false)]
+    filter_probs: bool,
+    /// Sample approximately this many reads when estimating the filtering
+    /// threshold. If alignments are present reads will be sampled evenly
+    /// across aligned genome. If a region is specified, either with the
+    /// --region option or the --sample-region option, then reads will be
+    /// sampled evenly across the region given. This option is useful for
+    /// large BAM files. In practice, 10-50 thousand reads is sufficient to
+    /// estimate the model output distribution and determine the filtering
+    /// threshold.
+    #[arg(
+        short = 'n',
+        requires = "filter_probs",
+        long,
+        default_value_t = 10_042,
+        hide_short_help = true
+    )]
+    num_reads: usize,
+    /// Specify a region for sampling reads from when estimating the threshold
+    /// probability. If this option is not provided, but --region is
+    /// provided, the genomic interval passed to --region will be used.
+    /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    #[arg(long, requires = "filter_probs", hide_short_help = true)]
+    sample_region: Option<String>,
+    /// Interval chunk size to process concurrently when estimating the
+    /// threshold probability, can be larger than the pileup processing
+    /// interval.
+    #[arg(
+        long,
+        requires = "filter_probs",
+        default_value_t = 1_000_000,
+        hide_short_help = true
+    )]
+    sampling_interval_size: u32,
+    /// Filter out modified base calls where the probability of the predicted
+    /// variant is below this confidence percentile. For example, 0.1 will
+    /// filter out the 10% lowest confidence modification calls.
+    #[arg(short = 'p', requires = "filter_probs", long, default_value_t = 0.1)]
+    filter_percentile: f32,
+    /// Specify the filter threshold globally or per primary base. A global
+    /// filter threshold can be specified with by a decimal number (e.g.
+    /// 0.75). Per-base thresholds can be specified by colon-separated
+    /// values, for example C:0.75 specifies a threshold value of 0.75 for
+    /// cytosine modification calls. Additional per-base thresholds can be
+    /// specified by repeating the option: for example --filter-threshold
+    /// C:0.75 --filter-threshold A:0.70 or specify a single base option
+    /// and a default for all other bases with: --filter-threshold A:0.70
+    /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
+    /// adenine and 0.9 for all other base modification calls.
+    #[arg(
+        long,
+        conflicts_with="filter_percentile",
+        requires="filter_probs",
+        action = clap::ArgAction::Append,
+        alias = "pass_threshold",
+        hide_short_help = true,
+    )]
+    filter_threshold: Option<Vec<String>>,
+    /// Specify a passing threshold to use for a base modification, independent
+    /// of the threshold for the primary sequence base or the default. For
+    /// example, to set the pass threshold for 5hmC to 0.8 use
+    /// `--mod-threshold h:0.8`. The pass threshold will still be estimated
+    /// as usual and used for canonical cytosine and other modifications
+    /// unless the `--filter-threshold` option is also passed.
+    /// See the online documentation for more details.
+    #[arg(
+        requires="filter_probs",
+        long = "mod-threshold",
+        action = clap::ArgAction::Append,
+        hide_short_help = true,
+    )]
+    mod_thresholds: Option<Vec<String>>,
+    /// Only use base modification probabilities from bases that are aligned
+    /// when estimating the filter threshold (i.e. ignore soft-clipped, and
+    /// inserted bases).
+    #[arg(
+        long,
+        default_value_t = false,
+        hide_short_help = true,
+        conflicts_with = "filter_percentile",
+        requires = "filter_probs",
+        hide_short_help = true
+    )]
+    only_mapped: bool,
+
     /// Hide the progress bar.
-    #[arg(long, default_value_t = false, hide_short_help = true)]
+    #[arg(long, default_value_t = false)]
     suppress_progress: bool,
 }
 
 impl Adjust {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        let io_threadpool = tpool::ThreadPool::new(self.threads as u32)?;
         let mut reader = get_serial_reader(self.in_bam.as_str())?;
-        let threads = self.threads;
-        reader.set_threads(threads)?;
+        reader.set_thread_pool(&io_threadpool)?;
         let mut header = bam::Header::from_template(reader.header());
         add_modkit_pg_records(&mut header);
-        let mut out_bam =
+        let mut bam_writer =
             get_bam_writer(&self.out_bam, &header, self.output_sam)?;
+        bam_writer.set_thread_pool(&io_threadpool)?;
 
         let methods = if let Some(convert) = &self.convert {
             let convert = convert
@@ -283,25 +376,88 @@ impl Adjust {
             .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
             .transpose()?;
 
-        let methods = if edge_filter.is_none() && methods.is_empty() {
+        let methods = if edge_filter.is_none()
+            && methods.is_empty()
+            && !self.filter_probs
+        {
             bail!(
                 "no edge-filter, ignore, or convert was provided, no work to \
-                 do. Provide --edge-filter, --ignore, or --convert option to \
-                 use modkit adjust-mods"
+                 do. Provide --edge-filter, --ignore, --filter-probs, or \
+                 --convert option to use `modkit adjust-mods`"
             )
         } else {
+            #[cfg(debug)]
+            {
+                assert!(medhods.len() <= 2 || !self.filter_probs);
+            }
             methods
+        };
+
+        let caller = if self.filter_probs {
+            let per_mod_thresholds =
+                if let Some(raw_per_mod_thresholds) = &self.mod_thresholds {
+                    Some(parse_per_mod_thresholds(raw_per_mod_thresholds)?)
+                } else {
+                    None
+                };
+
+            let sampling_region = if let Some(raw_region) = &self.sample_region
+            {
+                info!("parsing sample region {raw_region}");
+                Some(Region::parse_str(raw_region, &reader.header())?)
+            } else {
+                None
+            };
+
+            let caller = if let Some(raw_threshold) = &self.filter_threshold {
+                parse_thresholds(raw_threshold, per_mod_thresholds)?
+            } else {
+                if using_stream(&self.in_bam) {
+                    bail!(
+                        "must specify all thresholds with --filter-threshold \
+                         and (optionally) --mod-threshold when using stdin \
+                         stream"
+                    )
+                }
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(self.threads)
+                    .build()
+                    .with_context(|| "failed to make threadpool")?;
+                pool.install(|| {
+                    get_threshold_from_options(
+                        &Path::new(&self.in_bam).to_path_buf(),
+                        self.threads,
+                        self.sampling_interval_size,
+                        None,
+                        self.num_reads,
+                        false,
+                        self.filter_percentile,
+                        None,
+                        sampling_region.as_ref(),
+                        per_mod_thresholds,
+                        edge_filter.as_ref(),
+                        methods.get(0),
+                        None,
+                        self.only_mapped,
+                        self.suppress_progress,
+                    )
+                })?
+            };
+            Some(caller)
+        } else {
+            None
         };
 
         adjust_modbam(
             &mut reader,
-            &mut out_bam,
+            &mut bam_writer,
             &methods,
-            None,
+            caller.as_ref(),
             edge_filter.as_ref(),
             self.fail_fast,
-            "Adjusting modBAM",
+            "Adjusting modBAM, records processed",
             self.suppress_progress,
+            self.filter_probs,
         )?;
         Ok(())
     }
@@ -1206,14 +1362,14 @@ pub struct CallMods {
 impl CallMods {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        let io_threadpool = tpool::ThreadPool::new(self.threads as u32)?;
         let mut reader = get_serial_reader(&self.in_bam)?;
-
-        let threads = self.threads;
-        reader.set_threads(threads)?;
+        reader.set_thread_pool(&io_threadpool)?;
         let mut header = bam::Header::from_template(reader.header());
         add_modkit_pg_records(&mut header);
-        let mut out_bam =
+        let mut bam_writer =
             get_bam_writer(&self.out_bam, &header, self.output_sam)?;
+        bam_writer.set_thread_pool(&io_threadpool)?;
 
         let edge_filter = self
             .edge_filter
@@ -1271,13 +1427,14 @@ impl CallMods {
 
         adjust_modbam(
             &mut reader,
-            &mut out_bam,
+            &mut bam_writer,
             &[],
             Some(&caller),
             edge_filter.as_ref(),
             self.fail_fast,
-            "Calling Mods",
+            "Calling Mods, records processed",
             self.suppress_progress,
+            false,
         )?;
 
         Ok(())
