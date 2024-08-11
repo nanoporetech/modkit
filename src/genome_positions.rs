@@ -10,7 +10,7 @@ use log::debug;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::mod_base_code::DnaBase;
-use crate::util::{get_ticker, Strand};
+use crate::util::{get_ticker, Strand, StrandRule};
 
 #[derive(Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(crate) struct StrandedPosition<T>
@@ -88,29 +88,31 @@ impl GenomePositions {
         })
     }
 
-    // pub(crate) fn get_length(&self, chrom_name: &str) -> Option<usize> {
-    //     self.contigs.get(chrom_name).map(|seq| seq.len())
-    // }
-
     pub(crate) fn get_positions(
         &self,
         chrom_name: &str,
-        interval: &Range<u64>,
+        dmr_interval: &Range<u64>,
+        strand_rule: StrandRule,
     ) -> Option<Vec<StrandedPosition<DnaBase>>> {
-        let interval = (interval.start as usize)..(interval.end as usize);
+        let interval =
+            (dmr_interval.start as usize)..(dmr_interval.end as usize);
         self.contigs.get(chrom_name).map(|seq| {
             seq[interval.start..interval.end]
                 .iter()
                 .enumerate()
                 .filter_map(|(i, base)| {
                     let position = i + interval.start;
-                    if self.positive_strand_bases.contains(base) {
+                    if self.positive_strand_bases.contains(base)
+                        && strand_rule.covers(Strand::Positive)
+                    {
                         Some(StrandedPosition {
                             position: position as u64,
                             strand: Strand::Positive,
                             value: DnaBase::parse(*base).unwrap(),
                         })
-                    } else if self.negative_strand_bases.contains(base) {
+                    } else if self.negative_strand_bases.contains(base)
+                        && strand_rule.covers(Strand::Negative)
+                    {
                         Some(StrandedPosition {
                             position: position as u64,
                             strand: Strand::Negative,
@@ -123,10 +125,6 @@ impl GenomePositions {
                 .collect::<Vec<StrandedPosition<DnaBase>>>()
         })
     }
-
-    // pub(crate) fn contig_names(&self) -> impl Iterator<Item = &String> {
-    //     self.contigs.keys()
-    // }
 
     pub(crate) fn contig_sizes(
         &self,

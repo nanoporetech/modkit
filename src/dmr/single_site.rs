@@ -24,7 +24,9 @@ use crate::hmm::{HmmModel, States};
 use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::BorrowingMoniod;
 use crate::thresholds::percentile_linear_interp;
-use crate::util::{get_subroutine_progress_bar, get_ticker, Region};
+use crate::util::{
+    get_subroutine_progress_bar, get_ticker, Region, StrandRule,
+};
 use crate::writers::TsvWriter;
 
 pub(super) struct SingleSiteDmrAnalysis {
@@ -309,7 +311,7 @@ impl SingleSiteBatches {
         let mut interval_queue = genome_positions
             .contig_sizes()
             .filter(|(name, _)| sample_index.has_contig(name))
-            .map(|(name, length)| (name.to_owned(), (0u64..(length as u64))))
+            .map(|(name, length)| (name.to_owned(), 0u64..(length as u64)))
             .sorted_by(|(a, _), (b, _)| a.cmp(b))
             .collect::<VecDeque<(String, Range<u64>)>>();
 
@@ -361,10 +363,11 @@ impl SingleSiteBatches {
                 self.curr_contig_end,
             );
             let interval = self.curr_pos..end;
-            if let Some(positions) = self
-                .genome_positions
-                .get_positions(&self.curr_contig, &interval)
-            {
+            if let Some(positions) = self.genome_positions.get_positions(
+                &self.curr_contig,
+                &interval,
+                StrandRule::Both,
+            ) {
                 let interval_length = positions.len() as u64;
                 let control_chunks = self
                     .sample_index

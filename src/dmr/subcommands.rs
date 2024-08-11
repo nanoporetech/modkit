@@ -474,7 +474,9 @@ impl PairwiseDmr {
 
         let regions_of_interest =
             if let Some(roi_bed) = self.regions_bed.as_ref() {
-                let rois = parse_roi_bed(roi_bed)?;
+                let rois = parse_roi_bed(roi_bed).with_context(|| {
+                    format!("failed to parse supplied regions at {roi_bed:?}")
+                })?;
                 info!("loaded {} regions", rois.len());
                 rois
             } else {

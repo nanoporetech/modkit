@@ -13,6 +13,7 @@ use indicatif::ProgressBar;
 use log::{debug, error};
 use log_once::debug_once;
 use nom::character::complete::one_of;
+use nom::combinator::map_res;
 use nom::multi::many0;
 use nom::IResult;
 use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
@@ -22,9 +23,11 @@ use crate::dmr::tabix::MultiSampleIndex;
 use crate::genome_positions::{GenomePositions, StrandedPosition};
 use crate::mod_base_code::DnaBase;
 use crate::parsing_utils::{
-    consume_digit, consume_string, consume_string_spaces,
+    consume_char, consume_digit, consume_float, consume_string,
+    consume_string_spaces,
 };
 use crate::position_filter::Iv;
+use crate::util::StrandRule;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 #[allow(non_camel_case_types)]
@@ -50,11 +53,13 @@ pub(super) struct DmrInterval {
     pub(super) interval: Iv,
     pub(super) chrom: String,
     pub(super) name: String,
+    pub(super) strand: StrandRule,
 }
 
 impl DmrInterval {
-    pub(super) fn parse_bed_line(line: &str) -> IResult<&str, Self> {
-        let (rest, chrom) = consume_string(line)?;
+    #[inline]
+    fn parse_bed_line(l: &str) -> IResult<&str, Self> {
+        let (rest, chrom) = consume_string(l)?;
         let (rest, start) = consume_digit(rest)?;
         let (rest, stop) = consume_digit(rest)?;
 
@@ -69,14 +74,39 @@ impl DmrInterval {
                 let name = format!("{}:{}-{}", chrom, start, stop);
                 (rest, interval, name)
             });
-
-        Ok((rest, Self { interval, chrom, name }))
+        Ok((
+            rest,
+            DmrInterval { interval, chrom, name, strand: StrandRule::Both },
+        ))
     }
 
-    pub(super) fn parse_str(line: &str) -> anyhow::Result<Self> {
+    pub(super) fn parse_unstranded_bed_line(
+        line: &str,
+    ) -> anyhow::Result<Self> {
         Self::parse_bed_line(line)
+            .map_err(|e| {
+                anyhow!(
+                    "failed to parse un-stranded (bed3/4) line: {line}, {e}"
+                )
+            })
             .map(|(_, this)| this)
-            .map_err(|e| anyhow!("{}", e.to_string()))
+    }
+
+    pub(super) fn parse_stranded_bed_line(line: &str) -> anyhow::Result<Self> {
+        fn inner(l: &str) -> IResult<&str, DmrInterval> {
+            let mut parse_strand =
+                map_res(consume_char, |x| StrandRule::try_from(x));
+            let (rest, mut this) = DmrInterval::parse_bed_line(l)?;
+            let (rest, _score) = consume_float(rest)?;
+            let (rest, strand) = parse_strand(rest)?;
+            this.strand = strand;
+            Ok((rest, this))
+        }
+        inner(line)
+            .map_err(|e| {
+                anyhow!("failed to parse stranded (bed4+) line: {line}, {e}")
+            })
+            .map(|(_, this)| this)
     }
 
     pub(super) fn start(&self) -> u64 {
@@ -128,6 +158,7 @@ impl RegionOfInterest {
             .get_positions(
                 &dmr_interval.chrom,
                 &(dmr_interval.start()..dmr_interval.stop()),
+                dmr_interval.strand,
             )
             .map(|positions| Self {
                 positions: positions.into_iter().collect(),
@@ -145,10 +176,6 @@ impl PartialOrd for RegionOfInterest {
 impl Ord for RegionOfInterest {
     fn cmp(&self, other: &Self) -> Ordering {
         self.dmr_interval.cmp(&other.dmr_interval)
-        // match self.chrom_id.cmp(&other.chrom_id) {
-        //     Ordering::Equal => self.dmr_interval.cmp(&other.dmr_interval),
-        //     o @ _ => o,
-        // }
     }
 }
 
@@ -456,7 +483,7 @@ impl Iterator for RoiIter {
 pub(super) fn parse_roi_bed<P: AsRef<Path>>(
     fp: P,
 ) -> anyhow::Result<Vec<DmrInterval>> {
-    let intervals = BufReader::new(File::open(fp)?)
+    let mut reader = BufReader::new(File::open(fp)?)
         .lines()
         .filter_map(|r| match r {
             Ok(l) => Some(l),
@@ -468,9 +495,25 @@ pub(super) fn parse_roi_bed<P: AsRef<Path>>(
                 None
             }
         })
+        .skip_while(|l| l.starts_with('#'))
+        .peekable();
+
+    let num_fields = match reader.peek() {
+        Some(l) => l.split('\t').count(),
+        None => bail!("zero non-comment lines in regions"),
+    };
+
+    let parser = if num_fields <= 4 {
+        |l: &str| DmrInterval::parse_unstranded_bed_line(l)
+    } else {
+        |l: &str| DmrInterval::parse_stranded_bed_line(l)
+    };
+
+    let intervals = reader
         // todo check that regions do not overlap
-        .map(|line| DmrInterval::parse_str(&line))
+        .map(|line| parser(&line))
         .collect::<anyhow::Result<Vec<DmrInterval>>>()?;
+
     if intervals.is_empty() {
         bail!("didn't parse any regions")
     } else {
@@ -498,38 +541,52 @@ mod dmr_util_tests {
 
     use crate::dmr::util::{parse_roi_bed, DmrInterval, ProtoIndexChunk};
     use crate::position_filter::Iv;
+    use crate::util::StrandRule;
 
     #[test]
     #[rustfmt::skip]
     fn test_parse_rois() {
-        let obs = DmrInterval::parse_str(
-            "chr20\t279148\t279507\tCpG: 39 359\t39\t260\t21.7\t72.4\t0.83",
+        let obs = DmrInterval::parse_stranded_bed_line(
+            "chr20\t279148\t279507\tCpG: 39 359\t39\t+",
         )
         .unwrap();
         let expected = DmrInterval::new(
             Iv { start: 279148, stop: 279507, val: () },
             "chr20".to_string(),
             "CpG: 39 359".to_string(),
+            StrandRule::Positive,
+        );
+        let obs = DmrInterval::parse_stranded_bed_line(
+            "chr20\t279148\t279507\tCpG: 39 359\t39\t.",
+        )
+            .unwrap();
+        let expected = DmrInterval::new(
+            Iv { start: 279148, stop: 279507, val: () },
+            "chr20".to_string(),
+            "CpG: 39 359".to_string(),
+            StrandRule::Both,
         );
         assert_eq!(obs, expected);
-        let obs = DmrInterval::parse_str(
-            "chr20\t279148\t279507\tCpGby_any_other_name\t39\t260\t21.7\t72.4\t0.83",
+        let obs = DmrInterval::parse_stranded_bed_line(
+            "chr20\t279148\t279507\tCpGby_any_other_name\t39\t-\t",
         )
         .unwrap();
         let expected = DmrInterval::new(
             Iv { start: 279148, stop: 279507, val: () },
             "chr20".to_string(),
             "CpGby_any_other_name".to_string(),
+            StrandRule::Negative,
         );
         assert_eq!(obs, expected);
-        let obs = DmrInterval::parse_str("chr20\t279148\t279507\t").unwrap();
+        let obs = DmrInterval::parse_unstranded_bed_line("chr20\t279148\t279507\t").unwrap();
         let expected = DmrInterval::new(
             Iv { start: 279148, stop: 279507, val: () },
             "chr20".to_string(),
             "chr20:279148-279507".to_string(),
+            StrandRule::Both,
         );
         assert_eq!(obs, expected);
-        let obs = DmrInterval::parse_str("chr20\t279148\t279507 ").unwrap();
+        let obs = DmrInterval::parse_unstranded_bed_line("chr20\t279148\t279507 ").unwrap();
         assert_eq!(obs, expected);
     }
 
@@ -542,16 +599,19 @@ mod dmr_util_tests {
                 interval: Iv { start: 10172120, stop: 10172545, val: () },
                 chrom: "chr20".to_string(),
                 name: "r1".to_string(),
+                strand: StrandRule::Both,
             },
             DmrInterval {
                 interval: Iv { start: 10217487, stop: 10218336, val: () },
                 chrom: "chr20".to_string(),
                 name: "r2".to_string(),
+                strand: StrandRule::Both,
             },
             DmrInterval {
                 interval: Iv { start: 10034963, stop: 10035266, val: () },
                 chrom: "chr20".to_string(),
                 name: "r3".to_string(),
+                strand: StrandRule::Both,
             },
         ]
         .to_vec();
@@ -567,16 +627,19 @@ mod dmr_util_tests {
                 interval: Iv { start: 10172120, stop: 10172545, val: () },
                 chrom: "chr20".to_string(),
                 name: "chr20:10172120-10172545".to_string(),
+                strand: StrandRule::Both,
             },
             DmrInterval {
                 interval: Iv { start: 10217487, stop: 10218336, val: () },
                 chrom: "chr20".to_string(),
                 name: "chr20:10217487-10218336".to_string(),
+                strand: StrandRule::Both,
             },
             DmrInterval {
                 interval: Iv { start: 10034963, stop: 10035266, val: () },
                 chrom: "chr20".to_string(),
                 name: "chr20:10034963-10035266".to_string(),
+                strand: StrandRule::Both,
             },
         ]
         .to_vec();

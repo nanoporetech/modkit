@@ -238,7 +238,6 @@ impl MultiSampleIndex {
         &self,
         dmr_batch: &DmrBatch<T>,
     ) -> BedMethylLinesResult<SampleToBedMethyLines> {
-        // std::thread::scope(|sc| )
         let bedmethyl_lines_a =
             self.read_bedmethyl_lines_from_batch(&dmr_batch.chunks_a)?;
         let bedmethyl_lines_b =

@@ -242,6 +242,7 @@ mod bedmethylline_tests {
     use crate::genome_positions::GenomePositions;
     use crate::mod_base_code::{DnaBase, ModCodeRepr, MOD_CODE_TO_DNA_BASE};
     use crate::position_filter::Iv;
+    use crate::util::StrandRule;
 
     #[test]
     #[rustfmt::skip]
@@ -322,7 +323,7 @@ mod bedmethylline_tests {
         )
         .unwrap();
         let positions = genome_positions
-            .get_positions("oligo_1512_adapters", &(72..73))
+            .get_positions("oligo_1512_adapters", &(72..73), StrandRule::Both)
             .unwrap()
             .into_iter()
             .collect::<HashSet<_>>();
