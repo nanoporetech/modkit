@@ -3,11 +3,6 @@ use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
 use std::path::{Path, PathBuf};
 
-use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr, ProbHistogram};
-use crate::pileup::duplex::DuplexModBasePileup;
-use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
-use crate::summarize::ModSummary;
-use crate::thresholds::Percentiles;
 use anyhow::{anyhow, bail, Context, Result as AnyhowResult};
 use charming::component::{
     Axis, DataZoom, DataZoomType, Feature, Legend, Restore, SaveAsImage, Title,
@@ -24,6 +19,12 @@ use log::{debug, info, warn};
 use prettytable::format::FormatBuilder;
 use prettytable::{row, Table};
 use rustc_hash::FxHashMap;
+
+use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr, ProbHistogram};
+use crate::pileup::duplex::DuplexModBasePileup;
+use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
+use crate::summarize::ModSummary;
+use crate::thresholds::Percentiles;
 
 pub trait PileupWriter<T> {
     fn write(&mut self, item: T, motif_labels: &[String]) -> AnyhowResult<u64>;
@@ -830,10 +831,13 @@ impl ProbHistogram {
             let (stats, _) = counts.iter().fold(
                 (BTreeMap::new(), 0f32),
                 |(mut acc, cum_sum), (b, c)| {
-                    let f = *c as f32 / total;
-                    let percentile_rank = cum_sum / total;
+                    let n = *c as f32;
+                    let f = n / total;
+                    let cum_sum = cum_sum + n;
+                    let percentile_rank =
+                        ((cum_sum - (0.5f32 * n)) / total) * 100f32;
                     acc.insert(*b, (*c, f, percentile_rank));
-                    (acc, cum_sum + *c as f32)
+                    (acc, cum_sum)
                 },
             );
 
