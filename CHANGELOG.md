@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.3.2]
+### Fixes
+- [thresholds] OOB panic fix, #244
+- [dmr, pair] Allow strand information in regions to be provided. #240
+- [dmr, multi] Fix problem when many pairs are provided (#229)
+### Adds
+- [sample-probs] Change output format of probabilities table to make it easier to parse, also change schema. Output HTML documents with nicer tables.
+- [ci] Build in Ubuntu-16 due to Centos7 EOL.
+
 ## [v0.3.1]
 ### Fixes
 - [call-mods] Always change model to "explicit", dropped base modification probabilities should not be interpreted as canonical.

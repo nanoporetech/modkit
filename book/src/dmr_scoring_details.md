@@ -118,7 +118,8 @@ The model is a simple 2-state hidden Markov model, shown below, where the two hi
 ![hmm](./images/hmm2.png "2-state segmenting HMM")
 
 </div>
-The model is run over the intersection of the modified positions in a [pileup](https://nanoporetech.github.io/modkit/intro_bedmethyl.html#description-of-bedmethyl-output) for which there is enough coverage, from one or more samples.
+
+The model is run over the intersection of the modified positions in a [pileup](./intro_bedmethyl.html#description-of-bedmethyl-output) for which there is enough coverage, from one or more samples.
 
 ## Transition parameters
 There are two transition probability parameters, \\(p\\) and \\(d\\).
