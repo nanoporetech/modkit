@@ -301,6 +301,7 @@ mod methylation_entropy_tests {
         .collect::<Vec<String>>();
 
         let alphabet_info = AlphabetInfo::from_sequences(&sequences);
+        // todo add a test for patterns here
         let patterns = all_patterns_dp(&sequences, 4, &alphabet_info);
 
         let entropy = calc_entropy(&sequences, 4);

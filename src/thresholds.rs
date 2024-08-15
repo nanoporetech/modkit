@@ -90,10 +90,12 @@ pub(crate) fn calc_thresholds_per_base(
     filter_percentile: f32,
     default_threshold: Option<f32>,
     per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
+    suppress_progress: bool,
 ) -> AnyhowResult<MultipleThresholdModCaller> {
     debug!("calculating per base thresholds");
     let st = std::time::Instant::now();
-    let mut probs_per_base = read_ids_to_base_mod_calls.mle_probs_per_base();
+    let mut probs_per_base =
+        read_ids_to_base_mod_calls.mle_probs_per_base(suppress_progress);
     debug!("probs per base took {:?}s", st.elapsed().as_secs());
 
     let st = std::time::Instant::now();
@@ -190,7 +192,7 @@ pub fn get_modbase_probs_from_bam(
         only_mapped,
         suppress_progress,
     )
-    .map(|x| x.mle_probs_per_base())
+    .map(|x| x.mle_probs_per_base(suppress_progress))
 }
 
 #[cfg(test)]

@@ -584,7 +584,7 @@ impl DeltaListConverter {
 }
 
 #[inline]
-fn prob_to_qual(prob: f32) -> u8 {
+pub fn prob_to_qual(prob: f32) -> u8 {
     if prob == 1.0f32 {
         255u8
     } else {
@@ -2368,5 +2368,14 @@ mod mod_bam_tests {
             let probs = base_mod_probs.canonical_prob();
             assert_eq!(probs, 1.0f32);
         }
+    }
+
+    #[test]
+    fn test_quals_and_probs() {
+        let qs = (0u8..=255u8).collect::<Vec<u8>>();
+        let mut ps = qs.iter().map(|q| *q as f32).collect::<Vec<f32>>();
+        quals_to_probs(&mut ps);
+        let qs2 = ps.into_iter().map(|p| prob_to_qual(p)).collect::<Vec<u8>>();
+        assert_eq!(qs, qs2);
     }
 }

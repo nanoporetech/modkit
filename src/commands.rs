@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
-use histo_fp::Histogram;
 use itertools::Itertools;
 use log::{debug, info};
 use rust_htslib::bam::{
@@ -29,7 +28,7 @@ use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS,
 };
-use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
 use crate::motif_bed::motif_bed;
 use crate::pileup::subcommand::{DuplexModBamPileup, ModBamPileup};
@@ -534,9 +533,6 @@ pub struct SampleModBaseProbs {
     /// Output histogram of base modification prediction probabilities.
     #[arg(long = "hist", requires = "out_dir", default_value_t = false)]
     histogram: bool,
-    /// Number of buckets for the histogram, if used.
-    #[arg(long, requires = "histogram", default_value_t = 128)]
-    buckets: u64,
 
     /// Approximate maximum number of reads to use, especially recommended when
     /// using a large BAM without an index. If an indexed BAM is provided, the
@@ -586,6 +582,15 @@ pub struct SampleModBaseProbs {
 impl SampleModBaseProbs {
     fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        if let Some(p) = self.out_dir.as_ref() {
+            SampledProbs::check_files(
+                p,
+                self.prefix.as_ref(),
+                self.force,
+                self.histogram,
+            )?;
+        }
+
         let mut reader = get_serial_reader(&self.in_bam)?;
 
         let pool = rayon::ThreadPoolBuilder::new()
@@ -685,27 +690,16 @@ impl SampleModBaseProbs {
             };
 
             let histograms = if self.histogram {
-                let mod_call_probs =
-                    read_ids_to_base_mod_calls.mle_probs_per_base_mod();
                 Some(
-                    mod_call_probs
-                        .iter()
-                        .map(|(base, calls)| {
-                            let mut hist =
-                                Histogram::with_buckets(self.buckets, Some(0));
-                            for prob in calls {
-                                hist.add(*prob)
-                            }
-                            (*base, hist)
-                        })
-                        .collect::<HashMap<BaseState, Histogram>>(),
+                    read_ids_to_base_mod_calls
+                        .get_per_mod_histograms(self.suppress_progress),
                 )
             } else {
                 None
             };
 
             let percentiles = read_ids_to_base_mod_calls
-                .mle_probs_per_base()
+                .mle_probs_per_base(self.suppress_progress)
                 .into_iter()
                 .map(|(canonical_base, mut probs)| {
                     Percentiles::new(&mut probs, &desired_percentiles)
@@ -996,6 +990,7 @@ impl ModSummarize {
                     self.filter_percentile,
                     None,
                     per_mod_thresholds,
+                    self.suppress_progress,
                 )?
             };
 

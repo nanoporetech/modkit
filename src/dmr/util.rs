@@ -556,6 +556,7 @@ mod dmr_util_tests {
             "CpG: 39 359".to_string(),
             StrandRule::Positive,
         );
+        assert_eq!(obs, expected);
         let obs = DmrInterval::parse_stranded_bed_line(
             "chr20\t279148\t279507\tCpG: 39 359\t39\t.",
         )

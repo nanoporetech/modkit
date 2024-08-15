@@ -1,22 +1,29 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result as AnyhowResult};
-use derive_new::new;
-use histo_fp::Histogram;
-use itertools::Itertools;
-use log::{debug, info, warn};
-use prettytable::format::FormatBuilder;
-use prettytable::{cell, row, Table};
-use rustc_hash::FxHashMap;
-
-use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
+use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr, ProbHistogram};
 use crate::pileup::duplex::DuplexModBasePileup;
 use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
 use crate::summarize::ModSummary;
 use crate::thresholds::Percentiles;
+use anyhow::{anyhow, bail, Context, Result as AnyhowResult};
+use charming::component::{
+    Axis, DataZoom, DataZoomType, Feature, Legend, Restore, SaveAsImage, Title,
+    Toolbox, ToolboxDataZoom,
+};
+use charming::element::{
+    AxisPointer, AxisPointerType, AxisType, Tooltip, Trigger,
+};
+use charming::series::Bar;
+use charming::{Chart, HtmlRenderer};
+use derive_new::new;
+use itertools::Itertools;
+use log::{debug, info, warn};
+use prettytable::format::FormatBuilder;
+use prettytable::{row, Table};
+use rustc_hash::FxHashMap;
 
 pub trait PileupWriter<T> {
     fn write(&mut self, item: T, motif_labels: &[String]) -> AnyhowResult<u64>;
@@ -648,52 +655,65 @@ pub(crate) struct MultiTableWriter {
 
 #[derive(new)]
 pub(crate) struct SampledProbs {
-    histograms: Option<HashMap<BaseState, Histogram>>,
+    histograms: Option<ProbHistogram>,
     // char here is primary base, that's why it works
     percentiles: HashMap<DnaBase, Percentiles>,
     prefix: Option<String>,
 }
 
 impl SampledProbs {
-    fn get_thresholds_filename(&self) -> String {
-        if let Some(prefix) = &self.prefix {
+    fn get_thresholds_filename_prefix(prefix: Option<&String>) -> String {
+        if let Some(prefix) = prefix {
             format!("{prefix}_thresholds.tsv")
         } else {
             format!("thresholds.tsv")
         }
     }
 
-    fn get_probabilities_filenames(&self) -> (String, String) {
-        if let Some(prefix) = &self.prefix {
+    fn get_probabilities_filenames(
+        prefix: Option<&String>,
+    ) -> (String, String, String) {
+        if let Some(prefix) = prefix {
             (
                 format!("{prefix}_probabilities.tsv"),
-                format!("{prefix}_probabilities.txt"),
+                format!("{prefix}_counts.html"),
+                format!("{prefix}_proportion.html"),
             )
         } else {
-            (format!("probabilities.tsv"), format!("probabilities.txt"))
+            (
+                "probabilities.tsv".into(),
+                "counts.html".into(),
+                "proportion.html".into(),
+            )
         }
     }
 
-    pub(crate) fn check_path(
-        &self,
+    fn get_thresholds_filename(&self) -> String {
+        Self::get_thresholds_filename_prefix(self.prefix.as_ref())
+    }
+
+    pub(crate) fn check_files(
         p: &PathBuf,
+        prefix: Option<&String>,
         force: bool,
-    ) -> AnyhowResult<()> {
-        let filename = self.get_thresholds_filename();
+        with_histograms: bool,
+    ) -> anyhow::Result<()> {
+        let filename = Self::get_thresholds_filename_prefix(prefix);
         let fp = p.join(filename);
         if fp.exists() && !force {
             return Err(anyhow!("refusing to overwrite {:?}", fp));
         } else if fp.exists() && force {
             debug!("thresholds file at {:?} will be overwritten", fp);
         }
-        if let Some(_) = &self.histograms {
-            let (probs_table_fn, probs_plots_fn) =
-                self.get_probabilities_filenames();
+        if with_histograms {
+            let (probs_table_fn, counts_plot_fn, prop_plot_fn) =
+                Self::get_probabilities_filenames(prefix);
             let probs_table_fp = p.join(probs_table_fn);
-            let probs_plots_fp = p.join(probs_plots_fn);
-            for fp in [probs_table_fp, probs_plots_fp] {
+            let counts_plot_fp = p.join(counts_plot_fn);
+            let prop_plot_fp = p.join(prop_plot_fn);
+            for fp in [probs_table_fp, counts_plot_fp, prop_plot_fp] {
                 if fp.exists() && !force {
-                    return Err(anyhow!("refusing to overwrite {:?}", fp));
+                    bail!("refusing to overwrite {:?}", fp)
                 } else if fp.exists() && force {
                     debug!(
                         "probabilities file at {:?} will be overwritten",
@@ -704,6 +724,19 @@ impl SampledProbs {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn check_path(
+        &self,
+        p: &PathBuf,
+        force: bool,
+    ) -> AnyhowResult<()> {
+        Self::check_files(
+            p,
+            self.prefix.as_ref(),
+            force,
+            self.histograms.is_some(),
+        )
     }
 
     fn thresholds_table(&self) -> Table {
@@ -720,6 +753,121 @@ impl SampledProbs {
     }
 }
 
+impl ProbHistogram {
+    #[inline]
+    fn qual_to_bins(q: u8) -> (f32, f32) {
+        let q = q as f32;
+        (q / 256f32, (q + 1f32) / 256f32)
+    }
+
+    fn get_blank_chart(
+        name: &str,
+        qual_bins: &[u8],
+        y_axis_name: &str,
+    ) -> Chart {
+        let categories = qual_bins
+            .iter()
+            .map(|x| {
+                let (from, to) = Self::qual_to_bins(*x);
+                let from = from * 100f32;
+                let to = to * 100f32;
+                format!("[{from:.2}, {to:.2})")
+            })
+            .collect();
+        Chart::new()
+            .data_zoom(DataZoom::new().type_(DataZoomType::Slider))
+            .legend(Legend::new())
+            .title(Title::new().text(name))
+            .tooltip(Tooltip::new().trigger(Trigger::Axis).axis_pointer(
+                AxisPointer::new().type_(AxisPointerType::Shadow),
+            ))
+            .toolbox(
+                Toolbox::new().feature(
+                    Feature::new()
+                        .data_zoom(ToolboxDataZoom::new().y_axis_index("none"))
+                        .restore(Restore::new())
+                        .save_as_image(SaveAsImage::new()),
+                ),
+            )
+            .x_axis(
+                Axis::new()
+                    .type_(AxisType::Category)
+                    .data(categories)
+                    .name("bin"),
+            )
+            .y_axis(Axis::new().type_(AxisType::Value).name(y_axis_name))
+    }
+
+    fn get_artifacts(&self) -> (Table, Chart, Chart) {
+        let mut table = Table::new();
+        table.set_titles(row![
+            "code",
+            "primary_base",
+            "range_start",
+            "range_end",
+            "count",
+            "frac",
+            "percentile_rank",
+        ]);
+        let bins = self
+            .prob_counts
+            .values()
+            .flat_map(|x| x.keys())
+            .unique()
+            .sorted()
+            .copied()
+            .collect::<Vec<u8>>();
+        let mut counts_chart = Self::get_blank_chart("Counts", &bins, "counts");
+        let mut prop_chart =
+            Self::get_blank_chart("Proportion", &bins, "proportion");
+
+        for ((primary_base, base_state), counts) in self.prob_counts.iter() {
+            let label = match base_state {
+                BaseState::Modified(x) => format!("{primary_base}:{x}"),
+                BaseState::Canonical(_) => format!("{primary_base}:-"),
+            };
+            let total = counts.values().sum::<usize>() as f32;
+            let (stats, _) = counts.iter().fold(
+                (BTreeMap::new(), 0f32),
+                |(mut acc, cum_sum), (b, c)| {
+                    let f = *c as f32 / total;
+                    let percentile_rank = cum_sum / total;
+                    acc.insert(*b, (*c, f, percentile_rank));
+                    (acc, cum_sum + *c as f32)
+                },
+            );
+
+            let dat_counts = bins
+                .iter()
+                .map(|b| *counts.get(b).unwrap_or(&0) as i64)
+                .collect::<Vec<i64>>();
+            let tot = dat_counts.iter().sum::<i64>();
+            let dat_prop = dat_counts
+                .iter()
+                .map(|x| *x as f32 / tot as f32)
+                .collect::<Vec<f32>>();
+            counts_chart =
+                counts_chart.series(Bar::new().name(&label).data(dat_counts));
+            prop_chart =
+                prop_chart.series(Bar::new().name(&label).data(dat_prop));
+            for (b, (count, frac, rank)) in stats {
+                let (range_start, range_end) = Self::qual_to_bins(b);
+                table.add_row(row![
+                    base_state,
+                    primary_base,
+                    range_start,
+                    range_end,
+                    count,
+                    frac,
+                    rank
+                ]);
+            }
+        }
+
+        (table, counts_chart, prop_chart)
+    }
+}
+
 impl OutWriter<SampledProbs> for MultiTableWriter {
     fn write(&mut self, item: SampledProbs) -> AnyhowResult<u64> {
         let mut rows_written = 0u64;
@@ -731,54 +879,33 @@ impl OutWriter<SampledProbs> for MultiTableWriter {
         rows_written += n_written as u64;
 
         if let Some(histograms) = &item.histograms {
-            let (probs_table_fn, probs_plots_fn) =
-                item.get_probabilities_filenames();
-            let mut probs_table_fh =
+            let (probs_table_fn, counts_plot_fn, prop_plot_fn) =
+                SampledProbs::get_probabilities_filenames(item.prefix.as_ref());
+            let probs_table_fh =
                 File::create(self.out_dir.join(probs_table_fn))?;
-            let mut probs_plots_fh =
-                File::create(self.out_dir.join(probs_plots_fn))?;
+            let mut counts_plot_fh = BufWriter::new(File::create(
+                self.out_dir.join(counts_plot_fn),
+            )?);
+            let mut prop_plot_fh =
+                BufWriter::new(File::create(self.out_dir.join(prop_plot_fn))?);
 
-            let mut histogram_table = Table::new();
-            histogram_table
-                .set_format(*prettytable::format::consts::FORMAT_CLEAN);
-            histogram_table.set_titles(row![
-                "code",
-                "bucket",
-                "range_start",
-                "range_end",
-                "count",
-                "frac"
-            ]);
-            let mut total_rows = 0;
-            for (raw_mod_base_code, histogram) in histograms {
-                let mut row_count = Vec::new();
-                for (i, bucket) in histogram.buckets().enumerate() {
-                    histogram_table.add_row(row![
-                        raw_mod_base_code,
-                        i + 1,
-                        format!("{:.3}", bucket.start()),
-                        format!("{:.3}", bucket.end()),
-                        bucket.count()
-                    ]);
-                    row_count.push(bucket.count());
+            let csv_writer = csv::WriterBuilder::new()
+                .has_headers(true)
+                .delimiter('\t' as u8)
+                .from_writer(probs_table_fh);
+
+            let (tab, counts_chart, prop_chart) = histograms.get_artifacts();
+            tab.to_csv_writer(csv_writer)?;
+            match HtmlRenderer::new("Counts", 800, 800).render(&counts_chart) {
+                Ok(blob) => {
+                    counts_plot_fh.write(blob.as_bytes()).map(|_x| ())?
                 }
-                let total = row_count.iter().sum::<u64>() as f32;
-                for (i, count) in row_count.iter().enumerate() {
-                    let frac = *count as f32 / total;
-                    histogram_table
-                        .get_mut_row(i + total_rows)
-                        .unwrap()
-                        .add_cell(cell!(frac));
-                }
-                total_rows += row_count.len();
+                Err(e) => debug!("failed to render counts plot, {e:?}"),
             }
-            let n_written = histogram_table.print(&mut probs_table_fh)?;
-            rows_written += n_written as u64;
-
-            for (raw_mod_code, hist) in histograms {
-                probs_plots_fh
-                    .write(format!("# code {raw_mod_code}\n").as_bytes())?;
-                probs_plots_fh.write(format!("{hist}").as_bytes())?;
+            match HtmlRenderer::new("Proportions", 800, 800).render(&prop_chart)
+            {
+                Ok(blob) => prop_plot_fh.write(blob.as_bytes()).map(|_x| ())?,
+                Err(e) => debug!("failed to render proportions plot, {e:?}"),
             }
         }
 
@@ -792,13 +919,6 @@ impl OutWriter<SampledProbs> for TsvWriter<Stdout> {
         let thresholds_table = item.thresholds_table();
         let n_written = thresholds_table.print(&mut self.buf_writer)?;
         rows_written += n_written as u64;
-        if let Some(histograms) = &item.histograms {
-            for (raw_mod_code, hist) in histograms {
-                println!("# code {raw_mod_code}");
-                println!("{hist}");
-            }
-        }
-
         Ok(rows_written)
     }
 }
