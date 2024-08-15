@@ -348,7 +348,7 @@ mod bedmethylline_tests {
     #[test]
     fn test_frac_modified() {
         let fp = "tests/resources/head_21839.bed";
-        let mut reader = BufReader::new(File::open(fp).unwrap());
+        let reader = BufReader::new(File::open(fp).unwrap());
         let expected = vec![0f32, 0.07692308f32, 0f32];
         for (i, line) in reader.lines().map(|r| r.unwrap()).enumerate() {
             let record = BedMethylLine::parse(&line).unwrap();

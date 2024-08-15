@@ -101,6 +101,7 @@ pub fn summarize_modbam<'a>(
             filter_percentile,
             None,
             per_mod_thresholds,
+            suppress_progress,
         )?
     };
 

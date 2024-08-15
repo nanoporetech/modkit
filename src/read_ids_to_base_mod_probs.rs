@@ -1,6 +1,23 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 
+use crate::errs::RunError;
+use crate::mod_bam::{
+    filter_records_iter, prob_to_qual, BaseModCall, BaseModProbs,
+    CollapseMethod, EdgeFilter, ModBaseInfo, SeqPosBaseModProbs, SkipMode,
+    TrackingModRecordIter,
+};
+use crate::mod_base_code::{
+    BaseAndState, BaseState, DnaBase, ModCodeRepr, ProbHistogram,
+};
+use crate::monoid::Moniod;
+use crate::position_filter::StrandedPositionFilter;
+use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
+use crate::record_processor::{RecordProcessor, WithRecords};
+use crate::util::{
+    self, get_aligned_pairs_forward, get_master_progress_bar,
+    get_query_name_string, get_reference_mod_strand, get_spinner, Kmer, Strand,
+};
 use anyhow::bail;
 use bio::alphabets::dna::revcomp;
 use derive_new::new;
@@ -12,21 +29,6 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Cigar;
 use rust_htslib::bam::{self, Read, Records};
 use rustc_hash::FxHashMap;
-
-use crate::errs::RunError;
-use crate::mod_bam::{
-    filter_records_iter, BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
-    ModBaseInfo, SeqPosBaseModProbs, SkipMode, TrackingModRecordIter,
-};
-use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
-use crate::monoid::Moniod;
-use crate::position_filter::StrandedPositionFilter;
-use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
-use crate::record_processor::{RecordProcessor, WithRecords};
-use crate::util::{
-    self, get_aligned_pairs_forward, get_master_progress_bar,
-    get_query_name_string, get_reference_mod_strand, get_spinner, Kmer, Strand,
-};
 
 /// Read IDs mapped to their base modification probabilities, organized
 /// by the canonical base. This data structure contains essentially all
@@ -61,8 +63,14 @@ impl ReadIdsToBaseModProbs {
     #[inline]
     /// Returns most likely probabilities for base modifications predicted for
     /// each canonical base.
-    pub(crate) fn mle_probs_per_base(&self) -> HashMap<DnaBase, Vec<f32>> {
+    pub(crate) fn mle_probs_per_base(
+        &self,
+        suppress_progress: bool,
+    ) -> HashMap<DnaBase, Vec<f32>> {
         let pb = get_master_progress_bar(self.inner.len());
+        if suppress_progress {
+            pb.set_draw_target(indicatif::ProgressDrawTarget::hidden())
+        }
         pb.set_message("aggregating per-base modification probabilities");
         self.inner
             .par_iter()
@@ -94,9 +102,13 @@ impl ReadIdsToBaseModProbs {
     /// return argmax probs for each mod-code
     pub(crate) fn mle_probs_per_base_mod(
         &self,
-    ) -> HashMap<BaseState, Vec<f64>> {
+        suppress_progress: bool,
+    ) -> HashMap<BaseAndState, Vec<f64>> {
         // todo(arand) should really aggregate per mod-code
         let pb = get_master_progress_bar(self.inner.len());
+        if suppress_progress {
+            pb.set_draw_target(indicatif::ProgressDrawTarget::hidden())
+        }
         pb.set_message("aggregating per-mod probabilities");
         self.inner
             .par_iter()
@@ -104,17 +116,22 @@ impl ReadIdsToBaseModProbs {
             .filter_map(|(_, base_mod_probs)| {
                 let grouped = base_mod_probs
                     .iter()
-                    .map(|(base, base_mod_probs)| {
+                    .map(|(dna_base, base_mod_probs)| {
                         base_mod_probs
                             .iter()
                             // can make this .base_mod_call
                             .map(|bmc| match bmc.argmax_base_mod_call() {
-                                BaseModCall::Modified(p, code) => {
-                                    (BaseState::Modified(code), p as f64)
-                                }
-                                BaseModCall::Canonical(p) => {
-                                    (BaseState::Canonical(*base), p as f64)
-                                }
+                                BaseModCall::Modified(p, code) => (
+                                    (*dna_base, BaseState::Modified(code)),
+                                    p as f64,
+                                ),
+                                BaseModCall::Canonical(p) => (
+                                    (
+                                        *dna_base,
+                                        BaseState::Canonical(*dna_base),
+                                    ),
+                                    p as f64,
+                                ),
                                 BaseModCall::Filtered => {
                                     unreachable!(
                                         "argmax base mod call should not \
@@ -123,7 +140,7 @@ impl ReadIdsToBaseModProbs {
                                 }
                             })
                             .fold(
-                                HashMap::<BaseState, Vec<f64>>::new(),
+                                HashMap::<BaseAndState, Vec<f64>>::new(),
                                 |mut acc, (base, p)| {
                                     acc.entry(base)
                                         .or_insert(Vec::new())
@@ -136,6 +153,33 @@ impl ReadIdsToBaseModProbs {
                 grouped
             })
             .reduce(|| HashMap::zero(), |a, b| a.op(b))
+    }
+
+    pub(crate) fn get_per_mod_histograms(
+        &self,
+        suppress_progress: bool,
+    ) -> ProbHistogram {
+        let base_state_probs = self.mle_probs_per_base_mod(suppress_progress);
+        let prob_counts = base_state_probs
+            .into_par_iter()
+            .map(|(base_state, probs)| {
+                let max_p = probs
+                    .iter()
+                    .copied()
+                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                    .unwrap();
+                let counts = probs
+                    .into_iter()
+                    .map(|x| prob_to_qual(x as f32))
+                    .counts()
+                    .into_iter()
+                    .collect::<BTreeMap<u8, usize>>();
+                let max_q = counts.keys().max().unwrap();
+                debug!("{base_state:?} {max_p} {max_q}");
+                (base_state, counts)
+            })
+            .collect::<HashMap<BaseAndState, BTreeMap<u8, usize>>>();
+        ProbHistogram::new(prob_counts)
     }
 
     pub(crate) fn seen(&self, record_name: &str) -> bool {

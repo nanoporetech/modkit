@@ -1,9 +1,11 @@
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 
 use anyhow::{anyhow, Result as AnyhowResult};
 use clap::ValueEnum;
 use common_macros::hash_map;
+use derive_new::new;
 use lazy_static::lazy_static;
 use rustc_hash::FxHashMap;
 
@@ -209,17 +211,32 @@ impl ParseChar for DnaBase {
     }
 }
 
+impl Display for DnaBase {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.char())
+    }
+}
+
+// TODO this little enum is ripe for a refactor, try to make it just { DnaBase,
+//  Modified(code) | Canonical }
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum BaseState {
     Canonical(DnaBase),
     Modified(ModCodeRepr),
 }
 
+pub type BaseAndState = (DnaBase, BaseState);
+
 impl Display for BaseState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Canonical(dna_base) => write!(f, "{}", dna_base.char()),
-            Self::Modified(mod_code) => write!(f, "{}", mod_code),
+            Self::Canonical(_dna_base) => write!(f, "-"),
+            Self::Modified(mod_code) => write!(f, "{mod_code}"),
         }
     }
+}
+
+#[derive(new)]
+pub struct ProbHistogram {
+    pub prob_counts: HashMap<BaseAndState, BTreeMap<u8, usize>>,
 }

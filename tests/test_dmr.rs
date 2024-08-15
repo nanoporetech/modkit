@@ -1,6 +1,4 @@
 use crate::common::{check_against_expected_text_file, run_modkit};
-use std::fs::File;
-use std::io::{BufRead, Write};
 
 mod common;
 
