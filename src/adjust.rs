@@ -9,7 +9,7 @@ use crate::mod_bam::{
 };
 use crate::mod_base_code::DnaBase;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{get_query_name_string, get_spinner, get_ticker};
+use crate::util::{get_query_name_string, get_ticker};
 
 pub fn adjust_mod_probs(
     mut record: bam::Record,
