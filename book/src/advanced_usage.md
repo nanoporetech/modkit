@@ -281,8 +281,8 @@ Usage: modkit adjust-mods [OPTIONS] <IN_BAM> <OUT_BAM>
 
 Arguments:
   <IN_BAM>
-          BAM file to collapse mod call from. Can be a path to a file or one of `-` or `stdin` to
-          specify a stream from standard input.
+          Input BAM file, can be a path to a file or one of `-` or `stdin` to specify a stream from
+          standard input.
 
   <OUT_BAM>
           File path to new BAM file to be created. Can be a path to a file or one of `-` or `stdin`
@@ -324,6 +324,58 @@ Options:
 
       --output-sam
           Output SAM format instead of BAM.
+
+      --filter-probs
+          Filter out the lowest confidence base modification probabilities.
+
+  -n, --num-reads <NUM_READS>
+          Sample approximately this many reads when estimating the filtering threshold. If
+          alignments are present reads will be sampled evenly across aligned genome. If a region is
+          specified, either with the --region option or the --sample-region option, then reads will
+          be sampled evenly across the region given. This option is useful for large BAM files. In
+          practice, 10-50 thousand reads is sufficient to estimate the model output distribution and
+          determine the filtering threshold.
+          
+          [default: 10042]
+
+      --sample-region <SAMPLE_REGION>
+          Specify a region for sampling reads from when estimating the threshold probability. If
+          this option is not provided, but --region is provided, the genomic interval passed to
+          --region will be used. Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+
+      --sampling-interval-size <SAMPLING_INTERVAL_SIZE>
+          Interval chunk size to process concurrently when estimating the threshold probability, can
+          be larger than the pileup processing interval.
+          
+          [default: 1000000]
+
+  -p, --filter-percentile <FILTER_PERCENTILE>
+          Filter out modified base calls where the probability of the predicted variant is below
+          this confidence percentile. For example, 0.1 will filter out the 10% lowest confidence
+          modification calls.
+          
+          [default: 0.1]
+
+      --filter-threshold <FILTER_THRESHOLD>
+          Specify the filter threshold globally or per primary base. A global filter threshold can
+          be specified with by a decimal number (e.g. 0.75). Per-base thresholds can be specified by
+          colon-separated values, for example C:0.75 specifies a threshold value of 0.75 for
+          cytosine modification calls. Additional per-base thresholds can be specified by repeating
+          the option: for example --filter-threshold C:0.75 --filter-threshold A:0.70 or specify a
+          single base option and a default for all other bases with: --filter-threshold A:0.70
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for adenine and 0.9 for all
+          other base modification calls.
+
+      --mod-threshold <MOD_THRESHOLDS>
+          Specify a passing threshold to use for a base modification, independent of the threshold
+          for the primary sequence base or the default. For example, to set the pass threshold for
+          5hmC to 0.8 use `--mod-threshold h:0.8`. The pass threshold will still be estimated as
+          usual and used for canonical cytosine and other modifications unless the
+          `--filter-threshold` option is also passed. See the online documentation for more details.
+
+      --only-mapped
+          Only use base modification probabilities from bases that are aligned when estimating the
+          filter threshold (i.e. ignore soft-clipped, and inserted bases).
 
       --suppress-progress
           Hide the progress bar
@@ -398,13 +450,9 @@ Options:
 
   -o, --out-dir <OUT_DIR>
           Directory to deposit result tables into. Required for model probability histogram output.
-          Creates two files probabilities.tsv and probabilities.txt The .txt contains
-          ASCII-histograms and the .tsv contains tab-separated variable data represented by the
-          histograms.
 
       --prefix <PREFIX>
-          Label to prefix output files with. E.g. 'foo' will output foo_thresholds.tsv,
-          foo_probabilities.tsv, and foo_probabilities.txt.
+          Label to prefix output files with.
 
       --force
           Overwrite results if present.
@@ -430,11 +478,6 @@ Options:
 
       --hist
           Output histogram of base modification prediction probabilities.
-
-      --buckets <BUCKETS>
-          Number of buckets for the histogram, if used.
-          
-          [default: 128]
 
   -n, --num-reads <NUM_READS>
           Approximate maximum number of reads to use, especially recommended when using a large BAM
@@ -1397,7 +1440,7 @@ sample is input as a bgzip pileup bedMethyl (produced by pileup, for example) th
 tabix index. Output is a BED file with the score column indicating the magnitude of the difference
 in methylation between the two samples. See the online documentation for additional details.
 
-Usage: modkit dmr pair [OPTIONS] -a <CONTROL_BED_METHYL> -b <EXP_BED_METHYL> --ref <REFERENCE_FASTA>
+Usage: modkit dmr pair [OPTIONS] --ref <REFERENCE_FASTA>
 
 Options:
   -a <CONTROL_BED_METHYL>
