@@ -39,7 +39,7 @@ use crate::util::{
 
 /// todo investigate using this type in BaseModCall
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BaseStatus {
+enum BaseStatus {
     Canonical,
     Modified(ModCodeRepr),
     NoCall,
@@ -99,7 +99,7 @@ lazy_static! {
     };
 }
 
-pub struct GroundTruthSite {
+struct GroundTruthSite {
     pub chrom: String,
     pub strand: Strand,
     pub base_status: BaseStatus,
@@ -199,7 +199,7 @@ fn parse_ground_truth_bed_file(
 
 fn derive_canonical_base(
     gt_positions: &Vec<ChromStrandPositionNames>,
-    can_base: Option<DnaBase>,
+    mut can_base: Option<DnaBase>,
 ) -> anyhow::Result<DnaBase> {
     let mut base_statuses = HashSet::new();
     for chrom_strand_position_names in gt_positions {
@@ -211,17 +211,15 @@ fn derive_canonical_base(
             }
         }
     }
-    let mut can_base = can_base.clone();
     for base_status in base_statuses {
         match base_status {
             BaseStatus::Modified(mod_code) => {
                 if let Some(existing_can_base) = &can_base {
-                    if *existing_can_base
-                        != *MOD_CODE_TO_DNA_BASE
-                            .get(&mod_code)
-                            .unwrap_or(existing_can_base)
-                    {
-                        return Err(anyhow::anyhow!(
+                    let expected_can_base = *MOD_CODE_TO_DNA_BASE
+                        .get(&mod_code)
+                        .unwrap_or(existing_can_base);
+                    if *existing_can_base != expected_can_base {
+                        bail!(
                             "Multiple canonical bases represented in ground \
                              truth BED files: {} {}",
                             existing_can_base.char(),
@@ -229,7 +227,7 @@ fn derive_canonical_base(
                                 .get(&mod_code)
                                 .unwrap_or(existing_can_base)
                                 .char()
-                        ));
+                        )
                     }
                 } else {
                     match MOD_CODE_TO_DNA_BASE.get(&mod_code) {
@@ -263,7 +261,6 @@ fn process_bam_record(
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
 ) -> anyhow::Result<StatusProbs> {
-    let mut result = HashMap::new();
     let mbi = ModBaseInfo::new_from_record(&record)?;
     let record_name = String::from_utf8(record.qname().to_vec())
         .unwrap_or("utf-decode-failed".to_string());
@@ -285,27 +282,50 @@ fn process_bam_record(
         edge_filter,
         1,
     )?;
+
+    let mod_call_iter = PositionModCalls::from_profile(&mbp)
+        .into_iter()
+        .filter_map(|mod_call| match mod_call.ref_position {
+            Some(r_pos) if r_pos >= 0i64 => Some((mod_call, r_pos)),
+            _ => None,
+        })
+        .filter_map(|(mod_call, ref_pos)| {
+            if let Some(alignment_strand) = mod_call.alignment_strand.as_ref() {
+                let ref_strand = get_reference_mod_strand(
+                    mod_call.mod_strand,
+                    *alignment_strand,
+                );
+                Some((mod_call, ref_pos, ref_strand))
+            } else {
+                None
+            }
+        })
+        .filter_map(|(mod_call, ref_pos, ref_strand)| {
+            cgt_mod_pos
+                .get(&ref_strand)
+                .and_then(|cs_mod_pos| cs_mod_pos.get(&ref_pos))
+                .map(|gt_code| (mod_call, ref_pos, ref_strand, gt_code))
+        });
+
     let mut called_ref_pos = HashMap::new();
-    for mod_call in PositionModCalls::from_profile(&mbp) {
-        let Some(ref_pos) = mod_call.ref_position else {
-            continue;
-        };
-        if ref_pos < 0 {
+    let mut result = HashMap::new();
+    for (mod_call, ref_pos, ref_mod_strand, gt_code) in mod_call_iter {
+        called_ref_pos
+            .entry(ref_mod_strand)
+            .or_insert_with(HashSet::new)
+            .insert(ref_pos);
+
+        if mod_call.canonical_base != can_base {
+            result
+                .entry((
+                    *gt_code,
+                    BaseStatus::Mismatch(mod_call.canonical_base),
+                ))
+                .or_insert_with(Vec::new)
+                .push(f32::NAN);
             continue;
         }
-        let Some(alignment_strand) = mod_call.alignment_strand else {
-            continue;
-        };
-        let ref_mod_strand =
-            get_reference_mod_strand(mod_call.mod_strand, alignment_strand);
-        let Some(cs_mod_pos) = cgt_mod_pos.get(&ref_mod_strand) else {
-            continue;
-        };
-        let strand_called_ref_pos =
-            called_ref_pos.entry(ref_mod_strand).or_insert_with(HashSet::new);
-        let Some(gt_code) = cs_mod_pos.get(&ref_pos) else {
-            continue;
-        };
+
         let (mod_call_prob, call_code) = match mod_call
             .base_mod_probs
             .argmax_base_mod_call()
@@ -320,19 +340,17 @@ fn process_bam_record(
             .entry((*gt_code, call_code))
             .or_insert_with(Vec::new)
             .push(mod_call_prob);
-        strand_called_ref_pos.insert(ref_pos);
     }
+
     // add in no call, mismatch and deletion positions
     let r_st = record.reference_start();
     let r_en = record.reference_end();
     let q_seq = record.seq();
-    let ref_to_query: FxHashMap<i64, i64> = record
-        .aligned_pairs()
-        .filter_map(|p| Some(p))
-        .map(|pos| (pos[1], pos[0]))
-        .collect();
+    let ref_to_query: FxHashMap<i64, i64> =
+        record.aligned_pairs().map(|pos| (pos[1], pos[0])).collect();
     for (strand, positions) in called_ref_pos.iter() {
         let Some(cs_mod_pos) = cgt_mod_pos.get(&strand) else {
+            // should be unnecessary
             continue;
         };
         for (pos, gt_code) in cs_mod_pos.range(r_st..r_en) {
@@ -667,7 +685,11 @@ fn machine_parseable_table(status_probs: &StatusProbs) -> String {
     out_str
 }
 
-fn print_table(status_probs: &StatusProbs, show_percentages: bool) {
+fn print_table(
+    status_probs: &StatusProbs,
+    show_percentages: bool,
+    title: &str,
+) {
     let mut gt_codes: Vec<_> =
         status_probs.keys().map(|&(k, _)| k).unique().collect();
     gt_codes.sort();
@@ -746,7 +768,7 @@ fn print_table(status_probs: &StatusProbs, show_percentages: bool) {
     metatable.add_row(row!("\n\n\nGround\nTruth", count_tbl));
 
     // Print the table
-    metatable.printstd();
+    info!("{title}\n{metatable}");
 }
 
 #[derive(Args)]
@@ -935,30 +957,26 @@ impl ValidateFromModbam {
         for ((_, _), probs) in all_probs.iter_mut() {
             probs.sort_by_key(|&x| x.to_bits());
         }
-        info!("Raw counts summary");
-        print_table(&all_probs, false);
+        print_table(&all_probs, false, "Raw counts summary");
         if let Some(valid_out_handle) = &mut out_handle {
-            valid_out_handle
-                .write_all(
-                    &format!(
-                        "full_contingency_table: {}\n",
-                        machine_parseable_table(&all_probs)
-                    )
-                    .into_bytes(),
+            valid_out_handle.write_all(
+                &format!(
+                    "full_contingency_table: {}\n",
+                    machine_parseable_table(&all_probs)
                 )
-                .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
+                .into_bytes(),
+            )?;
         }
 
         // filter to only modified base calls
-        all_probs.retain(|&(_, call_code), _| {
-            call_code == BaseStatus::Canonical
-                || matches!(call_code, BaseStatus::Modified(_))
+        all_probs.retain(|&(_, call_code), _| match call_code {
+            BaseStatus::Canonical | BaseStatus::Modified(_) => true,
+            _ => false,
         });
 
         info!("Balancing ground truth call totals");
         balance_ground_truth(&mut all_probs)?;
-        info!("Balanced counts summary");
-        print_table(&all_probs, false);
+        print_table(&all_probs, false, "Balanced counts summary");
         let total_calls =
             all_probs.iter().map(|(_, values)| values.len()).sum::<usize>();
         let correct_calls = all_probs
@@ -968,8 +986,11 @@ impl ValidateFromModbam {
             .sum::<usize>();
         let raw_acc = 100.0 * correct_calls as f32 / total_calls as f32;
         info!("Raw accuracy: {:.2}%", raw_acc);
-        info!("Raw modified base calls contingency table");
-        print_table(&all_probs, true);
+        print_table(
+            &all_probs,
+            true,
+            "Raw modified base calls contingency table",
+        );
         if let Some(valid_out_handle) = &mut out_handle {
             valid_out_handle
                 .write_all(&format!("raw_accuracy: {}\n", raw_acc).into_bytes())
@@ -1029,8 +1050,11 @@ impl ValidateFromModbam {
                 .bold()
                 .paint(format!("Filtered accuracy: {:.2}%", filt_acc)),
         );
-        info!("Filtered modified base calls contingency table");
-        print_table(&all_probs, true);
+        print_table(
+            &all_probs,
+            true,
+            "Filtered modified base calls contingency table",
+        );
         if let Some(valid_out_handle) = &mut out_handle {
             valid_out_handle
                 .write_all(
