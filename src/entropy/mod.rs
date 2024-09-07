@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use derive_new::new;
 use itertools::{Itertools, MinMaxResult};
 use log::{debug, info};
@@ -686,7 +686,10 @@ impl SlidingWindows {
         window_size: usize,
         batch_size: usize,
     ) -> anyhow::Result<Self> {
-        let regions_iter = BufReader::new(File::open(regions_bed_fp)?)
+        let regions_iter =
+            BufReader::new(File::open(regions_bed_fp).with_context(|| {
+                format!("failed to load regions at {regions_bed_fp:?}")
+            })?)
             .lines()
             // change the lines into Errors
             .map(|r| r.map_err(|e| anyhow!("failed to read line, {e}")))

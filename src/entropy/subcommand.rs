@@ -273,36 +273,7 @@ impl MethylationEntropy {
             reference_sequence_lookup.get_chrom_id_to_name_lookup();
 
         let sliding_windows = pool.install(|| {
-            // let names_to_tid = bam_header_records
-            //     .iter()
-            //     .map(|ref_record| (ref_record.name.as_str(), ref_record.tid))
-            //     .collect::<HashMap<&str, u32>>();
-            // let reference_sequences = get_masked_sequences(
-            //     &self.reference_fasta,
-            //     &names_to_tid,
-            //     self.mask,
-            //     &multi_pb,
-            // )?
-            // .into_par_iter()
-            // .map(|(seq, tid)| (tid, seq.chars().collect::<Vec<char>>()))
-            // .collect::<HashMap<u32, Vec<char>>>();
-            //
-            // let idx_stats = IdxStats::new_from_path(&self.in_bam, None,
-            // None)?;
-
             if let Some(regions_fp) = self.regions_fp.as_ref() {
-                // let tid_to_name = names_to_tid
-                //     .iter()
-                //     .map(|(name, tid)| (*tid, *name))
-                //     .collect::<FxHashMap<u32, &str>>();
-                //
-                // let reference_sequences = reference_sequences
-                //     .into_iter()
-                //     .filter_map(|(tid, seq)| {
-                //         tid_to_name.get(&tid).map(|name| (*name, seq))
-                //     })
-                //     .collect::<HashMap<&str, Vec<char>>>();
-
                 SlidingWindows::new_with_regions(
                     reference_sequence_lookup,
                     regions_fp,

@@ -651,6 +651,7 @@ impl ReferenceSequencesLookup {
                 .records()
                 .progress_with(records_progress)
                 .filter_map(|res| res.ok())
+                .filter(|record| reference_sequence_names.contains(record.id()))
                 .filter_map(|record| {
                     let name = record.id();
                     let seq = String::from_utf8(record.seq().to_vec())
@@ -675,6 +676,9 @@ impl ReferenceSequencesLookup {
                     }
                 })
                 .collect::<HashMap<usize, Vec<char>>>();
+        if reference_sequences.is_empty() {
+            bail!("must have at least 1 vaid reference sequence")
+        }
 
         Ok(Self {
             reference_sequence_names,
