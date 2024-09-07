@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.3.2]
+## [v0.3.3]
 ### Fixes
 - [sample-probs, summary, pileup] Refactor sampling algorithm so that it will not over-sample reads leading to excessive memory usage.
 - [validate] Only use modifications on the canonical base we're validating (in case the modBAM has multiple, e.g. A and C-mods).
