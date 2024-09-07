@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.3.2]
 ### Fixes
+- [sample-probs, summary, pileup] Refactor sampling algorithm so that it will not over-sample reads leading to excessive memory usage.
+- [validate] Only use modifications on the canonical base we're validating (in case the modBAM has multiple, e.g. A and C-mods).
+- [entropy] Check that reference sequences are the same as in the bam header
+
+## [v0.3.2]
+### Fixes
 - [thresholds] OOB panic fix, #244
 - [dmr, pair] Allow strand information in regions to be provided. #240
 - [dmr, multi] Fix problem when many pairs are provided (#229)
