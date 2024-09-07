@@ -1,25 +1,32 @@
-use crate::position_filter::StrandedPositionFilter;
-use crate::reads_sampler::record_sampler::RecordSampler;
-use crate::util::{get_ticker, reader_is_bam, ReferenceRecord, Region};
-use anyhow::{anyhow, bail, Context};
-use derive_new::new;
-use indexmap::IndexSet;
-use indicatif::{MultiProgress, ProgressIterator};
-use itertools::Itertools;
-use log::{debug, error};
-use rust_htslib::bam::{self, FetchDefinition, Read};
-use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Display, Formatter};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use anyhow::{anyhow, bail, Context};
+use derive_new::new;
+use indexmap::IndexSet;
+use indicatif::{MultiProgress, ProgressIterator};
+use itertools::Itertools;
+use log::{debug, error};
+use prettytable::row;
+use rayon::prelude::*;
+use rust_htslib::bam::{self, FetchDefinition, Read};
+use rustc_hash::FxHashMap;
+
+use crate::interval_chunks::{ChromCoordinates, MultiChromCoordinates};
+use crate::monoid::Moniod;
+use crate::position_filter::StrandedPositionFilter;
+use crate::reads_sampler::record_sampler::RecordSampler;
+use crate::util::{get_ticker, reader_is_bam, ReferenceRecord, Region};
+
 /// Count is an exact count, Sample is a fraction to sample
-#[derive(Debug, PartialEq)]
-enum CountOrSample {
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub(crate) enum CountOrSample {
     Count(usize),
     Sample(f32),
+    All,
 }
 
 impl Display for CountOrSample {
@@ -27,6 +34,7 @@ impl Display for CountOrSample {
         match self {
             CountOrSample::Count(x) => write!(f, "{x}"),
             CountOrSample::Sample(x) => write!(f, "{x}"),
+            CountOrSample::All => write!(f, "all"),
         }
     }
 }
@@ -54,6 +62,9 @@ impl PartialOrd for CountOrSample {
             (CountOrSample::Count(_), CountOrSample::Sample(_)) => {
                 Some(Ordering::Greater)
             }
+            (CountOrSample::All, CountOrSample::All) => Some(Ordering::Equal),
+            (CountOrSample::All, _) => Some(Ordering::Greater),
+            (_, CountOrSample::All) => Some(Ordering::Less),
         }
     }
 }
@@ -115,9 +126,12 @@ impl SamplingSchedule {
         let total_to_sample = match total_to_sample {
             CountOrSample::Count(count) => format!("{}", count),
             CountOrSample::Sample(frac) => format!("{}% of", frac * 100f32),
+            CountOrSample::All => "all of".to_string(),
         };
         let unmapped = match unmapped_count {
-            Some(CountOrSample::Count(0)) => format!("including"),
+            Some(CountOrSample::Count(0)) | Some(CountOrSample::All) => {
+                format!("including")
+            }
             Some(CountOrSample::Count(count)) => format!("{}", count),
             Some(CountOrSample::Sample(s)) => {
                 format!("{}% of", (*s * 100f32).round())
@@ -129,15 +143,29 @@ impl SamplingSchedule {
              reads from {} {noun}, {} unmapped reads",
             contigs_with_reads, unmapped
         );
+        let mut tab = prettytable::Table::new();
+        tab.set_format(*prettytable::format::consts::FORMAT_CLEAN);
+        tab.set_titles(row!["chrom", "count/frac"]);
 
-        let report = counts_for_chroms
+        counts_for_chroms
             .iter()
             .sorted_by(|(_, counts_a), (_, counts_b)| counts_b.cmp(counts_a))
-            .fold(format!("schedule: "), |mut acc, (contig, counts)| {
-                acc.push_str(&format!("SQ: {}, {} reads ", contig, counts));
-                acc
+            .for_each(|(contig, count)| match count {
+                CountOrSample::Count(x) => {
+                    tab.add_row(row![*contig, *x]);
+                }
+                CountOrSample::Sample(f) => {
+                    tab.add_row(row![*contig, *f]);
+                }
+                CountOrSample::All => {
+                    tab.add_row(row![*contig, "all"]);
+                }
             });
-        debug!("{report}");
+        debug!("schedule\n{tab}");
+
+        if let Some(unmapped) = unmapped_count {
+            debug!("and {unmapped} unmapped reads");
+        }
     }
 
     pub fn from_num_reads<T: AsRef<Path>>(
@@ -316,7 +344,7 @@ impl SamplingSchedule {
                 .map(|(&chrom_id, counts_frac)| {
                     if sample_frac == 1.0f32 {
                         total_to_sample += counts_frac.counts;
-                        (chrom_id as u32, CountOrSample::Sample(1.0))
+                        (chrom_id as u32, CountOrSample::All)
                     } else {
                         let n_reads = (counts_frac.counts as f32 * sample_frac)
                             .ceil()
@@ -327,14 +355,19 @@ impl SamplingSchedule {
                 })
                 .collect::<FxHashMap<u32, CountOrSample>>();
             let unmapped_count = if include_unmapped {
-                let count = contig_to_counts_frac
-                    .get(&-1)
-                    .map(|couts_frac| {
-                        (couts_frac.counts as f32 * sample_frac).ceil() as usize
-                    })
-                    .unwrap_or(0usize);
-                total_to_sample += count;
-                Some(CountOrSample::Count(count))
+                if sample_frac == 1.0f32 {
+                    Some(CountOrSample::All)
+                } else {
+                    let count = contig_to_counts_frac
+                        .get(&-1)
+                        .map(|couts_frac| {
+                            (couts_frac.counts as f32 * sample_frac).ceil()
+                                as usize
+                        })
+                        .unwrap_or(0usize);
+                    total_to_sample += count;
+                    Some(CountOrSample::Count(count))
+                }
             } else {
                 None
             };
@@ -347,17 +380,20 @@ impl SamplingSchedule {
             );
             Ok(Self { counts_for_chroms, unmapped_count })
         } else {
+            let counts_or_sample = if sample_frac == 1.0f32 {
+                CountOrSample::All
+            } else {
+                CountOrSample::Sample(sample_frac)
+            };
             let counts_for_chroms = index_stats
                 .tid_to_mapped_read_count
                 .iter()
-                .map(|(&target_id, _)| {
-                    (target_id as u32, CountOrSample::Sample(sample_frac))
-                })
+                .map(|(&target_id, _)| (target_id as u32, counts_or_sample))
                 .collect::<FxHashMap<u32, CountOrSample>>();
 
             let unmapped_count = if include_unmapped {
                 if index_stats.unmapped_read_count > 0 {
-                    Some(CountOrSample::Sample(sample_frac))
+                    Some(counts_or_sample)
                 } else {
                     None
                 }
@@ -368,7 +404,7 @@ impl SamplingSchedule {
                 false,
                 &counts_for_chroms,
                 unmapped_count.as_ref(),
-                CountOrSample::Sample(sample_frac),
+                counts_or_sample,
             );
             Ok(Self { counts_for_chroms, unmapped_count })
         }
@@ -396,8 +432,186 @@ impl SamplingSchedule {
                 CountOrSample::Sample(frac) => {
                     RecordSampler::new_sample_frac(*frac as f64, None)
                 }
+                CountOrSample::All => RecordSampler::new_passthrough(),
             })
             .unwrap_or_else(|| RecordSampler::new_num_reads(0))
+    }
+
+    pub(crate) fn accumulate_sample_counts(
+        &self,
+        super_batch: Vec<MultiChromCoordinates>,
+        contig_sizes: &FxHashMap<u32, u32>,
+        reads_sampled_per_chr: &FxHashMap<u32, usize>,
+        batch_size: usize,
+    ) -> Vec<Vec<(ChromCoordinates, CountOrSample)>> {
+        let min_reads_per_query = 50usize;
+        let all_coords = super_batch
+            .into_iter()
+            .flat_map(|x| x.0)
+            .collect::<Vec<ChromCoordinates>>()
+            .into_iter()
+            .sorted_by(|a, b| match a.chrom_tid.cmp(&b.chrom_tid) {
+                Ordering::Equal => a.start_pos.cmp(&b.start_pos),
+                o @ _ => o,
+            })
+            .collect::<Vec<ChromCoordinates>>();
+
+        // first need to determine what proportion of each chromosome we have in
+        // the super batch
+        let total_length_per_chrom = all_coords
+            .par_iter()
+            .map(|cc| (cc.chrom_tid, cc.len()))
+            .fold(
+                || FxHashMap::default(),
+                |mut agg, (tid, l)| {
+                    *agg.entry(tid).or_insert(0u32) += l;
+                    agg
+                },
+            )
+            .reduce(|| FxHashMap::default(), |a, b| a.op(b));
+
+        // this is the count or fraction we should sample for this super batch
+        let sample_counts_per_chrom = total_length_per_chrom
+            .iter()
+            .filter_map(|(tid, l)| {
+                contig_sizes.get(&tid).map(|size| (tid, l, *size))
+            })
+            .filter_map(|(tid, l, size)| {
+                let sampled_so_far =
+                    *reads_sampled_per_chr.get(&tid).unwrap_or(&0usize);
+                // this is the proportion of the chromosome that this super
+                // batch has
+                let f = *l as f32 / size as f32;
+                match self.counts_for_chroms.get(&tid) {
+                    Some(CountOrSample::Count(total)) => (*total)
+                        .checked_sub(sampled_so_far)
+                        .and_then(|remaining| {
+                            if remaining > 0 {
+                                let x = (f * remaining as f32).ceil() as usize;
+                                Some((*tid, CountOrSample::Count(x)))
+                            } else {
+                                None
+                            }
+                        }),
+                    Some(CountOrSample::Sample(sample_frac)) => {
+                        Some((*tid, CountOrSample::Sample(f * (*sample_frac))))
+                    }
+                    Some(CountOrSample::All) => {
+                        Some((*tid, CountOrSample::All))
+                    }
+                    None => None,
+                }
+            })
+            .collect::<FxHashMap<u32, CountOrSample>>();
+
+        let regions_assigned_to_counts = all_coords
+            .into_iter()
+            // first figure out what proportion of the total in the batch is due
+            // to this region
+            .filter_map(|cc| {
+                total_length_per_chrom.get(&cc.chrom_tid).map(|l| {
+                    let f = cc.len() as f32 / *l as f32;
+                    (cc, f)
+                })
+            })
+            // now multiply this proportion by the number of reads or the
+            // fraction
+            .filter_map(|(cc, f)| {
+                sample_counts_per_chrom.get(&cc.chrom_tid).map(|count| {
+                    match count {
+                        CountOrSample::Count(k) => {
+                            let n_reads = (*k as f32 * f).ceil() as usize;
+                            (cc, CountOrSample::Count(n_reads))
+                        }
+                        CountOrSample::Sample(frac) => {
+                            (cc, CountOrSample::Sample(*frac * f))
+                        }
+                        CountOrSample::All => (cc, CountOrSample::All),
+                    }
+                })
+            });
+        let mut grouped = Vec::new();
+        let mut slack = Option::<(ChromCoordinates, usize)>::None;
+        for (chrom_coords, count) in regions_assigned_to_counts {
+            match count {
+                CountOrSample::Count(x) => {
+                    if x < min_reads_per_query {
+                        // try to gather a larger region
+                        slack = match slack {
+                            Some((prev, prev_count)) => {
+                                if prev.chrom_tid == chrom_coords.chrom_tid {
+                                    let merged = prev.merge(chrom_coords);
+                                    let merged_total = x + prev_count;
+                                    if merged_total < min_reads_per_query {
+                                        Some((merged, x + prev_count))
+                                    } else {
+                                        // we've gathered enough, so add it
+                                        grouped.push((
+                                            merged,
+                                            CountOrSample::Count(merged_total),
+                                        ));
+                                        None
+                                    }
+                                } else {
+                                    // we've moved on to a new chrom, so we have
+                                    // to add what we've got so far
+                                    grouped.push((
+                                        prev,
+                                        CountOrSample::Count(prev_count),
+                                    ));
+                                    Some((chrom_coords, x))
+                                }
+                            }
+                            None => Some((chrom_coords, x)),
+                        }
+                    } else {
+                        let prev = std::mem::replace(&mut slack, None);
+                        if let Some((prev, prev_count)) = prev {
+                            if prev.chrom_tid == chrom_coords.chrom_tid {
+                                let merged = prev.merge(chrom_coords);
+                                grouped.push((
+                                    merged,
+                                    CountOrSample::Count(prev_count + x),
+                                ))
+                            } else {
+                                grouped.push((
+                                    prev,
+                                    CountOrSample::Count(prev_count),
+                                ));
+                                grouped.push((chrom_coords, count));
+                            }
+                        } else {
+                            grouped.push((chrom_coords, count));
+                        }
+                    }
+                }
+                CountOrSample::Sample(_) => grouped.push((chrom_coords, count)),
+                CountOrSample::All => {
+                    grouped.push((chrom_coords, CountOrSample::All))
+                }
+            }
+        }
+
+        if let Some((c, x)) = slack {
+            grouped.push((c, CountOrSample::Count(x)));
+        }
+
+        let (mut batched, last) = grouped.into_iter().fold(
+            (Vec::new(), Vec::new()),
+            |(mut agg, mut batch), next| {
+                batch.push(next);
+                if batch.len() >= batch_size {
+                    let finished = std::mem::replace(&mut batch, Vec::new());
+                    agg.push(finished);
+                }
+                (agg, batch)
+            },
+        );
+        if !last.is_empty() {
+            batched.push(last);
+        }
+
+        batched
     }
 
     pub(crate) fn has_unmapped(&self) -> bool {
@@ -778,10 +992,7 @@ mod record_sampler_tests {
             false,
         )
         .unwrap();
-        assert_eq!(
-            sched.counts_for_chroms.get(&0),
-            Some(&CountOrSample::Sample(1.0))
-        );
+        assert_eq!(sched.counts_for_chroms.get(&0), Some(&CountOrSample::All));
 
         let sched = SamplingSchedule::from_sample_frac(
             "tests/resources/bc_anchored_10_reads.sorted.bam",

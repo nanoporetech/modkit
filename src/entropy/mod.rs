@@ -1252,7 +1252,8 @@ impl DescriptiveStats {
     ) -> String {
         use crate::util::TAB;
 
-        format!("\
+        format!(
+            "\
             {chrom}{TAB}\
             {start}{TAB}\
             {end}{TAB}\
@@ -1267,16 +1268,16 @@ impl DescriptiveStats {
             {}{TAB}\
             {}{TAB}\
             {}\n",
-              self.mean_entropy,
-              strand.to_char(),
-              self.median_entropy,
-              self.min_entropy,
-              self.max_entropy,
-              self.mean_num_reads,
-              self.min_num_reads,
-              self.max_num_reads,
-              self.successful_count,
-              self.failed_count
+            self.mean_entropy,
+            strand.to_char(),
+            self.median_entropy,
+            self.min_entropy,
+            self.max_entropy,
+            self.mean_num_reads,
+            self.min_num_reads,
+            self.max_num_reads,
+            self.successful_count,
+            self.failed_count
         )
     }
 }

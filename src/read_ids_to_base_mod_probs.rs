@@ -193,16 +193,9 @@ impl Moniod for ReadIdsToBaseModProbs {
     }
 
     fn op(self, other: Self) -> Self {
-        let mut acc = self.inner;
-        for (read_id, base_mod_calls) in other.inner {
-            if acc.contains_key(&read_id) {
-                continue;
-            } else {
-                acc.insert(read_id, base_mod_calls);
-            }
-        }
-
-        Self { inner: acc }
+        let mut this = self;
+        this.op_mut(other);
+        this
     }
 
     fn op_mut(&mut self, other: Self) {

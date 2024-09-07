@@ -981,7 +981,7 @@ impl ModSummarize {
             } else {
                 // calculate the filter thresholds at the requested percentile
                 let pct = (self.filter_percentile * 100f32).floor();
-                info!("calculating threshold at {pct}% percentile");
+                info!("calculating threshold at {pct}(th) percentile");
                 calc_thresholds_per_base(
                     &read_ids_to_base_mod_calls,
                     self.filter_percentile,
