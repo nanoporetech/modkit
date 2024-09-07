@@ -1,11 +1,12 @@
-use anyhow::Context;
-use rust_htslib::{bam, bam::Read};
-use std::path::PathBuf;
-
 use crate::common::{parse_mod_profile, run_simple_summary};
+use anyhow::Context;
 use common::run_modkit;
+use log::{debug, info};
+use mod_kit::logging::init_logging;
 use mod_kit::mod_bam::parse_raw_mod_tags;
 use mod_kit::mod_base_code::{BaseState, DnaBase};
+use rust_htslib::{bam, bam::Read};
+use std::path::{Path, PathBuf};
 
 mod common;
 
@@ -315,9 +316,11 @@ fn test_adjust_out_of_spec_codes() {
         25,
     )
     .expect("should get expected summary");
+
     let adjusted_summary =
         run_simple_summary(adjusted_bam.to_str().unwrap(), 25)
             .expect("should get adjusted summary");
+
     assert_eq!(expected_summary, adjusted_summary);
 }
 

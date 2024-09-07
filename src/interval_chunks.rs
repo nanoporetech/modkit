@@ -440,6 +440,20 @@ impl ChromCoordinates {
     pub(crate) fn len(&self) -> u32 {
         self.end_pos.checked_sub(self.start_pos).unwrap_or(0u32)
     }
+
+    pub(crate) fn merge(self, other: Self) -> Self {
+        match (&self.focus_positions, &other.focus_positions) {
+            (FocusPositions::AllPositions, FocusPositions::AllPositions) => {}
+            _ => todo!("must be 'AllPositions' to merge"),
+        }
+        assert_eq!(self.chrom_tid, other.chrom_tid);
+        Self {
+            chrom_tid: self.chrom_tid,
+            start_pos: std::cmp::min(self.start_pos, other.start_pos),
+            end_pos: std::cmp::max(self.end_pos, other.end_pos),
+            focus_positions: FocusPositions::AllPositions,
+        }
+    }
 }
 
 #[derive(new)]

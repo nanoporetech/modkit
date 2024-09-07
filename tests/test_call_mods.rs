@@ -253,10 +253,8 @@ fn test_call_mods_same_pileup() {
         "--no-filtering",
     ])
     .unwrap();
-    println!("calls first {mod_called_pileup:?}");
     let in_situ_threshold_pileup =
         std::env::temp_dir().join("test_call_mods_same_pileup-2.bed");
-    println!("in situ {in_situ_threshold_pileup:?}");
     run_modkit(&[
         "pileup",
         update_tags_bam.to_str().unwrap(),

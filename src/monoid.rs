@@ -212,6 +212,33 @@ where
     }
 }
 
+impl<A> Moniod for FxHashMap<A, usize>
+where
+    A: Eq + Hash,
+{
+    fn zero() -> Self {
+        FxHashMap::default()
+    }
+
+    fn op(self, other: Self) -> Self {
+        let mut agg = self;
+        for (k, v) in other {
+            *agg.entry(k).or_insert(0usize) += v;
+        }
+        agg
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        for (k, v) in other {
+            *self.entry(k).or_insert(0usize) += v;
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 impl<A, B> Moniod for FxHashMap<A, B>
 where
     A: Eq + Hash,
