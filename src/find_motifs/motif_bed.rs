@@ -672,7 +672,7 @@ impl MotifLocations {
 
 #[cfg(test)]
 mod motif_bed_tests {
-    use crate::motif_bed::{find_motif_hits, RegexMotif};
+    use crate::find_motifs::motif_bed::{find_motif_hits, RegexMotif};
     use crate::util::Strand;
 
     #[test]

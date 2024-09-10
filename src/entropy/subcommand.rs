@@ -11,10 +11,10 @@ use rayon::prelude::*;
 use crate::command_utils::parse_per_mod_thresholds;
 use crate::entropy::writers::{EntropyWriter, RegionsWriter, WindowsWriter};
 use crate::entropy::{process_entropy_window, SlidingWindows};
+use crate::find_motifs::motif_bed::RegexMotif;
 use crate::logging::init_logging;
 use crate::mod_base_code::DnaBase;
 use crate::monoid::Moniod;
-use crate::motif_bed::RegexMotif;
 use crate::reads_sampler::sampling_schedule::{
     IdxStats, ReferenceSequencesLookup,
 };

@@ -1,29 +1,60 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::RwLock;
 
-use anyhow::bail;
-use bio::io::fasta::Reader as FastaReader;
-use clap::Args;
+use anyhow::{anyhow, bail, Context};
+use clap::{Args, Subcommand};
 use indicatif::{MultiProgress, ParallelProgressIterator};
 use itertools::Itertools;
-use log::info;
+use log::{debug, info};
 use prettytable::{row, Table};
-use rayon::prelude::*;
+use rayon::{prelude::*, ThreadPool};
+use rustc_hash::FxHashMap;
 
+use crate::find_motifs::motif_bed::motif_bed;
 use crate::find_motifs::{
-    find_motifs_for_mod, load_bedmethyl, EnrichedMotif, EnrichedMotifData,
+    find_motifs_for_mod, load_bedmethyl_and_references, make_tables,
+    merge_motifs, parse_known_motifs, parse_motifs_from_table,
+    parse_raw_known_motifs, EnrichedMotif, EnrichedMotifData, KmerMask,
     KmerModificationDb, MotifRelationship,
 };
 use crate::logging::init_logging;
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
-use crate::util::{get_subroutine_progress_bar, get_ticker};
+use crate::util::get_subroutine_progress_bar;
+
+use super::args::{InputArgs, KnownMotifsArgs, RefineArgs};
+
+#[derive(Subcommand)]
+pub enum EntryMotifs {
+    /// Search for modification-enriched subsequences in a reference genome
+    Search(EntryFindMotifs),
+    /// Use a previously defined list of motif sequences and further refine
+    /// them with a bedMethyl table.
+    Refine(EntryRefineMotifs),
+    /// Calculate enrichment statistics on a set of motifs from a bedMethyl
+    /// table.
+    Evaluate(EntrySearchMotifs),
+    /// Create BED file with all locations of a sequence motif.
+    /// Example: modkit motif bed CG 0
+    Bed(EntryMotifBed),
+}
+
+impl EntryMotifs {
+    pub fn run(&self) -> anyhow::Result<()> {
+        match self {
+            EntryMotifs::Search(x) => x.run(),
+            EntryMotifs::Evaluate(x) => x.run(),
+            EntryMotifs::Refine(x) => x.run(),
+            EntryMotifs::Bed(x) => x.run(),
+        }
+    }
+}
 
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
 pub struct EntryFindMotifs {
-    /// Input bedmethyl table, can be used directly from modkit pileup.
-    #[arg(short = 'i', long)]
-    in_bedmethyl: PathBuf,
+    #[clap(flatten)]
+    input_args: InputArgs,
     /// Optionally output a machine-parsable TSV (human-readable table will
     /// always be output to the log).
     #[arg(short = 'o', long)]
@@ -32,59 +63,20 @@ pub struct EntryFindMotifs {
     /// modification frequencies that were not found during search.
     #[arg(long = "known-motifs-table", requires = "known_motifs")]
     out_known_table: Option<PathBuf>,
-    /// Number of threads to use.
-    #[arg(short, long, default_value_t = 4)]
-    threads: usize,
-    /// Reference sequence in FASTA format used for the pileup.
-    /// Reference sequence in FASTA format used for the pileup.
-    #[arg(short = 'r', long = "ref")]
-    reference_fasta: PathBuf,
-    /// Fraction modified threshold below which consider a genome location to
-    /// be "low modification".
-    #[arg(long = "low-thresh", default_value_t = 0.2)]
-    low_threshold: f32,
-    /// Fraction modified threshold above which consider a genome location to
-    /// be "high modification" or enriched for modification.
-    #[arg(long = "high-thresh", default_value_t = 0.6)]
-    high_threshold: f32,
-    /// Minimum log-odds to consider a motif sequence to be enriched.
-    #[arg(long, default_value_t = 1.5)]
-    min_log_odds: f32,
-    /// Minimum log-odds to consider a motif sequence to be enriched when
-    /// performing exhaustive search.
-    #[arg(long, conflicts_with = "skip_search", default_value_t = 2.5)]
-    exhaustive_seed_min_log_odds: f32,
-    /// Exhaustive search seed length, increasing this value increases
-    /// computational time.
-    #[arg(long, conflicts_with = "skip_search", default_value_t = 3)]
-    exhaustive_seed_len: usize,
-    /// Skip the exhaustive search phase, saves time but the results may be
-    /// less sensitive
-    #[arg(long, default_value_t = false)]
-    skip_search: bool,
-    /// Minimum coverage in the bedMethyl to consider a record valid.
-    #[arg(long, default_value_t = 5)]
-    min_coverage: u64,
-    /// Upstream and downstream number of bases to search for a motif sequence
-    /// around a modified base. Example: --context-size 12 12.
-    #[arg(long, num_args=2, default_values_t=vec![12, 12])]
-    context_size: Vec<u64>,
+    #[clap(flatten)]
+    refine_args: RefineArgs,
     /// Initial "fixed" seed window size in base pairs around the modified
     /// base. Example: --init-context-size 2 2
     #[arg(long, num_args=2, default_values_t=vec![2, 2])]
     init_context_size: Vec<usize>,
-    /// Minimum number of total sites in the genome required for a motif to be
-    /// considered.
-    #[arg(long, default_value_t = 300)]
-    min_sites: u64,
-    /// Minimum fraction of sites in the genome to be "high-modification" for a
-    /// motif to be considered.
-    #[arg(long = "min-frac-mod", default_value_t = 0.85)]
-    frac_sites_thresh: f32,
-    /// Gather enrichment information for a known motif as well as compare to
-    /// discovered motifs. Format should be <sequence> <offset> <mod_code>.
+    /// Format should be <sequence> <offset> <mod_code>.
     #[arg(long="known-motif", num_args = 3, action = clap::ArgAction::Append)]
-    known_motifs: Option<Vec<String>>,
+    pub known_motifs: Option<Vec<String>>,
+    /// Path to known motifs in tabular format. Tab-separated values:
+    /// <mod_code>\t<motif_seq>\t<offset>. May have the same header as the
+    /// output table from this command.
+    #[arg(long = "known-motifs-table")]
+    pub known_motifs_table: Option<PathBuf>,
     /// Specify which modification codes to process, default will process all
     /// modification codes found in the input bedMethyl file
     #[arg(long = "mod-code")]
@@ -93,76 +85,27 @@ pub struct EntryFindMotifs {
     /// to primary sequence bases.
     #[arg(long = "force-override-spec", default_value_t = false)]
     override_spec: bool,
-    /// Output log to this file.
-    #[arg(long, alias = "log")]
-    log_filepath: Option<PathBuf>,
-    /// Disable the progress bars.
-    #[arg(long, default_value_t = false)]
-    suppress_progress: bool,
 }
 
 impl EntryFindMotifs {
-    fn load_references(
-        &self,
-        multi_progress: &MultiProgress,
-    ) -> anyhow::Result<HashMap<String, Vec<u8>>> {
-        info!("loading references from {:?}", self.reference_fasta);
-        let pb = multi_progress.add(get_ticker());
-        pb.set_message("sequences read");
-        let reader = FastaReader::from_file(&self.reference_fasta)?;
-
-        let (contigs, n_fails) = reader.records().fold(
-            (HashMap::new(), 0usize),
-            |(mut agg, fails), record| match record {
-                Ok(r) => {
-                    let record_name = r.id().to_string();
-                    let seq = r
-                        .seq()
-                        .iter()
-                        .map(|&nt| nt.to_ascii_uppercase())
-                        .collect::<Vec<u8>>();
-                    agg.insert(record_name, seq);
-                    pb.inc(1);
-                    (agg, fails)
-                }
-                Err(_) => (agg, fails + 1),
-            },
-        );
-
-        if n_fails > 0 {
-            info!("failed to load {n_fails} record(s)");
-        }
-
-        if contigs.is_empty() {
-            bail!("failed to read any reference sequences");
-        } else {
-            pb.finish_and_clear();
-            info!("loaded {} sequence(s)", contigs.len());
-            Ok(contigs)
-        }
+    fn get_context(&self) -> [u64; 2] {
+        [self.refine_args.context_size[0], self.refine_args.context_size[1]]
     }
 
     fn load_mod_db(
         &self,
         multi_progress: &MultiProgress,
     ) -> anyhow::Result<KmerModificationDb> {
-        let reference_sequences = self.load_references(multi_progress)?;
-        let context = [self.context_size[0], self.context_size[1]];
-        for x in context {
-            if x > 127u64 {
-                bail!("context cannot be larger than 127x2 (255) bases")
-            }
-        }
-
-        // as well
-        load_bedmethyl(
-            &self.in_bedmethyl,
-            self.min_coverage,
-            context,
-            self.low_threshold,
-            self.high_threshold,
-            &reference_sequences,
+        load_bedmethyl_and_references(
+            &self.input_args.reference_fasta,
+            &self.input_args.in_bedmethyl,
+            self.input_args.contig.as_ref(),
+            self.refine_args.min_coverage,
+            self.get_context(),
+            self.refine_args.low_threshold,
+            self.refine_args.high_threshold,
             multi_progress,
+            self.input_args.threads,
         )
     }
 
@@ -170,32 +113,42 @@ impl EntryFindMotifs {
         &self,
         mod_code_lookup: &HashMap<ModCodeRepr, DnaBase>,
     ) -> anyhow::Result<Option<Vec<EnrichedMotif>>> {
-        let context_size =
-            [self.context_size[0] as usize, self.context_size[1] as usize];
-        self.known_motifs
+        let context_size = [
+            self.refine_args.context_size[0] as usize,
+            self.refine_args.context_size[1] as usize,
+        ];
+        let mut known_motifs = Vec::new();
+        let cli_motifs = self
+            .known_motifs
             .as_ref()
             .map(|raw_motifs| {
-                let all_motifs = raw_motifs
-                    .chunks(3)
-                    .map(|parts| {
-                        EnrichedMotif::new_from_parts(
-                            &parts[0],
-                            &parts[2],
-                            &parts[1],
-                            context_size,
-                            mod_code_lookup,
-                        )
-                    })
-                    .collect::<anyhow::Result<Vec<EnrichedMotif>>>();
-
-                all_motifs.map(|xs| {
-                    xs.into_iter()
-                        .collect::<HashSet<_>>()
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                })
+                parse_raw_known_motifs(
+                    raw_motifs,
+                    context_size,
+                    mod_code_lookup,
+                )
             })
-            .transpose()
+            .transpose()?;
+        let table_motifs = self
+            .known_motifs_table
+            .as_ref()
+            .map(|tab_fp| {
+                parse_motifs_from_table(tab_fp, context_size, mod_code_lookup)
+            })
+            .transpose()?;
+        if let Some(cli_motifs) = cli_motifs {
+            known_motifs.extend(cli_motifs);
+        }
+
+        if let Some(table_motifs) = table_motifs {
+            known_motifs.extend(table_motifs);
+        }
+
+        if known_motifs.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(known_motifs))
+        }
     }
 
     fn parse_input_mod_codes(
@@ -216,19 +169,19 @@ impl EntryFindMotifs {
     }
 
     pub fn run(&self) -> anyhow::Result<()> {
-        let _ = init_logging(self.log_filepath.as_ref());
-        if self.context_size.len() != 2 {
+        let _ = init_logging(self.input_args.log_filepath.as_ref());
+        if self.refine_args.context_size.len() != 2 {
             bail!("context-size must be 2 elements")
         }
         if self.init_context_size.len() != 2 {
             bail!("init-context-size must be 2 elements")
         }
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.threads)
+            .num_threads(self.input_args.threads)
             .build()?;
 
         let mpb = MultiProgress::new();
-        if self.suppress_progress {
+        if self.input_args.suppress_progress {
             mpb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
 
@@ -278,12 +231,12 @@ impl EntryFindMotifs {
                             *mod_code,
                             &mod_db,
                             &self.init_context_size,
-                            self.min_log_odds,
-                            self.min_sites,
-                            self.frac_sites_thresh,
-                            self.skip_search,
-                            self.exhaustive_seed_len,
-                            self.exhaustive_seed_min_log_odds,
+                            self.refine_args.min_log_odds,
+                            self.refine_args.min_sites,
+                            self.refine_args.frac_sites_thresh,
+                            self.refine_args.skip_search,
+                            self.refine_args.exhaustive_seed_len,
+                            self.refine_args.exhaustive_seed_min_log_odds,
                             &mpb,
                         )
                     })
@@ -300,8 +253,10 @@ impl EntryFindMotifs {
         let motifs_to_score = if let Some(known_motifs) = known_motifs.as_ref()
         {
             let mut motifs_to_score = Vec::new();
-            let context_size =
-                [self.context_size[0] as usize, self.context_size[1] as usize];
+            let context_size = [
+                self.refine_args.context_size[0] as usize,
+                self.refine_args.context_size[1] as usize,
+            ];
             let grouped_by_base =
                 results.iter().fold(HashMap::new(), |mut agg, next_motif| {
                     let canonical_base = next_motif.motif.canonical_base;
@@ -342,17 +297,7 @@ impl EntryFindMotifs {
                 motifs_to_score
                     .into_par_iter()
                     .progress_with(pb)
-                    .map(|motif| {
-                        let (total_high_count, total_low_count) =
-                            mod_db.get_total_mod_counts(&motif);
-                        let total_mid_count = mod_db.get_mid_counts(&motif);
-                        EnrichedMotifData::new(
-                            motif.clone(),
-                            total_high_count,
-                            total_low_count,
-                            total_mid_count,
-                        )
-                    })
+                    .map(|motif| mod_db.get_enriched_motif_data(motif))
                     .collect::<Vec<EnrichedMotifData>>(),
             )
         } else {
@@ -423,8 +368,10 @@ impl EntryFindMotifs {
         motif: &EnrichedMotif,
         others: &HashMap<DnaBase, Vec<&EnrichedMotif>>,
     ) -> (String, String) {
-        let context_size =
-            [self.context_size[0] as usize, self.context_size[1] as usize];
+        let context_size = [
+            self.refine_args.context_size[0] as usize,
+            self.refine_args.context_size[1] as usize,
+        ];
         if let Some(motifs_for_base) = others.get(&motif.canonical_base) {
             motifs_for_base
                 .iter()
@@ -659,5 +606,319 @@ impl EntryFindMotifs {
         }
 
         tab
+    }
+}
+
+#[derive(Args)]
+#[command(arg_required_else_help = true)]
+pub struct EntryRefineMotifs {
+    #[clap(flatten)]
+    input_args: InputArgs,
+    #[clap(flatten)]
+    known_motifs_args: KnownMotifsArgs,
+    /// Machine-parsable table of refined motifs. Human-readable table always
+    /// printed to stderr and log.
+    #[arg(long = "out")]
+    out_table: Option<PathBuf>,
+    /// Minimum fraction of sites in the genome to be "high-modification"
+    /// for a motif to be further refined, otherwise it will be discarded.
+    #[arg(long = "min_refine_frac_mod", default_value_t = 0.6)]
+    min_refine_frac_modified: f32,
+    /// Minimum number of total sites in the genome required for a motif to be
+    /// further refined, otherwise it will be discarded.
+    #[arg(long, default_value_t = 300)]
+    #[arg(long)]
+    pub min_refine_sites: u64,
+    #[clap(flatten)]
+    refine_args: RefineArgs,
+    /// Force override SAM specification of association of modification codes
+    /// to primary sequence bases.
+    #[arg(long = "force-override-spec", default_value_t = false)]
+    override_spec: bool,
+}
+
+impl EntryRefineMotifs {
+    fn refine_scored_motifs(
+        &self,
+        mod_db: &KmerModificationDb,
+        scored_motifs: &[EnrichedMotifData],
+        mpb: &MultiProgress,
+        pool: ThreadPool,
+    ) -> Vec<EnrichedMotifData> {
+        let (motifs_to_refine, num_below_frac, num_below_min_sites, both) =
+            scored_motifs.iter().fold(
+                (Vec::new(), 0usize, 0usize, 0usize),
+                |(mut agg, f, c, b), next| {
+                    let enough_sites = next.enough_sites(self.min_refine_sites);
+                    let enough_modified =
+                        next.frac_modified() >= self.min_refine_frac_modified;
+                    match (enough_sites, enough_modified) {
+                        (true, true) => {
+                            agg.push(next.motif.clone());
+                            (agg, f, c, b)
+                        }
+                        (true, false) => (agg, f + 1, c, b),
+                        (false, true) => (agg, f, c + 1, b),
+                        (false, false) => (agg, f, c, b + 1),
+                    }
+                },
+            );
+        info!(
+            "have {} motifs to refine, {} discarded",
+            motifs_to_refine.len(),
+            scored_motifs.len().saturating_sub(motifs_to_refine.len())
+        );
+        info!(
+            "discard reasons:\n\tBelow fraction modified: \
+             {num_below_frac}\n\tBelow min sites: \
+             {num_below_min_sites}\n\tBelow both: {both}"
+        );
+        let refine_pb =
+            mpb.add(get_subroutine_progress_bar(motifs_to_refine.len()));
+        refine_pb.set_message("refining motifs");
+        let cache = RwLock::new(FxHashMap::default());
+
+        let refined_motifs = pool.install(|| {
+            motifs_to_refine
+                .par_iter()
+                .progress_with(refine_pb)
+                .map(|motif| {
+                    let kmer_subset = mod_db.get_kmer_subset(
+                        motif.canonical_base,
+                        &KmerMask::default(),
+                        motif.multi_sequence.mod_code,
+                    );
+                    motif.clone().refine(
+                        &mod_db,
+                        &cache,
+                        &kmer_subset,
+                        self.refine_args.min_sites,
+                        self.refine_args.frac_sites_thresh,
+                        self.refine_args.min_log_odds,
+                    )
+                })
+                .collect::<Vec<EnrichedMotif>>()
+        });
+
+        info!("merging motifs");
+        let merged_refined_motifs = merge_motifs(refined_motifs);
+        info!(
+            "have {} merged, refined motifs to score",
+            merged_refined_motifs.len()
+        );
+        let re_score_pb =
+            mpb.add(get_subroutine_progress_bar(merged_refined_motifs.len()));
+        re_score_pb.set_message("scoring merged, refined, motifs");
+        let refined_motifs = pool.install(|| {
+            merged_refined_motifs
+                .into_par_iter()
+                .progress_with(re_score_pb)
+                .map(|m| mod_db.get_enriched_motif_data(&m))
+                .collect::<Vec<EnrichedMotifData>>()
+        });
+        refined_motifs
+    }
+
+    pub fn run(&self) -> anyhow::Result<()> {
+        let _ = init_logging(self.input_args.log_filepath.as_ref());
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.input_args.threads)
+            .build()
+            .context("failed to make threadpool")?;
+        let mpb = MultiProgress::new();
+        if self.input_args.suppress_progress {
+            mpb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
+        let context_bases = [
+            self.refine_args.context_size[0],
+            self.refine_args.context_size[1],
+        ];
+        let mod_db = load_bedmethyl_and_references(
+            &self.input_args.reference_fasta,
+            &self.input_args.in_bedmethyl,
+            self.input_args.contig.as_ref(),
+            self.refine_args.min_coverage,
+            context_bases,
+            self.refine_args.low_threshold,
+            self.refine_args.high_threshold,
+            &mpb,
+            self.input_args.threads,
+        )?;
+        let inferred_mod_codes =
+            mod_db.get_inferred_mod_code_associations(!self.override_spec)?;
+        let motifs_to_evaluate = parse_known_motifs(
+            &self.known_motifs_args,
+            [context_bases[0] as usize, context_bases[1] as usize],
+            &inferred_mod_codes,
+        )?;
+        if motifs_to_evaluate.is_empty() {
+            bail!("failed to parse any motifs to evaluate")
+        }
+
+        info!("have {} motifs to evaluate", motifs_to_evaluate.len());
+
+        let score_pb =
+            mpb.add(get_subroutine_progress_bar(motifs_to_evaluate.len()));
+        score_pb.set_message("scoring motifs");
+        let scored_motifs = pool.install(|| {
+            motifs_to_evaluate
+                .par_iter()
+                .progress_with(score_pb)
+                .map(|motif| mod_db.get_enriched_motif_data(&motif))
+                .collect::<Vec<EnrichedMotifData>>()
+                .into_iter()
+                .collect::<Vec<EnrichedMotifData>>()
+        });
+
+        let refined_motifs =
+            self.refine_scored_motifs(&mod_db, &scored_motifs, &mpb, pool);
+
+        let (refined_table, refined_mch_table) = make_tables(&refined_motifs);
+        if let Some(p) = self.out_table.as_ref() {
+            let writer = csv::WriterBuilder::new()
+                .delimiter('\t' as u8)
+                .from_path(p)
+                .map_err(|e| {
+                    anyhow!("failed to make TSV output writer at {p:?}, {e}")
+                })?;
+            refined_mch_table.to_csv_writer(writer)?;
+        }
+        info!("refined motifs:\n{refined_table}");
+        Ok(())
+    }
+}
+
+#[derive(Args)]
+#[command(arg_required_else_help = true)]
+pub struct EntrySearchMotifs {
+    #[clap(flatten)]
+    input_args: InputArgs,
+    #[clap(flatten)]
+    known_motifs_args: KnownMotifsArgs,
+    /// Machine-parsable table of refined motifs. Human-readable table always
+    /// printed to stderr and log.
+    #[arg(long = "out")]
+    out_table: Option<PathBuf>,
+    /// Force override SAM specification of association of modification codes
+    /// to primary sequence bases.
+    #[arg(long = "force-override-spec", default_value_t = false)]
+    override_spec: bool,
+    /// Minimum coverage in the bedMethyl to consider a record valid.
+    #[arg(long, default_value_t = 5)]
+    min_coverage: u64,
+    /// Upstream and downstream number of bases to search for a motif sequence
+    /// around a modified base. Example: --context-size 12 12.
+    #[arg(long, num_args=2, default_values_t=vec![12, 12])]
+    context_size: Vec<u64>,
+    /// Fraction modified threshold below which consider a genome location to
+    /// be "low modification".
+    #[arg(long = "low-thresh", default_value_t = 0.2)]
+    low_threshold: f32,
+    /// Fraction modified threshold above which consider a genome location to
+    /// be "high modification" or enriched for modification.
+    #[arg(long = "high-thresh", default_value_t = 0.6)]
+    high_threshold: f32,
+    /// Don't print final table to stderr (will still go to log file).
+    #[arg(long, default_value_t = false)]
+    suppress_table: bool,
+}
+
+impl EntrySearchMotifs {
+    pub fn run(&self) -> anyhow::Result<()> {
+        let _ = init_logging(self.input_args.log_filepath.as_ref());
+        if self.suppress_table
+            && (self.out_table.is_none()
+                && self.input_args.log_filepath.is_none())
+        {
+            bail!(
+                "must provide an file to output table or a log file if \
+                 suppressing human-readable table"
+            )
+        }
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.input_args.threads)
+            .build()
+            .context("failed to make threadpool")?;
+        let mpb = MultiProgress::new();
+        if self.input_args.suppress_progress {
+            mpb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
+        let context_bases = [self.context_size[0], self.context_size[1]];
+        let mod_db = load_bedmethyl_and_references(
+            &self.input_args.reference_fasta,
+            &self.input_args.in_bedmethyl,
+            self.input_args.contig.as_ref(),
+            self.min_coverage,
+            context_bases,
+            self.low_threshold,
+            self.high_threshold,
+            &mpb,
+            self.input_args.threads,
+        )?;
+        let inferred_mod_codes =
+            mod_db.get_inferred_mod_code_associations(!self.override_spec)?;
+        let motifs_to_evaluate = parse_known_motifs(
+            &self.known_motifs_args,
+            [context_bases[0] as usize, context_bases[1] as usize],
+            &inferred_mod_codes,
+        )?;
+        if motifs_to_evaluate.is_empty() {
+            bail!("failed to parse any motifs to evaluate")
+        }
+
+        info!("have {} motifs to evaluate", motifs_to_evaluate.len());
+
+        let score_pb =
+            mpb.add(get_subroutine_progress_bar(motifs_to_evaluate.len()));
+        score_pb.set_message("evaluating motifs");
+        let scored_motifs = pool.install(|| {
+            motifs_to_evaluate
+                .par_iter()
+                .progress_with(score_pb)
+                .map(|motif| mod_db.get_enriched_motif_data(&motif))
+                .collect::<Vec<EnrichedMotifData>>()
+                .into_iter()
+                .collect::<Vec<EnrichedMotifData>>()
+        });
+
+        let (scored_table, scored_mch_table) = make_tables(&scored_motifs);
+
+        if let Some(p) = self.out_table.as_ref() {
+            let writer = csv::WriterBuilder::new()
+                .delimiter('\t' as u8)
+                .from_path(p)
+                .map_err(|e| {
+                    anyhow!("failed to make TSV output writer at {p:?}, {e}")
+                })?;
+            scored_mch_table.to_csv_writer(writer)?;
+        }
+        if self.suppress_table {
+            debug!("evaluated motifs:\n{scored_table}");
+        } else {
+            info!("evaluated motifs:\n{scored_table}");
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Args)]
+#[command(arg_required_else_help = true)]
+pub struct EntryMotifBed {
+    /// Input FASTA file
+    fasta: PathBuf,
+    /// Motif to search for within FASTA, e.g. CG
+    motif: String,
+    /// Offset within motif, e.g. 0
+    offset: usize,
+    /// Respect soft masking in the reference FASTA.
+    #[arg(long, short = 'k', default_value_t = false)]
+    mask: bool,
+}
+
+impl EntryMotifBed {
+    fn run(&self) -> anyhow::Result<()> {
+        let _handle = init_logging(None);
+        motif_bed(&self.fasta, &self.motif, self.offset, self.mask)
     }
 }

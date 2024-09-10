@@ -11,7 +11,6 @@ pub mod logging;
 pub mod mod_bam;
 pub mod mod_base_code;
 pub mod monoid;
-pub mod motif_bed;
 pub mod pileup;
 pub mod position_filter;
 pub mod summarize;

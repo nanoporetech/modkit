@@ -18,9 +18,9 @@ use rustc_hash::FxHashMap;
 
 use crate::entropy::methylation_entropy::calc_me_entropy;
 use crate::errs::RunError;
+use crate::find_motifs::motif_bed::RegexMotif;
 use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::mod_base_code::ModCodeRepr;
-use crate::motif_bed::RegexMotif;
 use crate::read_ids_to_base_mod_probs::{PositionModCalls, ReadBaseModProfile};
 use crate::reads_sampler::sampling_schedule::ReferenceSequencesLookup;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
