@@ -23,14 +23,13 @@ use crate::dmr::subcommands::BedMethylDmr;
 use crate::entropy::subcommand::MethylationEntropy;
 use crate::errs::{InputError, RunError};
 use crate::extract::subcommand::ExtractMods;
-use crate::find_motifs::subcommand::EntryFindMotifs;
+use crate::find_motifs::subcommand::EntryMotifs;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS,
 };
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
-use crate::motif_bed::motif_bed;
 use crate::pileup::subcommand::{DuplexModBamPileup, ModBamPileup};
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
@@ -58,7 +57,7 @@ pub enum Commands {
     /// information, such as converting base modification codes and ignoring
     /// modification calls. Produces a BAM output file.
     AdjustMods(Adjust),
-    /// Renames Mm/Ml to tags to MM/ML. Also allows changing the the mode flag
+    /// Renames Mm/Ml to tags to MM/ML. Also allows changing the mode flag
     /// from silent '.' to explicitly '?' or '.'.
     UpdateTags(Update),
     /// Calculate an estimate of the base modification probability
@@ -72,9 +71,6 @@ pub enum Commands {
     /// Call mods from a modbam, creates a new modbam with probabilities set to
     /// 100% if a base modification is called or 0% if called canonical.
     CallMods(CallMods),
-    /// Create BED file with all locations of a sequence motif.
-    /// Example: modkit motif-bed CG 0
-    MotifBed(MotifBed),
     /// Extract read-level base modification information from a modBAM into a
     /// tab-separated values table.
     Extract(ExtractMods),
@@ -106,7 +102,8 @@ pub enum Commands {
     Validate(ValidateFromModbam),
     /// Find sequence motifs in a bedMethyl pileup that are enriched for base
     /// modification.
-    FindMotifs(EntryFindMotifs),
+    #[clap(subcommand)]
+    Motif(EntryMotifs),
     /// Use a mod-BAM to calculate methylation entropy over genomic windows.
     Entropy(MethylationEntropy),
 }
@@ -118,7 +115,6 @@ impl Commands {
             Self::Pileup(x) => x.run(),
             Self::SampleProbs(x) => x.run(),
             Self::Summary(x) => x.run(),
-            Self::MotifBed(x) => x.run(),
             Self::UpdateTags(x) => x.run(),
             Self::CallMods(x) => x.run(),
             Self::Extract(x) => x.run(),
@@ -126,7 +122,7 @@ impl Commands {
             Self::Dmr(x) => x.run(),
             Self::PileupHemi(x) => x.run(),
             Self::Validate(x) => x.run(),
-            Self::FindMotifs(x) => x.run(),
+            Self::Motif(x) => x.run(),
             Self::Entropy(x) => x.run(),
         }
     }
@@ -1006,27 +1002,6 @@ impl ModSummarize {
         };
         writer.write(mod_summary)?;
         Ok(())
-    }
-}
-
-#[derive(Args)]
-#[command(arg_required_else_help = true)]
-pub struct MotifBed {
-    /// Input FASTA file
-    fasta: PathBuf,
-    /// Motif to search for within FASTA, e.g. CG
-    motif: String,
-    /// Offset within motif, e.g. 0
-    offset: usize,
-    /// Respect soft masking in the reference FASTA.
-    #[arg(long, short = 'k', default_value_t = false)]
-    mask: bool,
-}
-
-impl MotifBed {
-    fn run(&self) -> AnyhowResult<()> {
-        let _handle = init_logging(None);
-        motif_bed(&self.fasta, &self.motif, self.offset, self.mask)
     }
 }
 

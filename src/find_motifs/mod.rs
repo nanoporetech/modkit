@@ -7,23 +7,33 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 
 use anyhow::{anyhow, bail, Context};
+use bio::io::fasta::Reader as FastaReader;
 use bitvec::prelude::*;
 use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
 use itertools::{iproduct, Either, Itertools};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
+use nom::character::complete::multispace1;
+use nom::IResult;
+use prettytable as pt;
+use prettytable::row;
 use rayon::prelude::*;
+use rust_htslib::tbx::{self, Read};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dmr::bedmethyl::BedMethylLine;
+use crate::find_motifs::args::KnownMotifsArgs;
 use crate::find_motifs::iupac::nt_bytes::BASES;
 use crate::find_motifs::iupac::IupacBase;
 use crate::mod_base_code::{DnaBase, ModCodeRepr, MOD_CODE_TO_DNA_BASE};
+use crate::parsing_utils::consume_string;
 use crate::util::{get_subroutine_progress_bar, get_ticker, StrandRule};
 
+mod args;
 pub(super) mod iupac;
+pub mod motif_bed;
 pub mod subcommand;
-mod util;
+pub(super) mod util;
 
 type KmerRef<'a> = &'a [u8];
 type RawBase = u8;
@@ -306,7 +316,7 @@ impl KmerTable {
         self.counts
             .par_iter()
             // todo a performance improvement would be to organize the contexts
-            // by their canonical base  ahead of time
+            //  by their canonical base  ahead of time
             .filter(|(kmer, _)| kmer[focus_position] == canonical_base)
             .filter_map(|(kmer, counts)| {
                 counts.get(&motif.multi_sequence.mod_code).and_then(|count| {
@@ -321,6 +331,29 @@ impl KmerTable {
                 })
             })
             .sum::<u64>()
+    }
+
+    fn count_total_not_matching(
+        &self,
+        motif: &EnrichedMotif,
+        focus_position: usize,
+        total_matching: u64,
+    ) -> u64 {
+        let total_potential_count = self
+            .counts
+            .par_iter()
+            .filter(|(kmer, _)| {
+                kmer[focus_position] == motif.canonical_base.as_byte()
+            })
+            .filter_map(|(_kmer, counts)| {
+                counts.get(&motif.multi_sequence.mod_code).map(|x| *x as u64)
+            })
+            .sum::<u64>();
+        assert!(
+            total_potential_count >= total_matching,
+            "total potential should be >= total matching"
+        );
+        total_potential_count.checked_sub(total_matching).unwrap()
     }
 
     fn count_matches(
@@ -764,6 +797,25 @@ impl KmerModificationDb {
         (high_counts, low_counts)
     }
 
+    fn get_total_not_matching(
+        &self,
+        motif: &EnrichedMotif,
+        n_high_matching: u64,
+        n_low_matching: u64,
+    ) -> (u64, u64) {
+        let low_not_matching = self.low_mod_table.count_total_not_matching(
+            motif,
+            self.context_bases[0],
+            n_low_matching,
+        );
+        let high_not_matching = self.high_mod_table.count_total_not_matching(
+            motif,
+            self.context_bases[0],
+            n_high_matching,
+        );
+        (high_not_matching, low_not_matching)
+    }
+
     fn get_mid_counts(&self, motif: &EnrichedMotif) -> u64 {
         self.mid_mod_table.count_total_matches(
             motif,
@@ -892,16 +944,176 @@ impl KmerModificationDb {
 
         KmerSubset { high_mod_table, low_mod_table }
     }
+
+    fn get_enriched_motif_data(
+        &self,
+        motif: &EnrichedMotif,
+    ) -> EnrichedMotifData {
+        let (total_high_count, total_low_count) =
+            self.get_total_mod_counts(&motif);
+        let total_mid_count = self.get_mid_counts(&motif);
+        let (total_high_not_match, total_low_not_match) = self
+            .get_total_not_matching(&motif, total_high_count, total_low_count);
+        EnrichedMotifData::new(
+            motif.clone(),
+            total_high_count,
+            total_low_count,
+            total_mid_count,
+            total_high_not_match,
+            total_low_not_match,
+        )
+    }
+}
+
+fn load_references_from_fasta(
+    reference_fasta: &PathBuf,
+    mpb: &MultiProgress,
+) -> anyhow::Result<HashMap<String, Vec<u8>>> {
+    info!("loading references from {:?}", reference_fasta);
+    let pb = mpb.add(get_ticker());
+    pb.set_message("sequences read");
+    let reader = FastaReader::from_file(&reference_fasta)?;
+
+    let (contigs, n_fails) = reader.records().fold(
+        (HashMap::new(), 0usize),
+        |(mut agg, fails), record| match record {
+            Ok(r) => {
+                let record_name = r.id().to_string();
+                let seq = r
+                    .seq()
+                    .iter()
+                    .map(|&nt| nt.to_ascii_uppercase())
+                    .collect::<Vec<u8>>();
+                agg.insert(record_name, seq);
+                pb.inc(1);
+                (agg, fails)
+            }
+            Err(_) => (agg, fails + 1),
+        },
+    );
+
+    if n_fails > 0 {
+        info!("failed to load {n_fails} record(s)");
+    }
+
+    if contigs.is_empty() {
+        bail!("failed to read any reference sequences");
+    } else {
+        pb.finish_and_clear();
+        info!("loaded {} sequence(s)", contigs.len());
+        Ok(contigs)
+    }
+}
+
+fn parse_raw_known_motifs(
+    raw_motifs: &[String],
+    context: [usize; 2],
+    mod_code_lookup: &HashMap<ModCodeRepr, DnaBase>,
+) -> anyhow::Result<Vec<EnrichedMotif>> {
+    let all_motifs = raw_motifs
+        .chunks(3)
+        .map(|parts| {
+            EnrichedMotif::new_from_parts(
+                &parts[0],
+                &parts[2],
+                &parts[1],
+                context,
+                mod_code_lookup,
+            )
+        })
+        .collect::<anyhow::Result<Vec<EnrichedMotif>>>();
+
+    all_motifs.map(|xs| xs.into_iter().unique().collect::<Vec<_>>())
+}
+
+fn parse_motifs_from_table(
+    table_fp: &PathBuf,
+    context: [usize; 2],
+    mod_code_lookup: &HashMap<ModCodeRepr, DnaBase>,
+) -> anyhow::Result<Vec<EnrichedMotif>> {
+    fn parse_raw_motif_parts(
+        l: &str,
+    ) -> IResult<&str, (String, String, String)> {
+        let (rest, raw_mod_code) = consume_string(l)?;
+        let (rest, raw_motif_seq) =
+            multispace1(rest).and_then(|(r, _)| consume_string(r))?;
+        let (rest, raw_offset) =
+            multispace1(rest).and_then(|(r, _)| consume_string(r))?;
+        Ok((rest, (raw_mod_code, raw_motif_seq, raw_offset)))
+    }
+
+    let reader = BufReader::new(std::fs::File::open(table_fp)?);
+
+    reader
+        .lines()
+        .skip_while(|r| {
+            r.as_ref().map(|l| l.starts_with("mod_code")).unwrap_or(true)
+        })
+        .filter_map(|r| match r {
+            Ok(l) => Some(l),
+            Err(e) => {
+                debug!("failed to read, {e}");
+                None
+            }
+        })
+        .map(|l| {
+            parse_raw_motif_parts(&l)
+                .map_err(|e| anyhow!("failed to parse line {l}, {e}"))
+                .and_then(|(_, (raw_mod_code, raw_motif_seq, raw_offset))| {
+                    EnrichedMotif::new_from_parts(
+                        &raw_motif_seq,
+                        &raw_mod_code,
+                        &raw_offset,
+                        context,
+                        mod_code_lookup,
+                    )
+                })
+        })
+        .collect::<anyhow::Result<Vec<EnrichedMotif>>>()
+}
+
+fn load_bedmethyl_and_references(
+    reference_fasta_fp: &PathBuf,
+    bedmethyl_fp: &PathBuf,
+    contig: Option<&String>,
+    min_coverage: u64,
+    context_bases: [u64; 2],
+    low_modification_threshold: f32,
+    high_modification_threshold: f32,
+    multi_progress: &MultiProgress,
+    threads: usize,
+) -> anyhow::Result<KmerModificationDb> {
+    let reference_sequences =
+        load_references_from_fasta(reference_fasta_fp, multi_progress)?;
+    for x in context_bases {
+        if x > 127u64 {
+            bail!("context cannot be larger than 127x2 (255) bases")
+        }
+    }
+
+    load_bedmethyl(
+        bedmethyl_fp,
+        contig,
+        min_coverage,
+        context_bases,
+        low_modification_threshold,
+        high_modification_threshold,
+        &reference_sequences,
+        &multi_progress,
+        threads,
+    )
 }
 
 fn load_bedmethyl(
     bedmethyl_fp: &PathBuf,
+    contig: Option<&String>,
     min_coverage: u64,
     context_bases: [u64; 2],
     low_modification_threshold: f32,
     high_modification_threshold: f32,
     reference_sequences: &HashMap<String, Vec<u8>>,
     multi_progress: &MultiProgress,
+    threads: usize,
 ) -> anyhow::Result<KmerModificationDb> {
     enum ModLevel {
         High,
@@ -909,13 +1121,77 @@ fn load_bedmethyl(
         Low,
     }
 
-    let reader = BufReader::new(
-        std::fs::File::open(bedmethyl_fp)
-            .context("failed to open bedmethyl")?,
-    );
     let pb = multi_progress.add(get_ticker());
-    pb.set_message("reading bedMethyl records");
-    let (bedmethyl_records, n_fails) = reader.lines().progress_with(pb).fold(
+    pb.set_message("parsing bedMethyl records");
+
+    let file_fh = std::fs::File::open(bedmethyl_fp)?;
+    let mut tabix_reader = tbx::Reader::from_path(&bedmethyl_fp);
+    if let Ok(tabix_reader) = tabix_reader.as_mut() {
+        tabix_reader.set_threads(std::cmp::min(threads, 8usize))?;
+    }
+
+    match (tabix_reader.as_mut(), contig.as_ref()) {
+        (Ok(reader), Some(contig)) => {
+            if let Some(l) =
+                reference_sequences.get(contig.as_str()).map(|r| r.len())
+            {
+                info!("attempting to fetch bedMethyl records for {contig}");
+                let tid = reader.tid(contig).with_context(|| {
+                    format!("failed to get target ID for {contig}")
+                })?;
+                reader
+                    .fetch(tid, 0, l as u64)
+                    .with_context(|| format!("failed tabix fetch"))?;
+            } else {
+                bail!("contig {contig} not found in reference")
+            }
+        }
+        (Ok(_), None) => {
+            info!("using tabix/bgzip reader");
+        }
+        (Err(e), Some(_)) => {
+            bail!(
+                "failed to use tabix index (required when --contig provided). \
+                 Error was {e}."
+            )
+        }
+        (Err(_), None) => {
+            info!("reading uncompressed bedMethyl file");
+        }
+    }
+    let (snd, rcv) = crossbeam::channel::bounded(1000);
+    std::thread::spawn(move || {
+        if let Ok(mut tabix_reader) = tabix_reader {
+            drop(file_fh);
+            tabix_reader
+                .records()
+                .map(|r| r.map_err(|e| anyhow::Error::new(e)))
+                .map(|r| {
+                    r.and_then(|raw| {
+                        String::from_utf8(raw)
+                            .map_err(|e| anyhow::Error::new(e))
+                    })
+                })
+                .for_each(|res| match snd.send(res) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("failed to send on channel, {e}");
+                    }
+                });
+        } else {
+            BufReader::new(file_fh)
+                .lines()
+                .map(|r| r.map_err(|e| anyhow::Error::new(e)))
+                .for_each(|r| match snd.send(r) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("failed to send on channel, {e}");
+                    }
+                })
+        }
+    });
+
+    let (bedmethyl_records, n_fails) = rcv.into_iter().progress_with(pb).fold(
         (Vec::new(), 0u32),
         |(mut records, mut fails), next| {
             match next
@@ -941,6 +1217,7 @@ fn load_bedmethyl(
             (records, fails)
         },
     );
+
     if bedmethyl_records.is_empty() {
         bail!("failed to parse any bedmethyl records")
     }
@@ -1073,12 +1350,27 @@ struct EnrichedMotifData {
     total_high_count: u64,
     total_low_count: u64,
     total_mid_count: u64,
+    total_high_not_matching: u64,
+    total_low_not_matching: u64,
 }
 
 impl EnrichedMotifData {
     fn frac_modified(&self) -> f32 {
         self.total_high_count as f32
             / (self.total_high_count + self.total_low_count) as f32
+    }
+
+    fn enough_sites(&self, min_sites: u64) -> bool {
+        self.total_high_count >= min_sites || self.total_low_count >= min_sites
+    }
+
+    fn log_odds(&self) -> f32 {
+        util::log_odds(
+            self.total_low_count,
+            self.total_low_not_matching,
+            self.total_high_count,
+            self.total_high_not_matching,
+        )
     }
 }
 
@@ -2146,33 +2438,13 @@ fn find_motifs_for_mod(
                 .collect(),
         )
         .into_par_iter()
-        .map(|motif| {
-            let (total_high_count, total_low_count) =
-                mod_db.get_total_mod_counts(&motif);
-            let total_mid_count = mod_db.get_mid_counts(&motif);
-            EnrichedMotifData::new(
-                motif,
-                total_high_count,
-                total_low_count,
-                total_mid_count,
-            )
-        })
+        .map(|motif| mod_db.get_enriched_motif_data(&motif))
         .collect::<Vec<EnrichedMotifData>>()
     } else {
         debug!("skipping search");
         seeded_motifs
             .into_par_iter()
-            .map(|motif| {
-                let (total_high_count, total_low_count) =
-                    mod_db.get_total_mod_counts(&motif);
-                let total_mid_count = mod_db.get_mid_counts(&motif);
-                EnrichedMotifData::new(
-                    motif,
-                    total_high_count,
-                    total_low_count,
-                    total_mid_count,
-                )
-            })
+            .map(|motif| mod_db.get_enriched_motif_data(&motif))
             .collect::<Vec<EnrichedMotifData>>()
     };
 
@@ -2264,6 +2536,94 @@ fn find_exhaustive_seed_motifs(
         .collect::<FxHashSet<_>>()
         .into_iter()
         .collect::<Vec<EnrichedMotif>>()
+}
+
+fn parse_known_motifs(
+    known_motifs_args: &KnownMotifsArgs,
+    context_bases: [usize; 2],
+    mod_code_lookup: &HashMap<ModCodeRepr, DnaBase>,
+) -> anyhow::Result<Vec<EnrichedMotif>> {
+    if known_motifs_args.known_motifs_table.is_none()
+        && known_motifs_args.known_motifs.is_none()
+    {
+        bail!("must provide --known-motifs or --known-motifs-table")
+    }
+
+    let mut motifs_to_evaluate = Vec::new();
+    if let Some(raw_known_motifs) = known_motifs_args.known_motifs.as_ref() {
+        let command_line_motifs = parse_raw_known_motifs(
+            raw_known_motifs,
+            context_bases,
+            mod_code_lookup,
+        )?;
+        motifs_to_evaluate.extend(command_line_motifs.into_iter());
+    }
+
+    if let Some(tab_fp) = known_motifs_args.known_motifs_table.as_ref() {
+        let table_motifs =
+            parse_motifs_from_table(tab_fp, context_bases, mod_code_lookup)?;
+        debug!("parsed {} motifs from {tab_fp:?}", table_motifs.len());
+        motifs_to_evaluate.extend(table_motifs.into_iter());
+    }
+
+    Ok(motifs_to_evaluate)
+}
+
+fn make_tables(motifs: &[EnrichedMotifData]) -> (pt::Table, pt::Table) {
+    let human_header = row![
+        "motif",
+        "frac_mod",
+        "high_count",
+        "low_count",
+        "mid_count",
+        "log_odds"
+    ];
+    let mch_header = row![
+        "mod_code",
+        "motif",
+        "offset",
+        "frac_mod",
+        "high_count",
+        "low_count",
+        "mid_count",
+        "log_odds",
+    ];
+    let (mut human_table, mut machine_table) = motifs
+        .iter()
+        .sorted_by(|a, b| {
+            b.frac_modified()
+                .partial_cmp(&a.frac_modified())
+                .unwrap_or(Ordering::Equal)
+        })
+        .fold(
+            (pt::Table::new(), pt::Table::new()),
+            |(mut hu, mut mch), next| {
+                let human_row = row![
+                    next.motif.to_string(),
+                    next.frac_modified(),
+                    next.total_high_count,
+                    next.total_low_count,
+                    next.total_mid_count,
+                    next.log_odds(),
+                ];
+                let mach_row = row![
+                    next.motif.multi_sequence.mod_code,
+                    next.motif.format_seq(),
+                    next.motif.multi_sequence.get_offset(),
+                    next.frac_modified(),
+                    next.total_high_count,
+                    next.total_low_count,
+                    next.total_mid_count,
+                    next.log_odds(),
+                ];
+                hu.add_row(human_row);
+                mch.add_row(mach_row);
+                (hu, mch)
+            },
+        );
+    human_table.set_titles(human_header);
+    machine_table.set_titles(mch_header);
+    (human_table, machine_table)
 }
 
 #[cfg(test)]
@@ -2502,5 +2862,46 @@ mod find_motifs_mod_tests {
             .expect("should get min");
         assert_eq!(rel, MotifRelationship::Disjoint { edit_distance: 2 });
         assert_eq!(closest, 1usize);
+    }
+
+    #[test]
+    fn test_motif_relationship_ord() {
+        let equal = MotifRelationship::Equal;
+        let subset = MotifRelationship::Subset;
+        assert!(equal < subset);
+        // 43210
+        // 01234
+        // GGCCAY
+        // GGCCANNY
+        let a = {
+            let mp = [
+                (-4i8, IupacBase::G),
+                (-3i8, IupacBase::G),
+                (-2i8, IupacBase::C),
+                (-1i8, IupacBase::C),
+                (1i8, IupacBase::Y),
+            ]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+            let ms = MultiSequence::new(ModCodeRepr::Code('a'), mp);
+            EnrichedMotif::new(DnaBase::C, ms)
+        };
+        let b = {
+            let mp = [
+                (-4i8, IupacBase::G),
+                (-3i8, IupacBase::G),
+                (-2i8, IupacBase::C),
+                (-1i8, IupacBase::C),
+                (4i8, IupacBase::Y),
+            ]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+            let ms = MultiSequence::new(ModCodeRepr::Code('a'), mp);
+            EnrichedMotif::new(DnaBase::C, ms)
+        };
+        println!("{a}");
+        println!("{b}");
+        dbg!(a.compare(&b, [4, 4]));
+        dbg!(b.compare(&a, [4, 4]));
     }
 }

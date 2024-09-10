@@ -15,13 +15,13 @@ use crate::command_utils::{
     get_threshold_from_options, parse_edge_filter_input,
     parse_per_mod_thresholds, parse_thresholds,
 };
+use crate::find_motifs::motif_bed::{
+    get_masked_sequences, MotifLocations, MultipleMotifLocations, RegexMotif,
+};
 use crate::interval_chunks::ReferenceIntervalsFeeder;
 use crate::logging::init_logging;
 use crate::mod_bam::CollapseMethod;
 use crate::mod_base_code::{ModCodeRepr, HYDROXY_METHYL_CYTOSINE};
-use crate::motif_bed::{
-    get_masked_sequences, MotifLocations, MultipleMotifLocations, RegexMotif,
-};
 use crate::pileup::duplex::{process_region_duplex_batch, DuplexModBasePileup};
 use crate::pileup::{
     process_region_batch, ModBasePileup, PileupNumericOptions,

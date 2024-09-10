@@ -21,12 +21,12 @@ use crate::command_utils::{
 };
 use crate::errs::RunError;
 use crate::extract::writer::{OutwriterWithMemory, TsvWriterWithContigNames};
+use crate::find_motifs::motif_bed::{find_motif_hits, RegexMotif};
 use crate::interval_chunks::{ReferenceIntervalsFeeder, WithPrevEnd};
 use crate::logging::init_logging_smart;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::Moniod;
-use crate::motif_bed::{find_motif_hits, RegexMotif};
 use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,

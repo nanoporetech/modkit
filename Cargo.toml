@@ -34,6 +34,8 @@ memchr = "2.6.4"
 ndarray = "0.15.6"
 nom = "7.1.3"
 noodles = { version = "0.50.0", features = ["tabix", "core", "bgzf", "csi", "tabix"] }
+num = "0.4.3"
+num-traits = "0.2.19"
 prettytable-rs = "0.10.0"
 pulp = "0.18.10"
 rand = "0.8.5"

@@ -5,7 +5,7 @@ use derive_new::new;
 use log::debug;
 use rustc_hash::FxHashMap;
 
-use crate::motif_bed::{
+use crate::find_motifs::motif_bed::{
     MotifInfo, MotifLocations, MultipleMotifLocations, RegexMotif,
 };
 use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};

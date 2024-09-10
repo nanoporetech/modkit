@@ -5,28 +5,6 @@ use crate::find_motifs::{EnrichedMotif, KmerRef, RawBase};
 use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::Moniod;
 
-// pub(super) fn string_kmer(kmer: &[u8]) -> String {
-//     kmer.iter().map(|&x| x as char).collect::<String>()
-// }
-//
-// pub(super) fn pretty_kmer_ref_table<T: Display>(
-//     kmer_lookup: &FxHashMap<KmerRef, T>,
-// ) -> Table {
-//     let mut table = Table::new();
-//     let kmer_iter = kmer_lookup
-//         .iter()
-//         .map(|(kmer, x)| {
-//             let nt_kmer = kmer.iter().map(|&x| x as
-// char).collect::<String>();             (nt_kmer, x)
-//         })
-//         .sorted_by(|(a, _), (b, _)| a.cmp(b));
-//     for (nt_kmer, x) in kmer_iter {
-//         table.add_row(row![nt_kmer, x]);
-//     }
-//
-//     table
-// }
-
 #[inline]
 pub(super) fn aggregate_base_counts_on_position(
     kmer_counts: &[(KmerRef, u32)],
@@ -49,24 +27,28 @@ pub(super) fn aggregate_base_counts_on_position(
         .reduce(|| FxHashMap::default(), |a, b| a.op(b))
 }
 
-pub(super) fn log_odds(
-    low_pos: u32,
-    low_neg: u32,
-    high_pos: u32,
-    high_neg: u32,
+pub(super) fn log_odds<
+    T: num_traits::Num + num_traits::cast::AsPrimitive<f32>,
+>(
+    low_pos: T,
+    low_neg: T,
+    high_pos: T,
+    high_neg: T,
 ) -> f32 {
     let numer = high_pos * low_neg;
     let denom = low_pos * high_neg;
-    if denom == 0u32 {
-        if numer == 0u32 {
+    if denom == T::zero() {
+        if numer == T::zero() {
             0f32
         } else {
             f32::INFINITY
         }
-    } else if numer == 0u32 {
+    } else if numer == T::zero() {
         f32::NEG_INFINITY
     } else {
-        (numer as f32 / denom as f32).log2()
+        let numer: f32 = numer.as_();
+        let denom: f32 = denom.as_();
+        (numer / denom).log2()
     }
 }
 

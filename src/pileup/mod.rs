@@ -11,10 +11,10 @@ use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
+use crate::find_motifs::motif_bed::MotifInfo;
 use crate::interval_chunks::{FocusPositions, MultiChromCoordinates};
 use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
-use crate::motif_bed::MotifInfo;
 use crate::read_cache::ReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
