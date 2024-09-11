@@ -92,7 +92,7 @@ impl GenomeWindow {
             }
         });
 
-        #[cfg(debug)]
+        #[cfg(debug_assertions)]
         let check = |positions: Option<&Vec<u64>>| {
             if let Some(ps) = positions {
                 ps.iter().skip(1).fold(ps[0], |last, next| {
@@ -102,9 +102,9 @@ impl GenomeWindow {
             }
         };
 
-        #[cfg(debug)]
+        #[cfg(debug_assertions)]
         check(pos_positions.as_ref());
-        #[cfg(debug)]
+        #[cfg(debug_assertions)]
         check(neg_positions.as_ref());
 
         let pos_position_valid_coverages = vec![0u32; num_positions];

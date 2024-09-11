@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use crate::find_motifs::motif_bed::{
     MotifInfo, MotifLocations, MultipleMotifLocations, RegexMotif,
 };
-use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
+use crate::position_filter::{GenomeIntervals, Iv, StrandedPositionFilter};
 use crate::util::{ReferenceRecord, StrandRule};
 
 pub fn slice_dna_sequence(str_seq: &str, start: usize, end: usize) -> String {
@@ -50,8 +50,8 @@ pub enum FocusPositions {
     },
     Regions {
         // positions from an extracted BED file
-        pos_lapper: GenomeLapper<()>,
-        neg_lapper: GenomeLapper<()>,
+        pos_lapper: GenomeIntervals<()>,
+        neg_lapper: GenomeIntervals<()>,
     },
     AllPositions,
 }
@@ -332,9 +332,9 @@ impl FocusPositions {
                     .collect::<Vec<Iv>>()
             })
             .unwrap_or(Vec::new());
-        let mut pos_lapper = GenomeLapper::new(pos_intervals);
+        let mut pos_lapper = GenomeIntervals::new(pos_intervals);
         pos_lapper.merge_overlaps();
-        let mut neg_lapper = GenomeLapper::new(neg_intervals);
+        let mut neg_lapper = GenomeIntervals::new(neg_intervals);
         neg_lapper.merge_overlaps();
 
         Self::Regions { pos_lapper, neg_lapper }

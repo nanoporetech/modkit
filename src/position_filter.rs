@@ -12,12 +12,12 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 pub(crate) type Iv = lapper::Interval<u64, ()>;
-pub(crate) type GenomeLapper<T> = lapper::Lapper<u64, T>;
+pub(crate) type GenomeIntervals<T> = lapper::Lapper<u64, T>;
 
 #[derive(Debug)]
 pub struct StrandedPositionFilter<T: Send + Sync + Eq + Clone> {
-    pub(crate) pos_positions: FxHashMap<u32, GenomeLapper<T>>,
-    pub(crate) neg_positions: FxHashMap<u32, GenomeLapper<T>>,
+    pub(crate) pos_positions: FxHashMap<u32, GenomeIntervals<T>>,
+    pub(crate) neg_positions: FxHashMap<u32, GenomeIntervals<T>>,
 }
 
 impl<T: Send + Sync + Eq + Clone> StrandedPositionFilter<T> {
@@ -86,7 +86,7 @@ impl<T: Send + Sync + Eq + Clone> StrandedPositionFilter<T> {
     }
 
     pub fn contig_ends(&self, contig_id: &u32) -> Option<(u64, u64)> {
-        let get_start_end = |positions: &FxHashMap<u32, GenomeLapper<T>>| -> Option<(u64, u64)> {
+        let get_start_end = |positions: &FxHashMap<u32, GenomeIntervals<T>>| -> Option<(u64, u64)> {
             positions.get(&contig_id)
                 .and_then(|lp| {
                     let start = lp.intervals.first().map(|iv| iv.start);
@@ -229,7 +229,7 @@ impl StrandedPositionFilter<()> {
                 lp.merge_overlaps();
                 (chrom_id, lp)
             })
-            .collect::<FxHashMap<u32, GenomeLapper<()>>>();
+            .collect::<FxHashMap<u32, GenomeIntervals<()>>>();
 
         let neg_lapper = neg_positions
             .into_iter()
@@ -238,7 +238,7 @@ impl StrandedPositionFilter<()> {
                 lp.merge_overlaps();
                 (chrom_id, lp)
             })
-            .collect::<FxHashMap<u32, GenomeLapper<()>>>();
+            .collect::<FxHashMap<u32, GenomeIntervals<()>>>();
 
         lines_processed.finish_and_clear();
         info!("processed {} BED lines", lines_processed.position());

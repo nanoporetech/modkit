@@ -24,6 +24,7 @@ use crate::entropy::subcommand::MethylationEntropy;
 use crate::errs::{InputError, RunError};
 use crate::extract::subcommand::ExtractMods;
 use crate::find_motifs::subcommand::EntryMotifs;
+use crate::localise::subcommand::EntryLocalize;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS,
@@ -37,6 +38,7 @@ use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::reads_sampler::record_sampler::RecordSampler;
 use crate::record_processor::RecordProcessor;
 use crate::repair_tags::RepairTags;
+use crate::stats::subcommand::EntryStats;
 use crate::summarize::{sampled_reads_to_summary, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{calc_thresholds_per_base, Percentiles};
@@ -106,6 +108,9 @@ pub enum Commands {
     Motif(EntryMotifs),
     /// Use a mod-BAM to calculate methylation entropy over genomic windows.
     Entropy(MethylationEntropy),
+    /// Run localise
+    Localise(EntryLocalize),
+    Stats(EntryStats),
 }
 
 impl Commands {
@@ -124,6 +129,8 @@ impl Commands {
             Self::Validate(x) => x.run(),
             Self::Motif(x) => x.run(),
             Self::Entropy(x) => x.run(),
+            Self::Localise(x) => x.run(),
+            Self::Stats(x) => x.run(),
         }
     }
 }
@@ -381,10 +388,7 @@ impl Adjust {
                  --convert option to use `modkit adjust-mods`"
             )
         } else {
-            #[cfg(debug)]
-            {
-                assert!(medhods.len() <= 2 || !self.filter_probs);
-            }
+            debug_assert!(methods.len() <= 2 || !self.filter_probs);
             methods
         };
 

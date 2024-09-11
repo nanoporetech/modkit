@@ -14,6 +14,10 @@ pub(crate) fn consume_float(l: &str) -> IResult<&str, f32> {
     multispace1(l).and_then(|(r, _)| float(r))
 }
 
+pub(crate) fn consume_dot(l: &str) -> IResult<&str, &str> {
+    multispace1(l).and_then(|(r, _)| tag(".")(r))
+}
+
 #[allow(dead_code)] // keeping this in case I want it later.. so I don't have to reinvent it
 pub(crate) fn consume_char_from_list<'a>(
     l: &'a str,

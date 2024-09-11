@@ -24,6 +24,7 @@ pub mod dmr;
 /// Contains functions for genome arithmatic/overlaps, etc.
 pub(crate) mod genome_positions;
 mod hmm;
+mod localise;
 pub(crate) mod parsing_utils;
 mod read_cache;
 mod read_ids_to_base_mod_probs;
@@ -32,6 +33,8 @@ mod read_ids_to_base_mod_probs;
 mod reads_sampler;
 mod record_processor;
 mod repair_tags;
+mod stats;
+mod tabix;
 mod util;
 
 #[cfg(test)]
