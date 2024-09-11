@@ -6,6 +6,19 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::string::FromUtf8Error;
 
+use crate::command_utils::parse_edge_filter_input;
+use crate::logging::init_logging;
+use crate::mod_bam::BaseModCall;
+use crate::mod_bam::{CollapseMethod, EdgeFilter, ModBaseInfo};
+use crate::mod_base_code::{
+    DnaBase, ModCodeRepr, ANY_MOD_CODES, MOD_CODE_TO_DNA_BASE,
+};
+use crate::read_ids_to_base_mod_probs::{PositionModCalls, ReadBaseModProfile};
+use crate::thresholds::percentile_linear_interp;
+use crate::util::{
+    format_int_with_commas, get_reference_mod_strand, get_ticker, parse_nm,
+    record_is_not_primary, Strand,
+};
 use ansi_term::Style;
 use anyhow::{anyhow, bail};
 use clap::Args;
@@ -22,20 +35,6 @@ use prettytable::{cell, row, Row, Table};
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{Read, Reader, Record, Records};
 use std::cmp::Ordering;
-
-use crate::command_utils::parse_edge_filter_input;
-use crate::logging::init_logging;
-use crate::mod_bam::BaseModCall;
-use crate::mod_bam::{CollapseMethod, EdgeFilter, ModBaseInfo};
-use crate::mod_base_code::{
-    DnaBase, ModCodeRepr, ANY_MOD_CODES, MOD_CODE_TO_DNA_BASE,
-};
-use crate::read_ids_to_base_mod_probs::{PositionModCalls, ReadBaseModProfile};
-use crate::thresholds::percentile_linear_interp;
-use crate::util::{
-    format_int_with_commas, get_reference_mod_strand, get_ticker, parse_nm,
-    record_is_not_primary, Strand,
-};
 
 /// todo investigate using this type in BaseModCall
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -55,6 +54,24 @@ impl Display for BaseStatus {
             BaseStatus::NoCall => write!(f, "No Call"),
             BaseStatus::Mismatch(b) => write!(f, "{}", b.char()),
             BaseStatus::Deletion => write!(f, "Deletion"),
+        }
+    }
+}
+
+impl BaseStatus {
+    fn human_display(&self, validate_base: DnaBase) -> String {
+        match self {
+            BaseStatus::Canonical => format!("{}", validate_base),
+            BaseStatus::Modified(code) => {
+                if code.is_any() {
+                    "*".to_string()
+                } else {
+                    format!("{}", code)
+                }
+            }
+            BaseStatus::NoCall => "No Call".to_string(),
+            BaseStatus::Mismatch(b) => format!("{b}"),
+            BaseStatus::Deletion => "Deletion".to_string(),
         }
     }
 }
@@ -654,7 +671,10 @@ fn balance_ground_truth(status_probs: &mut StatusProbs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn machine_parseable_table(status_probs: &StatusProbs) -> String {
+fn machine_parseable_table(
+    validate_base: DnaBase,
+    status_probs: &StatusProbs,
+) -> String {
     let mut gt_codes: Vec<_> =
         status_probs.keys().map(|&(k, _)| k).unique().collect();
     gt_codes.sort();
@@ -665,11 +685,13 @@ fn machine_parseable_table(status_probs: &StatusProbs) -> String {
     all_codes.sort();
 
     let mut out_str = "[[\"ground_truth_label\",\"".to_string();
-    out_str.push_str(&all_codes.iter().map(|x| x.to_string()).join("\",\""));
+    out_str.push_str(
+        &all_codes.iter().map(|x| x.human_display(validate_base)).join("\",\""),
+    );
     out_str.push_str("\"]");
     for gt_code in &gt_codes {
         out_str.push_str(",[\"");
-        out_str.push_str(&gt_code.to_string());
+        out_str.push_str(&gt_code.human_display(validate_base));
         out_str.push_str("\"");
         for &call_code in &all_codes {
             let vector_length = status_probs
@@ -686,6 +708,7 @@ fn machine_parseable_table(status_probs: &StatusProbs) -> String {
 }
 
 fn print_table(
+    validate_base: DnaBase,
     status_probs: &StatusProbs,
     show_percentages: bool,
     title: &str,
@@ -717,14 +740,14 @@ fn print_table(
     let mut header = Row::empty();
     header.add_cell(cell!(""));
     for &call_code in &all_codes {
-        header.add_cell(cell!(&call_code.to_string()));
+        header.add_cell(cell!(&call_code.human_display(validate_base)));
     }
     count_tbl.set_titles(header);
 
     // Create table rows
     for gt_code in &gt_codes {
         let mut row = Row::empty();
-        row.add_cell(cell!(&gt_code.to_string()));
+        row.add_cell(cell!(&gt_code.human_display(validate_base)));
         for &call_code in &all_codes {
             let vector_length = status_probs
                 .get(&(*gt_code, *call_code))
@@ -752,13 +775,12 @@ fn print_table(
         count_tbl.add_row(row);
     }
 
-    let mut longest_gt_code_len: usize = 0;
-    if let Some(longest_gt_code) = gt_codes
+    let longest_gt_code_len = gt_codes
         .iter()
-        .max_by(|&a, &b| a.to_string().len().cmp(&b.to_string().len()))
-    {
-        longest_gt_code_len = longest_gt_code.to_string().len();
-    }
+        .map(|code| code.human_display(validate_base).len())
+        .max_by(|a, b| a.cmp(b))
+        .unwrap_or(0);
+
     let mut metatable = Table::new();
     metatable.set_format(*prettytable::format::consts::FORMAT_CLEAN);
     metatable.add_row(row!(
@@ -921,7 +943,7 @@ impl ValidateFromModbam {
             .collect::<Result<Vec<_>, _>>()?;
         let can_base =
             derive_canonical_base(&gt_positions, self.canonical_base)?;
-        info!("Canonical base: {}", can_base.char());
+        info!("Canonical base: {}", can_base);
 
         let mut all_probs = HashMap::new();
         for (bam_path, bed_indices) in bam_path_to_bed_indices {
@@ -957,12 +979,12 @@ impl ValidateFromModbam {
         for ((_, _), probs) in all_probs.iter_mut() {
             probs.sort_by_key(|&x| x.to_bits());
         }
-        print_table(&all_probs, false, "Raw counts summary");
+        print_table(can_base, &all_probs, false, "Raw counts summary");
         if let Some(valid_out_handle) = &mut out_handle {
             valid_out_handle.write_all(
                 &format!(
                     "full_contingency_table: {}\n",
-                    machine_parseable_table(&all_probs)
+                    machine_parseable_table(can_base, &all_probs)
                 )
                 .into_bytes(),
             )?;
@@ -976,7 +998,7 @@ impl ValidateFromModbam {
 
         info!("Balancing ground truth call totals");
         balance_ground_truth(&mut all_probs)?;
-        print_table(&all_probs, false, "Balanced counts summary");
+        print_table(can_base, &all_probs, false, "Balanced counts summary");
         let total_calls =
             all_probs.iter().map(|(_, values)| values.len()).sum::<usize>();
         let correct_calls = all_probs
@@ -987,6 +1009,7 @@ impl ValidateFromModbam {
         let raw_acc = 100.0 * correct_calls as f32 / total_calls as f32;
         info!("Raw accuracy: {:.2}%", raw_acc);
         print_table(
+            can_base,
             &all_probs,
             true,
             "Raw modified base calls contingency table",
@@ -999,7 +1022,7 @@ impl ValidateFromModbam {
                 .write_all(
                     &format!(
                         "raw_contingency_table: {}\n",
-                        machine_parseable_table(&all_probs)
+                        machine_parseable_table(can_base, &all_probs)
                     )
                     .into_bytes(),
                 )
@@ -1051,6 +1074,7 @@ impl ValidateFromModbam {
                 .paint(format!("Filtered accuracy: {:.2}%", filt_acc)),
         );
         print_table(
+            can_base,
             &all_probs,
             true,
             "Filtered modified base calls contingency table",
@@ -1079,7 +1103,7 @@ impl ValidateFromModbam {
                 .write_all(
                     &format!(
                         "filtered_contingency_table: {}\n",
-                        machine_parseable_table(&all_probs)
+                        machine_parseable_table(can_base, &all_probs)
                     )
                     .into_bytes(),
                 )
