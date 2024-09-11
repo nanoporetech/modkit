@@ -114,6 +114,10 @@ impl ModCodeRepr {
             false
         }
     }
+
+    pub fn is_any(&self) -> bool {
+        ANY_MOD_CODES.contains(self)
+    }
 }
 
 impl PartialOrd for ModCodeRepr {
