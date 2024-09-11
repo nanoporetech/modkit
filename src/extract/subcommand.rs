@@ -27,7 +27,7 @@ use crate::logging::init_logging_smart;
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::Moniod;
-use crate::position_filter::{GenomeLapper, Iv, StrandedPositionFilter};
+use crate::position_filter::{GenomeIntervals, Iv, StrandedPositionFilter};
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
 };
@@ -425,12 +425,12 @@ impl ExtractMods {
                 (FxHashMap::default(), FxHashMap::default()),
                 |(mut pos, mut neg), (tid, positions)| {
                     let to_lapper =
-                        |intervals: Vec<(Iv, Strand)>| -> GenomeLapper<()> {
+                        |intervals: Vec<(Iv, Strand)>| -> GenomeIntervals<()> {
                             let intervals = intervals
                                 .into_iter()
                                 .map(|(iv, _)| iv)
                                 .collect();
-                            GenomeLapper::new(intervals)
+                            GenomeIntervals::new(intervals)
                         };
 
                     let (pos_positions, neg_positions): (

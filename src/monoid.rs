@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::Hash;
 
@@ -14,65 +14,6 @@ pub trait BorrowingMoniod {
     fn op(self, other: &Self) -> Self;
     fn op_mut(&mut self, other: &Self);
     fn len(&self) -> usize;
-}
-
-impl<A, B> Moniod for HashMap<A, Vec<B>>
-where
-    A: Eq + Hash,
-    B: Copy,
-{
-    fn zero() -> Self {
-        HashMap::new()
-    }
-
-    fn op(self, other: Self) -> Self {
-        let mut out = Self::zero();
-        for (k, mut vs) in self.into_iter().chain(other.into_iter()) {
-            let agg = out.entry(k).or_insert(Vec::new());
-            agg.append(&mut vs);
-        }
-        out
-    }
-
-    fn op_mut(&mut self, other: Self) {
-        for (k, mut vs) in other {
-            let agg = self.entry(k).or_insert(Vec::new());
-            agg.append(&mut vs);
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.len()
-    }
-}
-
-impl<A, B> Moniod for FxHashMap<A, Vec<B>>
-where
-    A: Eq + Hash,
-{
-    fn zero() -> Self {
-        FxHashMap::default()
-    }
-
-    fn op(self, other: Self) -> Self {
-        let mut out = Self::zero();
-        for (k, mut vs) in self.into_iter().chain(other.into_iter()) {
-            let agg = out.entry(k).or_insert(Vec::new());
-            agg.append(&mut vs);
-        }
-        out
-    }
-
-    fn op_mut(&mut self, other: Self) {
-        for (k, mut vs) in other {
-            let agg = self.entry(k).or_insert(Vec::new());
-            agg.append(&mut vs);
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.len()
-    }
 }
 
 impl<A, B> Moniod for BTreeMap<A, Vec<B>>
@@ -260,6 +201,78 @@ where
         for (k, v) in other {
             self.entry(k).or_insert(B::zero()).op_mut(v)
         }
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<A> Moniod for FxHashMap<A, u64>
+where
+    A: Eq + PartialEq + Hash,
+{
+    fn zero() -> Self {
+        FxHashMap::default()
+    }
+
+    fn op(self, other: Self) -> Self {
+        let mut agg = self;
+        for (k, count) in other {
+            *agg.entry(k).or_insert(0) += count;
+        }
+        agg
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        for (k, count) in other {
+            *self.entry(k).or_insert(0) += count;
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<A> Moniod for Vec<A> {
+    fn zero() -> Self {
+        Vec::new()
+    }
+
+    fn op(self, mut other: Self) -> Self {
+        let mut this = self;
+        this.append(&mut other);
+        this
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        self.extend(other.into_iter());
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<A> Moniod for FxHashSet<A>
+where
+    A: Eq + PartialEq + Hash,
+{
+    fn zero() -> Self {
+        FxHashSet::default()
+    }
+
+    fn op(self, other: Self) -> Self {
+        let mut this = self;
+        this.op_mut(other);
+        this
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        other.into_iter().for_each(|a| {
+            self.insert(a);
+        });
     }
 
     fn len(&self) -> usize {

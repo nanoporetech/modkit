@@ -6,28 +6,20 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail};
+use anyhow::bail;
 use clap::ValueEnum;
 use derive_new::new;
 use indicatif::ProgressBar;
 use log::{debug, error};
 use log_once::debug_once;
-use nom::character::complete::one_of;
-use nom::combinator::map_res;
-use nom::multi::many0;
-use nom::IResult;
 use noodles::csi::index::reference_sequence::bin::Chunk as IndexChunk;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dmr::tabix::MultiSampleIndex;
 use crate::genome_positions::{GenomePositions, StrandedPosition};
 use crate::mod_base_code::DnaBase;
-use crate::parsing_utils::{
-    consume_char, consume_digit, consume_float, consume_string,
-    consume_string_spaces,
-};
 use crate::position_filter::Iv;
-use crate::util::StrandRule;
+use crate::util::{GenomeRegion, StrandRule};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 #[allow(non_camel_case_types)]
@@ -50,6 +42,7 @@ impl Display for HandleMissing {
 // todo rename to ROI
 #[derive(new, Clone, Debug, Eq, PartialEq)]
 pub(super) struct DmrInterval {
+    // todo refacter out Iv and lapper-things
     pub(super) interval: Iv,
     pub(super) chrom: String,
     pub(super) name: String,
@@ -57,56 +50,42 @@ pub(super) struct DmrInterval {
 }
 
 impl DmrInterval {
-    #[inline]
-    fn parse_bed_line(l: &str) -> IResult<&str, Self> {
-        let (rest, chrom) = consume_string(l)?;
-        let (rest, start) = consume_digit(rest)?;
-        let (rest, stop) = consume_digit(rest)?;
-
-        let (rest, interval, name) = many0(one_of(" \t\r\n"))(rest)
-            .and_then(|(rest, _)| consume_string_spaces(rest))
-            .map(|(rest, name)| {
-                let interval = Iv { start, stop, val: () };
-                (rest, interval, name)
-            })
-            .unwrap_or_else(|_| {
-                let interval = Iv { start, stop, val: () };
-                let name = format!("{}:{}-{}", chrom, start, stop);
-                (rest, interval, name)
-            });
-        Ok((
-            rest,
-            DmrInterval { interval, chrom, name, strand: StrandRule::Both },
-        ))
-    }
-
     pub(super) fn parse_unstranded_bed_line(
         line: &str,
     ) -> anyhow::Result<Self> {
-        Self::parse_bed_line(line)
-            .map_err(|e| {
-                anyhow!(
-                    "failed to parse un-stranded (bed3/4) line: {line}, {e}"
-                )
-            })
-            .map(|(_, this)| this)
+        let genome_region = GenomeRegion::parse_unstranded_bed_line(line)?;
+        let name = genome_region.name.unwrap_or(format!(
+            "{}:{}-{}",
+            genome_region.chrom, genome_region.start, genome_region.end
+        ));
+        Ok(Self {
+            interval: Iv {
+                start: genome_region.start,
+                stop: genome_region.end,
+                val: (),
+            },
+            chrom: genome_region.chrom,
+            name,
+            strand: genome_region.strand,
+        })
     }
 
     pub(super) fn parse_stranded_bed_line(line: &str) -> anyhow::Result<Self> {
-        fn inner(l: &str) -> IResult<&str, DmrInterval> {
-            let mut parse_strand =
-                map_res(consume_char, |x| StrandRule::try_from(x));
-            let (rest, mut this) = DmrInterval::parse_bed_line(l)?;
-            let (rest, _score) = consume_float(rest)?;
-            let (rest, strand) = parse_strand(rest)?;
-            this.strand = strand;
-            Ok((rest, this))
-        }
-        inner(line)
-            .map_err(|e| {
-                anyhow!("failed to parse stranded (bed4+) line: {line}, {e}")
-            })
-            .map(|(_, this)| this)
+        let genome_region = GenomeRegion::parse_stranded_bed_line(line)?;
+        let name = genome_region.name.unwrap_or(format!(
+            "{}:{}-{}",
+            genome_region.chrom, genome_region.start, genome_region.end
+        ));
+        Ok(Self {
+            interval: Iv {
+                start: genome_region.start,
+                stop: genome_region.end,
+                val: (),
+            },
+            chrom: genome_region.chrom,
+            name,
+            strand: genome_region.strand,
+        })
     }
 
     pub(super) fn start(&self) -> u64 {

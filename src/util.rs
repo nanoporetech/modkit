@@ -7,11 +7,16 @@ use std::string::FromUtf8Error;
 use anyhow::Result as AnyhowResult;
 use anyhow::{anyhow, bail};
 use bio::alphabets::dna::complement;
+use clap::ValueEnum;
 use derive_new::new;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use linear_map::LinearMap;
 use log::{debug, error, info};
+use nom::character::complete::one_of;
+use nom::combinator::map_res;
+use nom::multi::many0;
+use nom::IResult;
 use regex::Regex;
 use rust_htslib::bam::{
     self, ext::BamRecordExtensions, header::HeaderRecord, record::Aux,
@@ -19,6 +24,11 @@ use rust_htslib::bam::{
 };
 
 use crate::errs::{InputError, RunError};
+use crate::monoid::Moniod;
+use crate::parsing_utils::{
+    consume_char, consume_digit, consume_dot, consume_float, consume_string,
+    consume_string_spaces,
+};
 
 pub(crate) const TAB: char = '\t';
 
@@ -204,14 +214,33 @@ impl Strand {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+impl Display for Strand {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_char())
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, ValueEnum)]
 pub enum StrandRule {
+    #[clap(name = "positive")]
     Positive,
+    #[clap(name = "negative")]
     Negative,
+    #[clap(name = "both")]
     Both,
 }
 
 impl StrandRule {
+    pub fn overlaps(&self, other: &Self) -> bool {
+        (self == &StrandRule::Both || other == &StrandRule::Both) || {
+            match self {
+                StrandRule::Positive => other == &StrandRule::Positive,
+                StrandRule::Negative => other == &StrandRule::Negative,
+                _ => unreachable!(),
+            }
+        }
+    }
+
     pub fn covers(&self, strand: Strand) -> bool {
         match &self {
             StrandRule::Positive => strand == Strand::Positive,
@@ -730,6 +759,122 @@ pub fn format_int_with_commas(val: isize) -> String {
     num
 }
 
+#[derive(new, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenomeRegion {
+    pub chrom: String,
+    pub start: u64,
+    pub end: u64,
+    pub strand: StrandRule,
+    pub name: Option<String>,
+}
+
+impl GenomeRegion {
+    pub fn midpoint(&self) -> u64 {
+        (self.start + self.end) / 2
+    }
+
+    #[inline]
+    fn parse_bed_line(l: &str) -> IResult<&str, Self> {
+        let (rest, chrom) = consume_string(l)?;
+        let (rest, start) = consume_digit(rest)?;
+        let (rest, stop) = consume_digit(rest)?;
+
+        let (rest, name) = many0(one_of(" \t\r\n"))(rest)
+            .and_then(|(rest, _)| consume_string_spaces(rest))
+            .map(|(rest, name)| (rest, Some(name)))
+            .unwrap_or_else(|_| (rest, None));
+        Ok((
+            rest,
+            Self { chrom, start, end: stop, name, strand: StrandRule::Both },
+        ))
+    }
+
+    pub(super) fn parse_unstranded_bed_line(
+        line: &str,
+    ) -> anyhow::Result<Self> {
+        Self::parse_bed_line(line)
+            .map_err(|e| {
+                anyhow!(
+                    "failed to parse un-stranded (bed3/4) line: {line}, {e}"
+                )
+            })
+            .map(|(_, this)| this)
+    }
+
+    pub(super) fn parse_stranded_bed_line(line: &str) -> anyhow::Result<Self> {
+        fn inner(l: &str) -> IResult<&str, GenomeRegion> {
+            let mut parse_strand =
+                map_res(consume_char, |x| StrandRule::try_from(x));
+            let (rest, mut this) = GenomeRegion::parse_bed_line(l)?;
+            let (rest, _score) = consume_float(rest)
+                .or_else(|_| consume_dot(rest).map(|(r, _)| (r, 0f32)))?;
+
+            let (rest, strand) = parse_strand(rest)?;
+            this.strand = strand;
+            Ok((rest, this))
+        }
+        inner(line)
+            .map_err(|e| {
+                anyhow!("failed to parse stranded (bed4+) line: {line}, {e}")
+            })
+            .map(|(_, this)| this)
+    }
+}
+
+#[derive(new)]
+pub(crate) struct ModPositionInfo<T> {
+    pub n_valid: T,
+    pub n_mod: T,
+}
+
+impl<T: num_traits::Num + num_traits::cast::AsPrimitive<f32>>
+    ModPositionInfo<T>
+{
+    pub(crate) fn frac_modified(&self) -> f32 {
+        if self.n_valid == T::zero() {
+            0f32
+        } else {
+            let n_mod: f32 = self.n_mod.as_();
+            let n_valid: f32 = self.n_mod.as_();
+            n_mod / n_valid
+        }
+    }
+
+    pub(crate) fn percent_modified(&self) -> f32 {
+        self.frac_modified() * 100f32
+    }
+}
+
+impl<T> Moniod for ModPositionInfo<T>
+where
+    T: num_traits::Num
+        + num_traits::cast::AsPrimitive<f32>
+        + num_traits::cast::AsPrimitive<usize>,
+{
+    fn zero() -> Self {
+        Self { n_valid: T::zero(), n_mod: T::zero() }
+    }
+
+    fn op(self, other: Self) -> Self {
+        Self {
+            n_mod: self.n_mod + other.n_mod,
+            n_valid: self.n_valid + other.n_valid,
+        }
+    }
+
+    fn op_mut(&mut self, other: Self) {
+        let n_mod = self.n_mod + other.n_mod;
+        let n_valid = self.n_valid + other.n_valid;
+        self.n_mod = n_mod;
+        self.n_valid = n_valid;
+    }
+
+    fn len(&self) -> usize {
+        let l: usize = self.n_valid.as_();
+        l
+    }
+}
+
 #[cfg(test)]
 mod utils_tests {
     use anyhow::Context;
@@ -737,7 +882,8 @@ mod utils_tests {
     use rust_htslib::bam::Read;
 
     use crate::util::{
-        get_query_name_string, get_stringable_aux, parse_partition_tags, SamTag,
+        get_query_name_string, get_stringable_aux, parse_partition_tags,
+        GenomeRegion, SamTag, StrandRule,
     };
 
     #[test]
@@ -781,5 +927,63 @@ mod utils_tests {
         let expected =
             vec![SamTag::parse(['H', 'P']), SamTag::parse(['R', 'G'])];
         assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_strand_rule_semantics() {
+        let pos = StrandRule::Positive;
+        let neg = StrandRule::Negative;
+        let both = StrandRule::Both;
+        assert!(both.overlaps(&pos));
+        assert!(both.overlaps(&neg));
+        assert!(pos.overlaps(&both));
+        assert!(neg.overlaps(&both));
+        assert!(pos.overlaps(&StrandRule::Positive));
+        assert!(!pos.overlaps(&StrandRule::Negative));
+        assert!(!neg.overlaps(&StrandRule::Positive));
+        assert!(neg.overlaps(&StrandRule::Negative));
+    }
+
+    #[test]
+    fn test_genome_region_parse_bedlines() {
+        let line = "chr1\t938169\t938373\tmerged_peak1\t.\t.\n";
+        let gr = GenomeRegion::parse_stranded_bed_line(line).unwrap();
+        let expected = GenomeRegion {
+            chrom: "chr1".to_string(),
+            start: 938169,
+            end: 938373,
+            name: Some("merged_peak1".to_string()),
+            strand: StrandRule::Both,
+        };
+        assert_eq!(gr, expected);
+        let line = "chr1\t938169\t938373\tmerged_peak1\t.\t+\n";
+        let gr = GenomeRegion::parse_stranded_bed_line(line).unwrap();
+        let expected = GenomeRegion {
+            chrom: "chr1".to_string(),
+            start: 938169,
+            end: 938373,
+            name: Some("merged_peak1".to_string()),
+            strand: StrandRule::Positive,
+        };
+        assert_eq!(gr, expected);
+        let line = "chr1\t938169\t938373\tmerged_peak1\n";
+        let gr = GenomeRegion::parse_unstranded_bed_line(line).unwrap();
+        let expected = GenomeRegion {
+            chrom: "chr1".to_string(),
+            start: 938169,
+            end: 938373,
+            name: Some("merged_peak1".to_string()),
+            strand: StrandRule::Both,
+        };
+        assert_eq!(gr, expected);
+        let line = "chr1\t938169\t938373\tmerged_peak1\t1000\t+\n";
+        let gr = GenomeRegion::parse_stranded_bed_line(line).unwrap();
+        let expected = GenomeRegion {
+            chrom: "chr1".to_string(),
+            start: 938169,
+            end: 938373,
+            name: Some("merged_peak1".to_string()),
+            strand: StrandRule::Positive,
+        };
     }
 }
