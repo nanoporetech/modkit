@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{bail, Context};
+use anyhow::bail;
 use derive_new::new;
 use indicatif::{MultiProgress, ProgressBar};
 use itertools::Itertools;
@@ -16,7 +16,7 @@ use rayon::prelude::*;
 use crate::dmr::beta_diff::{BetaParams, PMapEstimator};
 use crate::dmr::llr_model::{llk_ratio, AggregatedCounts};
 use crate::dmr::tabix::{
-    MultiSampleIndex, SampleToBedMethyLines, SingleSiteSampleIndex,
+    MultiSampleIndex, SampleToChromBMLines, SingleSiteSampleIndex,
 };
 use crate::dmr::util::DmrBatchOfPositions;
 use crate::genome_positions::GenomePositions;
@@ -350,7 +350,7 @@ impl SingleSiteBatches {
         &mut self,
     ) -> anyhow::Result<Option<Vec<DmrBatchOfPositions>>> {
         let mut batches = Vec::<DmrBatchOfPositions>::new();
-        let mut current_batch = DmrBatchOfPositions::empty();
+        let mut current_batch = DmrBatchOfPositions::default();
         let mut current_batch_length = 0u64;
 
         loop {
@@ -369,29 +369,12 @@ impl SingleSiteBatches {
                 StrandRule::Both,
             ) {
                 let interval_length = positions.len() as u64;
-                let control_chunks = self
-                    .sample_index
-                    .query_control_chunks(&self.curr_contig, &interval)
-                    .with_context(|| {
-                        format!(
-                            "failed to get control chunks at {}:{}-{}",
-                            &self.curr_contig, &self.curr_pos, end
-                        )
-                    })?;
-                let exp_chunks = self
-                    .sample_index
-                    .query_exp_chunks(&self.curr_contig, &interval)
-                    .with_context(|| {
-                        format!(
-                            "failed to get exp chunks at {}:{}-{}",
-                            &self.curr_contig, &self.curr_pos, end
-                        )
-                    })?;
                 current_batch.add_chunks(
                     &self.curr_contig,
+                    interval,
                     positions,
-                    control_chunks,
-                    exp_chunks,
+                    &self.sample_index.control_idxs,
+                    &self.sample_index.exp_idxs,
                 );
                 current_batch_length += interval_length;
             }
@@ -399,7 +382,7 @@ impl SingleSiteBatches {
             if current_batch_length >= self.interval_size {
                 let finished_batch = std::mem::replace(
                     &mut current_batch,
-                    DmrBatchOfPositions::empty(),
+                    DmrBatchOfPositions::default(),
                 );
                 batches.push(finished_batch);
                 current_batch_length = 0;
@@ -742,7 +725,7 @@ fn get_coverage_from_batch(
 ) -> anyhow::Result<Coverages> {
     let (a_lines, b_lines) =
         sample_index.read_bedmethyl_lines_filtered_by_position(&batch)?;
-    let get_covs = |x: SampleToBedMethyLines| -> Vec<u64> {
+    let get_covs = |x: SampleToChromBMLines| -> Vec<u64> {
         x.into_iter()
             .flat_map(|(_sample_id, chrom_to_lines)| {
                 chrom_to_lines

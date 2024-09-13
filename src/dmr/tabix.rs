@@ -1,178 +1,41 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs::File;
-use std::io::BufRead;
+use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context};
-use log::debug;
-use log_once::debug_once;
-use noodles::csi::{
-    index::reference_sequence::bin::Chunk as IndexChunk, Index as CsiIndex,
-};
+use anyhow::bail;
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dmr::bedmethyl::{aggregate_counts2, BedMethylLine};
 use crate::dmr::llr_model::AggregatedCounts;
-use crate::dmr::util::{
-    n_choose_2, DmrBatch, DmrBatchOfPositions, ProtoIndexChunk,
-};
+use crate::dmr::util::{n_choose_2, DmrBatch, DmrBatchOfPositions};
 use crate::genome_positions::StrandedPosition;
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
+use crate::tabix::BedMethylTbxIndex;
 
-pub(super) type ChromToBedmethylLines = FxHashMap<String, Vec<BedMethylLine>>;
-pub(super) type SampleToBedMethyLines =
+/// Chrom -> {Sample id -> <bedmethyl_records>}
+pub(super) type ChromToSampleBMLines =
+    FxHashMap<String, FxHashMap<usize, Vec<BedMethylLine>>>;
+/// Sample id -> {Chrom -> <BedMethyl_records>}
+pub(super) type SampleToChromBMLines =
     FxHashMap<usize, FxHashMap<String, Vec<BedMethylLine>>>;
 /// Chrom -> {StrandedPosition -> <X_i>} for all i in samples
-pub(super) type ChromToAggregatedCountsByPosition = FxHashMap<
+pub(super) type ChromToPosAggregatedCounts = FxHashMap<
     String,
     BTreeMap<StrandedPosition<DnaBase>, Vec<AggregatedCounts>>,
 >;
+/// Usually (control, experiment)
 pub(super) type BedMethylLinesResult<T> = anyhow::Result<(T, T)>;
 
-pub(super) struct IndexHandler {
-    csi_index: CsiIndex,
-    bedmethyl_fp: PathBuf,
-    contig_to_id: FxHashMap<String, usize>,
-}
-
-impl IndexHandler {
-    pub(super) fn new(
-        bedmethyl_fp: &PathBuf,
-        index_fp: &PathBuf,
-    ) -> anyhow::Result<Self> {
-        let csi_index = noodles::tabix::read(index_fp).with_context(|| {
-            format!("failed to read tabix index {index_fp:?}")
-        })?;
-        if let Some(header) = csi_index.header() {
-            if bedmethyl_fp.exists() {
-                let contig_to_id = header
-                    .reference_sequence_names()
-                    .iter()
-                    .enumerate()
-                    .map(|(id, name)| (name.to_owned(), id))
-                    .collect::<FxHashMap<String, usize>>();
-                Ok(Self {
-                    csi_index,
-                    bedmethyl_fp: bedmethyl_fp.to_owned(),
-                    contig_to_id,
-                })
-            } else {
-                bail!("bedMethyl file not found at {bedmethyl_fp:?}")
-            }
-        } else {
-            bail!("could not read tabix header from {index_fp:?}")
-        }
-    }
-
-    pub(super) fn new_infer_index_filepath(
-        bedmethyl_fp: &PathBuf,
-        index_fp: Option<&PathBuf>,
-    ) -> anyhow::Result<Self> {
-        if let Some(index_fp) = index_fp {
-            debug!("loading specified index at {}", index_fp.to_string_lossy());
-            IndexHandler::new(bedmethyl_fp, index_fp)
-        } else {
-            let bedmethyl_root = bedmethyl_fp.to_str().ok_or_else(|| {
-                anyhow!("could not format bedmethyl filepath, {bedmethyl_fp:?}")
-            })?;
-            let index_fp = format!("{}.tbi", bedmethyl_root);
-            debug!(
-                "looking for index associated with {} at {}",
-                bedmethyl_root, &index_fp
-            );
-            let index_path = Path::new(&index_fp).to_path_buf();
-            IndexHandler::new(bedmethyl_fp, &index_path).with_context(|| {
-                format!(
-                    "failed to read index inferred from bedMethyl file name \
-                     at {index_fp}"
-                )
-            })
-        }
-    }
-
-    /// Reads bedmethyl records from the file. Filters:
-    /// 1. N_valid_cov >= min_valid_cov
-    /// 2. mod_code must be in [`crate::mod_base_code::SUPPORTED_CODES`]
-    fn read_bedmethyl(
-        &self,
-        chunks: &[IndexChunk],
-        min_valid_coverage: u64,
-        code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
-    ) -> anyhow::Result<Vec<BedMethylLine>> {
-        let mut reader =
-            File::open(&self.bedmethyl_fp).map(noodles::bgzf::Reader::new)?;
-        let mut bedmethyl_lines = Vec::new();
-        let mut failed_to_parse = 0;
-        // let mut successfully_parsed = 0usize;
-        // todo could be a fold instead
-        for chunk in chunks {
-            reader.seek(chunk.start())?;
-            let mut lines = Vec::new();
-            // todo come back and make this one loop
-            'readloop: loop {
-                let mut buf = String::new();
-                let _byts = reader.read_line(&mut buf)?;
-                lines.push(buf);
-                let cur_pos = reader.virtual_position();
-                if cur_pos >= chunk.end() {
-                    break 'readloop;
-                }
-            }
-            for line in lines.iter() {
-                match BedMethylLine::parse(line) {
-                    Ok(bm_line) => {
-                        bedmethyl_lines.push(bm_line);
-                        // successfully_parsed += 1;
-                    }
-                    Err(_e) => {
-                        // trace!("failed to parse line {line}");
-                        failed_to_parse += 1
-                    }
-                }
-            }
-        }
-
-        if failed_to_parse > 0 {
-            debug!(
-                "failed to parse {failed_to_parse} lines from {:?}",
-                &self.bedmethyl_fp
-            );
-        }
-
-        Ok(bedmethyl_lines
-            .into_iter()
-            .filter(|bml| bml.valid_coverage >= min_valid_coverage)
-            .filter(|bml| {
-                if code_lookup.contains_key(&bml.raw_mod_code) {
-                    true
-                } else {
-                    debug_once!(
-                        "encountered illegal mod-code for DMR, {}",
-                        bml.raw_mod_code
-                    );
-                    false
-                }
-            })
-            .collect())
-    }
-
-    fn has_contig(&self, contig_name: &str) -> bool {
-        self.contig_to_id.contains_key(contig_name)
-    }
-}
-
 pub(super) struct MultiSampleIndex {
-    index_handlers: Vec<IndexHandler>,
+    index_handlers: Vec<BedMethylTbxIndex>,
     pub code_lookup: FxHashMap<ModCodeRepr, DnaBase>,
     min_valid_coverage: u64,
 }
 
 impl MultiSampleIndex {
     pub(super) fn new(
-        handlers: Vec<IndexHandler>,
+        handlers: Vec<BedMethylTbxIndex>,
         code_lookup: FxHashMap<ModCodeRepr, DnaBase>,
         min_valid_coverage: u64,
     ) -> Self {
@@ -180,49 +43,43 @@ impl MultiSampleIndex {
     }
 
     #[inline]
-    fn read_bedmethyl_lines_from_batch(
+    fn read_bedmethyl_files(
         &self,
-        // todo needs documentation of what this data structure is
-        chunks: &FxHashMap<usize, BTreeSet<ProtoIndexChunk>>,
+        idxs: &FxHashSet<usize>,
+        chunks: &FxHashMap<String, Range<u64>>,
     ) -> anyhow::Result<FxHashMap<usize, FxHashMap<String, Vec<BedMethylLine>>>>
     {
         // take all the mappings of sample_id to chunks
-        let groups = chunks
+        let groups = idxs
             .par_iter() // yah
-            .filter_map(|(id, chunks)| {
+            .filter_map(|id| {
                 // get the index handler for each
-                // shouldn't ever really get an miss here, but
+                // shouldn't ever really get a miss here, but
                 // just in case do a filter_map
-                self.index_handlers.get(*id).map(|handler| {
-                    // optimize/join overlapping chunks
-                    let index_chunks = join_chunks_together(chunks);
-                    // each pair is for one tabix index
-                    (*id, handler, index_chunks)
-                })
+                self.index_handlers
+                    .get(*id)
+                    .map(|handler| (*id, handler, chunks))
             })
+            // chunks is a mapping of each chrom to the range in that chrom to
+            // fetch
             .map(|(sample_id, handler, chunks)| {
                 // actually read the bedmethyl here
-                let grouped_by_chrom = handler
-                    .read_bedmethyl(
-                        &chunks,
-                        self.min_valid_coverage,
-                        &self.code_lookup,
-                    )
-                    .map(|bedmethyl_lines| {
-                        // group the bedmethyl lines by contig
-                        // in case this batch has more than one contigs'
-                        // worth in it
-                        bedmethyl_lines.into_iter().fold(
-                            FxHashMap::default(),
-                            |mut agg, bml| {
-                                // groupby chrom
-                                agg.entry(bml.chrom.to_owned())
-                                    .or_insert(Vec::new())
-                                    .push(bml);
-                                agg
-                            },
-                        )
-                    });
+                let grouped_by_chrom =
+                        chunks
+                            .par_iter()
+                            // here we read the bedmethyl and have a mapping of chrom to records
+                            .map(|(chrom, range)| {
+                                let bm_lines = handler.read_bedmethyl(
+                                    chrom,
+                                    range,
+                                    self.min_valid_coverage,
+                                    &self.code_lookup,
+                                );
+                                bm_lines.map(|lines| (chrom.to_owned(), lines))
+                            })
+                            .collect::<anyhow::Result<
+                                FxHashMap<String, Vec<BedMethylLine>>,
+                            >>();
                 grouped_by_chrom.map(|grouped| (sample_id, grouped))
             })
             .collect::<anyhow::Result<
@@ -234,45 +91,44 @@ impl MultiSampleIndex {
 
     // remember this method _only_ reads the lines, it does not perform any
     // filtering
-    fn read_bedmethyl_lines<T>(
+    fn read_bedmethyl_lines<T: Default>(
         &self,
         dmr_batch: &DmrBatch<T>,
-    ) -> BedMethylLinesResult<SampleToBedMethyLines> {
+    ) -> BedMethylLinesResult<SampleToChromBMLines> {
         let bedmethyl_lines_a =
-            self.read_bedmethyl_lines_from_batch(&dmr_batch.chunks_a)?;
+            self.read_bedmethyl_files(&dmr_batch.idxs_a, &dmr_batch.regions)?;
         let bedmethyl_lines_b =
-            self.read_bedmethyl_lines_from_batch(&dmr_batch.chunks_b)?;
+            self.read_bedmethyl_files(&dmr_batch.idxs_b, &dmr_batch.regions)?;
 
         Ok((bedmethyl_lines_a, bedmethyl_lines_b))
     }
 
-    pub(super) fn read_bedmethyl_lines_collapse_on_chrom<T>(
+    pub(super) fn read_bedmethyl_group_by_chrom<T: Default>(
         &self,
         dmr_batch: &DmrBatch<T>,
-    ) -> BedMethylLinesResult<ChromToBedmethylLines> {
+    ) -> BedMethylLinesResult<ChromToSampleBMLines> {
         let (bedmethyl_lines_a, bedmethyl_lines_b) =
             self.read_bedmethyl_lines(dmr_batch)?;
-        let collapse_f =
-            |sample_lines: SampleToBedMethyLines| -> ChromToBedmethylLines {
+        // todo I think this could be replaced my moniod
+        let traverse_records =
+            |sample_lines: SampleToChromBMLines| -> ChromToSampleBMLines {
                 sample_lines.into_iter().fold(
                     FxHashMap::default(),
-                    |mut agg, (_sample_id, chrom_to_lines)| {
-                        for (chrom, mut lines) in chrom_to_lines {
+                    |mut agg, (sample, records)| {
+                        for (chrom, lines) in records {
                             agg.entry(chrom)
-                                .or_insert(Vec::new())
-                                .append(&mut lines);
+                                .or_insert_with(FxHashMap::default)
+                                .entry(sample)
+                                .or_insert_with(Vec::new)
+                                .extend(lines);
                         }
                         agg
                     },
                 )
             };
-        let a = collapse_f(bedmethyl_lines_a);
-        let b = collapse_f(bedmethyl_lines_b);
+        let a = traverse_records(bedmethyl_lines_a);
+        let b = traverse_records(bedmethyl_lines_b);
         Ok((a, b))
-    }
-
-    pub(super) fn samples(&self) -> Vec<usize> {
-        (0..self.index_handlers.len()).collect()
     }
 
     pub(super) fn num_combinations(&self) -> anyhow::Result<usize> {
@@ -290,45 +146,11 @@ impl MultiSampleIndex {
             .unwrap_or(false)
     }
 
-    pub(super) fn get_index_chunks(
-        &self,
-        sample_index: usize,
-        chrom: &str,
-        interval: &Range<u64>,
-    ) -> anyhow::Result<Vec<IndexChunk>> {
-        if let Some((tabix_index, chrom_id)) =
-            self.index_handlers.get(sample_index).and_then(|index| {
-                index.contig_to_id.get(chrom).map(|chrom_id| (index, chrom_id))
-            })
-        {
-            let start =
-                noodles::core::Position::new((interval.start + 1) as usize)
-                    .unwrap();
-            let end = noodles::core::Position::new((interval.end + 1) as usize)
-                .unwrap();
-            let interval = noodles::core::region::Interval::from(start..=end);
-            tabix_index.csi_index.query(*chrom_id, interval).map_err(|e| {
-                anyhow!(
-                    "failed to query sample index {sample_index} for interval \
-                     {interval:?}, {e}"
-                )
-            })
-        } else {
-            Ok(Vec::new())
-        }
-    }
-
     // todo try and make this return &String
     pub(super) fn all_contigs(&self) -> HashSet<String> {
         self.index_handlers
             .iter()
-            .flat_map(|handler| {
-                handler
-                    .contig_to_id
-                    .keys()
-                    .map(|s| s.to_owned())
-                    .collect::<HashSet<String>>()
-            })
+            .flat_map(|handler| handler.get_contigs())
             .collect()
     }
 }
@@ -337,8 +159,8 @@ impl MultiSampleIndex {
 
 pub(super) struct SingleSiteSampleIndex {
     multi_sample_index: MultiSampleIndex,
-    control_idxs: Vec<usize>,
-    exp_idxs: Vec<usize>,
+    pub(super) control_idxs: Vec<usize>,
+    pub(super) exp_idxs: Vec<usize>,
 }
 
 impl SingleSiteSampleIndex {
@@ -357,42 +179,6 @@ impl SingleSiteSampleIndex {
         Ok(Self { multi_sample_index, control_idxs, exp_idxs })
     }
 
-    #[inline]
-    fn query_chunks(
-        &self,
-        contig_name: &str,
-        interval: &Range<u64>,
-        is_control: bool,
-    ) -> anyhow::Result<FxHashMap<usize, Vec<IndexChunk>>> {
-        let idxs = if is_control { &self.control_idxs } else { &self.exp_idxs };
-        idxs.iter()
-            .map(|idx| {
-                let chunks = self.multi_sample_index.get_index_chunks(
-                    *idx,
-                    contig_name,
-                    interval,
-                );
-                chunks.map(|x| (*idx, x))
-            })
-            .collect::<anyhow::Result<FxHashMap<usize, Vec<IndexChunk>>>>()
-    }
-
-    pub(super) fn query_control_chunks(
-        &self,
-        contig_name: &str,
-        interval: &Range<u64>,
-    ) -> anyhow::Result<FxHashMap<usize, Vec<IndexChunk>>> {
-        self.query_chunks(contig_name, interval, true)
-    }
-
-    pub(super) fn query_exp_chunks(
-        &self,
-        contig_name: &str,
-        interval: &Range<u64>,
-    ) -> anyhow::Result<FxHashMap<usize, Vec<IndexChunk>>> {
-        self.query_chunks(contig_name, interval, false)
-    }
-
     pub(super) fn has_contig(&self, name: &str) -> bool {
         let control_has_contig = self
             .control_idxs
@@ -407,9 +193,9 @@ impl SingleSiteSampleIndex {
     }
 
     fn organize_bedmethy_lines(
-        sample: SampleToBedMethyLines,
+        sample: SampleToChromBMLines,
         code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
-    ) -> anyhow::Result<ChromToAggregatedCountsByPosition> {
+    ) -> anyhow::Result<ChromToPosAggregatedCounts> {
         let mut agg = FxHashMap::default();
 
         // samples should be length ~1-5
@@ -433,7 +219,7 @@ impl SingleSiteSampleIndex {
                         .reduce(|| BTreeMap::new(), |a, b| a.op(b))
                         .into_par_iter()
                         .map(|(position, lines)| {
-                            (position, aggregate_counts2(&lines))
+                            (position, aggregate_counts2(&lines, &code_lookup))
                         })
                         .collect::<FxHashMap<
                             StrandedPosition<DnaBase>,
@@ -472,13 +258,13 @@ impl SingleSiteSampleIndex {
     #[inline]
     fn intersect_bedmethyl_lines_with_sites(
         dmr_batch: &DmrBatchOfPositions,
-        bedmethyl_lines: SampleToBedMethyLines,
+        bedmethyl_lines: SampleToChromBMLines,
         code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
-    ) -> SampleToBedMethyLines {
+    ) -> SampleToChromBMLines {
         bedmethyl_lines
             .into_iter()
             .map(|(sample, bm_lines)| {
-                let filtered_chrom_to_lines = bm_lines
+                let chrom_to_filtered_lines = bm_lines
                     .into_iter()
                     .filter_map(|(chrom, lines)| {
                         let filtered_lines = lines
@@ -498,7 +284,7 @@ impl SingleSiteSampleIndex {
                         filtered_lines.map(|ls| (chrom, ls))
                     })
                     .collect::<FxHashMap<String, Vec<BedMethylLine>>>();
-                (sample, filtered_chrom_to_lines)
+                (sample, chrom_to_filtered_lines)
             })
             .collect::<FxHashMap<usize, FxHashMap<String, Vec<BedMethylLine>>>>(
             )
@@ -507,7 +293,7 @@ impl SingleSiteSampleIndex {
     pub(super) fn read_bedmethyl_lines_filtered_by_position(
         &self,
         dmr_batch: &DmrBatchOfPositions,
-    ) -> BedMethylLinesResult<SampleToBedMethyLines> {
+    ) -> BedMethylLinesResult<SampleToChromBMLines> {
         let (bedmethyl_lines_a, bedmethyl_lines_b) =
             self.multi_sample_index.read_bedmethyl_lines(&dmr_batch)?;
 
@@ -528,7 +314,7 @@ impl SingleSiteSampleIndex {
     pub(super) fn read_bedmethyl_lines_organized_by_position(
         &self,
         dmr_batch: DmrBatchOfPositions,
-    ) -> BedMethylLinesResult<ChromToAggregatedCountsByPosition> {
+    ) -> BedMethylLinesResult<ChromToPosAggregatedCounts> {
         let (bedmethyl_lines_a, bedmethyl_lines_b) =
             self.read_bedmethyl_lines_filtered_by_position(&dmr_batch)?;
 
@@ -563,27 +349,5 @@ impl SingleSiteSampleIndex {
     #[inline]
     pub(super) fn multiple_samples(&self) -> bool {
         self.num_a_samples() > 1 || self.num_b_samples() > 1
-    }
-}
-
-#[inline]
-fn join_chunks_together(chunks: &BTreeSet<ProtoIndexChunk>) -> Vec<IndexChunk> {
-    if let Some(&first) = chunks.first() {
-        let (mut chunks, last) = chunks.iter().skip(1).fold(
-            (Vec::new(), first),
-            |(mut acc, mut front), chunk| {
-                if chunk.start <= front.stop {
-                    front = ProtoIndexChunk::new(front.start, chunk.stop);
-                    (acc, front)
-                } else {
-                    acc.push(front);
-                    (acc, *chunk)
-                }
-            },
-        );
-        chunks.push(last);
-        chunks.into_iter().map(|x| x.into()).collect()
-    } else {
-        Vec::new()
     }
 }
