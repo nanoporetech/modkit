@@ -728,6 +728,9 @@ impl ExtractMods {
                 master_progress.set_message("genome positions");
 
                 let mut num_aligned_reads_used = 0usize;
+                // TODO/WARN currently this cannot fail since we don't use the
+                // FastaIndex here
+                let feeder = feeder.map(|x| x.unwrap());
                 for super_batch in feeder.with_prev_end() {
                     let total_batch_length = super_batch
                         .iter()

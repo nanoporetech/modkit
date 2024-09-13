@@ -10,7 +10,7 @@ use itertools::Itertools;
 use log::{debug, info};
 use rayon::prelude::*;
 use regex::{Match, Regex};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::position_filter::StrandedPositionFilter;
 use crate::util::{
@@ -86,7 +86,7 @@ impl<'a> Iterator for OverlappingPatternIterator<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OverlappingRegex {
     inner: Regex,
 }
@@ -140,7 +140,7 @@ impl MotifInfo {
     }
 }
 
-#[derive(Debug, new)]
+#[derive(Debug, Clone, new)]
 pub struct RegexMotif {
     forward_pattern: OverlappingRegex,
     reverse_pattern: OverlappingRegex,
@@ -534,10 +534,10 @@ pub fn get_masked_sequences(
         .collect::<Vec<(String, u32)>>())
 }
 
-#[derive(Debug)]
+#[derive(Debug, new)]
 pub struct MotifLocations {
-    tid_to_motif_positions: FxHashMap<u32, BTreeMap<u32, StrandRule>>,
-    motif: RegexMotif,
+    pub tid_to_motif_positions: FxHashMap<u32, BTreeMap<u32, StrandRule>>,
+    pub motif: RegexMotif,
 }
 
 impl MotifLocations {
@@ -635,10 +635,6 @@ impl MotifLocations {
             &seqs_and_target_ids,
             master_progress_bar,
         )
-    }
-
-    pub(crate) fn references_with_hits(&self) -> FxHashSet<u32> {
-        self.tid_to_motif_positions.keys().copied().collect()
     }
 
     pub fn filter_reference_records(

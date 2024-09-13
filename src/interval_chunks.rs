@@ -1,15 +1,15 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+use crate::fasta::MotifLocationsLookup;
+use crate::find_motifs::motif_bed::{
+    MotifInfo, MotifLocations, MultipleMotifLocations,
+};
+use crate::position_filter::{GenomeIntervals, Iv, StrandedPositionFilter};
+use crate::util::{ReferenceRecord, StrandRule};
 use anyhow::{anyhow, bail};
 use derive_new::new;
 use log::debug;
 use rustc_hash::FxHashMap;
-
-use crate::find_motifs::motif_bed::{
-    MotifInfo, MotifLocations, MultipleMotifLocations, RegexMotif,
-};
-use crate::position_filter::{GenomeIntervals, Iv, StrandedPositionFilter};
-use crate::util::{ReferenceRecord, StrandRule};
 
 pub fn slice_dna_sequence(str_seq: &str, start: usize, end: usize) -> String {
     str_seq
@@ -50,8 +50,8 @@ pub enum FocusPositions {
     },
     Regions {
         // positions from an extracted BED file
-        pos_lapper: GenomeIntervals<()>,
-        neg_lapper: GenomeIntervals<()>,
+        pos_intervals: GenomeIntervals<()>,
+        neg_intervals: GenomeIntervals<()>,
     },
     AllPositions,
 }
@@ -332,12 +332,18 @@ impl FocusPositions {
                     .collect::<Vec<Iv>>()
             })
             .unwrap_or(Vec::new());
-        let mut pos_lapper = GenomeIntervals::new(pos_intervals);
-        pos_lapper.merge_overlaps();
-        let mut neg_lapper = GenomeIntervals::new(neg_intervals);
-        neg_lapper.merge_overlaps();
+        let pos_intervals = {
+            let mut tmp = GenomeIntervals::new(pos_intervals);
+            tmp.merge_overlaps();
+            tmp
+        };
+        let neg_intervals = {
+            let mut tmp = GenomeIntervals::new(neg_intervals);
+            tmp.merge_overlaps();
+            tmp
+        };
 
-        Self::Regions { pos_lapper, neg_lapper }
+        Self::Regions { pos_intervals, neg_intervals }
     }
 
     // semantics: return Some iff we keep that position, else None
@@ -347,7 +353,10 @@ impl FocusPositions {
             | FocusPositions::MotifCombineStrands { positions, .. } => {
                 positions.get(pos).map(|sr| *sr)
             }
-            FocusPositions::Regions { pos_lapper, neg_lapper } => {
+            FocusPositions::Regions {
+                pos_intervals: pos_lapper,
+                neg_intervals: neg_lapper,
+            } => {
                 let pos = *pos as u64;
                 let pos_hit = pos_lapper.find(pos, pos + 1).count() > 0;
                 let neg_hit = neg_lapper.find(pos, pos + 1).count() > 0;
@@ -469,7 +478,7 @@ pub struct ReferenceIntervalsFeeder {
     contigs: VecDeque<ReferenceRecord>,
     batch_size: usize,
     interval_size: u32,
-    motifs: Option<MultipleMotifLocations>,
+    motifs: Option<MotifLocationsLookup>,
     position_filter: Option<StrandedPositionFilter<()>>,
     combine_strands: bool,
     curr_contig: ReferenceRecord,
@@ -483,7 +492,7 @@ impl ReferenceIntervalsFeeder {
         batch_size: usize,
         interval_size: u32,
         combine_strands: bool,
-        multi_motif_locations: Option<MultipleMotifLocations>,
+        multi_motif_locations: Option<MotifLocationsLookup>,
         position_filter: Option<StrandedPositionFilter<()>>,
     ) -> anyhow::Result<Self> {
         if combine_strands & !multi_motif_locations.is_some() {
@@ -492,6 +501,7 @@ impl ReferenceIntervalsFeeder {
         let mut contigs = if let Some(position_filter) =
             position_filter.as_ref()
         {
+            // todo do more aggressive "narrowing"
             reference_records
                 .into_iter()
                 .filter_map(|contig| {
@@ -544,45 +554,6 @@ impl ReferenceIntervalsFeeder {
             })
     }
 
-    fn find_end(&self, mut end: u32, tid: u32) -> u32 {
-        if let Some(mls) = self.motifs.as_ref() {
-            'creep_loop: loop {
-                let motifs_at_position = mls
-                    .motifs_at_position(tid, end.checked_sub(1).unwrap_or(end))
-                    .into_iter()
-                    .filter(|motif| motif.length() > 1)
-                    .collect::<Vec<&RegexMotif>>();
-                if motifs_at_position.is_empty() {
-                    break 'creep_loop;
-                }
-                let creep_out = motifs_at_position
-                    .iter()
-                    .map(|motif| {
-                        motif
-                            .length()
-                            .checked_sub(motif.forward_offset())
-                            .unwrap_or(motif.length())
-                    })
-                    .max();
-                if let Some(creep) = creep_out {
-                    end += creep as u32;
-                    if creep == 0 {
-                        // just in case so that we don't get stuck
-                        // forever
-                        break 'creep_loop;
-                    } else {
-                        continue 'creep_loop;
-                    }
-                } else {
-                    // shouldn't ever really hit this since we have
-                    // a break when motifs_at_position is empty
-                    break 'creep_loop;
-                }
-            }
-        }
-        end
-    }
-
     fn update_current(&mut self) {
         if let Some(reference_record) = self.contigs.pop_front() {
             self.curr_position = reference_record.start;
@@ -592,12 +563,10 @@ impl ReferenceIntervalsFeeder {
             self.done = true;
         }
     }
-}
 
-impl Iterator for ReferenceIntervalsFeeder {
-    type Item = Vec<MultiChromCoordinates>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next_batch(
+        &mut self,
+    ) -> anyhow::Result<Option<Vec<MultiChromCoordinates>>> {
         let mut ret = Vec::new();
 
         let mut batch = Vec::new();
@@ -619,8 +588,22 @@ impl Iterator for ReferenceIntervalsFeeder {
                 start + self.interval_size,
                 self.curr_contig.end(),
             );
-            // if self.combine_strands...
-            let end = self.find_end(end, tid);
+            // get the sequence here.
+            let (motifs, end) = if let Some(lookup) = self.motifs.as_mut() {
+                // todo change everything to u64
+                let range = (start as u64)..(end as u64);
+                let (pos, end) = lookup.get_motif_positions(
+                    &self.curr_contig.name,
+                    tid,
+                    self.curr_contig.end(),
+                    range,
+                    self.position_filter.as_ref(),
+                    self.combine_strands,
+                )?;
+                (Some(pos), end)
+            } else {
+                (None, end)
+            };
             let end = std::cmp::min(end, self.curr_contig.end());
             // in the "short contig" case, chrom_coords.len() will be less than
             // interval size so batch length will be less than
@@ -630,7 +613,7 @@ impl Iterator for ReferenceIntervalsFeeder {
                 start,
                 end,
                 self.combine_strands,
-                self.motifs.as_ref(),
+                motifs.as_ref(),
                 self.position_filter.as_ref(),
             );
             batch_length += chrom_coords.len();
@@ -657,10 +640,18 @@ impl Iterator for ReferenceIntervalsFeeder {
         }
 
         if ret.is_empty() {
-            None
+            Ok(None)
         } else {
-            Some(ret)
+            Ok(Some(ret))
         }
+    }
+}
+
+impl Iterator for ReferenceIntervalsFeeder {
+    type Item = anyhow::Result<Vec<MultiChromCoordinates>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_batch().transpose()
     }
 }
 

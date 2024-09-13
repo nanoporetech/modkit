@@ -21,6 +21,7 @@ pub mod writers;
 
 pub(crate) mod command_utils;
 pub mod dmr;
+mod fasta;
 /// Contains functions for genome arithmatic/overlaps, etc.
 pub(crate) mod genome_positions;
 mod hmm;

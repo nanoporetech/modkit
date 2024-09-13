@@ -9,8 +9,6 @@ use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
 use rustc_hash::FxHashMap;
 
-use record_sampler::RecordSampler;
-
 use crate::interval_chunks::{ChromCoordinates, ReferenceIntervalsFeeder};
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::monoid::Moniod;
@@ -22,6 +20,7 @@ use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
     get_master_progress_bar, get_targets, get_ticker, ReferenceRecord, Region,
 };
+use record_sampler::RecordSampler;
 
 pub(crate) mod record_sampler;
 pub(crate) mod sampling_schedule;
@@ -214,6 +213,7 @@ where
 
     let mut aggregator = <P::Output as Moniod>::zero();
     let mut reads_sampled_per_chr = FxHashMap::default();
+    let feeder = feeder.map(|x| x.unwrap());
     for super_batch in feeder {
         let total_batch_length =
             super_batch.iter().map(|c| c.total_length()).sum::<u64>();
