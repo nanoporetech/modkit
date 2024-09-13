@@ -11,13 +11,15 @@ use itertools::Itertools;
 use log::{debug, error, info};
 use rustc_hash::FxHashMap;
 
+use crate::dmr::bedmethyl::BedMethylLine;
 use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::single_site::SingleSiteDmrAnalysis;
-use crate::dmr::tabix::{IndexHandler, MultiSampleIndex};
+use crate::dmr::tabix::MultiSampleIndex;
 use crate::dmr::util::{parse_roi_bed, HandleMissing, RoiIter};
 use crate::genome_positions::GenomePositions;
 use crate::logging::init_logging;
 use crate::mod_base_code::{DnaBase, ModCodeRepr, MOD_CODE_TO_DNA_BASE};
+use crate::tabix::{BedMethylTbxIndex, HtsTabixHandler};
 use crate::util::{
     create_out_directory, get_master_progress_bar, get_subroutine_progress_bar,
     get_ticker,
@@ -185,14 +187,6 @@ pub struct PairwiseDmr {
     /// Force overwrite of output file, if it already exists.
     #[arg(short = 'f', long, default_value_t = false)]
     force: bool,
-    /// Path to tabix index associated with -a (--control-bed-methyl) bedMethyl
-    /// file.
-    #[arg(long)]
-    index_a: Option<Vec<PathBuf>>,
-    /// Path to tabix index associated with -b (--exp-bed-methyl) bedMethyl
-    /// file.
-    #[arg(long)]
-    index_b: Option<Vec<PathBuf>>,
     /// How to handle regions found in the `--regions` BED file.
     /// quiet => ignore regions that are not found in the tabix header
     /// warn => log (debug) regions that are missing
@@ -375,27 +369,17 @@ impl PairwiseDmr {
         let a_handlers = self
             .control_bed_methyl
             .iter()
-            .enumerate()
-            .map(|(i, fp)| {
-                let index_fp =
-                    self.index_a.as_ref().and_then(|indexes| indexes.get(i));
-                IndexHandler::new_infer_index_filepath(fp, index_fp)
-            })
-            .collect::<anyhow::Result<Vec<IndexHandler>>>()?;
+            .map(|fp| BedMethylTbxIndex::from_path(fp))
+            .collect::<anyhow::Result<Vec<BedMethylTbxIndex>>>()?;
         let b_handlers = self
             .exp_bed_methyl
             .iter()
-            .enumerate()
-            .map(|(i, fp)| {
-                let index_fp =
-                    self.index_b.as_ref().and_then(|indexes| indexes.get(i));
-                IndexHandler::new_infer_index_filepath(fp, index_fp)
-            })
-            .collect::<anyhow::Result<Vec<IndexHandler>>>()?;
+            .map(|fp| HtsTabixHandler::<BedMethylLine>::from_path(fp))
+            .collect::<anyhow::Result<Vec<BedMethylTbxIndex>>>()?;
         let handlers = a_handlers
             .into_iter()
             .chain(b_handlers)
-            .collect::<Vec<IndexHandler>>();
+            .collect::<Vec<BedMethylTbxIndex>>();
 
         let sample_index = MultiSampleIndex::new(
             handlers,
@@ -494,14 +478,13 @@ impl PairwiseDmr {
         failures.set_message(format!("regions failed to process"));
 
         let dmr_interval_iter = RoiIter::new(
-            0,
-            1,
+            &[0],
+            &[1],
             "a",
             "b",
             sample_index.clone(),
             regions_of_interest,
             batch_size,
-            failures.clone(),
             self.handle_missing,
             genome_positions.clone(),
         )?;
@@ -535,11 +518,6 @@ pub struct MultiSampleDmr {
     /// <name>. This option should be repeated at least two times.
     #[arg(short = 's', long = "sample", num_args = 2)]
     samples: Vec<String>,
-    /// Optional, paths to tabix indices associated with named samples. Two
-    /// arguments are required <path> <name> where <name> corresponds to
-    /// the name of the sample given to the -s/--sample argument.
-    #[arg(short = 'i', long = "index", num_args = 2)]
-    indices: Vec<String>,
     /// BED file of regions over which to compare methylation levels. Should be
     /// tab-separated (spaces allowed in the "name" column). Requires
     /// chrom, chromStart and chromEnd. The Name column is optional. Strand
@@ -638,34 +616,12 @@ impl MultiSampleDmr {
             &self.modified_bases,
             self.mod_code_assignments.as_ref(),
         )?;
-        let index_fps = self
-            .indices
-            .chunks(2)
-            .filter_map(|raw| {
-                if raw.len() != 2 {
-                    error!(
-                        "illegal index pair {:?}, should be length 2 of the \
-                         form <path> <name>",
-                        raw
-                    );
-                    None
-                } else {
-                    let fp = Path::new(raw[0].as_str()).to_path_buf();
-                    let name = raw[1].to_string();
-                    if fp.exists() {
-                        Some((name, fp))
-                    } else {
-                        error!("index for {name} at {} not found", &raw[0]);
-                        None
-                    }
-                }
-            })
-            .collect::<HashMap<String, PathBuf>>();
 
         let handlers = self
             .samples
             .chunks(2)
-            .filter_map(|raw| {
+            .enumerate()
+            .filter_map(|(i, raw)| {
                 if raw.len() != 2 {
                     error!(
                         "illegal sample pair {:?}, should be length 2 of the \
@@ -677,12 +633,8 @@ impl MultiSampleDmr {
                     let fp = Path::new(raw[0].as_str()).to_path_buf();
                     let name = raw[1].to_string();
                     if fp.exists() {
-                        let specified_index_fp = index_fps.get(&name);
-                        match IndexHandler::new_infer_index_filepath(
-                            &fp,
-                            specified_index_fp,
-                        ) {
-                            Ok(handler) => Some((name, handler)),
+                        match BedMethylTbxIndex::from_path(&fp) {
+                            Ok(handler) => Some((i, name, handler)),
                             Err(e) => {
                                 error!("failed to load {name}, {e}");
                                 None
@@ -694,7 +646,7 @@ impl MultiSampleDmr {
                     }
                 }
             })
-            .collect::<Vec<(String, IndexHandler)>>();
+            .collect::<Vec<(usize, String, BedMethylTbxIndex)>>();
 
         let mpb = MultiProgress::new();
 
@@ -706,13 +658,21 @@ impl MultiSampleDmr {
             .context("failed to parse modified base")?;
 
         let (names, handlers) = handlers.into_iter().fold(
-            (Vec::new(), Vec::new()),
-            |(mut names, mut handlers), (name, handler)| {
-                names.push(name);
+            (HashMap::new(), Vec::new()),
+            |(mut names, mut handlers), (sample_id, name, handler)| {
+                names.entry(name).or_insert_with(Vec::new).push(sample_id);
                 handlers.push(handler);
                 (names, handlers)
             },
         );
+        for (name, ids) in &names {
+            if ids.len() > 1 {
+                info!(
+                    "sample {name} has {} replicates, they will be combined",
+                    ids.len()
+                );
+            }
+        }
 
         let sample_index = MultiSampleIndex::new(
             handlers,
@@ -741,16 +701,15 @@ impl MultiSampleDmr {
         let sample_pb =
             mpb.add(get_master_progress_bar(sample_index.num_combinations()?));
 
-        for pair in sample_index
-            .samples()
-            .iter()
-            .combinations(2)
-            .progress_with(sample_pb.clone())
+        let samples = names.keys().sorted().collect::<Vec<&String>>();
+        for pair in
+            samples.into_iter().combinations(2).progress_with(sample_pb.clone())
         {
-            let a_index = *pair[0];
-            let b_index = *pair[1];
-            let a_name = &names[a_index];
-            let b_name = &names[b_index];
+            let a_name = pair[0];
+            let b_name = pair[1];
+            let a_idxs = names.get(a_name).unwrap();
+            let b_idxs = names.get(b_name).unwrap();
+
             sample_pb
                 .set_message(format!("comparing {} and {}", a_name, b_name));
             let pb =
@@ -763,17 +722,15 @@ impl MultiSampleDmr {
                 .num_threads(self.threads)
                 .build()?;
 
+            debug!("running {a_name} as control and {b_name} as experiment");
             match RoiIter::new(
-                a_index,
-                b_index,
+                a_idxs,
+                b_idxs,
                 a_name,
                 b_name,
                 sample_index.clone(),
-                // todo remove this clone.. but at most there will be 2 copies
-                // around
                 regions_of_interest.clone(),
                 chunk_size,
-                failures.clone(),
                 self.handle_missing,
                 genome_positions.clone(),
             ) {
@@ -795,15 +752,15 @@ impl MultiSampleDmr {
                          failed for pair {} {}",
                         success_count,
                         failures.position(),
-                        &a_index,
-                        &b_index,
+                        &a_name,
+                        &b_name,
                     );
                 }
                 Err(e) => {
                     error!(
                         "pair {} {} failed to process, {}",
-                        &a_index,
-                        &b_index,
+                        &a_name,
+                        &b_name,
                         e.to_string()
                     );
                     if self.handle_missing == HandleMissing::fail {

@@ -4,10 +4,12 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, Context};
 use itertools::Itertools;
+use log_once::debug_once;
 use rust_htslib::tbx::{Read, Reader as TbxReader};
 use rustc_hash::FxHashMap;
 
 use crate::dmr::bedmethyl::BedMethylLine;
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::util::StrandRule;
 
 pub(crate) trait ParseBedLine {
@@ -51,23 +53,13 @@ impl<T: ParseBedLine> HtsTabixHandler<T> {
         self.contigs.contains_key(contig)
     }
 
-    pub(crate) fn fetch_region(
+    #[inline]
+    fn fetch_region_it<'a>(
         &self,
-        chrom: &str,
-        range: &Range<u64>,
+        reader: &'a mut TbxReader,
         strand_rule: StrandRule,
-    ) -> anyhow::Result<Vec<T>> {
-        let tid = *self
-            .contigs
-            .get(chrom)
-            .ok_or(anyhow!("didn't find target-id for {chrom}"))?;
-        let mut reader = TbxReader::from_path(&self.indexed_fp)?;
-        reader.set_threads(4)?; // todo make param
-        reader.fetch(tid, range.start, range.end).with_context(|| {
-            format!("failed to fetch {chrom}:{}-{}", range.start, range.end)
-        })?;
-
-        reader
+    ) -> anyhow::Result<impl Iterator<Item = anyhow::Result<T>> + 'a> {
+        Ok(reader
             .records()
             .map(|r| {
                 r.map_err(|e| anyhow!("tbx failed to read, {e}"))
@@ -78,7 +70,65 @@ impl<T: ParseBedLine> HtsTabixHandler<T> {
                     })
                     .and_then(|s| T::parse(&s))
             })
-            .filter_ok(|t| t.overlaps(strand_rule))
-            .collect::<anyhow::Result<Vec<T>>>()
+            .filter_ok(move |t| t.overlaps(strand_rule)))
+    }
+
+    fn get_reader(
+        &self,
+        chrom: &str,
+        range: &Range<u64>,
+    ) -> anyhow::Result<TbxReader> {
+        let tid = *self
+            .contigs
+            .get(chrom)
+            .ok_or(anyhow!("didn't find target-id for {chrom}"))?;
+        let mut reader = TbxReader::from_path(&self.indexed_fp)?;
+        reader.set_threads(4)?; // todo make param
+        reader.fetch(tid, range.start, range.end).with_context(|| {
+            format!("failed to fetch {chrom}:{}-{}", range.start, range.end)
+        })?;
+        Ok(reader)
+    }
+
+    pub(crate) fn fetch_region(
+        &self,
+        chrom: &str,
+        range: &Range<u64>,
+        strand_rule: StrandRule,
+    ) -> anyhow::Result<Vec<T>> {
+        let mut reader = self.get_reader(chrom, range)?;
+        let it = self.fetch_region_it(&mut reader, strand_rule)?;
+        it.collect()
+    }
+
+    pub fn get_contigs(&self) -> Vec<String> {
+        self.contigs.keys().map(|x| x.to_owned()).collect()
+    }
+}
+pub type BedMethylTbxIndex = HtsTabixHandler<BedMethylLine>;
+
+impl HtsTabixHandler<BedMethylLine> {
+    pub(crate) fn read_bedmethyl(
+        &self,
+        chrom: &str,
+        range: &Range<u64>,
+        min_coverage: u64,
+        code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
+    ) -> anyhow::Result<Vec<BedMethylLine>> {
+        let mut reader = self.get_reader(chrom, range)?;
+        let it = self.fetch_region_it(&mut reader, StrandRule::Both)?;
+        it.filter_ok(|bml| bml.valid_coverage >= min_coverage)
+            .filter_ok(|bml| {
+                if code_lookup.contains_key(&bml.raw_mod_code) {
+                    true
+                } else {
+                    debug_once!(
+                        "encountered illegal mod-code for DMR, {}",
+                        bml.raw_mod_code
+                    );
+                    false
+                }
+            })
+            .collect()
     }
 }

@@ -127,13 +127,15 @@ impl BedMethylLine {
 
 pub(super) fn aggregate_counts2(
     bm_lines: &[BedMethylLine],
+    code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
 ) -> anyhow::Result<AggregatedCounts> {
     let lines = bm_lines.iter().collect::<Vec<&BedMethylLine>>();
-    aggregate_counts(&lines)
+    aggregate_counts(&lines, code_lookup)
 }
 
 pub(super) fn aggregate_counts(
     bm_lines: &[&BedMethylLine],
+    code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
 ) -> anyhow::Result<AggregatedCounts> {
     assert_eq!(
         bm_lines.iter().map(|l| &l.chrom).collect::<HashSet<_>>().len(),
@@ -141,11 +143,15 @@ pub(super) fn aggregate_counts(
     );
     // group by position because multiple mods are distributed over more than
     // one bedmethyl record
-    let grouped_by_position: FxHashMap<u64, Vec<&BedMethylLine>> =
-        bm_lines.iter().fold(FxHashMap::default(), |mut acc, bm_line| {
-            acc.entry(bm_line.start()).or_insert(Vec::new()).push(*bm_line);
-            acc
-        });
+    let grouped_by_position: FxHashMap<
+        StrandedPosition<DnaBase>,
+        Vec<&BedMethylLine>,
+    > = bm_lines.iter().fold(FxHashMap::default(), |mut acc, bm_line| {
+        acc.entry(bm_line.get_stranded_position(code_lookup))
+            .or_insert(Vec::new())
+            .push(*bm_line);
+        acc
+    });
     let (counts_per_code, total) = grouped_by_position.into_iter().try_fold(
         (HashMap::new(), 0),
         |(mut acc, mut total_so_far), (_pos, grouped)| {
@@ -157,10 +163,6 @@ pub(super) fn aggregate_counts(
                 .iter()
                 .map(|bml| bml.count_canonical)
                 .collect::<FxHashSet<u64>>();
-            let chroms = grouped
-                .iter()
-                .map(|bml| &bml.chrom)
-                .collect::<FxHashSet<&String>>();
             let valid_coverage = grouped[0].valid_coverage as usize;
             if valid_covs.len() != 1 || canonical_counts.len() != 1 {
                 let mut message = format!(
@@ -182,12 +184,6 @@ pub(super) fn aggregate_counts(
                 bail!(message)
             }
 
-            if chroms.len() != 1 {
-                bail!(format!(
-                    "should only get one chrom, got {}",
-                    chroms.len()
-                ))
-            }
             // check that the sum of canonical counts and
             // modified counts is equal to the valid coverage
             let mut check = grouped[0].count_canonical as usize;
@@ -335,14 +331,16 @@ mod bedmethylline_tests {
                     .contains(&l.get_stranded_position(&MOD_CODE_TO_DNA_BASE))
             })
             .collect::<Vec<BedMethylLine>>();
-        let counts = aggregate_counts2(&bedmethyl_lines).unwrap();
+        let counts =
+            aggregate_counts2(&bedmethyl_lines, &MOD_CODE_TO_DNA_BASE).unwrap();
         assert_eq!(&counts.string_counts(), "h:2,m:4");
         assert_eq!(counts.total, 6);
         let filtered_bm_lines = bedmethyl_lines
             .into_iter()
             .filter(|l| l.raw_mod_code == ModCodeRepr::Code('m'))
             .collect::<Vec<BedMethylLine>>();
-        assert!(aggregate_counts2(&filtered_bm_lines).is_err());
+        assert!(aggregate_counts2(&filtered_bm_lines, &MOD_CODE_TO_DNA_BASE)
+            .is_err());
     }
 
     #[test]
