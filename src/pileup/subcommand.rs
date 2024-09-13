@@ -9,15 +9,13 @@ use indicatif::{MultiProgress, ParallelProgressIterator};
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
-use rustc_hash::FxHashSet;
 
 use crate::command_utils::{
     get_threshold_from_options, parse_edge_filter_input,
     parse_per_mod_thresholds, parse_thresholds,
 };
-use crate::find_motifs::motif_bed::{
-    get_masked_sequences, MotifLocations, MultipleMotifLocations, RegexMotif,
-};
+use crate::fasta::MotifLocationsLookup;
+use crate::find_motifs::motif_bed::RegexMotif;
 use crate::interval_chunks::ReferenceIntervalsFeeder;
 use crate::logging::init_logging;
 use crate::mod_bam::CollapseMethod;
@@ -30,8 +28,7 @@ use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::util::{
     create_out_directory, get_master_progress_bar, get_subroutine_progress_bar,
-    get_targets, get_ticker, parse_partition_tags, reader_is_bam,
-    ReferenceRecord, Region,
+    get_targets, get_ticker, parse_partition_tags, reader_is_bam, Region,
 };
 use crate::writers::{
     BedGraphWriter, BedMethylWriter, PartitioningBedMethylWriter, PileupWriter,
@@ -75,6 +72,9 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     interval_size: u32,
+    /// Size of queue for writing records
+    #[arg(long, hide_short_help = true, default_value_t = 1000)]
+    queue_size: usize,
 
     /// Break contigs into chunks containing this many intervals (see
     /// `interval_size`). This option can be used to help prevent excessive
@@ -404,12 +404,12 @@ impl ModBamPileup {
             .as_ref()
             .map(|raw_tags| parse_partition_tags(raw_tags))
             .transpose()?;
-        let tids = get_targets(&header, region.as_ref());
+        let reference_records = get_targets(&header, region.as_ref());
         let position_filter = self
             .include_bed
             .as_ref()
             .map(|bed_fp| {
-                let chrom_to_tid = tids
+                let chrom_to_tid = reference_records
                     .iter()
                     .map(|reference_record| {
                         (reference_record.name.as_str(), reference_record.tid)
@@ -568,15 +568,13 @@ impl ModBamPileup {
             .num_threads(self.threads)
             .build()
             .with_context(|| "failed to make threadpool")?;
-        let (motif_locations, reference_records) = if let Some(regex_motifs) =
-            regex_motifs
-        {
+        let motif_lookup = if let Some(motifs) = regex_motifs {
             let fasta_fp = self.reference_fasta.as_ref().ok_or(anyhow!(
                 "reference fasta is required for using --motif or --cpg \
                  options"
             ))?;
             if combine_strands {
-                if regex_motifs.iter().any(|rm| !rm.is_palendrome()) {
+                if motifs.iter().any(|rm| !rm.is_palendrome()) {
                     bail!(
                         "cannot combine strands with a motif that is not a \
                          palindrome"
@@ -584,49 +582,12 @@ impl ModBamPileup {
                 }
                 debug!("combining + and - strand counts");
             }
-            let names_to_tid = tids
-                .iter()
-                .map(|target| (target.name.as_str(), target.tid))
-                .collect::<HashMap<&str, u32>>();
-            let master_progress = MultiProgress::new();
-            if self.suppress_progress {
-                master_progress
-                    .set_draw_target(indicatif::ProgressDrawTarget::hidden());
-            }
-            let masked_seqs_to_tids = get_masked_sequences(
-                fasta_fp,
-                &names_to_tid,
-                self.mask,
-                &master_progress,
-            )?;
-            let motif_locations = pool.install(|| {
-                regex_motifs
-                    .into_par_iter()
-                    .map(|regex_motif| {
-                        MotifLocations::from_sequences(
-                            regex_motif,
-                            position_filter.as_ref(),
-                            &masked_seqs_to_tids,
-                            &master_progress,
-                        )
-                    })
-                    .collect::<anyhow::Result<Vec<MotifLocations>>>()
-            })?;
-            let targets_with_hits = motif_locations
-                .iter()
-                .flat_map(|ml| ml.references_with_hits())
-                .collect::<FxHashSet<u32>>();
-            let filtered_tids = tids
-                .into_iter()
-                .filter(|ref_record| {
-                    targets_with_hits.contains(&ref_record.tid)
-                })
-                .collect::<Vec<ReferenceRecord>>();
-            // wrap in struct to make lookups easier later
-            let motif_locations = MultipleMotifLocations::new(motif_locations);
-            (Some(motif_locations), filtered_tids)
+
+            Some(MotifLocationsLookup::from_paths(
+                fasta_fp, self.mask, None, motifs,
+            )?)
         } else {
-            (None, tids)
+            None
         };
 
         // start the actual work here
@@ -695,13 +656,13 @@ impl ModBamPileup {
             }
         }
 
-        let (snd, rx) = bounded(1_000); // todo figure out sane default for this?
+        let (snd, rx) = bounded(self.queue_size);
         let feeder = ReferenceIntervalsFeeder::new(
             reference_records,
             chunk_size,
             self.interval_size,
             combine_strands,
-            motif_locations,
+            motif_lookup,
             position_filter,
         )?;
 
@@ -726,7 +687,14 @@ impl ModBamPileup {
 
         std::thread::spawn(move || {
             pool.install(|| {
-                for multi_chrom_coords in feeder {
+                for multi_chrom_coords in feeder.into_iter()
+                    .inspect(|x| match x {
+                        Ok(_) => {},
+                        Err(e) => {
+                            error!("fetching sequence failed, {e}");
+                        }
+                    })
+                    .filter_map(|r| r.ok()) {
                     let genome_length_in_batch = multi_chrom_coords.iter()
                         .map(|x| x.total_length())
                         .sum::<u64>();
@@ -857,7 +825,7 @@ pub struct DuplexModBamPileup {
     motif: Option<Vec<String>>,
     /// Reference sequence in FASTA format.
     #[arg(long = "ref", alias = "reference", short = 'r')]
-    reference_fasta: Option<PathBuf>,
+    reference_fasta: PathBuf,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
     #[arg(long, alias = "log")]
@@ -887,6 +855,9 @@ pub struct DuplexModBamPileup {
         hide_short_help = true
     )]
     interval_size: u32,
+    /// Size of queue for writing records
+    #[arg(long, hide_short_help = true, default_value_t = 1000)]
+    queue_size: usize,
 
     /// Break contigs into chunks containing this many intervals (see
     /// `interval_size`). This option can be used to help prevent excessive
@@ -1147,12 +1118,12 @@ impl DuplexModBamPileup {
                 parse_per_mod_thresholds(raw_per_mod_thresholds)
             })
             .transpose()?;
-        let tids = get_targets(&header, region.as_ref());
+        let reference_records = get_targets(&header, region.as_ref());
         let position_filter = self
             .include_bed
             .as_ref()
             .map(|bed_fp| {
-                let chrom_to_tid = tids
+                let chrom_to_tid = reference_records
                     .iter()
                     .map(|reference_record| {
                         (reference_record.name.as_str(), reference_record.tid)
@@ -1273,44 +1244,12 @@ impl DuplexModBamPileup {
             .with_context(|| "failed to make threadpool")?;
 
         // put this into it's own function
-        let (motif_locations, reference_records) = {
-            let fasta_fp = self.reference_fasta.as_ref().ok_or(anyhow!(
-                "reference fasta is required for using --motif or --cpg \
-                 options"
-            ))?;
-            let names_to_tid = tids
-                .iter()
-                .map(|target| (target.name.as_str(), target.tid))
-                .collect::<HashMap<&str, u32>>();
-            let master_progress = MultiProgress::new();
-            if self.suppress_progress {
-                master_progress
-                    .set_draw_target(indicatif::ProgressDrawTarget::hidden());
-            }
-            let masked_seqs_to_tids = get_masked_sequences(
-                fasta_fp,
-                &names_to_tid,
-                self.mask,
-                &master_progress,
-            )?;
-            let motif_locations = MotifLocations::from_sequences(
-                regex_motif,
-                position_filter.as_ref(),
-                &masked_seqs_to_tids,
-                &master_progress,
-            )?;
-            let targets_with_hits = motif_locations.references_with_hits();
-            let filtered_tids = tids
-                .into_iter()
-                .filter(|ref_record| {
-                    targets_with_hits.contains(&ref_record.tid)
-                })
-                .collect::<Vec<ReferenceRecord>>();
-            // wrap in struct to make lookups easier later
-            let motif_locations =
-                MultipleMotifLocations::new(vec![motif_locations]);
-            (motif_locations, filtered_tids)
-        };
+        let motif_lookup = MotifLocationsLookup::from_paths(
+            &self.reference_fasta,
+            self.mask,
+            None,
+            vec![regex_motif],
+        )?;
 
         // start the actual work here
         let threshold_caller =
@@ -1382,13 +1321,13 @@ impl DuplexModBamPileup {
         }
 
         // from here down could also be it's own "Processor"
-        let (snd, rx) = bounded(1_000); // todo figure out sane default for this?
+        let (snd, rx) = bounded(self.queue_size); // todo figure out sane default for this?
         let feeder = ReferenceIntervalsFeeder::new(
             reference_records,
             chunk_size,
             self.interval_size,
             true, // must be true for duplex
-            Some(motif_locations),
+            Some(motif_lookup),
             position_filter,
         )?;
 
@@ -1413,7 +1352,14 @@ impl DuplexModBamPileup {
         let max_depth = self.max_depth;
 
         pool.spawn(move || {
-            for multi_chrom_coords in feeder {
+            for multi_chrom_coords in feeder
+                .inspect(|x| match x {
+                    Ok(_) => {},
+                    Err(e) => {
+                        error!("fetching sequence failed, {e}");
+                    }
+                })
+                .filter_map(|r| r.ok()) {
                 let genome_length_in_batch = multi_chrom_coords.iter()
                     .map(|x| x.total_length())
                     .sum::<u64>();
