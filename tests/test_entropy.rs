@@ -1,4 +1,4 @@
-use crate::common::{check_against_expected_text_file, run_modkit};
+use crate::common::run_modkit;
 
 mod common;
 

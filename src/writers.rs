@@ -14,6 +14,8 @@ use charming::element::{
 use charming::series::Bar;
 use charming::{Chart, HtmlRenderer};
 use derive_new::new;
+use gzp::deflate::Bgzf;
+use gzp::par::compress::{ParCompress, ParCompressBuilder};
 use itertools::Itertools;
 use log::{debug, info, warn};
 use prettytable::format::FormatBuilder;
@@ -506,35 +508,35 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
     }
 }
 
-pub struct TsvWriter<W: Write> {
-    buf_writer: BufWriter<W>,
+pub struct TsvWriter<W> {
+    writer: W,
 }
 
 impl<T: Write> TsvWriter<T> {
     pub fn write(&mut self, raw: &[u8]) -> std::io::Result<usize> {
-        self.buf_writer.write(raw)
+        self.writer.write(raw)
     }
 }
 
-impl TsvWriter<std::io::Sink> {
+impl TsvWriter<BufWriter<std::io::Sink>> {
     pub fn new_null() -> Self {
         let out = BufWriter::new(std::io::sink());
-        Self { buf_writer: out }
+        Self { writer: out }
     }
 }
 
-impl TsvWriter<Stdout> {
+impl TsvWriter<BufWriter<Stdout>> {
     pub fn new_stdout(header: Option<String>) -> Self {
         let out = BufWriter::new(std::io::stdout());
         if let Some(header) = header {
             println!("{header}");
         }
 
-        Self { buf_writer: out }
+        Self { writer: out }
     }
 }
 
-impl TsvWriter<File> {
+impl TsvWriter<BufWriter<File>> {
     pub fn new_path(
         path: &PathBuf,
         force: bool,
@@ -550,7 +552,7 @@ impl TsvWriter<File> {
         if let Some(header) = header {
             buf_writer.write(format!("{header}\n").as_bytes())?;
         }
-        Ok(Self { buf_writer })
+        Ok(Self { writer: buf_writer })
     }
 
     pub fn new_file(
@@ -563,9 +565,35 @@ impl TsvWriter<File> {
     }
 }
 
+impl TsvWriter<ParCompress<Bgzf>> {
+    pub fn new_gzip(
+        fp: &str,
+        force: bool,
+        threads: usize,
+        header: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let fp = Path::new(fp);
+        let out_fh = if force {
+            File::create(fp)?
+        } else {
+            File::create_new(fp).context("refusing to overwrite {fp:?}")?
+        };
+        let mut writer = ParCompressBuilder::<Bgzf>::new()
+            .num_threads(threads)
+            .unwrap()
+            .from_writer(out_fh);
+        if let Some(header) = header {
+            writer.write(header.as_bytes())?;
+            writer.write(&['\n' as u8])?;
+        }
+
+        Ok(Self { writer })
+    }
+}
+
 impl<W: Write> OutWriter<String> for TsvWriter<W> {
     fn write(&mut self, item: String) -> anyhow::Result<u64> {
-        self.buf_writer
+        self.writer
             .write(item.as_bytes())
             .map(|b| b as u64)
             .map_err(|e| anyhow!("{e}"))
@@ -644,7 +672,7 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
             item.total_reads_used
         ));
 
-        self.buf_writer.write(report.as_bytes())?;
+        self.writer.write(report.as_bytes())?;
         Ok(1)
     }
 }
@@ -917,11 +945,11 @@ impl OutWriter<SampledProbs> for MultiTableWriter {
     }
 }
 
-impl OutWriter<SampledProbs> for TsvWriter<Stdout> {
+impl OutWriter<SampledProbs> for TsvWriter<BufWriter<Stdout>> {
     fn write(&mut self, item: SampledProbs) -> AnyhowResult<u64> {
         let mut rows_written = 0u64;
         let thresholds_table = item.thresholds_table();
-        let n_written = thresholds_table.print(&mut self.buf_writer)?;
+        let n_written = thresholds_table.print(&mut self.writer)?;
         rows_written += n_written as u64;
         Ok(rows_written)
     }

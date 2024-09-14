@@ -1,4 +1,4 @@
-use crate::common::{check_against_expected_text_file, run_modkit};
+use crate::common::run_modkit;
 use anyhow::{anyhow, Context};
 use mod_kit::dmr::bedmethyl::BedMethylLine;
 use mod_kit::errs::RunError;
@@ -183,6 +183,7 @@ fn test_call_mods_keeps_all_mod_calls() {
 
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         extract_control_fp.to_str().unwrap(),
         "--force",
@@ -198,6 +199,7 @@ fn test_call_mods_keeps_all_mod_calls() {
     .unwrap();
     run_modkit(&[
         "extract",
+        "full",
         extract_call_mods_fp.to_str().unwrap(),
         extract_call_mods_fp_tsv.to_str().unwrap(),
         "--force",
@@ -271,7 +273,7 @@ fn test_call_mods_same_pileup() {
     .unwrap();
 
     let parse_bedmethyl_fp = |fp: &PathBuf| -> Vec<BedMethylLine> {
-        let mut reader = BufReader::new(File::open(fp).unwrap());
+        let reader = BufReader::new(File::open(fp).unwrap());
         reader
             .lines()
             .map(|l| BedMethylLine::parse(l.unwrap().as_str()).unwrap())

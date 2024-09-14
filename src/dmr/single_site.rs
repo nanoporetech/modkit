@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -849,7 +849,7 @@ impl DmrSegmenter for DummySegmenter {
 }
 
 struct HmmDmrSegmenter {
-    writer: TsvWriter<File>,
+    writer: TsvWriter<BufWriter<File>>,
     hmm: HmmModel,
     curr_region_scores: Vec<f64>,
     curr_region_positions: Vec<u64>,
