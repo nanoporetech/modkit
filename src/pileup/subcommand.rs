@@ -657,6 +657,11 @@ impl ModBamPileup {
         }
 
         let (snd, rx) = bounded(self.queue_size);
+        let reference_records = if let Some(pf) = position_filter.as_ref() {
+            pf.optimize_reference_records(reference_records, self.interval_size)
+        } else {
+            reference_records
+        };
         let feeder = ReferenceIntervalsFeeder::new(
             reference_records,
             chunk_size,
@@ -1322,6 +1327,11 @@ impl DuplexModBamPileup {
 
         // from here down could also be it's own "Processor"
         let (snd, rx) = bounded(self.queue_size); // todo figure out sane default for this?
+        let reference_records = if let Some(pf) = position_filter.as_ref() {
+            pf.optimize_reference_records(reference_records, self.interval_size)
+        } else {
+            reference_records
+        };
         let feeder = ReferenceIntervalsFeeder::new(
             reference_records,
             chunk_size,
