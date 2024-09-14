@@ -75,6 +75,7 @@ pub enum Commands {
     CallMods(CallMods),
     /// Extract read-level base modification information from a modBAM into a
     /// tab-separated values table.
+    #[clap(subcommand)]
     Extract(ExtractMods),
     /// Repair MM and ML tags in one bam with the correct tags from another. To
     /// use this command, both modBAMs _must_ be sorted by read name. The

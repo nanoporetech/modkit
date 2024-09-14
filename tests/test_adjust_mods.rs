@@ -1,12 +1,10 @@
 use crate::common::{parse_mod_profile, run_simple_summary};
 use anyhow::Context;
 use common::run_modkit;
-use log::{debug, info};
-use mod_kit::logging::init_logging;
 use mod_kit::mod_bam::parse_raw_mod_tags;
 use mod_kit::mod_base_code::{BaseState, DnaBase};
 use rust_htslib::{bam, bam::Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 mod common;
 
@@ -341,6 +339,7 @@ fn test_adjust_edge_filter() {
             .join("test_adjust_edge_filter_methyl_profile.tsv");
         run_modkit(&[
             "extract",
+            "full",
             adjusted_bam.to_str().unwrap(),
             methyl_profile_fp.to_str().unwrap(),
             "--force",

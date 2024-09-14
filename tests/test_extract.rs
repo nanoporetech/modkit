@@ -83,6 +83,12 @@ fn test_extract_help() {
     run_modkit(&["extract", "--help"])
         .context("modkit extract --help failed")
         .unwrap();
+    run_modkit(&["extract", "calls", "--help"])
+        .context("modkit extract calls --help failed")
+        .unwrap();
+    run_modkit(&["extract", "full", "--help"])
+        .context("modkit extract full --help failed")
+        .unwrap();
 }
 
 #[test]
@@ -90,6 +96,7 @@ fn test_extract_correct_output() {
     let out_fp = std::env::temp_dir().join("test_extract_correct_output.tsv");
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         out_fp.to_str().unwrap(),
         "-i",
@@ -115,6 +122,7 @@ fn test_extract_correct_output_with_ref() {
 
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         out_fp.to_str().unwrap(),
         "-i",
@@ -145,6 +153,7 @@ fn test_extract_duplex_correct_output() {
 
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/duplex_modbam.sorted.bam",
         out_fp_sorted.to_str().unwrap(),
         "--region",
@@ -155,6 +164,7 @@ fn test_extract_duplex_correct_output() {
 
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/duplex_modbam.bam",
         out_fp.to_str().unwrap(),
         "--region",
@@ -184,6 +194,7 @@ fn test_extract_include_sites() {
     let include_bed_fp = "tests/resources/CGI_ladder_3.6kb_ref_CG.bed";
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         out_fp.to_str().unwrap(),
         "-i",
@@ -215,6 +226,7 @@ fn test_extract_include_sites_bed3() {
     let include_bed_fp = "tests/resources/CGI_ladder_3.6kb_ref_CG_bed3.bed";
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         out_fp.to_str().unwrap(),
         "-i",
@@ -258,6 +270,7 @@ fn test_extract_include_sites_duplex_regression() {
     let include_bed_fp = "tests/resources/hg38_chr17_CG0_snip.bed";
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/duplex_modbam.sorted.bam",
         "--ignore-index",
         out_fp.to_str().unwrap(),
@@ -279,6 +292,7 @@ fn test_extract_exclude_sites() {
     let exclude_bed_fp = "tests/resources/CGI_ladder_3.6kb_ref_CG_exclude.bed";
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         out_fp.to_str().unwrap(),
         "-i",
@@ -313,6 +327,7 @@ fn test_pileup_extract_invert_edge_filter() {
         std::env::temp_dir().join("test_pileup_extract_invert_edge_filter.tsv");
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         out_fp.to_str().unwrap(),
         "--edge-filter",
@@ -338,6 +353,7 @@ fn test_extract_unmapped_bam_correct_output() {
         .join("test_extract_unmapped_bam_correct_output_unmapped.tsv");
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.unmapped.bam",
         out_fp_unmapped.to_str().unwrap(),
         "-i",
@@ -348,6 +364,7 @@ fn test_extract_unmapped_bam_correct_output() {
 
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         out_fp.to_str().unwrap(),
         "-i",
@@ -386,6 +403,7 @@ fn test_extract_collapse_correct_output() {
         std::env::temp_dir().join("test_extract_collapse_correct_output.tsv");
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         out_fp.to_str().unwrap(),
         "--ignore",
@@ -414,6 +432,7 @@ fn test_extract_implicit_mod_calls() {
         std::env::temp_dir().join("test_extract_implicit_mod_calls.tsv");
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/implicit_mod_tags.bam",
         out_fp.to_str().unwrap(),
         "--force",
@@ -453,6 +472,7 @@ fn test_extract_cpg_motif() {
 
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/2_reads_all_context.bam",
         extract_tsv.to_str().unwrap(),
         "--cpg",
@@ -481,9 +501,8 @@ fn test_extract_calls_regression() {
         std::env::temp_dir().join("test_extract_calls_regression.tsv");
     run_modkit(&[
         "extract",
+        "calls",
         "tests/resources/2_reads_all_context.bam",
-        "null",
-        "--read-calls",
         extract_tsv.to_str().unwrap(),
         "--ref",
         "tests/resources/CGI_ladder_3.6kb_ref.fa",
@@ -505,14 +524,24 @@ fn test_extract_supplementary_secondary() {
 
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/supplementary_and_secondary_read.bam",
         extract_tsv.to_str().unwrap(),
-        "--read-calls",
+        "--force",
+        "--allow-non-primary",
+    ])
+    .unwrap();
+
+    run_modkit(&[
+        "extract",
+        "calls",
+        "tests/resources/supplementary_and_secondary_read.bam",
         calls_tsv.to_str().unwrap(),
         "--force",
         "--allow-non-primary",
     ])
     .unwrap();
+
     check_against_expected_text_file(
         extract_tsv.to_str().unwrap(),
         "tests/resources/test_supplementary_extract.tsv",
@@ -529,6 +558,7 @@ fn test_extract_region_correct_output() {
         std::env::temp_dir().join("test_extract_region_correct_output");
     run_modkit(&[
         "extract",
+        "full",
         "tests/resources/bc_anchored_10_reads.sorted.bam",
         out_fp.to_str().unwrap(),
         "--ignore",
