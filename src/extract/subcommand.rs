@@ -474,6 +474,16 @@ impl ExtractMods {
                         );
                         let reference_records =
                             get_targets(reader.header(), region);
+                        let reference_records =
+                            if let Some(pf) = include_positions.as_ref() {
+                                pf.optimize_reference_records(
+                                    reference_records,
+                                    self.interval_size,
+                                )
+                            } else {
+                                reference_records
+                            };
+
                         let feeder = ReferenceIntervalsFeeder::new(
                             reference_records,
                             (self.threads as f32 * 1.5f32).floor() as usize,
