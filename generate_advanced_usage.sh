@@ -15,13 +15,43 @@ echo "\`\`\`text" >> ${doc_file}
 ./target/debug/modkit --help >> ${doc_file}
 echo "\`\`\`" >> ${doc_file}
 
-subcommands=("pileup" "adjust-mods" "update-tags" "sample-probs" "summary" "motif-bed" "call-mods" "extract" "repair" "validate" "pileup-hemi" "find-motifs" "entropy")
+subcommands=(
+  "pileup"
+  "adjust-mods"
+  "update-tags"
+  "sample-probs"
+  "summary"
+  "call-mods"
+  "repair"
+  "validate"
+  "pileup-hemi"
+  "entropy"
+  "localise"
+  "stats"
+)
+
 for cmd in "${subcommands[@]}"
 do
   echo "" >> ${doc_file}
   echo "## ${cmd}" >> ${doc_file}
   echo "\`\`\`text" >> ${doc_file}
   ./target/debug/modkit $cmd --help >> ${doc_file}
+  echo "\`\`\`" >> ${doc_file}
+done
+
+for subcommand in "full" "calls"; do
+  echo "" >> ${doc_file}
+  echo "## extract ${subcommand}" >> ${doc_file}
+  echo "\`\`\`text" >> ${doc_file}
+  ./target/debug/modkit extract $subcommand --help >> ${doc_file}
+  echo "\`\`\`" >> ${doc_file}
+done
+
+for subcommand in "bed" "search" "evaluate" "refine"; do
+  echo "" >> ${doc_file}
+  echo "## motif ${subcommand}" >> ${doc_file}
+  echo "\`\`\`text" >> ${doc_file}
+  ./target/debug/modkit motif $subcommand --help >> ${doc_file}
   echo "\`\`\`" >> ${doc_file}
 done
 

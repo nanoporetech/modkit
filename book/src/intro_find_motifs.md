@@ -8,7 +8,7 @@ For example, to run the command with default settings (recommended):
 bedmethyl=/path/to/pileup.bed
 ref=/path/to/reference.fasta
 
-modkit find-motifs \
+modkit motif search \
   -i ${bedmethyl} \
   -r ${ref} \
   -o ./motifs.tsv \

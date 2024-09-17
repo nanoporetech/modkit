@@ -77,7 +77,7 @@ impl LocalizedModCounts {
                             *offset,
                             info.n_valid,
                             info.n_mod,
-                            info.frac_modified()
+                            info.percent_modified()
                         ]
                     })
                     .for_each(|row| {
@@ -196,13 +196,13 @@ impl GenomeRegion {
     pub(super) fn into_localized_mod_counts(
         self,
         index: &HtsTabixHandler<BedMethylLine>,
-        strand_rule: StrandRule,
+        strand_rule: Option<StrandRule>,
         stranded_features: Option<StrandedFeatures>,
     ) -> anyhow::Result<LocalizedModCounts> {
         let bedmethyl_records = index.fetch_region(
             &self.chrom,
             &(self.start..self.end),
-            strand_rule,
+            strand_rule.unwrap_or(self.strand),
         )?;
         let anchor_point = self.midpoint();
         let loc_counts = bedmethyl_records

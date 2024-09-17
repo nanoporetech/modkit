@@ -23,7 +23,7 @@ use crate::dmr::subcommands::BedMethylDmr;
 use crate::entropy::subcommand::MethylationEntropy;
 use crate::errs::{InputError, RunError};
 use crate::extract::subcommand::ExtractMods;
-use crate::find_motifs::subcommand::EntryMotifs;
+use crate::find_motifs::subcommand::{EntryFindMotifs, EntryMotifs};
 use crate::localise::subcommand::EntryLocalize;
 use crate::logging::init_logging;
 use crate::mod_bam::{
@@ -103,14 +103,19 @@ pub enum Commands {
     /// containing the ground truth modified base status at reference
     /// positions.
     Validate(ValidateFromModbam),
-    /// Find sequence motifs in a bedMethyl pileup that are enriched for base
-    /// modification.
+    #[clap(hide = true)]
+    FindMotifs(EntryFindMotifs),
+    /// Various commands to search for, evaluate, or further regine sequence
+    /// motifs enriched for base modification. Also can generate BED files of
+    /// motif locations.
     #[clap(subcommand)]
     Motif(EntryMotifs),
     /// Use a mod-BAM to calculate methylation entropy over genomic windows.
     Entropy(MethylationEntropy),
-    /// Run localise
+    /// Investigate patterns of base modifications, by aggregating pileup
+    /// counts "localised" around genomic features of interest.
     Localise(EntryLocalize),
+    /// Calculate base modification levels over entire regions.
     Stats(EntryStats),
 }
 
@@ -128,6 +133,7 @@ impl Commands {
             Self::Dmr(x) => x.run(),
             Self::PileupHemi(x) => x.run(),
             Self::Validate(x) => x.run(),
+            Self::FindMotifs(x) => x.run(),
             Self::Motif(x) => x.run(),
             Self::Entropy(x) => x.run(),
             Self::Localise(x) => x.run(),

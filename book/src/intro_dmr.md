@@ -96,6 +96,9 @@ The full schema is described [below](#differential-methylation-output-format).
 ## 2. Perform differential methylation detection on all pairs of samples over regions from the genome.
 The `modkit dmr multi` command runs all pairwise comparisons for more than two samples for all regions provided in the regions BED file.
 The preparation of the data is identical to that for the [previous section](#preparing-the-input-data) (for each sample, of course).
+
+**Note** that if multiple samples are given the same name, they will be combined.
+
 An example command could be:
 
 ```bash

@@ -821,13 +821,13 @@ impl GenomeRegion {
     }
 }
 
-#[derive(new)]
+#[derive(new, Debug)]
 pub(crate) struct ModPositionInfo<T> {
     pub n_valid: T,
     pub n_mod: T,
 }
 
-impl<T: num_traits::Num + num_traits::cast::AsPrimitive<f32>>
+impl<T: num_traits::Num + num_traits::cast::AsPrimitive<f32> + Debug>
     ModPositionInfo<T>
 {
     pub(crate) fn frac_modified(&self) -> f32 {
@@ -835,7 +835,7 @@ impl<T: num_traits::Num + num_traits::cast::AsPrimitive<f32>>
             0f32
         } else {
             let n_mod: f32 = self.n_mod.as_();
-            let n_valid: f32 = self.n_mod.as_();
+            let n_valid: f32 = self.n_valid.as_();
             n_mod / n_valid
         }
     }
@@ -880,6 +880,7 @@ mod utils_tests {
     use anyhow::Context;
     use rust_htslib::bam;
     use rust_htslib::bam::Read;
+    use similar_asserts::assert_eq;
 
     use crate::util::{
         get_query_name_string, get_stringable_aux, parse_partition_tags,
@@ -985,5 +986,16 @@ mod utils_tests {
             name: Some("merged_peak1".to_string()),
             strand: StrandRule::Positive,
         };
+        assert_eq!(gr, expected);
+        let line = "chr20\t9838623\t9839213\tCpG: 47\n";
+        let gr = GenomeRegion::parse_unstranded_bed_line(line).unwrap();
+        let expected = GenomeRegion {
+            chrom: "chr20".to_string(),
+            start: 9838623,
+            end: 9839213,
+            name: Some("CpG: 47".to_string()),
+            strand: StrandRule::Both,
+        };
+        assert_eq!(gr, expected);
     }
 }

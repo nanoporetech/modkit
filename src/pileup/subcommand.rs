@@ -232,11 +232,11 @@ pub struct ModBamPileup {
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
     motif: Option<Vec<String>>,
     /// Only output counts at CpG motifs. Requires a reference sequence to be
-    /// provided.
+    /// provided as well as FAI index.
     #[arg(long, requires = "reference_fasta", default_value_t = false)]
     cpg: bool,
     /// Reference sequence in FASTA format. Required for motif (e.g. CpG)
-    /// filtering.
+    /// filtering, requires FAI fasta index to be pre-generated.
     #[arg(long = "ref", alias = "reference", short = 'r')]
     reference_fasta: Option<PathBuf>,
     /// Respect soft masking in the reference FASTA.
