@@ -515,7 +515,8 @@ impl PairwiseDmr {
 #[command(arg_required_else_help = true)]
 pub struct MultiSampleDmr {
     /// Two or more named samples to compare. Two arguments are required <path>
-    /// <name>. This option should be repeated at least two times.
+    /// <name>. This option should be repeated at least two times. When two
+    /// samples have the same name, they will be combined.
     #[arg(short = 's', long = "sample", num_args = 2)]
     samples: Vec<String>,
     /// BED file of regions over which to compare methylation levels. Should be

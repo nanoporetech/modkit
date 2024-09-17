@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.4.0]
+### Adds
+- [motif] Add `search` and `evaluate` subcommands under `motif` command hierarchy.
+- [stats, localize] Add `stats` and `localize` commands, see documentation for details.
+- [dmr, multi] Combine samples when they have the same name.
+- [extract] Add option to emit bgzf-compressed output.
+### Fixes
+- [validate] Only consider modification codes attributed to the primary sequence base being validated.
+- [pileup, extract] Improve iteration over regions when `--include-bed` is provided.
+### Changes
+- [dmr] Use `htslib` `tbx` module for reading tabix index instead of `noodles`.
+- [pileup] Require `.fai` FASTA index when a reference is provided, load only sections of reference that are necessary.
+- [extract] Separate `calls` and `full` commands to produce the read calls, and full tables, respectively.
+- [validate] Change "any-mod" code from {`A`, `C`, `G`, `T`} to `*`.
+
+
 ## [v0.3.3]
 ### Fixes
 - [sample-probs, summary, pileup] Refactor sampling algorithm so that it will not over-sample reads leading to excessive memory usage.

@@ -61,7 +61,7 @@ pub struct EntryFindMotifs {
     out_table: Option<PathBuf>,
     /// Optionally output machine parsable table with known motif
     /// modification frequencies that were not found during search.
-    #[arg(long = "known-motifs-table", requires = "known_motifs")]
+    #[arg(long = "eval-motifs-table")]
     out_known_table: Option<PathBuf>,
     #[clap(flatten)]
     refine_args: RefineArgs,
@@ -176,6 +176,16 @@ impl EntryFindMotifs {
         if self.init_context_size.len() != 2 {
             bail!("init-context-size must be 2 elements")
         }
+        if self.out_known_table.is_some() {
+            if self.known_motifs.is_none() && self.known_motifs_table.is_none()
+            {
+                bail!(
+                    "--eval-motifs-table requires input known motifs with \
+                     --known-motif and/or --known-motifs-table"
+                )
+            }
+        }
+
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.input_args.threads)
             .build()?;

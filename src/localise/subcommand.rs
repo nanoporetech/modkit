@@ -62,8 +62,8 @@ pub struct EntryLocalize {
     /// "opposite" strand.
     #[arg(short = 's', long)]
     stranded: Option<StrandedFeatures>,
-    /// Only use bedMethyl records from a particular strand, default is to use
-    /// both strands.
+    /// Force use bedMethyl records from a particular strand, default is to use
+    /// the strand as given in the BED file (will use BOTH for BED3).
     #[arg(long)]
     stranded_features: Option<StrandRule>,
     /// Minimum valid coverage to use a bedMethyl record
@@ -81,6 +81,7 @@ pub struct EntryLocalize {
     /// Number of threads to use.
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
+    /// Force overwrite of existing output file.
     #[arg(long, short = 'f', default_value_t = false)]
     force: bool,
     #[arg(
@@ -247,10 +248,6 @@ impl EntryLocalize {
         let successes =
             multi_progress.add(get_master_progress_bar(genome_regions.len()));
 
-        let strand_rule = self
-            .stranded_features
-            .map(|s| StrandRule::from(s))
-            .unwrap_or(StrandRule::Both);
         let stranded_features = self.stranded;
         let counts = pool.install(|| {
             genome_regions
@@ -259,7 +256,7 @@ impl EntryLocalize {
                 .map(|gr| {
                     gr.into_localized_mod_counts(
                         &tabix_index,
-                        strand_rule,
+                        self.stranded_features,
                         stranded_features,
                     )
                 })

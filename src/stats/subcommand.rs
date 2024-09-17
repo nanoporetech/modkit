@@ -26,16 +26,25 @@ pub struct EntryStats {
     /// associated Tabix index. The tabix index will be assumed to be
     /// $this_file.tbi
     in_bedmethyl: PathBuf,
+    /// BED file of regions to aggregate base modification over.
     #[arg(long)]
     regions: PathBuf,
+    /// Specify which base modification codes to use. Default will report
+    /// information on all base modification codes encountered.
     #[arg(long, short = 'c', alias = "codes", value_delimiter = ',', action=clap::ArgAction::Append)]
     mod_codes: Option<Vec<String>>,
+    /// Only use records with at least this much valid coverage.
     #[arg(short = 'm', long, alias = "min-cov", default_value_t = 1)]
     min_coverage: u64,
+    /// Specify the output file to write the results table.
     #[arg(long, short = 'o', alias = "out")]
     out_table: PathBuf,
+    /// Force overwrite the output file.
     #[arg(long, default_value_t = false)]
     force: bool,
+    /// Don't add the header describing the columns to the output
+    #[arg(long, default_value_t = false)]
+    no_header: bool,
     /// Specify a file to write debug logs to.
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
@@ -66,7 +75,7 @@ impl EntryStats {
             .peekable();
         let parser = match reader.peek() {
             Some(Ok(l)) => {
-                let num_fields = l.split_whitespace().count();
+                let num_fields = l.split('\t').count();
                 if num_fields <= 4 {
                     |l: &str| GenomeRegion::parse_unstranded_bed_line(l)
                 } else {
@@ -172,7 +181,9 @@ impl EntryStats {
         }
 
         let mut table = prettytable::Table::new();
-        table.set_titles(MethylationStats::header(&mod_codes));
+        if !self.no_header {
+            table.set_titles(MethylationStats::header(&mod_codes));
+        }
         stats.into_iter().for_each(|x| {
             table.add_row(x.into_row(&mod_codes));
         });

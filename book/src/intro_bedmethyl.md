@@ -12,7 +12,7 @@ for details.
 
 ## Basic usage
 
-In its simplest form `modkit` creates a bedMethyl file using the following:
+In its simplest form `modkit pileup` creates a bedMethyl file using the following:
 
 ```text
 modkit pileup path/to/reads.bam output/path/pileup.bed --log-filepath pileup.log
@@ -35,6 +35,8 @@ in the reference:
 ```bash
 modkit pileup path/to/reads.bam output/path/pileup.bed --cpg --ref path/to/reference.fasta
 ```
+
+**Note** that when passing a reference with `--ref` a FASTA index `.fai` file is required to be at `path/to/reference.fasta.fai`.
 
 To restrict output to only certain CpGs, pass the `--include-bed` option with the CpGs to be used, 
 see [this page](./intro_include_bed.md) for more details.
@@ -180,6 +182,5 @@ CG->CH substitution such that no modification call was produced by the basecalle
 
 ## Performance considerations
 
-The `--interval-size`, `--threads`, `--chunk-size`, and `--max-depth` parameters can be used to tweak the parallelism and 
-memory consumption of `modkit pileup`. The defaults should be suitable for most use cases, for more details see the
-[advanced usage](./advanced_usage.md) and [performance considerations](./perf_considerations.md) sections.
+The `--interval-size`, `--threads`, `--chunk-size`, and `--max-depth` parameters can be used to tweak the parallelism and memory consumption of `modkit pileup`.
+The defaults should be suitable for most use cases, for more details see [performance considerations](./perf_considerations.md) sections.

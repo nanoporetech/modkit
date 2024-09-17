@@ -1,8 +1,7 @@
 # Extracting base modification information
 
-The `modkit extract` sub-command will produce a table containing the base modification probabilities, 
-the read sequence context, and optionally aligned reference information.
-For `extract`, if a correct `MN` tag is found, secondary and supplementary alignments may be output with the `--allow-non-primary` flag. 
+The `modkit extract full` sub-commands will produce a table containing the base modification probabilities, the read sequence context, and optionally aligned reference information.
+For `extract full` and `extract calls`, if a correct `MN` tag is found, secondary and supplementary alignments may be output with the `--allow-non-primary` flag. 
 See [troubleshooting](./troubleshooting.md) for details.
 
 The table will by default contain unmapped sections of the read (soft-clipped sections, for example). 
@@ -13,7 +12,7 @@ the size of the BAM). You may want to either use the `--num-reads` option, the `
 pre-filter the modBAM ahead of time. You can also stream the output to stdout by setting the output to `-`
 or `stdout` and filter the columns before writing to disk.
 
-## Description of output table
+## Description of output table for `extract full`
 
 | column | name                  | description                                                                     | type |
 |--------|-----------------------|---------------------------------------------------------------------------------|------|
@@ -38,11 +37,10 @@ or `stdout` and filter the columns before writing to disk.
 | 19     | flag                  | FLAG from alignment record                                                      | str  |
 
 
-# Tabulating base modification _calls_ for each read position
-Passing `--read-calls <file-path>` option will generate a table of read-level base modification calls using the 
-same [thresholding](./filtering.md) algorithm employed by `modkit pileup`. The resultant table has, for each read,
-one row for each base modification call in that read. If a base is called as modified then `call_code` will be the 
-code in the `MM` tag. If the base is called as canonical the `call_code` will be `-` (`A`, `C`, `G`, and `T` are
+# Tabulating base modification _calls_ for each read position with `extract calls`
+The `modkit extract calls` command will generate a table of read-level base modification calls using the same [thresholding](./filtering.md) algorithm employed by `modkit pileup`.
+The resultant table has, for each read, one row for each base modification call in that read.
+If a base is called as modified then `call_code` will be the code in the `MM` tag. If the base is called as canonical the `call_code` will be `-` (`A`, `C`, `G`, and `T` are
 reserved for "any modification"). The full schema of the table is below:
 
 | column | name                  | description                                                                     | type |
@@ -88,9 +86,9 @@ For secondary and supplementary alignments, soft-clipped positions are not repea
 
 ## Example usages:
 
-### Extract a table from an aligned and indexed BAM 
+### Extract a table of base modification probabilities from an aligned and indexed BAM 
 ```
-modkit extract <input.bam> <output.tsv> 
+modkit extract full <input.bam> <output.tsv> 
 ```
 If the index `input.bam.bai` can be found, intervals along the aligned genome can be performed
 in parallel.
@@ -98,34 +96,30 @@ in parallel.
 ### Extract a table from a region of a large modBAM
 The below example will extract reads from only chr20, and include reference sequence context
 ```
-modkit extract <intput.bam> <output.tsv> --region chr20 --ref <ref.fasta>
+modkit extract full <intput.bam> <output.tsv> --region chr20 --ref <ref.fasta>
 ```
 
 ### Extract only sites aligned to a CG motif
 ```
-modkit motif-bed <reference.fasta> CG 0 > CG_motifs.bed
-modkit extract <in.bam> <out.tsv> --ref <ref.fasta> --include-bed CG_motifs.bed
+modkit motif bed <reference.fasta> CG 0 > CG_motifs.bed
+modkit extract full <in.bam> <out.tsv> --ref <ref.fasta> --include-bed CG_motifs.bed
 ```
 
 ### Extract only sites that are at least 50 bases from the ends of the reads
 ```
-modkit extract <in.bam> <out.tsv> --edge-filter 50
+modkit extract full <in.bam> <out.tsv> --edge-filter 50
 ```
 
 ### Extract read-level base modification calls
-```
-modkit extract <input.bam> null --read-calls <calls.tsv>
-```
-Using "null" in the place of the normal output will direct the normal extract output
-to /dev/null, to keep this output specify a file or `-` for standard out.
 
 ```
-modkit extract <input.bam> <output.tsv> --read-calls <calls.tsv>
+modkit extract calls <input.bam> <calls.tsv>
 ```
+
 Use `--allow-non-primary` to get secondary and supplementary mappings in the output.
+
 ```
-modkit extract <input.bam> <output.tsv> --read-calls <calls.tsv> --allow-non-primary
+modkit extract calls <input.bam> <output.tsv> --allow-non-primary
 ```
 
-
-See the help string and/or [advanced_usage](./advanced_usage.md) for more details.
+See the help string and/or [advanced_usage](./advanced_usage.md) for more details and [performace considerations](./perf_considerations.m) if you encounter issues with memory usage.
