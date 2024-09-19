@@ -1,0 +1,251 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Evaluate and refine a table of known motifs - Modkit</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="custom.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quick_start.html"><strong aria-hidden="true">1.</strong> Quick Start guides</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_bedmethyl.html"><strong aria-hidden="true">1.1.</strong> Constructing bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_pileup_hemi.html"><strong aria-hidden="true">1.2.</strong> Make hemi-methylation bedMethyl tables</a></li><li class="chapter-item expanded "><a href="intro_adjust.html"><strong aria-hidden="true">1.3.</strong> Updating and adjusting MM tags</a></li><li class="chapter-item expanded "><a href="intro_sample_probs.html"><strong aria-hidden="true">1.4.</strong> Inspecting base modification probabilities</a></li><li class="chapter-item expanded "><a href="intro_summary.html"><strong aria-hidden="true">1.5.</strong> Summarizing a modBAM</a></li><li class="chapter-item expanded "><a href="intro_stats.html"><strong aria-hidden="true">1.6.</strong> Calculating modification statistics in regions</a></li><li class="chapter-item expanded "><a href="intro_call_mods.html"><strong aria-hidden="true">1.7.</strong> Calling mods in a modBAM</a></li><li class="chapter-item expanded "><a href="intro_edge_filter.html"><strong aria-hidden="true">1.8.</strong> Removing modification calls at the ends of reads</a></li><li class="chapter-item expanded "><a href="intro_repair.html"><strong aria-hidden="true">1.9.</strong> Repair MM/ML tags on trimmed reads</a></li><li class="chapter-item expanded "><a href="intro_motif.html"><strong aria-hidden="true">1.10.</strong> Working with sequence motifs</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="intro_motif_bed.html"><strong aria-hidden="true">1.10.1.</strong> Making a motif BED file</a></li><li class="chapter-item expanded "><a href="intro_find_motifs.html"><strong aria-hidden="true">1.10.2.</strong> Find highly modified motif sequences</a></li><li class="chapter-item expanded "><a href="evaluate_motif.html" class="active"><strong aria-hidden="true">1.10.3.</strong> Evaluate and refine a table of known motifs</a></li></ol></li><li class="chapter-item expanded "><a href="intro_extract.html"><strong aria-hidden="true">1.11.</strong> Extracting read information to a table</a></li><li class="chapter-item expanded "><a href="intro_localize.html"><strong aria-hidden="true">1.12.</strong> Investigating patterns with localise</a></li><li class="chapter-item expanded "><a href="intro_dmr.html"><strong aria-hidden="true">1.13.</strong> Perform differential methylation scoring</a></li><li class="chapter-item expanded "><a href="intro_validate.html"><strong aria-hidden="true">1.14.</strong> Validate ground truth results</a></li><li class="chapter-item expanded "><a href="intro_entropy.html"><strong aria-hidden="true">1.15.</strong> Calculating methylation entropy</a></li><li class="chapter-item expanded "><a href="intro_include_bed.html"><strong aria-hidden="true">1.16.</strong> Narrow output to specific positions</a></li></ol></li><li class="chapter-item expanded "><a href="advanced_usage.html"><strong aria-hidden="true">2.</strong> Extended subcommand help</a></li><li class="chapter-item expanded "><a href="troubleshooting.html"><strong aria-hidden="true">3.</strong> Troubleshooting</a></li><li class="chapter-item expanded "><a href="faq.html"><strong aria-hidden="true">4.</strong> Frequently asked questions</a></li><li class="chapter-item expanded "><a href="limitations.html"><strong aria-hidden="true">5.</strong> Current limitations</a></li><li class="chapter-item expanded "><a href="perf_considerations.html"><strong aria-hidden="true">6.</strong> Performance considerations</a></li><li class="chapter-item expanded "><a href="algo_details.html"><strong aria-hidden="true">7.</strong> Algorithm details</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering.html"><strong aria-hidden="true">7.1.</strong> Pass/fail base modification calls</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="filtering_details.html"><strong aria-hidden="true">7.1.1.</strong> Threshold examples</a></li><li class="chapter-item expanded "><a href="filtering_numeric_details.html"><strong aria-hidden="true">7.1.2.</strong> Numeric details</a></li></ol></li><li class="chapter-item expanded "><a href="dmr_scoring_details.html"><strong aria-hidden="true">7.2.</strong> DMR model and scoring details</a></li><li class="chapter-item expanded "><a href="collapse.html"><strong aria-hidden="true">7.3.</strong> Ignoring and combining calls</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Modkit</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="evaluate-a-table-of-known-motifs"><a class="header" href="#evaluate-a-table-of-known-motifs">Evaluate a table of known motifs</a></h1>
+<p>The <code>modkit search</code> command has an option to provide any number of known motifs with <code>--know-motif</code>.
+If you already have a list of candidate motifs (e.f. from a previous run of <code>modkit motif search</code>) you can check these motifs quickly against a bedMethyl table with <code>modkit motif evaluate</code>.</p>
+<pre><code class="language-bash">modkit motif evaluate -i ${bedmethyl} --known-motifs-table motifs.tsv -r ${ref}
+</code></pre>
+<p>Similarly, the search <a href="./intro_find_motifs.html#simple-description-of-the-search-algorithm">algorithm</a> can be run using known motifs as seeds:</p>
+<pre><code class="language-bash">modkit motif refine -i ${bedmethyl} --known-motifs-table motifs.tsv -r ${ref}
+</code></pre>
+<p>The output tables to both of these commands have the same schema:</p>
+<div class="table-wrapper"><table><thead><tr><th>column</th><th>name</th><th>description</th><th>type</th></tr></thead><tbody>
+<tr><td>1</td><td>mod_code</td><td>code specifying the modification found in the motif</td><td>str</td></tr>
+<tr><td>2</td><td>motif</td><td>sequence of identified motif using <a href="https://www.bioinformatics.org/sms/iupac.html">IUPAC</a> codes</td><td>str</td></tr>
+<tr><td>3</td><td>offset</td><td>0-based offset into the motif sequence of the modified base</td><td>int</td></tr>
+<tr><td>4</td><td>frac_mod</td><td>fraction of time this sequence is found in the <em>high modified</em> set col-5 / (col-5 + col-6)</td><td>float</td></tr>
+<tr><td>5</td><td>high_count</td><td>number of occurances of this sequence in the <em>high-modified</em> set</td><td>int</td></tr>
+<tr><td>6</td><td>low_count</td><td>number of occurances of this sequence in the <em>low-modified</em> set</td><td>int</td></tr>
+<tr><td>7</td><td>mid_count</td><td>number of occurances of this sequence in the <em>mid-modified</em> set</td><td>int</td></tr>
+<tr><td>8</td><td>log_odds</td><td>log2 odds of the motif being in the high-modified set</td><td>int</td></tr>
+</tbody></table>
+</div>
+<p>In the human-readable table columns (1) and (2) are merged to show the modification code in the motif sequence context, the rest of the columns are the same as the machine-readable table.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="intro_find_motifs.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="intro_extract.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="intro_find_motifs.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="intro_extract.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>
