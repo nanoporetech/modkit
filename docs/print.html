@@ -840,7 +840,7 @@ Decreasing <code>--min-sites</code> along with <code>--skip-search</code> may be
 <p>Also consider the additional steps in <a href="./perf_considerations.html#parallelism-in-find-motifs-when-to---skip-search">performance considerations.</a></p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="evaluate-a-table-of-known-motifs"><a class="header" href="#evaluate-a-table-of-known-motifs">Evaluate a table of known motifs</a></h1>
 <p>The <code>modkit search</code> command has an option to provide any number of known motifs with <code>--know-motif</code>.
-If you already have a list of candidate motifs (e.f. from a previous run of <code>modkit motif search</code>) you can check these motifs quickly against a bedMethyl table with <code>modkit motif evaluate</code>.</p>
+However, if you already have a list of candidate motifs (e.g. from a previous run of <code>modkit motif search</code>) you can check these motifs quickly against a bedMethyl table with <code>modkit motif evaluate</code>.</p>
 <pre><code class="language-bash">modkit motif evaluate -i ${bedmethyl} --known-motifs-table motifs.tsv -r ${ref}
 </code></pre>
 <p>Similarly, the search <a href="./intro_find_motifs.html#simple-description-of-the-search-algorithm">algorithm</a> can be run using known motifs as seeds:</p>
@@ -938,10 +938,10 @@ If the <code>--mapped-only</code> flag is used, soft clipped sections of the rea
 For secondary and supplementary alignments, soft-clipped positions are not repeated. See <a href="./advanced_usage.html">advanced usage</a> for more details.</p>
 <h2 id="example-usages-2"><a class="header" href="#example-usages-2">Example usages:</a></h2>
 <h3 id="extract-a-table-of-base-modification-probabilities-from-an-aligned-and-indexed-bam"><a class="header" href="#extract-a-table-of-base-modification-probabilities-from-an-aligned-and-indexed-bam">Extract a table of base modification probabilities from an aligned and indexed BAM</a></h3>
-<pre><code>modkit extract full &lt;input.bam&gt; &lt;output.tsv&gt; 
+<pre><code>modkit extract full &lt;input.bam&gt; &lt;output.tsv&gt; [--bgzf]
 </code></pre>
 <p>If the index <code>input.bam.bai</code> can be found, intervals along the aligned genome can be performed
-in parallel.</p>
+in parallel. The optional <code>--bgzf</code> flag will emit compressed output.</p>
 <h3 id="extract-a-table-from-a-region-of-a-large-modbam"><a class="header" href="#extract-a-table-from-a-region-of-a-large-modbam">Extract a table from a region of a large modBAM</a></h3>
 <p>The below example will extract reads from only chr20, and include reference sequence context</p>
 <pre><code>modkit extract full &lt;intput.bam&gt; &lt;output.tsv&gt; --region chr20 --ref &lt;ref.fasta&gt;
@@ -959,7 +959,7 @@ modkit extract full &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --inc
 <p>Use <code>--allow-non-primary</code> to get secondary and supplementary mappings in the output.</p>
 <pre><code>modkit extract calls &lt;input.bam&gt; &lt;output.tsv&gt; --allow-non-primary
 </code></pre>
-<p>See the help string and/or <a href="./advanced_usage.html">advanced_usage</a> for more details and <a href="./perf_considerations.m">performace considerations</a> if you encounter issues with memory usage.</p>
+<p>See the help string and/or <a href="./advanced_usage.html">advanced_usage</a> for more details and <a href="./perf_considerations.html">performace considerations</a> if you encounter issues with memory usage.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="investigating-patterns-with-localise"><a class="header" href="#investigating-patterns-with-localise">Investigating patterns with localise</a></h1>
 <p>One a bedMethyl table has been created, <code>modkit localise</code> will use the pileup and calculate per-base modification aggregate information around genomic features of interest.
 For example, we can investigate base modification patterns around CTCF binding sites.</p>

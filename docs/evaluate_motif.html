@@ -178,7 +178,7 @@
                     <main>
                         <h1 id="evaluate-a-table-of-known-motifs"><a class="header" href="#evaluate-a-table-of-known-motifs">Evaluate a table of known motifs</a></h1>
 <p>The <code>modkit search</code> command has an option to provide any number of known motifs with <code>--know-motif</code>.
-If you already have a list of candidate motifs (e.f. from a previous run of <code>modkit motif search</code>) you can check these motifs quickly against a bedMethyl table with <code>modkit motif evaluate</code>.</p>
+However, if you already have a list of candidate motifs (e.g. from a previous run of <code>modkit motif search</code>) you can check these motifs quickly against a bedMethyl table with <code>modkit motif evaluate</code>.</p>
 <pre><code class="language-bash">modkit motif evaluate -i ${bedmethyl} --known-motifs-table motifs.tsv -r ${ref}
 </code></pre>
 <p>Similarly, the search <a href="./intro_find_motifs.html#simple-description-of-the-search-algorithm">algorithm</a> can be run using known motifs as seeds:</p>
