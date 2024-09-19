@@ -255,10 +255,10 @@ If the <code>--mapped-only</code> flag is used, soft clipped sections of the rea
 For secondary and supplementary alignments, soft-clipped positions are not repeated. See <a href="./advanced_usage.html">advanced usage</a> for more details.</p>
 <h2 id="example-usages"><a class="header" href="#example-usages">Example usages:</a></h2>
 <h3 id="extract-a-table-of-base-modification-probabilities-from-an-aligned-and-indexed-bam"><a class="header" href="#extract-a-table-of-base-modification-probabilities-from-an-aligned-and-indexed-bam">Extract a table of base modification probabilities from an aligned and indexed BAM</a></h3>
-<pre><code>modkit extract full &lt;input.bam&gt; &lt;output.tsv&gt; 
+<pre><code>modkit extract full &lt;input.bam&gt; &lt;output.tsv&gt; [--bgzf]
 </code></pre>
 <p>If the index <code>input.bam.bai</code> can be found, intervals along the aligned genome can be performed
-in parallel.</p>
+in parallel. The optional <code>--bgzf</code> flag will emit compressed output.</p>
 <h3 id="extract-a-table-from-a-region-of-a-large-modbam"><a class="header" href="#extract-a-table-from-a-region-of-a-large-modbam">Extract a table from a region of a large modBAM</a></h3>
 <p>The below example will extract reads from only chr20, and include reference sequence context</p>
 <pre><code>modkit extract full &lt;intput.bam&gt; &lt;output.tsv&gt; --region chr20 --ref &lt;ref.fasta&gt;
@@ -276,7 +276,7 @@ modkit extract full &lt;in.bam&gt; &lt;out.tsv&gt; --ref &lt;ref.fasta&gt; --inc
 <p>Use <code>--allow-non-primary</code> to get secondary and supplementary mappings in the output.</p>
 <pre><code>modkit extract calls &lt;input.bam&gt; &lt;output.tsv&gt; --allow-non-primary
 </code></pre>
-<p>See the help string and/or <a href="./advanced_usage.html">advanced_usage</a> for more details and <a href="./perf_considerations.m">performace considerations</a> if you encounter issues with memory usage.</p>
+<p>See the help string and/or <a href="./advanced_usage.html">advanced_usage</a> for more details and <a href="./perf_considerations.html">performace considerations</a> if you encounter issues with memory usage.</p>
 
                     </main>
 

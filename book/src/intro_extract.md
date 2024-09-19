@@ -88,10 +88,10 @@ For secondary and supplementary alignments, soft-clipped positions are not repea
 
 ### Extract a table of base modification probabilities from an aligned and indexed BAM 
 ```
-modkit extract full <input.bam> <output.tsv> 
+modkit extract full <input.bam> <output.tsv> [--bgzf]
 ```
 If the index `input.bam.bai` can be found, intervals along the aligned genome can be performed
-in parallel.
+in parallel. The optional `--bgzf` flag will emit compressed output.
 
 ### Extract a table from a region of a large modBAM
 The below example will extract reads from only chr20, and include reference sequence context
@@ -122,4 +122,4 @@ Use `--allow-non-primary` to get secondary and supplementary mappings in the out
 modkit extract calls <input.bam> <output.tsv> --allow-non-primary
 ```
 
-See the help string and/or [advanced_usage](./advanced_usage.md) for more details and [performace considerations](./perf_considerations.m) if you encounter issues with memory usage.
+See the help string and/or [advanced_usage](./advanced_usage.md) for more details and [performace considerations](./perf_considerations.md) if you encounter issues with memory usage.

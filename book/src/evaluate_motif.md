@@ -1,7 +1,7 @@
 # Evaluate a table of known motifs
 
 The `modkit search` command has an option to provide any number of known motifs with `--know-motif`.
-If you already have a list of candidate motifs (e.f. from a previous run of `modkit motif search`) you can check these motifs quickly against a bedMethyl table with `modkit motif evaluate`.
+However, if you already have a list of candidate motifs (e.g. from a previous run of `modkit motif search`) you can check these motifs quickly against a bedMethyl table with `modkit motif evaluate`.
 
 ```bash
 modkit motif evaluate -i ${bedmethyl} --known-motifs-table motifs.tsv -r ${ref}
