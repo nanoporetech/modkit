@@ -5,6 +5,6 @@ A common use case is to discover the motifs enriched for modification in a nativ
 
 The following tools are available:
 
-1. [Find enriched motifs _de novo_ from a bedMethyl with `search`.](,/intro_find_motifs.md)
+1. [Find enriched motifs _de novo_ from a bedMethyl with `search`.](./intro_find_motifs.md)
 1. [`evaluate` or `refine` a table of known motifs](./evaluate_motif.md)
 4. [Making a motif BED file with `motif bed`](./intro_motif_bed.md)
