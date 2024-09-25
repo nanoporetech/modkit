@@ -33,7 +33,7 @@ pub enum EntryMotifs {
     Refine(EntryRefineMotifs),
     /// Calculate enrichment statistics on a set of motifs from a bedMethyl
     /// table.
-    Evaluate(EntrySearchMotifs),
+    Evaluate(EntrySearchMotifs), // todo rename
     /// Create BED file with all locations of a sequence motif.
     /// Example: modkit motif bed CG 0
     Bed(EntryMotifBed),

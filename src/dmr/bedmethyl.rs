@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, bail, Context};
 use derive_new::new;
 use itertools::{Itertools, MinMaxResult};
-use log::debug;
 use nom::character::complete::{multispace1, none_of};
 use nom::combinator::map_res;
 use nom::multi::many1;

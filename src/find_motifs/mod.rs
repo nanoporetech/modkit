@@ -1120,14 +1120,15 @@ fn load_bedmethyl(
         Middle,
         Low,
     }
-
     let pb = multi_progress.add(get_ticker());
     pb.set_message("parsing bedMethyl records");
 
     let file_fh = std::fs::File::open(bedmethyl_fp)?;
     let mut tabix_reader = tbx::Reader::from_path(&bedmethyl_fp);
     if let Ok(tabix_reader) = tabix_reader.as_mut() {
-        tabix_reader.set_threads(std::cmp::min(threads, 8usize))?;
+        tabix_reader
+            .set_threads(std::cmp::min(threads, 8usize))
+            .context("failed to set threads on TABIX reader")?;
     }
 
     match (tabix_reader.as_mut(), contig.as_ref()) {
@@ -1165,6 +1166,7 @@ fn load_bedmethyl(
             drop(file_fh);
             tabix_reader
                 .records()
+                .par_bridge()
                 .map(|r| r.map_err(|e| anyhow::Error::new(e)))
                 .map(|r| {
                     r.and_then(|raw| {
@@ -1181,6 +1183,7 @@ fn load_bedmethyl(
         } else {
             BufReader::new(file_fh)
                 .lines()
+                .par_bridge()
                 .map(|r| r.map_err(|e| anyhow::Error::new(e)))
                 .for_each(|r| match snd.send(r) {
                     Ok(_) => {}
@@ -1191,32 +1194,36 @@ fn load_bedmethyl(
         }
     });
 
-    let (bedmethyl_records, n_fails) = rcv.into_iter().progress_with(pb).fold(
-        (Vec::new(), 0u32),
-        |(mut records, mut fails), next| {
-            match next
-                .map_err(|e| anyhow!("failed to read line, {e}"))
-                .and_then(|l| BedMethylLine::parse(l.as_str()))
-            {
-                Ok(record) => {
-                    if record.valid_coverage >= min_coverage {
-                        if record.frac_modified() <= low_modification_threshold
-                        {
-                            records.push((ModLevel::Low, record));
-                        } else if record.frac_modified()
-                            > high_modification_threshold
-                        {
-                            records.push((ModLevel::High, record));
+    let (bedmethyl_records, n_fails, n_discard) =
+        rcv.into_iter().progress_with(pb).fold(
+            (Vec::new(), 0usize, 0usize),
+            |(mut records, mut fails, mut n_discard), next| {
+                match next
+                    .map_err(|e| anyhow!("failed to read line, {e}"))
+                    .and_then(|l| BedMethylLine::parse(l.as_str()))
+                {
+                    Ok(record) => {
+                        if record.valid_coverage >= min_coverage {
+                            if record.frac_modified()
+                                <= low_modification_threshold
+                            {
+                                records.push((ModLevel::Low, record));
+                            } else if record.frac_modified()
+                                > high_modification_threshold
+                            {
+                                records.push((ModLevel::High, record));
+                            } else {
+                                records.push((ModLevel::Middle, record));
+                            }
                         } else {
-                            records.push((ModLevel::Middle, record));
+                            n_discard += 1;
                         }
                     }
-                }
-                Err(_) => fails += 1,
-            };
-            (records, fails)
-        },
-    );
+                    Err(_) => fails += 1,
+                };
+                (records, fails, n_discard)
+            },
+        );
 
     if bedmethyl_records.is_empty() {
         bail!("failed to parse any bedmethyl records")
@@ -1224,6 +1231,13 @@ fn load_bedmethyl(
     if n_fails > 0 {
         bail!("failed to parse {n_fails} bedmethyl records")
     }
+
+    info!(
+        "parsed {} bedmethyl records, discarded {n_discard} for low coverage, \
+         {} total",
+        bedmethyl_records.len(),
+        bedmethyl_records.len() + n_discard
+    );
 
     let mut low_mod_table = KmerTable::new_empty(&context_bases);
     let mut high_mod_table = KmerTable::new_empty(&context_bases);
