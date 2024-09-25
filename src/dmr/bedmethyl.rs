@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, bail, Context};
 use derive_new::new;
 use itertools::{Itertools, MinMaxResult};
+use log::debug;
 use nom::character::complete::{multispace1, none_of};
 use nom::combinator::map_res;
 use nom::multi::many1;
@@ -137,6 +138,9 @@ pub(super) fn aggregate_counts(
     bm_lines: &[&BedMethylLine],
     code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
 ) -> anyhow::Result<AggregatedCounts> {
+    if bm_lines.is_empty() {
+        return Ok(AggregatedCounts::default());
+    }
     assert_eq!(
         bm_lines.iter().map(|l| &l.chrom).collect::<HashSet<_>>().len(),
         1
