@@ -99,7 +99,7 @@ impl EntryFindMotifs {
         load_bedmethyl_and_references(
             &self.input_args.reference_fasta,
             &self.input_args.in_bedmethyl,
-            self.input_args.contig.as_ref(),
+            self.input_args.contig.clone(),
             self.refine_args.min_coverage,
             self.get_context(),
             self.refine_args.low_threshold,
@@ -746,7 +746,7 @@ impl EntryRefineMotifs {
         let mod_db = load_bedmethyl_and_references(
             &self.input_args.reference_fasta,
             &self.input_args.in_bedmethyl,
-            self.input_args.contig.as_ref(),
+            self.input_args.contig.clone(),
             self.refine_args.min_coverage,
             context_bases,
             self.refine_args.low_threshold,
@@ -857,7 +857,7 @@ impl EntrySearchMotifs {
         let mod_db = load_bedmethyl_and_references(
             &self.input_args.reference_fasta,
             &self.input_args.in_bedmethyl,
-            self.input_args.contig.as_ref(),
+            self.input_args.contig.clone(),
             self.min_coverage,
             context_bases,
             self.low_threshold,

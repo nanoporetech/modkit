@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::io::{BufRead, BufReader};
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{anyhow, bail, Context};
 use bio::io::fasta::Reader as FastaReader;
@@ -18,7 +18,6 @@ use nom::IResult;
 use prettytable as pt;
 use prettytable::row;
 use rayon::prelude::*;
-use rust_htslib::tbx::{self, Read};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::dmr::bedmethyl::BedMethylLine;
@@ -1075,7 +1074,7 @@ fn parse_motifs_from_table(
 fn load_bedmethyl_and_references(
     reference_fasta_fp: &PathBuf,
     bedmethyl_fp: &PathBuf,
-    contig: Option<&String>,
+    contig: Option<String>,
     min_coverage: u64,
     context_bases: [u64; 2],
     low_modification_threshold: f32,
@@ -1098,7 +1097,7 @@ fn load_bedmethyl_and_references(
         context_bases,
         low_modification_threshold,
         high_modification_threshold,
-        &reference_sequences,
+        Arc::new(reference_sequences),
         &multi_progress,
         threads,
     )
@@ -1106,12 +1105,12 @@ fn load_bedmethyl_and_references(
 
 fn load_bedmethyl(
     bedmethyl_fp: &PathBuf,
-    contig: Option<&String>,
+    contig: Option<String>,
     min_coverage: u64,
     context_bases: [u64; 2],
     low_modification_threshold: f32,
     high_modification_threshold: f32,
-    reference_sequences: &HashMap<String, Vec<u8>>,
+    reference_sequences: Arc<HashMap<String, Vec<u8>>>,
     multi_progress: &MultiProgress,
     threads: usize,
 ) -> anyhow::Result<KmerModificationDb> {
@@ -1120,71 +1119,78 @@ fn load_bedmethyl(
         Middle,
         Low,
     }
+
+    let file_fh = std::fs::File::open(bedmethyl_fp)?;
+    let tbx_reader = crate::tabix::HtsTabixHandler::<BedMethylLine>::from_path(
+        &bedmethyl_fp,
+    );
+    let use_tabix = tbx_reader.is_ok();
+    if use_tabix {
+        info!("using tabix/bgzf reader");
+    }
+    if !use_tabix && bedmethyl_fp.ends_with(".gz") {
+        warn!(
+            "failed to use tabix/bgzf reader, but file indicates compressed \
+             data"
+        );
+    }
+    if tbx_reader.is_err() && contig.is_some() {
+        bail!(
+            "failed to use tabix index (required when --contig provided). \
+             Error was {}.",
+            tbx_reader.err().unwrap()
+        )
+    }
+    if let Some(ctg) = contig.as_ref() {
+        if !reference_sequences.contains_key(ctg.as_str()) {
+            bail!("contig {ctg} not found in reference")
+        }
+    }
+
     let pb = multi_progress.add(get_ticker());
     pb.set_message("parsing bedMethyl records");
 
-    let file_fh = std::fs::File::open(bedmethyl_fp)?;
-    let mut tabix_reader = tbx::Reader::from_path(&bedmethyl_fp);
-    if let Ok(tabix_reader) = tabix_reader.as_mut() {
-        tabix_reader
-            .set_threads(std::cmp::min(threads, 8usize))
-            .context("failed to set threads on TABIX reader")?;
-    }
-
-    match (tabix_reader.as_mut(), contig.as_ref()) {
-        (Ok(reader), Some(contig)) => {
-            if let Some(l) =
-                reference_sequences.get(contig.as_str()).map(|r| r.len())
-            {
-                info!("attempting to fetch bedMethyl records for {contig}");
-                let tid = reader.tid(contig).with_context(|| {
-                    format!("failed to get target ID for {contig}")
-                })?;
-                reader
-                    .fetch(tid, 0, l as u64)
-                    .with_context(|| format!("failed tabix fetch"))?;
-            } else {
-                bail!("contig {contig} not found in reference")
-            }
-        }
-        (Ok(_), None) => {
-            info!("using tabix/bgzip reader");
-        }
-        (Err(e), Some(_)) => {
-            bail!(
-                "failed to use tabix index (required when --contig provided). \
-                 Error was {e}."
-            )
-        }
-        (Err(_), None) => {
-            info!("reading uncompressed bedMethyl file");
-        }
-    }
     let (snd, rcv) = crossbeam::channel::bounded(1000);
+    let ref_seqs_reader = reference_sequences.clone();
     std::thread::spawn(move || {
-        if let Ok(mut tabix_reader) = tabix_reader {
-            drop(file_fh);
-            tabix_reader
-                .records()
-                .par_bridge()
-                .map(|r| r.map_err(|e| anyhow::Error::new(e)))
-                .map(|r| {
-                    r.and_then(|raw| {
-                        String::from_utf8(raw)
-                            .map_err(|e| anyhow::Error::new(e))
-                    })
-                })
-                .for_each(|res| match snd.send(res) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("failed to send on channel, {e}");
+        if let Ok(handler) = tbx_reader {
+            let contigs = if let Some(ctg) = contig {
+                let contig_length = ref_seqs_reader
+                    .get(ctg.as_str())
+                    .map(|x| x.len() as u64)
+                    .unwrap(); // safe because of above check
+                vec![(ctg.to_owned(), contig_length)]
+            } else {
+                ref_seqs_reader
+                    .iter()
+                    .map(|(name, s)| (name.to_owned(), s.len() as u64))
+                    .collect::<Vec<_>>()
+            };
+            contigs.par_iter().for_each(|(name, len)| {
+                match handler.read_bedmethyl2(name, &(0..(*len)), threads) {
+                    Ok(records) => {
+                        records.into_iter().for_each(|r| match snd.send(r) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                error!("failed to send on channel, {e}")
+                            }
+                        });
                     }
-                });
+                    Err(e) => {
+                        debug!(
+                            "failed to fetch bedMethyl records for {name}, {e}"
+                        );
+                    }
+                }
+            });
         } else {
             BufReader::new(file_fh)
                 .lines()
                 .par_bridge()
-                .map(|r| r.map_err(|e| anyhow::Error::new(e)))
+                .map(|r| {
+                    r.map_err(|e| anyhow::Error::new(e))
+                        .and_then(|s| BedMethylLine::parse(&s))
+                })
                 .for_each(|r| match snd.send(r) {
                     Ok(_) => {}
                     Err(e) => {
@@ -1198,10 +1204,7 @@ fn load_bedmethyl(
         rcv.into_iter().progress_with(pb).fold(
             (Vec::new(), 0usize, 0usize),
             |(mut records, mut fails, mut n_discard), next| {
-                match next
-                    .map_err(|e| anyhow!("failed to read line, {e}"))
-                    .and_then(|l| BedMethylLine::parse(l.as_str()))
-                {
+                match next {
                     Ok(record) => {
                         if record.valid_coverage >= min_coverage {
                             if record.frac_modified()
