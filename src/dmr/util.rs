@@ -547,4 +547,11 @@ mod dmr_util_tests {
         .to_vec();
         assert_eq!(rois, expected);
     }
+
+    #[test]
+    fn test_roi_parsing_motif_bed() {
+        let fp = "tests/resources/test_motif_bed_drach.bed";
+        let rois = parse_roi_bed(fp).unwrap();
+        assert_eq!(rois.len(), 10);
+    }
 }

@@ -33,7 +33,7 @@ pub enum EntryMotifs {
     Refine(EntryRefineMotifs),
     /// Calculate enrichment statistics on a set of motifs from a bedMethyl
     /// table.
-    Evaluate(EntrySearchMotifs),
+    Evaluate(EntrySearchMotifs), // todo rename
     /// Create BED file with all locations of a sequence motif.
     /// Example: modkit motif bed CG 0
     Bed(EntryMotifBed),
@@ -95,17 +95,19 @@ impl EntryFindMotifs {
     fn load_mod_db(
         &self,
         multi_progress: &MultiProgress,
+        pool: &ThreadPool,
     ) -> anyhow::Result<KmerModificationDb> {
         load_bedmethyl_and_references(
             &self.input_args.reference_fasta,
             &self.input_args.in_bedmethyl,
-            self.input_args.contig.as_ref(),
+            self.input_args.contig.clone(),
             self.refine_args.min_coverage,
             self.get_context(),
             self.refine_args.low_threshold,
             self.refine_args.high_threshold,
             multi_progress,
-            self.input_args.threads,
+            self.input_args.io_threads,
+            pool,
         )
     }
 
@@ -195,7 +197,7 @@ impl EntryFindMotifs {
             mpb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
 
-        let mod_db = self.load_mod_db(&mpb)?;
+        let mod_db = self.load_mod_db(&mpb, &pool)?;
         let input_mod_codes = self.parse_input_mod_codes()?;
         let inferred_mod_codes =
             mod_db.get_inferred_mod_code_associations(!self.override_spec)?;
@@ -746,13 +748,14 @@ impl EntryRefineMotifs {
         let mod_db = load_bedmethyl_and_references(
             &self.input_args.reference_fasta,
             &self.input_args.in_bedmethyl,
-            self.input_args.contig.as_ref(),
+            self.input_args.contig.clone(),
             self.refine_args.min_coverage,
             context_bases,
             self.refine_args.low_threshold,
             self.refine_args.high_threshold,
             &mpb,
-            self.input_args.threads,
+            self.input_args.io_threads,
+            &pool,
         )?;
         let inferred_mod_codes =
             mod_db.get_inferred_mod_code_associations(!self.override_spec)?;
@@ -857,13 +860,14 @@ impl EntrySearchMotifs {
         let mod_db = load_bedmethyl_and_references(
             &self.input_args.reference_fasta,
             &self.input_args.in_bedmethyl,
-            self.input_args.contig.as_ref(),
+            self.input_args.contig.clone(),
             self.min_coverage,
             context_bases,
             self.low_threshold,
             self.high_threshold,
             &mpb,
-            self.input_args.threads,
+            self.input_args.io_threads,
+            &pool,
         )?;
         let inferred_mod_codes =
             mod_db.get_inferred_mod_code_associations(!self.override_spec)?;

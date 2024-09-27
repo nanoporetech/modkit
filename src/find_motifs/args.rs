@@ -9,6 +9,9 @@ pub(super) struct InputArgs {
     /// Number of threads to use.
     #[arg(short, long, default_value_t = 4)]
     pub threads: usize,
+    /// Number of tabix/bgzf IO threads to use.
+    #[arg(short, long, default_value_t = 2, hide_short_help = true)]
+    pub io_threads: usize,
     /// Reference sequence in FASTA format used for the pileup.
     #[arg(short = 'r', long = "ref")]
     pub reference_fasta: PathBuf,
