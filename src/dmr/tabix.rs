@@ -60,21 +60,23 @@ impl MultiSampleIndex {
                     .get(*id)
                     .map(|handler| (*id, handler, chunks))
             })
-            // chunks is a mapping of each chrom to the range in that chrom to
-            // fetch
+            // chunks is a mapping of each chrom to the range in that chrom
+            // to fetch
             .map(|(sample_id, handler, chunks)| {
                 // actually read the bedmethyl here
                 let grouped_by_chrom =
                         chunks
                             .par_iter()
-                            // here we read the bedmethyl and have a mapping of chrom to records
+                            // here we read the bedmethyl and have a mapping of
+                            // chrom to records
                             .map(|(chrom, range)| {
-                                let bm_lines = handler.read_bedmethyl(
-                                    chrom,
-                                    range,
-                                    self.min_valid_coverage,
-                                    &self.code_lookup,
-                                );
+                                let bm_lines = handler
+                                    .read_bedmethyl_check_code(
+                                        chrom,
+                                        range,
+                                        self.min_valid_coverage,
+                                        &self.code_lookup,
+                                    );
                                 bm_lines.map(|lines| (chrom.to_owned(), lines))
                             })
                             .collect::<anyhow::Result<

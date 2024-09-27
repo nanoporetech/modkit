@@ -137,6 +137,9 @@ pub(super) fn aggregate_counts(
     bm_lines: &[&BedMethylLine],
     code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
 ) -> anyhow::Result<AggregatedCounts> {
+    if bm_lines.is_empty() {
+        return Ok(AggregatedCounts::default());
+    }
     assert_eq!(
         bm_lines.iter().map(|l| &l.chrom).collect::<HashSet<_>>().len(),
         1
