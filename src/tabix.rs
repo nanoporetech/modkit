@@ -96,9 +96,10 @@ impl<T: ParseBedLine> HtsTabixHandler<T> {
         chrom: &str,
         range: &Range<u64>,
         strand_rule: StrandRule,
+        io_threads: usize,
     ) -> anyhow::Result<Vec<T>> {
         // todo make io_threads a parameter
-        let mut reader = self.get_reader(chrom, range, 4)?;
+        let mut reader = self.get_reader(chrom, range, io_threads)?;
         let it = self.fetch_region_it(&mut reader, strand_rule)?;
         it.collect()
     }

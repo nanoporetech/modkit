@@ -56,12 +56,14 @@ impl GenomeRegion {
         index: &HtsTabixHandler<BedMethylLine>,
         min_coverage: u64,
         mod_codes: Option<&FxHashSet<ModCodeRepr>>,
+        io_threads: usize,
         // todo allow combine
     ) -> anyhow::Result<MethylationStats> {
         let bm_lines = index.fetch_region(
             &self.chrom,
             &(self.start..self.end),
             self.strand,
+            io_threads,
         )?;
 
         let mod_counts = bm_lines
