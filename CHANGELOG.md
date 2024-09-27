@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.4.1]
+### Adds
+- [docs] Fix documentation links
+- [dmr] Address bug where assert fires when one sample does not have any records over a region, fixes #265A
+### Fixes
+- [sample-probs] Add arguments to specify the colors of the histogram output, also make them deterministic when not given
+- [summary] Make table ordering deterministic.
+
+
 ## [v0.4.0]
 ### Adds
 - [motif] Add `search` and `evaluate` subcommands under `motif` command hierarchy.
