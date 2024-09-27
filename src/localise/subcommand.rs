@@ -81,6 +81,9 @@ pub struct EntryLocalize {
     /// Number of threads to use.
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
+    /// Number of tabix/bgzf IO threads to use.
+    #[arg(long, default_value_t = 2)]
+    io_threads: usize,
     /// Force overwrite of existing output file.
     #[arg(long, short = 'f', default_value_t = false)]
     force: bool,
@@ -258,6 +261,7 @@ impl EntryLocalize {
                         &tabix_index,
                         self.stranded_features,
                         stranded_features,
+                        self.io_threads,
                     )
                 })
                 .fold(

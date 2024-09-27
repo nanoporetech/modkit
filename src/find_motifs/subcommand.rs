@@ -33,7 +33,7 @@ pub enum EntryMotifs {
     Refine(EntryRefineMotifs),
     /// Calculate enrichment statistics on a set of motifs from a bedMethyl
     /// table.
-    Evaluate(EntrySearchMotifs), // todo rename
+    Evaluate(EntryEvaluateMotifs),
     /// Create BED file with all locations of a sequence motif.
     /// Example: modkit motif bed CG 0
     Bed(EntryMotifBed),
@@ -803,7 +803,7 @@ impl EntryRefineMotifs {
 
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
-pub struct EntrySearchMotifs {
+pub struct EntryEvaluateMotifs {
     #[clap(flatten)]
     input_args: InputArgs,
     #[clap(flatten)]
@@ -836,7 +836,7 @@ pub struct EntrySearchMotifs {
     suppress_table: bool,
 }
 
-impl EntrySearchMotifs {
+impl EntryEvaluateMotifs {
     pub fn run(&self) -> anyhow::Result<()> {
         let _ = init_logging(self.input_args.log_filepath.as_ref());
         if self.suppress_table

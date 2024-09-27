@@ -88,6 +88,18 @@ lazy_static! {
     };
 }
 
+lazy_static! {
+    pub static ref MOD_COLORS: HashMap<ModCodeRepr, String> = hash_map! {
+            METHYL_CYTOSINE => "#FF0000".to_string(),
+            HYDROXY_METHYL_CYTOSINE => "#FF00FF".to_string(),
+            SIX_METHYL_ADENINE => "#0084A9".to_string(),
+    };
+    pub static ref DNA_BASE_COLORS: HashMap<DnaBase, String> = hash_map! {
+            DnaBase::C => "#0000FF".to_string(),
+            DnaBase::A => "#009600".to_string(),
+    };
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, Hash)]
 pub enum ModCodeRepr {
     Code(char),

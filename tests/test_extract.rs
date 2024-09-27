@@ -40,6 +40,14 @@ fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {
 }
 
 #[test]
+fn test_extract_helps() {
+    let _ = run_modkit(&["extract", "full", "--help"])
+        .expect("failed to run modkit extract full help");
+    let _ = run_modkit(&["extract", "calls", "--help"])
+        .expect("failed to run modkit extract calls help");
+}
+
+#[test]
 fn test_extract_mod_data_ord() {
     let mod_data1 =
         ModData::new(0, 1, 'm', '+', 100, "".to_string(), "".to_string());

@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Stdout, Write};
@@ -9,7 +10,7 @@ use charming::component::{
     Toolbox, ToolboxDataZoom,
 };
 use charming::element::{
-    AxisPointer, AxisPointerType, AxisType, Tooltip, Trigger,
+    AxisPointer, AxisPointerType, AxisType, Color, Tooltip, Trigger,
 };
 use charming::series::Bar;
 use charming::{Chart, HtmlRenderer};
@@ -20,9 +21,12 @@ use itertools::Itertools;
 use log::{debug, info, warn};
 use prettytable::format::FormatBuilder;
 use prettytable::{row, Table};
+use random_color::RandomColor;
 use rustc_hash::FxHashMap;
 
-use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr, ProbHistogram};
+use crate::mod_base_code::{
+    BaseState, DnaBase, ModCodeRepr, ProbHistogram, DNA_BASE_COLORS, MOD_COLORS,
+};
 use crate::pileup::duplex::DuplexModBasePileup;
 use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
 use crate::summarize::ModSummary;
@@ -448,7 +452,9 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
 
             let mut seen_canonical = false;
             if let Some(pass_counts) = pass_mod_to_counts {
-                for (base_state, pass_counts) in pass_counts {
+                for (base_state, pass_counts) in
+                    pass_counts.iter().sorted_by(|(a, _), (b, _)| a.cmp(b))
+                {
                     let label = match base_state {
                         BaseState::Canonical(_) => {
                             seen_canonical = true;
@@ -685,9 +691,10 @@ pub(crate) struct MultiTableWriter {
 #[derive(new)]
 pub(crate) struct SampledProbs {
     histograms: Option<ProbHistogram>,
-    // char here is primary base, that's why it works
     percentiles: HashMap<DnaBase, Percentiles>,
     prefix: Option<String>,
+    primary_base_colors: HashMap<DnaBase, String>,
+    mod_base_colors: HashMap<ModCodeRepr, String>,
 }
 
 impl SampledProbs {
@@ -827,7 +834,11 @@ impl ProbHistogram {
             .y_axis(Axis::new().type_(AxisType::Value).name(y_axis_name))
     }
 
-    fn get_artifacts(&self) -> (Table, Chart, Chart) {
+    fn get_artifacts(
+        &self,
+        extra_dna_colors: &HashMap<DnaBase, String>,
+        extra_mod_colors: &HashMap<ModCodeRepr, String>,
+    ) -> (Table, Chart, Chart) {
         let mut table = Table::new();
         table.set_titles(row![
             "code",
@@ -849,12 +860,34 @@ impl ProbHistogram {
         let mut counts_chart = Self::get_blank_chart("Counts", &bins, "counts");
         let mut prop_chart =
             Self::get_blank_chart("Proportion", &bins, "proportion");
+        let mut colors = Vec::new();
 
-        for ((primary_base, base_state), counts) in self.prob_counts.iter() {
-            let label = match base_state {
-                BaseState::Modified(x) => format!("{primary_base}:{x}"),
-                BaseState::Canonical(_) => format!("{primary_base}:-"),
+        let iter =
+            self.prob_counts.iter().sorted_by(|((b, bs), _), ((c, cs), _)| {
+                match b.cmp(c) {
+                    Ordering::Equal => bs.cmp(cs),
+                    o @ _ => o,
+                }
+            });
+        for ((primary_base, base_state), counts) in iter {
+            let (label, color) = match base_state {
+                BaseState::Modified(x) => (
+                    format!("{primary_base}:{x}"),
+                    extra_mod_colors.get(x).or(MOD_COLORS.get(x)),
+                ),
+                BaseState::Canonical(x) => (
+                    format!("{primary_base}:-"),
+                    extra_dna_colors.get(x).or(DNA_BASE_COLORS.get(x)),
+                ),
             };
+            let color = if let Some(c) = color {
+                c.to_string()
+            } else {
+                let mut gen = RandomColor::new();
+                gen.seed(label.as_str());
+                gen.to_rgb_string()
+            };
+            colors.push(color);
             let total = counts.values().sum::<usize>() as f32;
             let (stats, _) = counts.iter().fold(
                 (BTreeMap::new(), 0f32),
@@ -882,6 +915,7 @@ impl ProbHistogram {
                 counts_chart.series(Bar::new().name(&label).data(dat_counts));
             prop_chart =
                 prop_chart.series(Bar::new().name(&label).data(dat_prop));
+
             for (b, (count, frac, rank)) in stats {
                 let (range_start, range_end) = Self::qual_to_bins(b);
                 table.add_row(row![
@@ -895,6 +929,9 @@ impl ProbHistogram {
                 ]);
             }
         }
+        counts_chart = counts_chart.color(
+            colors.iter().map(|c| Color::Value(c.to_string())).collect(),
+        );
 
         (table, counts_chart, prop_chart)
     }
@@ -926,7 +963,10 @@ impl OutWriter<SampledProbs> for MultiTableWriter {
                 .delimiter('\t' as u8)
                 .from_writer(probs_table_fh);
 
-            let (tab, counts_chart, prop_chart) = histograms.get_artifacts();
+            let (tab, counts_chart, prop_chart) = histograms.get_artifacts(
+                &item.primary_base_colors,
+                &item.mod_base_colors,
+            );
             tab.to_csv_writer(csv_writer)?;
             match HtmlRenderer::new("Counts", 800, 800).render(&counts_chart) {
                 Ok(blob) => {

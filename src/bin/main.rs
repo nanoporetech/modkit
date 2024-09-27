@@ -3,6 +3,7 @@ use mod_kit::commands::Commands;
 
 #[derive(Parser)]
 #[command(version)]
+#[command(term_width = 80)]
 /// Modkit is a bioinformatics tool for working with modified bases from Oxford
 /// Nanopore
 struct Cli {

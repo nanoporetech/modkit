@@ -51,6 +51,9 @@ pub struct EntryStats {
     /// Number of threads to use
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
+    /// Number of tabix/bgzf threads to use
+    #[arg(long, default_value_t = 2)]
+    io_threads: usize,
 }
 
 impl EntryStats {
@@ -144,6 +147,7 @@ impl EntryStats {
                         &index,
                         self.min_coverage,
                         mod_codes.as_ref(),
+                        self.io_threads,
                     ) {
                         Ok(stats) => Some(stats),
                         Err(e) => {

@@ -26,7 +26,7 @@ subcommands=(
   "validate"
   "pileup-hemi"
   "entropy"
-  "localise"
+  "localize"
   "stats"
 )
 

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::num::ParseFloatError;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result as AnyhowResult};
+use anyhow::{anyhow, bail, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
 use itertools::Itertools;
 use log::{debug, info};
@@ -113,8 +113,9 @@ pub enum Commands {
     /// Use a mod-BAM to calculate methylation entropy over genomic windows.
     Entropy(MethylationEntropy),
     /// Investigate patterns of base modifications, by aggregating pileup
-    /// counts "localised" around genomic features of interest.
-    Localise(EntryLocalize),
+    /// counts "localized" around genomic features of interest.
+    #[clap(alias = "localise")]
+    Localize(EntryLocalize),
     /// Calculate base modification levels over entire regions.
     Stats(EntryStats),
 }
@@ -136,7 +137,7 @@ impl Commands {
             Self::FindMotifs(x) => x.run(),
             Self::Motif(x) => x.run(),
             Self::Entropy(x) => x.run(),
-            Self::Localise(x) => x.run(),
+            Self::Localize(x) => x.run(),
             Self::Stats(x) => x.run(),
         }
     }
@@ -537,6 +538,14 @@ pub struct SampleModBaseProbs {
     /// Output histogram of base modification prediction probabilities.
     #[arg(long = "hist", requires = "out_dir", default_value_t = false)]
     histogram: bool,
+    /// Set colors of primary bases in histogram, should be RGB format, e.g.
+    /// "#0000FF" is defailt for canonical cytosine
+    #[arg(long="dna-color", requires = "histogram", num_args = 2, action = clap::ArgAction::Append)]
+    primary_base_colors: Option<Vec<String>>,
+    /// Set colors of modified bases in histogram, should be RGB format, e.g.
+    /// "#FF00FF" is default for 5hmC
+    #[arg(long="mod-color", requires = "histogram", num_args = 2, action = clap::ArgAction::Append)]
+    mod_base_colors: Option<Vec<String>>,
 
     /// Approximate maximum number of reads to use, especially recommended when
     /// using a large BAM without an index. If an indexed BAM is provided, the
@@ -594,6 +603,43 @@ impl SampleModBaseProbs {
                 self.histogram,
             )?;
         }
+
+        let extra_dna_colors = if let Some(raw_dna_colors) =
+            self.primary_base_colors.as_ref()
+        {
+            if raw_dna_colors.len() % 2 != 0 {
+                bail!("invalid number of arguments")
+            }
+            raw_dna_colors
+                .chunks(2)
+                .map(|ch| {
+                    let dna_base = ch[0]
+                        .parse::<char>()
+                        .map_err(|e| anyhow!("DNA base should be a char, {e}"))
+                        .and_then(|c| DnaBase::parse(c));
+                    let color_code = ch[1].to_string();
+                    dna_base.map(|b| (b, color_code))
+                })
+                .collect::<anyhow::Result<HashMap<DnaBase, String>>>()?
+        } else {
+            HashMap::new()
+        };
+        let extra_mod_colors =
+            if let Some(raw_mod_colors) = self.mod_base_colors.as_ref() {
+                if raw_mod_colors.len() % 2 != 0 {
+                    bail!("invalid number of arguments")
+                }
+                raw_mod_colors
+                    .chunks(2)
+                    .map(|ch| {
+                        let mod_code = ModCodeRepr::parse(&ch[0]);
+                        let color_code = ch[1].to_string();
+                        mod_code.map(|b| (b, color_code))
+                    })
+                    .collect::<anyhow::Result<HashMap<ModCodeRepr, String>>>()?
+            } else {
+                HashMap::new()
+            };
 
         let mut reader = get_serial_reader(&self.in_bam)?;
 
@@ -717,8 +763,13 @@ impl SampleModBaseProbs {
                 })
                 .collect::<AnyhowResult<HashMap<DnaBase, Percentiles>>>()?;
 
-            let sampled_probs =
-                SampledProbs::new(histograms, percentiles, self.prefix.clone());
+            let sampled_probs = SampledProbs::new(
+                histograms,
+                percentiles,
+                self.prefix.clone(),
+                extra_dna_colors,
+                extra_mod_colors,
+            );
 
             let mut writer: Box<dyn OutWriter<SampledProbs>> =
                 if let Some(p) = &self.out_dir {

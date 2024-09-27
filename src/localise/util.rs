@@ -198,11 +198,13 @@ impl GenomeRegion {
         index: &HtsTabixHandler<BedMethylLine>,
         strand_rule: Option<StrandRule>,
         stranded_features: Option<StrandedFeatures>,
+        io_threads: usize,
     ) -> anyhow::Result<LocalizedModCounts> {
         let bedmethyl_records = index.fetch_region(
             &self.chrom,
             &(self.start..self.end),
             strand_rule.unwrap_or(self.strand),
+            io_threads,
         )?;
         let anchor_point = self.midpoint();
         let loc_counts = bedmethyl_records
