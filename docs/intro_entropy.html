@@ -217,6 +217,24 @@ Probably the simplest visual description of methylation entropy is the following
 </code></pre>
 <p>The output must now be a directory (specified with <code>-o</code>), a bedGraph with the entropy over the windows with the regions as well as a summary of the methylation entropy in the regions will be output.
 By default these files will be <code>regions.bed</code> and <code>windows.bedgraph</code>.</p>
+<p>The schema for the <code>regions.bed</code> file is below:</p>
+<div class="table-wrapper"><table><thead><tr><th>col</th><th>Name</th><th>Description</th><th>type</th></tr></thead><tbody>
+<tr><td>1</td><td>chrom</td><td>chromosome of the region</td><td>str</td></tr>
+<tr><td>2</td><td>start</td><td>0-based start position of the region</td><td>int</td></tr>
+<tr><td>3</td><td>end</td><td>0-based end position of the region</td><td>int</td></tr>
+<tr><td>4</td><td>region_name</td><td>name of the region from the input BED file</td><td>str</td></tr>
+<tr><td>5</td><td>mean_entropy</td><td>average entropy of the passing windows included in the region</td><td>float</td></tr>
+<tr><td>6</td><td>strand</td><td>strand of the region {<code>+</code>, <code>-</code>, <code>.</code> }</td><td>str</td></tr>
+<tr><td>7</td><td>median_entropy</td><td>median entropy of the passing windows included in the region</td><td>float</td></tr>
+<tr><td>8</td><td>min_entropy</td><td>minimum passing window entropy</td><td>float</td></tr>
+<tr><td>9</td><td>max_entropy</td><td>maximum passing window entropy</td><td>float</td></tr>
+<tr><td>10</td><td>mean_num_reads</td><td>average number of reads used in the passing windows' entropy calculation</td><td>float</td></tr>
+<tr><td>11</td><td>min_num_reads</td><td>minimum number of reads used in the passing windows' entropy calculation</td><td>int</td></tr>
+<tr><td>12</td><td>max_num_reads</td><td>minimum number of reads used in the passing windows' entropy calculation</td><td>int</td></tr>
+<tr><td>13</td><td>successful_window_count</td><td>number of passing windows in the region</td><td>int</td></tr>
+<tr><td>14</td><td>failed_window_count</td><td>number of failed windows in the region</td><td>int</td></tr>
+</tbody></table>
+</div>
 <h2 id="specifying-motifs-or-primary-sequence-bases"><a class="header" href="#specifying-motifs-or-primary-sequence-bases">Specifying motifs or primary sequence bases</a></h2>
 <p>Similar to <code>pileup</code> you can specify a motif on the command line with <code>--motif</code> and optionally combine the counts across the positive and negative strands with <code>--combine-strands</code>.
 If you specify a primary sequence base (with <code>--base</code>) or a motif (with <code>--motif</code>) that is not reverse-complement palindromic <code>modkit</code> will output methylation entropy per-strand.</p>

@@ -56,6 +56,26 @@ modkit entropy \
 The output must now be a directory (specified with `-o`), a bedGraph with the entropy over the windows with the regions as well as a summary of the methylation entropy in the regions will be output.
 By default these files will be `regions.bed` and `windows.bedgraph`.
 
+The schema for the `regions.bed` file is below:
+
+| col | Name                    | Description                                                              | type  |
+|-----|-------------------------|--------------------------------------------------------------------------|-------|
+| 1   | chrom                   | chromosome of the region                                                 | str   |
+| 2   | start                   | 0-based start position of the region                                     | int   |
+| 3   | end                     | 0-based end position of the region                                       | int   |
+| 4   | region_name             | name of the region from the input BED file                               | str   |
+| 5   | mean_entropy            | average entropy of the passing windows included in the region            | float |
+| 6   | strand                  | strand of the region {`+`, `-`, `.` }                                    | str   |
+| 7   | median_entropy          | median entropy of the passing windows included in the region             | float |
+| 8   | min_entropy             | minimum passing window entropy                                           | float |
+| 9   | max_entropy             | maximum passing window entropy                                           | float |
+| 10  | mean_num_reads          | average number of reads used in the passing windows' entropy calculation | float |
+| 11  | min_num_reads           | minimum number of reads used in the passing windows' entropy calculation | int   |
+| 12  | max_num_reads           | minimum number of reads used in the passing windows' entropy calculation | int   |
+| 13  | successful_window_count | number of passing windows in the region                                  | int   |
+| 14  | failed_window_count     | number of failed windows in the region                                   | int   |
+
+
 ## Specifying motifs or primary sequence bases
 
 Similar to `pileup` you can specify a motif on the command line with `--motif` and optionally combine the counts across the positive and negative strands with `--combine-strands`.
