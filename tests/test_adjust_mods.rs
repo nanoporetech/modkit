@@ -456,3 +456,24 @@ fn test_adjust_mods_supplementary_secondary() {
     .unwrap();
     check(&out_bam_convert);
 }
+
+#[test]
+fn test_adust_mods_motifs() {
+    let bam_fp = "tests/resources/testing_all_context_calls.bam";
+    let outbam =
+        std::env::temp_dir().join("test_adust_mods_motifs_cg0_drach2.bam");
+    run_modkit(&[
+        "adjust-mods",
+        bam_fp,
+        outbam.to_str().unwrap(),
+        "--motif",
+        "DRACH",
+        "2",
+        "--motif",
+        "CG",
+        "0",
+        "--ff",
+    ])
+    .context(format!("failed to run adjust"))
+    .unwrap();
+}

@@ -512,6 +512,27 @@ pub(crate) struct ReadBaseModProfile {
 }
 
 impl ReadBaseModProfile {
+    #[cfg(test)]
+    pub(crate) fn from_record(
+        record: &bam::Record,
+        collapse_method: Option<&CollapseMethod>,
+        edge_filter: Option<&EdgeFilter>,
+        kmer_size: usize,
+    ) -> Result<Self, RunError> {
+        let mod_base_info = ModBaseInfo::new_from_record(record)?;
+        let record_name = get_query_name_string(record).map_err(|e| {
+            RunError::new_input_error(format!("invalid query name, {e}"))
+        })?;
+        Self::process_record(
+            record,
+            &record_name,
+            mod_base_info,
+            collapse_method,
+            edge_filter,
+            kmer_size,
+        )
+    }
+
     fn get_kmer_from_sequence(
         forward_sequence: &[u8],
         forward_position: usize,

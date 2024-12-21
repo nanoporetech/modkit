@@ -61,3 +61,8 @@ For example, the following command will change `C+Z,` tags to `C+m,` tags.
 ```
 modkit adjust-mods input.bam output.bam --convert Z m
 ```
+
+## Filtering to specific motifs
+If you want to remove base modification calls that don't match a specific basecall sequence motif, you can use the `--motif` in `adjust-mods` retain only base modification calls that match the motif. 
+The format for specifying the motif is `<sequence> <offset>` [IUPAC](https://www.bioinformatics.org/sms/iupac.html) codes are allowed in the motif sequence and `<offset>` specifies the 0-based offset into the sequence for the primary base carrying the modification.
+For example for CpG dinucleotides `--motif CG 0`.
