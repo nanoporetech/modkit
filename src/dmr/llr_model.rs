@@ -160,6 +160,7 @@ impl ModificationCounts {
             "end",
             "name",
             "score",
+            "strand",
             &format!("{a_name}_counts"),
             &format!("{a_name}_total"),
             &format!("{b_name}_counts"),
@@ -201,6 +202,7 @@ impl ModificationCounts {
         {}{sep}\
         {}{sep}\
         {}{sep}\
+        {}{sep}\
         {}\n\
         ",
             self.interval.chrom,
@@ -208,6 +210,7 @@ impl ModificationCounts {
             stop,
             self.interval.name,
             self.score,
+            self.interval.strand.to_string(),
             self.control_counts.string_counts(),
             self.control_counts.total,
             self.exp_counts.string_counts(),
