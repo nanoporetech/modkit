@@ -64,3 +64,11 @@ do
   echo "\`\`\`" >> ${doc_file}
 done
 
+for subcommand in "merge"; do
+  echo "" >> ${doc_file}
+  echo "## bedmethyl ${subcommand}" >> ${doc_file}
+  echo "\`\`\`text" >> ${doc_file}
+  ./target/debug/modkit bedmethyl $subcommand --help >> ${doc_file}
+  echo "\`\`\`" >> ${doc_file}
+done
+

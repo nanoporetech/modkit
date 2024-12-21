@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.4.2]
+### Adds
+- [entropy] Entropy can now be calculated with multiple motifs and multiple modified primary bases.
+- [adjust-mods, call-mods] Retain or remove base modification calls based on whether they match a sequence motif in the basecall sequence.
+- [bedmethyl] Add command to merge bedMethyl files.
+- [dmr] Add strand to DMR output.
+
+
 ## [v0.4.1]
 ### Adds
 - [docs] Fix documentation links
