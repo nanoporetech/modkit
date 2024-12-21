@@ -64,6 +64,7 @@ Commands:
   localize      Investigate patterns of base modifications, by aggregating
                 pileup counts "localized" around genomic features of interest
   stats         Calculate base modification levels over entire regions
+  bedmethyl     Utilities to work with bedMethyl files
   help          Print this message or the help of the given subcommand(s)
 
 Options:
@@ -337,9 +338,6 @@ Arguments:
           one of `-` or `stdin` to specify a stream from standard output
 
 Options:
-      --log-filepath <LOG_FILEPATH>
-          Output debug logs to file at this path
-
       --ignore <IGNORE>
           Modified base code to ignore/remove, see
           https://samtools.github.io/hts-specs/SAMtags.pdf for details on the
@@ -438,11 +436,31 @@ Options:
           when estimating the filter threshold (i.e. ignore soft-clipped, and
           inserted bases)
 
+      --motif <MOTIF> <MOTIF>
+          Filter out any base modification call that isn't part of a basecall
+          sequence motif. This argument can be passed multiple times. Format is
+          <motif_sequence> <offset>. For example the argument to match CpG
+          dinucleotides is `--motif CG 0`, or to match CG[5mC]G the argument
+          would be `--motif CGCG 2`. Single bases can be used as motifs to keep
+          only base modification calls for a specific primary base, for example
+          `--motif C 0`
+
+      --cpg
+          Shorthand for --motif CG 0
+
+      --discard-motifs
+          Discard base modification calls that match the provided motifs
+          (instead of keeping them)
+
       --suppress-progress
           Hide the progress bar
 
   -h, --help
           Print help (see a summary with '-h')
+
+Logging:
+      --log-filepath <LOG_FILEPATH>
+          Output debug logs to file at this path
 ```
 
 ## update-tags
@@ -850,6 +868,20 @@ Options:
           base modification calls in the first 4 and last 8 bases of the read,
           using this flag will keep only base modification calls in the first 4
           and last 8 bases
+
+      --motif <MOTIF> <MOTIF>
+          Filter out any base modification call that isn't part of a basecall
+          sequence motif This argument can be passed multiple times. Format is
+          <motif_sequence> <offset>. For example the argument to match CpG
+          dinucleotides is `--motif CG 0`, or to match CG[5mC]G the argument
+          would be `--motif CGCG 2`
+
+      --cpg
+          Shorthand for --motif CG 0
+
+      --discard-motifs
+          Discard base modification calls that match the provided motifs
+          (instead of keeping them)
 
       --output-sam
           Output SAM format instead of BAM
@@ -1263,7 +1295,10 @@ Options:
           Respect soft masking in the reference FASTA
 
       --motif <MOTIF> <MOTIF>
-          Motif to use for entropy calculation, default will be CpG
+          Motif to use for entropy calculation, multiple motifs can be used by
+          repeating this option. When multiple motifs are used that specify
+          different modified primary bases, all modification possibilities will
+          be used in the calculation
 
       --cpg
           Use CpG motifs. Short hand for --motif CG 0 --combine-strands
@@ -2371,4 +2406,65 @@ Options:
           coverage [default: 0]
   -h, --help
           Print help
+```
+
+## bedmethyl merge
+```text
+Perform an outer join on two or more bedMethyl files, summing their counts for
+records that overlap
+
+Usage: modkit bedmethyl merge [OPTIONS] --out-bed <OUT_BED> --genome-sizes <GENOME_SIZES> [IN_BEDMETHYL] [IN_BEDMETHYL]...
+
+Arguments:
+  [IN_BEDMETHYL] [IN_BEDMETHYL]...
+          Input bedMethyl table(s). Should be bgzip-compressed and have an
+          associated Tabix index. The tabix index will be assumed to be
+          $this_file.tbi
+
+Options:
+  -o, --out-bed <OUT_BED>
+          Specify the output file to write the results table
+
+  -g, --genome-sizes <GENOME_SIZES>
+          TSV of genome sizes, should be <chrom>\t<size_in_bp>
+
+      --force
+          Force overwrite the output file
+
+      --with-header
+          Output a header with the bedMethyl
+
+      --mixed-delim
+          Output bedMethyl where the delimiter of columns past column 10 are
+          space-delimited instead of tab-delimited. This option can be useful
+          for some browsers and parsers that don't expect the extra columns of
+          the bedMethyl format
+
+      --chunk-size <CHUNK_SIZE>
+          Chunk size for how many start..end regions for each chromosome to
+          read. Larger values will lead to faster merging at the expense of
+          memory usage, while smaller values will be slower with lower memory
+          usage. This option will only impact large bedmethyl files
+
+  -i, --interval-size <INTERVAL_SIZE>
+          Interval chunk size in base pairs to process concurrently. Smaller
+          interval chunk sizes will use less memory but incur more overhead
+          
+          [default: 100000]
+
+      --log-filepath <LOG_FILEPATH>
+          Specify a file to write debug logs to
+
+  -t, --threads <THREADS>
+          Number of threads to use
+          
+          [default: 4]
+
+      --io-threads <IO_THREADS>
+          Number of tabix/bgzf threads to use
+          
+          [default: 2]
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
