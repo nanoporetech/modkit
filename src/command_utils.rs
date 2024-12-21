@@ -6,6 +6,8 @@ use itertools::Itertools;
 use log::{debug, info};
 use rust_htslib::bam::{self, Header};
 
+use crate::adjust::OverlappingRegexOffset;
+use crate::find_motifs::motif_bed::RegexMotif;
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
@@ -272,4 +274,23 @@ pub(crate) fn parse_edge_filter_input(
         );
         Ok(EdgeFilter::new(trim, trim, inverted))
     }
+}
+
+pub(crate) fn parse_forward_motifs(
+    input_motifs: &Option<Vec<String>>,
+    cpg: bool,
+) -> anyhow::Result<Option<Vec<OverlappingRegexOffset>>> {
+    input_motifs
+        .as_ref()
+        .map(|raw_parts| {
+            RegexMotif::from_raw_parts(raw_parts, cpg).map(|rms| {
+                rms.into_iter()
+                    .map(|rm| {
+                        let offset = rm.forward_offset();
+                        OverlappingRegexOffset::new(rm.forward_pattern, offset)
+                    })
+                    .collect::<Vec<OverlappingRegexOffset>>()
+            })
+        })
+        .transpose()
 }

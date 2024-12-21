@@ -63,7 +63,7 @@ fn motif_rev_comp(motif: &str) -> String {
     reverse_complement
 }
 
-struct OverlappingPatternIterator<'a> {
+pub(crate) struct OverlappingPatternIterator<'a> {
     text: &'a str,
     re: &'a Regex,
     start: usize,
@@ -92,19 +92,19 @@ pub struct OverlappingRegex {
 }
 
 impl OverlappingRegex {
+    pub(crate) fn as_str(&self) -> &str {
+        self.inner.as_str()
+    }
+
     fn new(pattern: &str) -> Result<Self, regex::Error> {
         Regex::new(pattern).map(|re| Self { inner: re })
     }
 
-    fn find_iter<'a>(
+    pub(crate) fn find_iter<'a>(
         &'a self,
         text: &'a str,
     ) -> OverlappingPatternIterator<'a> {
         OverlappingPatternIterator { text: &text, re: &self.inner, start: 0 }
-    }
-
-    fn as_str(&self) -> &str {
-        self.inner.as_str()
     }
 }
 
@@ -142,8 +142,8 @@ impl MotifInfo {
 
 #[derive(Debug, Clone, new)]
 pub struct RegexMotif {
-    forward_pattern: OverlappingRegex,
-    reverse_pattern: OverlappingRegex,
+    pub(crate) forward_pattern: OverlappingRegex,
+    pub(crate) reverse_pattern: OverlappingRegex,
     pub motif_info: MotifInfo,
     pub raw_motif: String,
 }

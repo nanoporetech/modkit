@@ -16,8 +16,8 @@ use rust_htslib::tpool;
 use crate::adjust::adjust_modbam;
 use crate::command_utils::{
     get_bam_writer, get_serial_reader, get_threshold_from_options,
-    parse_edge_filter_input, parse_per_mod_thresholds, parse_thresholds,
-    using_stream,
+    parse_edge_filter_input, parse_forward_motifs, parse_per_mod_thresholds,
+    parse_thresholds, using_stream,
 };
 use crate::dmr::subcommands::BedMethylDmr;
 use crate::entropy::subcommand::MethylationEntropy;
@@ -179,8 +179,9 @@ pub struct Adjust {
     /// of `-` or `stdin` to specify a stream from standard output.
     out_bam: String,
     /// Output debug logs to file at this path.
-    #[arg(long)]
+    #[arg(long, help_heading = "Logging")]
     log_filepath: Option<PathBuf>,
+
     /// Modified base code to ignore/remove, see
     /// https://samtools.github.io/hts-specs/SAMtags.pdf for details on
     /// the modified base codes.
@@ -305,13 +306,30 @@ pub struct Adjust {
     )]
     only_mapped: bool,
 
+    /// Filter out any base modification call that isn't part of a basecall
+    /// sequence motif. This argument can be passed multiple times. Format
+    /// is <motif_sequence> <offset>. For example the argument to match CpG
+    /// dinucleotides is `--motif CG 0`, or to match CG[5mC]G the argument
+    /// would be `--motif CGCG 2`. Single bases can be used as motifs
+    /// to keep only base modification calls for a specific primary base,
+    /// for example `--motif C 0`.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2)]
+    motif: Option<Vec<String>>,
+    /// Shorthand for --motif CG 0.
+    #[arg(long, default_value_t = false)]
+    cpg: bool,
+    /// Discard base modification calls that match the provided motifs (instead
+    /// of keeping them).
+    #[arg(long, requires = "motif", default_value_t = false)]
+    discard_motifs: bool,
+
     /// Hide the progress bar.
     #[arg(long, default_value_t = false)]
     suppress_progress: bool,
 }
 
 impl Adjust {
-    pub fn run(&self) -> AnyhowResult<()> {
+    pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         let io_threadpool = tpool::ThreadPool::new(self.threads as u32)?;
         let mut reader = get_serial_reader(self.in_bam.as_str())?;
@@ -386,18 +404,25 @@ impl Adjust {
             .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
             .transpose()?;
 
-        let methods = if edge_filter.is_none()
+        let motifs = parse_forward_motifs(&self.motif, self.cpg)?;
+        if let Some(ms) = motifs.as_ref() {
+            let patterns = ms.iter().map(|x| x.as_str()).join(",");
+            info!("filtering base modification calls to patterns: {patterns}");
+        }
+
+        let have_motifs =
+            motifs.as_ref().map(|x| !x.is_empty()).unwrap_or(false);
+
+        if edge_filter.is_none()
             && methods.is_empty()
             && !self.filter_probs
+            && !have_motifs
         {
             bail!(
-                "no edge-filter, ignore, or convert was provided, no work to \
-                 do. Provide --edge-filter, --ignore, --filter-probs, or \
-                 --convert option to use `modkit adjust-mods`"
+                "no edge-filter, ignore, motifs, or convert was provided, no \
+                 work to do. Provide --edge-filter, --ignore, --filter-probs, \
+                 --motif, or --convert option to use `modkit adjust-mods`"
             )
-        } else {
-            debug_assert!(methods.len() <= 2 || !self.filter_probs);
-            methods
         };
 
         let caller = if self.filter_probs {
@@ -462,6 +487,8 @@ impl Adjust {
             caller.as_ref(),
             edge_filter.as_ref(),
             self.fail_fast,
+            &motifs,
+            self.discard_motifs,
             "Adjusting modBAM, records processed",
             self.suppress_progress,
             self.filter_probs,
@@ -1383,6 +1410,22 @@ pub struct CallMods {
     /// first 4 and last 8 bases.
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
+
+    /// Filter out any base modification call that isn't part of a basecall
+    /// sequence motif This argument can be passed multiple times. Format
+    /// is <motif_sequence> <offset>. For example the argument to match CpG
+    /// dinucleotides is `--motif CG 0`, or to match CG[5mC]G the argument
+    /// would be `--motif CGCG 2`.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2)]
+    motif: Option<Vec<String>>,
+    /// Shorthand for --motif CG 0.
+    #[arg(long, default_value_t = false)]
+    cpg: bool,
+    /// Discard base modification calls that match the provided motifs (instead
+    /// of keeping them).
+    #[arg(long, requires = "motif", default_value_t = false)]
+    discard_motifs: bool,
+
     /// Output SAM format instead of BAM.
     #[arg(long, default_value_t = false)]
     output_sam: bool,
@@ -1419,6 +1462,12 @@ impl CallMods {
         } else {
             None
         };
+
+        let motifs = parse_forward_motifs(&self.motif, self.cpg)?;
+        if let Some(ms) = motifs.as_ref() {
+            let patterns = ms.iter().map(|x| x.as_str()).join(",");
+            info!("filtering base modification calls to patterns: {patterns}");
+        }
 
         let caller = if let Some(raw_threshold) = &self.filter_threshold {
             parse_thresholds(raw_threshold, per_mod_thresholds)?
@@ -1461,6 +1510,8 @@ impl CallMods {
             Some(&caller),
             edge_filter.as_ref(),
             self.fail_fast,
+            &motifs,
+            self.discard_motifs,
             "Calling Mods, records processed",
             self.suppress_progress,
             false,

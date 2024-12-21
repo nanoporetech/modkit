@@ -670,7 +670,7 @@ impl Kmer {
     // kinda risky, size needs to be < 12
     pub(crate) fn new(seq: &[u8], position: usize, size: usize) -> Self {
         if size > KMER_SIZE {
-            debug!("kmers greater that size 12 will be corrupted");
+            debug!("kmers greater that size {KMER_SIZE} will be corrupted");
         }
         let get_back_base_safe = |i| -> Option<u8> {
             position.checked_sub(i).and_then(|idx| seq.get(idx).map(|b| *b))
@@ -707,6 +707,15 @@ impl Kmer {
             inner[i] = b
         }
         Self { inner, size: self.size }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn get_nt(&self, pos: usize) -> Option<u8> {
+        if pos > self.size || pos > KMER_SIZE {
+            None
+        } else {
+            Some(self.inner[pos])
+        }
     }
 }
 
@@ -887,6 +896,8 @@ mod utils_tests {
         GenomeRegion, SamTag, StrandRule,
     };
 
+    use super::Kmer;
+
     #[test]
     fn test_util_get_stringable_tag() {
         let bam_fp = "tests/resources/bc_anchored_10_reads.sorted.bam";
@@ -997,5 +1008,15 @@ mod utils_tests {
             strand: StrandRule::Both,
         };
         assert_eq!(gr, expected);
+    }
+
+    #[test]
+    fn test_kmer_get_nt() {
+        let seq = "GATTACA".as_bytes();
+        let kmer = Kmer::from_seq(seq, 2, 5);
+        assert_eq!(format!("{kmer}"), "GATTA".to_string());
+        let nt = kmer.get_nt(0).unwrap();
+        assert_eq!(nt, 'G' as u8);
+        assert!(kmer.get_nt(6).is_none());
     }
 }
