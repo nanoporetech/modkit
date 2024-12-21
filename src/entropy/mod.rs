@@ -20,7 +20,7 @@ use crate::entropy::methylation_entropy::calc_me_entropy;
 use crate::errs::RunError;
 use crate::find_motifs::motif_bed::RegexMotif;
 use crate::mod_bam::{BaseModCall, ModBaseInfo};
-use crate::mod_base_code::ModCodeRepr;
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::read_ids_to_base_mod_probs::{PositionModCalls, ReadBaseModProfile};
 use crate::reads_sampler::sampling_schedule::ReferenceSequencesLookup;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
@@ -31,11 +31,13 @@ mod methylation_entropy;
 pub mod subcommand;
 mod writers;
 
+type BaseAndPosition = (DnaBase, u64);
+
 #[derive(Debug)]
 pub(super) enum GenomeWindow {
     CombineStrands {
         interval: Range<u64>,
-        neg_to_pos_positions: FxHashMap<u64, u64>,
+        neg_to_pos_positions: FxHashMap<BaseAndPosition, BaseAndPosition>,
         read_patterns: Vec<Vec<BaseModCall>>,
         position_valid_coverages: Vec<u32>,
     },
@@ -44,8 +46,8 @@ pub(super) enum GenomeWindow {
         // have  an optional for all of it
         pos_interval: Option<Range<u64>>,
         neg_interval: Option<Range<u64>>,
-        pos_positions: Option<Vec<u64>>,
-        neg_positions: Option<Vec<u64>>,
+        pos_positions: Option<Vec<BaseAndPosition>>,
+        neg_positions: Option<Vec<BaseAndPosition>>,
         pos_read_patterns: Vec<Vec<BaseModCall>>,
         neg_read_patterns: Vec<Vec<BaseModCall>>,
         pos_position_valid_coverages: Vec<u32>,
@@ -57,7 +59,7 @@ impl GenomeWindow {
     fn new_combine_strands(
         interval: Range<u64>,
         num_positions: usize,
-        neg_to_pos_positions: FxHashMap<u64, u64>,
+        neg_to_pos_positions: FxHashMap<BaseAndPosition, BaseAndPosition>,
     ) -> Self {
         let position_valid_coverages = vec![0u32; num_positions];
         Self::CombineStrands {
@@ -69,12 +71,12 @@ impl GenomeWindow {
     }
 
     fn new_stranded(
-        pos_positions: Option<Vec<u64>>,
-        neg_positions: Option<Vec<u64>>,
+        pos_positions: Option<Vec<BaseAndPosition>>,
+        neg_positions: Option<Vec<BaseAndPosition>>,
         num_positions: usize,
     ) -> Self {
         let pos_interval = pos_positions.as_ref().map(|positions| {
-            match positions.iter().minmax() {
+            match positions.iter().map(|(_, p)| p).minmax() {
                 MinMaxResult::MinMax(s, t) => *s..*t,
                 MinMaxResult::OneElement(x) => *x..(*x + 1u64),
                 MinMaxResult::NoElements => {
@@ -83,7 +85,7 @@ impl GenomeWindow {
             }
         });
         let neg_interval = neg_positions.as_ref().map(|positions| {
-            match positions.iter().minmax() {
+            match positions.iter().map(|(_, p)| p).minmax() {
                 MinMaxResult::MinMax(s, t) => *s..*t,
                 MinMaxResult::OneElement(x) => *x..(*x + 1u64),
                 MinMaxResult::NoElements => {
@@ -93,9 +95,9 @@ impl GenomeWindow {
         });
 
         #[cfg(debug_assertions)]
-        let check = |positions: Option<&Vec<u64>>| {
+        let check = |positions: Option<&Vec<BaseAndPosition>>| {
             if let Some(ps) = positions {
-                ps.iter().skip(1).fold(ps[0], |last, next| {
+                ps.iter().skip(1).fold(ps[0].1, |last, (_, next)| {
                     assert!(last < *next, "needs to be sorted");
                     *next
                 });
@@ -109,6 +111,10 @@ impl GenomeWindow {
 
         let pos_position_valid_coverages = vec![0u32; num_positions];
         let neg_position_valid_coverages = vec![0u32; num_positions];
+        // debug!(
+        //     "interval {pos_interval:?}, {neg_interval:?} \n\t> pos: \
+        //      {pos_positions:?} neg {neg_positions:?}"
+        // );
         Self::Stranded {
             pos_interval,
             neg_interval,
@@ -212,7 +218,7 @@ impl GenomeWindow {
 
     fn add_read_to_patterns(
         &mut self,
-        ref_pos_to_basemod_call: &FxHashMap<u64, BaseModCall>,
+        ref_pos_to_basemod_call: &FxHashMap<BaseAndPosition, BaseModCall>,
         reference_start: i64,
         reference_end: i64,
         strand: Strand,
@@ -270,7 +276,7 @@ impl GenomeWindow {
                                 .unwrap_or(BaseModCall::Filtered);
                             (p, call)
                         })
-                        .sorted_by(|(a, _), (b, _)| a.cmp(b))
+                        .sorted_by(|((_, a), _), ((_, b), _)| a.cmp(b))
                         .map(|(_, call)| call)
                         .collect()
                 }
@@ -298,7 +304,7 @@ impl GenomeWindow {
                                 .unwrap_or(BaseModCall::Filtered);
                             (positive_position, call)
                         })
-                        .sorted_by(|(a, _), (b, _)| a.cmp(b))
+                        .sorted_by(|((_, a), _), ((_, b), _)| a.cmp(b))
                         .map(|(_, call)| call)
                         .collect()
                 }
@@ -323,6 +329,8 @@ impl GenomeWindow {
     }
 
     fn get_mod_code_lookup(&self) -> FxHashMap<ModCodeRepr, char> {
+        // looks complicated, but it just iterates over either the positive and
+        // negative read patterns or the positive-combined read patterns
         let read_patterns: Box<dyn Iterator<Item = &Vec<BaseModCall>>> =
             match self {
                 Self::Stranded {
@@ -334,6 +342,10 @@ impl GenomeWindow {
                     Box::new(read_patterns.iter())
                 }
             };
+
+        // todo this could be done more simply with a set, but the idea is to
+        // make  a single char code (e.g. '1', '2', '3', etc. for each
+        // modification code
         read_patterns
             .flat_map(|pattern| {
                 pattern.iter().filter_map(|call| match call {
@@ -478,6 +490,23 @@ impl GenomeWindow {
             )),
             _ => None,
         };
+        // left for debugging
+        // debug!(
+        //     "{}:{}-{} (+), {:?}",
+        //     chrom,
+        //     self.leftmost(),
+        //     self.rightmost(),
+        //     &positive_encoded_patterns
+        // );
+        // if let Some(nps) = negative_patterns.as_ref() {
+        //     debug!(
+        //         "{}:{}-{} (-), {:?}",
+        //         chrom,
+        //         self.leftmost(),
+        //         self.rightmost(),
+        //         &nps
+        //     );
+        // }
 
         // todo remove this after testing or make it a result/debug conditional
         if let Some(Ok(patterns)) = positive_encoded_patterns.as_ref() {
@@ -496,7 +525,7 @@ impl GenomeWindow {
                     calc_me_entropy(&patterns, window_size, constant);
                 let num_reads = patterns.len();
                 let interval = self.start(&Strand::Positive).unwrap()
-                    ..self.end(&Strand::Positive).unwrap();
+                    ..self.end(&Strand::Positive).unwrap().saturating_add(1);
                 MethylationEntropy::new(me_entropy, num_reads, interval)
             })
         });
@@ -507,7 +536,7 @@ impl GenomeWindow {
                     calc_me_entropy(&patterns, window_size, constant);
                 let num_reads = patterns.len();
                 let interval = self.start(&Strand::Negative).unwrap()
-                    ..self.end(&Strand::Negative).unwrap();
+                    ..self.end(&Strand::Negative).unwrap().saturating_add(1);
                 MethylationEntropy::new(me_entropy, num_reads, interval)
             })
         });
@@ -661,8 +690,16 @@ impl GenomeWindows {
     }
 }
 
+#[derive(new)]
+struct MotifHit {
+    pos: u64,
+    neg_position: Option<u64>,
+    strand: Strand,
+    base: DnaBase,
+}
+
 struct SlidingWindows {
-    motif: RegexMotif,
+    motifs: Vec<RegexMotif>,
     work_queue: VecDeque<(ReferenceRecord, Vec<char>)>,
     region_names: VecDeque<String>,
     window_size: usize,
@@ -673,6 +710,9 @@ struct SlidingWindows {
     curr_seq: Vec<char>,
     curr_region_name: Option<String>,
     combine_strands: bool,
+    /// the longest motif length, so we find motifs that are in the window, but
+    /// reach outside the window
+    motif_search_adj: usize,
     done: bool,
 }
 
@@ -680,7 +720,7 @@ impl SlidingWindows {
     fn new_with_regions(
         reference_sequences_lookup: ReferenceSequencesLookup,
         regions_bed_fp: &PathBuf,
-        motif: RegexMotif,
+        motifs: Vec<RegexMotif>,
         combine_strands: bool,
         num_positions: usize,
         window_size: usize,
@@ -772,7 +812,7 @@ impl SlidingWindows {
                     ),
                 }?;
             if let Some(start_position) =
-                Self::find_start_position(&subseq, &motif)
+                Self::find_start_position(&subseq, &motifs)
             {
                 info!(
                     "starting with region {region_name} at 0-based position \
@@ -792,9 +832,15 @@ impl SlidingWindows {
             &curr_region_name,
             curr_contig.name
         );
+        let motif_search_adj = motifs
+            .iter()
+            .map(|motif| motif.length())
+            .filter(|l| *l > 1)
+            .max()
+            .unwrap_or(0);
 
         Ok(Self {
-            motif,
+            motifs,
             work_queue,
             region_names: region_queue,
             window_size,
@@ -805,13 +851,14 @@ impl SlidingWindows {
             curr_seq,
             curr_region_name: Some(curr_region_name),
             combine_strands,
+            motif_search_adj,
             done: false,
         })
     }
 
     fn new(
         reference_sequence_lookup: ReferenceSequencesLookup,
-        motif: RegexMotif,
+        motifs: Vec<RegexMotif>,
         combine_strands: bool,
         num_positions: usize,
         window_size: usize,
@@ -828,7 +875,7 @@ impl SlidingWindows {
                          position"
                     )
                 })?;
-            if let Some(pos) = Self::find_start_position(&curr_seq, &motif) {
+            if let Some(pos) = Self::find_start_position(&curr_seq, &motifs) {
                 info!(
                     "starting with contig {} at 0-based position {pos}",
                     &curr_record.name
@@ -841,9 +888,15 @@ impl SlidingWindows {
                 );
             }
         };
+        let motif_search_adj = motifs
+            .iter()
+            .map(|motif| motif.length())
+            .filter(|l| *l > 1)
+            .max()
+            .unwrap_or(0);
 
         Ok(Self {
-            motif,
+            motifs,
             work_queue,
             region_names: VecDeque::new(),
             window_size,
@@ -854,6 +907,7 @@ impl SlidingWindows {
             curr_seq,
             curr_region_name: None,
             combine_strands,
+            motif_search_adj,
             done: false,
         })
     }
@@ -861,14 +915,14 @@ impl SlidingWindows {
     #[inline]
     fn take_hits_if_enough(
         &self,
-        motif_hits: &[(usize, Strand)],
-    ) -> Option<Vec<u64>> {
+        motif_hits: &[MotifHit],
+    ) -> Option<Vec<BaseAndPosition>> {
         let positions = motif_hits
             .into_iter()
             .take(self.num_positions)
-            .map(|(pos, _strand)| *pos as u64)
-            .sorted()
-            .collect::<Vec<_>>();
+            .map(|mh| (mh.base, mh.pos))
+            .sorted_by(|(_, a), (_, b)| a.cmp(b))
+            .collect::<Vec<BaseAndPosition>>();
         if positions.len() == self.num_positions {
             Some(positions)
         } else {
@@ -879,34 +933,36 @@ impl SlidingWindows {
     #[inline]
     fn enough_hits_for_window(
         &self,
-        pos_hits: &[(usize, Strand)],
-        neg_hits: &[(usize, Strand)],
+        pos_hits: &[MotifHit],
+        neg_hits: &[MotifHit],
     ) -> Option<GenomeWindow> {
         if self.combine_strands {
             let neg_to_pos = pos_hits
                 .into_iter()
-                .filter(|(_, strand)| strand == &Strand::Positive)
+                .filter(|x| x.strand == Strand::Positive)
                 .take(self.num_positions)
-                .filter_map(|(pos_position, strand)| {
-                    assert_eq!(strand, &Strand::Positive, "logic error!");
-                    self.motif
-                        .motif_info
-                        .negative_strand_position(*pos_position as u32)
-                        .map(|neg_position| {
-                            (neg_position as u64, *pos_position as u64)
-                        })
+                .filter_map(|motif_hit| {
+                    assert_eq!(
+                        motif_hit.strand,
+                        Strand::Positive,
+                        "logic error!"
+                    );
+                    motif_hit.neg_position.map(|np| {
+                        ((motif_hit.base, np), (motif_hit.base, motif_hit.pos))
+                    })
                 })
-                .collect::<FxHashMap<u64, u64>>();
+                .collect::<FxHashMap<BaseAndPosition, BaseAndPosition>>();
             if neg_to_pos.len() < self.num_positions {
                 None
             } else {
                 let (start, end) = match neg_to_pos
                     .keys()
                     .chain(neg_to_pos.values())
+                    .map(|(_, x)| x)
                     .minmax()
                 {
                     MinMaxResult::MinMax(s, t) => (*s, *t),
-                    MinMaxResult::OneElement(x) => (*x, *x + 1), /* should probably fail here too? */
+                    MinMaxResult::OneElement(x) => (*x, *x + 1u64), /* should probably fail here too? */
                     _ => unreachable!("there must be more than 1 element"),
                 };
                 let interval = start..end;
@@ -922,11 +978,71 @@ impl SlidingWindows {
             {
                 let pos_positions = self.take_hits_if_enough(pos_hits);
                 let neg_positions = self.take_hits_if_enough(neg_hits);
-                Some(GenomeWindow::new_stranded(
-                    pos_positions,
-                    neg_positions,
-                    self.num_positions,
-                ))
+                match (pos_positions, neg_positions) {
+                    (Some(p), Some(n)) => {
+                        assert_eq!(p.len(), self.num_positions);
+                        assert!(!p.is_empty());
+                        assert_eq!(n.len(), self.num_positions);
+                        assert!(!n.is_empty());
+                        let leftmost_positive_ref_pos = p
+                            .iter()
+                            .min_by(|(_, a), (_, b)| a.cmp(b))
+                            .map(|(_, p)| *p)
+                            .unwrap();
+                        let leftmost_negative_ref_pos = n
+                            .iter()
+                            .min_by(|(_, a), (_, b)| a.cmp(b))
+                            .map(|(_, p)| *p)
+                            .unwrap();
+                        if leftmost_positive_ref_pos < leftmost_negative_ref_pos
+                        {
+                            // debug!("(+) is lefter, using {p:?}");
+                            Some(GenomeWindow::new_stranded(
+                                Some(p),
+                                None,
+                                self.num_positions,
+                            ))
+                        } else if leftmost_negative_ref_pos
+                            < leftmost_positive_ref_pos
+                        {
+                            // debug!("(-) is lefter, using {n:?}");
+                            Some(GenomeWindow::new_stranded(
+                                None,
+                                Some(n),
+                                self.num_positions,
+                            ))
+                        } else {
+                            assert_eq!(
+                                leftmost_positive_ref_pos,
+                                leftmost_negative_ref_pos
+                            );
+                            // debug!("they are the same, using {p:?} and
+                            // {n:?}");
+                            Some(GenomeWindow::new_stranded(
+                                Some(p),
+                                Some(n),
+                                self.num_positions,
+                            ))
+                        }
+                    }
+                    (Some(p), None) => {
+                        // debug!("(+) only, using {p:?}");
+                        Some(GenomeWindow::new_stranded(
+                            Some(p),
+                            None,
+                            self.num_positions,
+                        ))
+                    }
+                    (None, Some(n)) => {
+                        // debug!("(-) only, using {n:?}");
+                        Some(GenomeWindow::new_stranded(
+                            None,
+                            Some(n),
+                            self.num_positions,
+                        ))
+                    }
+                    _ => None,
+                }
             } else {
                 None
             }
@@ -941,10 +1057,22 @@ impl SlidingWindows {
                 self.curr_seq.len(),
             );
             // todo optimize?
-            let subseq = self.curr_seq[self.curr_position..end]
+            // debug!(
+            //     "genome space position at top {}, {}, {}",
+            //     self.curr_position + self.curr_contig.start as usize,
+            //     self.curr_position,
+            //     self.motif_search_adj
+            // );
+            let subseq_start =
+                self.curr_position.saturating_sub(self.motif_search_adj);
+            let offset = self.curr_position.checked_sub(subseq_start).expect(
+                "curr_position should always be greater than subset_start",
+            );
+            let subseq = self.curr_seq[subseq_start..end]
                 .iter()
                 .map(|x| *x)
                 .collect::<String>();
+            // debug!("subseq at the top {subseq}");
             // N.B. the 'position' in these tuples are  _genome coordinates_!
             // this is because when we fetch reads we need to do it with the
             // proper genome coordinates. when we're using normal
@@ -953,25 +1081,56 @@ impl SlidingWindows {
             // using regions, we slice the reference genome, so the
             // relative (to the sequence) and genome coordinates will _not_ be
             // the same
-            let (pos_hits, neg_hits): (
-                Vec<(usize, Strand)>,
-                Vec<(usize, Strand)>,
-            ) = self
-                .motif
-                .find_hits(&subseq)
-                .into_iter()
-                .map(|(pos, strand)| {
-                    let adjusted_position = pos
-                        .saturating_add(self.curr_position)
-                        .saturating_add(self.curr_contig.start as usize);
-                    (adjusted_position, strand)
+            let (pos_hits, neg_hits): (Vec<MotifHit>, Vec<MotifHit>) = self
+                .motifs
+                .iter()
+                .flat_map(|motif| {
+                    motif
+                        .find_hits(&subseq)
+                        .into_iter()
+                        // this filter removes positions found before
+                        // self.curr-position
+                        .filter_map(|(pos, strand)| {
+                            pos.checked_sub(offset).map(|p| (p, strand))
+                        })
+                        .map(|(pos, strand)| {
+                            let adjusted_position = pos
+                                .saturating_add(self.curr_position)
+                                .saturating_add(
+                                    self.curr_contig.start as usize,
+                                );
+                            let dna_base = DnaBase::parse(
+                                self.curr_seq[pos + self.curr_position],
+                            )
+                            .unwrap();
+                            let base = if strand == Strand::Negative {
+                                dna_base.complement()
+                            } else {
+                                dna_base
+                            };
+                            let neg_position = motif
+                                .motif_info
+                                .negative_strand_position(
+                                    adjusted_position as u32,
+                                )
+                                .map(|x| x as u64);
+                            MotifHit::new(
+                                adjusted_position as u64,
+                                neg_position,
+                                strand,
+                                base,
+                            )
+                        })
+                        .collect::<Vec<MotifHit>>()
                 })
-                .partition(|(_pos, strand)| strand == &Strand::Positive);
+                .sorted_by(|a, b| a.pos.cmp(&b.pos))
+                .partition(|x| x.strand == Strand::Positive);
             if let Some(entropy_window) =
                 self.enough_hits_for_window(&pos_hits, &neg_hits)
             {
                 let new_genome_space_position =
                     (entropy_window.leftmost() as usize).saturating_add(1usize);
+                // info!("new genome position {new_genome_space_position}");
                 // need to re-adjust to relative coordinates instead of genome
                 // coordinates
                 self.curr_position = new_genome_space_position
@@ -986,7 +1145,8 @@ impl SlidingWindows {
                 let hits = pos_hits
                     .into_iter()
                     .chain(neg_hits)
-                    .map(|(p, _)| {
+                    .map(|mh| mh.pos as usize)
+                    .map(|p| {
                         // need to re-adjust to relative coordinates instead of
                         // genome coordinates
                         p.checked_sub(self.curr_contig.start as usize)
@@ -1018,11 +1178,18 @@ impl SlidingWindows {
         None
     }
 
-    fn find_start_position(seq: &[char], motif: &RegexMotif) -> Option<usize> {
+    fn find_start_position(
+        seq: &[char],
+        motifs: &[RegexMotif],
+    ) -> Option<usize> {
         seq.par_chunks(10_000).find_map_first(|c| {
             let s = c.iter().collect::<String>();
-            let min_pos =
-                motif.find_hits(&s).into_iter().map(|(pos, _)| pos).nth(0);
+            let min_pos = motifs
+                .iter()
+                .flat_map(|motif| {
+                    motif.find_hits(&s).into_iter().nth(0).map(|(pos, _)| pos)
+                })
+                .min();
             min_pos
         })
     }
@@ -1035,7 +1202,7 @@ impl SlidingWindows {
     fn update_current_contig(&mut self) {
         'search: loop {
             if let Some((record, seq)) = self.work_queue.pop_front() {
-                match Self::find_start_position(&seq, &self.motif) {
+                match Self::find_start_position(&seq, &self.motifs) {
                     Some(start_pos) => {
                         self.curr_contig = record;
                         self.curr_position = start_pos;
@@ -1049,13 +1216,14 @@ impl SlidingWindows {
                         {
                             debug!(
                                 "skipping region {region_name}, no valid \
-                                 positions for motif {}",
-                                &self.motif.raw_motif
+                                 positions for motifs {:?}",
+                                &self.motifs
                             )
                         } else {
                             debug!(
-                                "skipping {}, no valid positions for motif {}",
-                                &record.name, &self.motif.raw_motif
+                                "skipping {}, no valid positions for motifs \
+                                 {:?}",
+                                &record.name, &self.motifs
                             )
                         }
                         continue;
@@ -1297,7 +1465,7 @@ pub(super) struct RegionEntropy {
 
 #[derive(new)]
 struct Message {
-    mod_calls: FxHashMap<u64, BaseModCall>,
+    mod_calls: FxHashMap<BaseAndPosition, BaseModCall>,
     reference_start: i64,
     reference_end: i64,
     strand: Strand,
@@ -1376,9 +1544,9 @@ fn process_bam_fp(
                         .map(|(p, ref_pos, _alignment_strand)| {
                             let mod_base_call = caller
                                 .call(&p.canonical_base, &p.base_mod_probs);
-                            (ref_pos as u64, mod_base_call)
+                            ((p.canonical_base, ref_pos as u64), mod_base_call)
                         })
-                        .collect::<FxHashMap<u64, BaseModCall>>();
+                        .collect::<FxHashMap<BaseAndPosition, BaseModCall>>();
                     let msg = Message::new(
                         mod_calls,
                         record.reference_start(),

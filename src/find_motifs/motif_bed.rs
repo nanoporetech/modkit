@@ -150,7 +150,7 @@ pub struct RegexMotif {
 
 impl RegexMotif {
     pub fn from_raw_parts(
-        raw_motif_parts: &Vec<String>,
+        raw_motif_parts: &[String],
         cpg: bool,
     ) -> AnyhowResult<Vec<Self>> {
         if raw_motif_parts

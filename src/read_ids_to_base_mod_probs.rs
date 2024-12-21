@@ -28,7 +28,7 @@ use rayon::prelude::*;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Cigar;
 use rust_htslib::bam::{self, Read, Records};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Read IDs mapped to their base modification probabilities, organized
 /// by the canonical base. This data structure contains essentially all
@@ -1079,7 +1079,7 @@ impl SeqPosBaseModProbs {
     }
 }
 
-#[derive(new)]
+#[derive(new, Debug)]
 pub(crate) struct PositionModCalls {
     pub(crate) query_position: usize,
     pub(crate) ref_position: Option<i64>,
@@ -1100,42 +1100,51 @@ impl PositionModCalls {
     ) -> Vec<Self> {
         type Key = (usize, Strand, DnaBase);
         let (grouped, mod_codes): (
-            HashMap<Key, Vec<&ModProfile>>,
-            HashSet<ModCodeRepr>,
+            FxHashMap<Key, Vec<&ModProfile>>,
+            FxHashMap<DnaBase, FxHashSet<ModCodeRepr>>,
         ) = read_base_mod_profile.iter_profiles().fold(
-            (HashMap::new(), HashSet::new()),
+            (FxHashMap::default(), FxHashMap::default()),
             |(mut acc, mut codes), x| {
                 let k = (x.query_position, x.mod_strand, x.canonical_base);
                 acc.entry(k).or_insert(Vec::new()).push(x);
-                codes.insert(x.raw_mod_code);
+                codes
+                    .entry(x.canonical_base)
+                    .or_insert_with(FxHashSet::default)
+                    .insert(x.raw_mod_code);
                 (acc, codes)
             },
         );
-        let mod_codes = mod_codes.into_iter().collect::<Vec<ModCodeRepr>>();
+        let mod_codes = mod_codes
+            .into_iter()
+            .map(|(base, codes)| {
+                (base, codes.into_iter().sorted().collect::<Vec<ModCodeRepr>>())
+            })
+            .collect::<FxHashMap<DnaBase, Vec<ModCodeRepr>>>();
 
         grouped
             .into_iter()
             .fold(
                 Vec::<Self>::new(),
                 |mut acc, ((query_pos, strand, base), mod_profile)| {
-                    let base_mod_probs = if mod_profile
-                        .iter()
-                        .any(|x| x.inferred)
-                    {
-                        BaseModProbs::new_inferred_canonical(mod_codes.iter())
-                    } else {
-                        let mut probs = mod_profile
-                            .iter()
-                            .map(|x| (x.raw_mod_code, x.q_mod))
-                            .collect::<FxHashMap<ModCodeRepr, f32>>();
-                        for code in mod_codes.iter() {
-                            if !probs.contains_key(&code) {
-                                probs.insert(*code, 0f32);
+                    let codes_for_base = mod_codes.get(&base).unwrap();
+                    let base_mod_probs =
+                        if mod_profile.iter().any(|x| x.inferred) {
+                            BaseModProbs::new_inferred_canonical(
+                                codes_for_base.iter(),
+                            )
+                        } else {
+                            let mut probs = mod_profile
+                                .iter()
+                                .map(|x| (x.raw_mod_code, x.q_mod))
+                                .collect::<FxHashMap<ModCodeRepr, f32>>();
+                            for code in codes_for_base.iter() {
+                                if !probs.contains_key(&code) {
+                                    probs.insert(*code, 0f32);
+                                }
                             }
-                        }
 
-                        BaseModProbs::new(probs, false)
-                    };
+                            BaseModProbs::new(probs, false)
+                        };
                     let template = &mod_profile[0];
                     let ref_position = template.ref_position;
                     let num_clip_start = template.num_soft_clipped_start;
