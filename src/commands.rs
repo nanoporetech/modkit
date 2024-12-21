@@ -14,6 +14,7 @@ use rust_htslib::bam::{
 use rust_htslib::tpool;
 
 use crate::adjust::adjust_modbam;
+use crate::bedmethyl_util::subcommand::EntryBedMethyl;
 use crate::command_utils::{
     get_bam_writer, get_serial_reader, get_threshold_from_options,
     parse_edge_filter_input, parse_forward_motifs, parse_per_mod_thresholds,
@@ -118,6 +119,10 @@ pub enum Commands {
     Localize(EntryLocalize),
     /// Calculate base modification levels over entire regions.
     Stats(EntryStats),
+    /// Utilities to work with bedMethyl files
+    #[clap(subcommand)]
+    #[command(name = "bedmethyl")]
+    BedMethyl(EntryBedMethyl),
 }
 
 impl Commands {
@@ -139,6 +144,7 @@ impl Commands {
             Self::Entropy(x) => x.run(),
             Self::Localize(x) => x.run(),
             Self::Stats(x) => x.run(),
+            Self::BedMethyl(x) => x.run(),
         }
     }
 }

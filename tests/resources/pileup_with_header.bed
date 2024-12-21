@@ -1,4 +1,4 @@
-chrom	chromStart	chromEnd	name	score	strand	thickStart	thickEnd	color	valid_coverage	percent_modified	count_modified	count_canonical	count_other_mode	count_delete	count_fail	count_diff	count_nocall
+chrom	chromStart	chromEnd	name	score	strand	thickStart	thickEnd	color	valid_coverage	percent_modified	count_modified	count_canonical	count_other_mod	count_delete	count_fail	count_diff	count_nocall
 oligo_1512_adapters	9	10	h	4	+	9	10	255,0,0	4	50.00	2	1	1	0	0	2	0
 oligo_1512_adapters	9	10	m	4	+	9	10	255,0,0	4	25.00	1	1	2	0	0	2	0
 oligo_1512_adapters	19	20	h	6	+	19	20	255,0,0	6	66.67	4	2	0	0	0	0	0

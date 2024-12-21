@@ -19,7 +19,7 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 ```
 
 ## Common Use Cases
-1. [Creating a bedMethyl table with `pileup`](./intro_bedmethyl.md)
+1. [Creating a bedMethyl table with `pileup`](./intro_pileup.md)
 2. [Updating and Adjusting MM tags with `adjust-mods` and `update-tags`](./intro_adjust.md)
 3. [Summarizing a modBAM with `summary`](./intro_summary.md)
 4. [Making a motif BED file with `motif-bed`](./intro_motif_bed.md)

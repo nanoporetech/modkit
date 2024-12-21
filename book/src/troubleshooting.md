@@ -69,5 +69,5 @@ option.
 When running with `--preset traditional` or `--cpg` the resultant bedMethyl file will only
 contains CG positions. However, it will not include positions for which the pass coverage
 is zero (see [the column
-descriptions](./intro_bedmethyl.md#description-of-bedmethyl-output)). This is to be
+descriptions](./intro_pileup.md#description-of-bedmethyl-output)). This is to be
 expected.

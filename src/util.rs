@@ -1,16 +1,19 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
-use std::path::Path;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::str;
 use std::string::FromUtf8Error;
 
-use anyhow::Result as AnyhowResult;
 use anyhow::{anyhow, bail};
+use anyhow::{Context, Result as AnyhowResult};
 use bio::alphabets::dna::complement;
 use clap::ValueEnum;
 use derive_new::new;
+use indexmap::IndexMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use linear_map::LinearMap;
 use log::{debug, error, info};
 use nom::character::complete::one_of;
@@ -24,6 +27,7 @@ use rust_htslib::bam::{
 };
 
 use crate::errs::{InputError, RunError};
+use crate::mod_base_code::{DnaBase, ParseChar};
 use crate::monoid::Moniod;
 use crate::parsing_utils::{
     consume_char, consume_digit, consume_dot, consume_float, consume_string,
@@ -184,6 +188,64 @@ pub(crate) fn parse_nm(record: &bam::Record) -> anyhow::Result<u32> {
     }
 }
 
+// Regex split into three possible elements
+// (\d+) - matches
+// (\^[A-Z]+) - deletions
+// ([A-Z]) - mismatch
+lazy_static! {
+    pub static ref MDTAG_REGEX: Regex =
+        Regex::new(r"(\d+)|(\^[A-Za-z]+)|([A-Za-z])").unwrap();
+}
+
+#[allow(dead_code)]
+pub(crate) enum MdTag {
+    // Number of matches
+    Match(usize),
+    // Mismatch base
+    Mismatch(DnaBase),
+    // Base deletions with length
+    Deletion(Vec<DnaBase>),
+}
+
+// Parse BAM tags
+// returns a vector of Option<MdTag> in the event the BAM tag has invalid
+// elements
+#[allow(dead_code)]
+pub(crate) fn parse_md(record: &bam::Record) -> anyhow::Result<Vec<MdTag>> {
+    let md_tag = record.aux("MD".as_bytes()).context("missing MD tag")?;
+    let Aux::String(md_tag) = md_tag else { bail!("MD tag isn't a String") };
+
+    MDTAG_REGEX
+        .captures_iter(&md_tag)
+        .map(|op| {
+            if let Some(md_match) = op.get(1) {
+                md_match
+                    .as_str()
+                    .parse::<usize>()
+                    .map_err(|e| anyhow!("invalid match number, {e}"))
+                    .map(|n| MdTag::Match(n))
+            } else if let Some(md_deletion) = op.get(2) {
+                md_deletion
+                    .as_str()
+                    .to_uppercase()
+                    .chars()
+                    .map(|b| DnaBase::parse_char(b))
+                    .collect::<anyhow::Result<Vec<DnaBase>>>()
+                    .map(|bases| MdTag::Deletion(bases))
+            } else if let Some(md_mismatch) = op.get(3) {
+                md_mismatch
+                    .as_str()
+                    .parse::<char>()
+                    .map_err(|e| anyhow!("invalid mismatch char, {e}"))
+                    .and_then(|b| DnaBase::parse_char(b))
+                    .map(|b| MdTag::Mismatch(b))
+            } else {
+                bail!("invalid MD, should match one of the groups")
+            }
+        })
+        .collect::<anyhow::Result<Vec<MdTag>>>()
+}
+
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, Default, PartialOrd, Ord)]
 pub enum Strand {
     #[default]
@@ -220,7 +282,9 @@ impl Display for Strand {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, ValueEnum)]
+#[derive(
+    Debug, Copy, Clone, Eq, PartialEq, Hash, ValueEnum, PartialOrd, Ord,
+)]
 pub enum StrandRule {
     #[clap(name = "positive")]
     Positive,
@@ -294,6 +358,16 @@ impl TryFrom<char> for StrandRule {
             '-' => Ok(Self::Negative),
             '.' => Ok(Self::Both),
             _ => bail!("illegal strand rule {value}"),
+        }
+    }
+}
+
+impl From<StrandRule> for char {
+    fn from(value: StrandRule) -> Self {
+        match value {
+            StrandRule::Positive => '+',
+            StrandRule::Negative => '-',
+            StrandRule::Both => '.',
         }
     }
 }
@@ -882,6 +956,30 @@ where
         let l: usize = self.n_valid.as_();
         l
     }
+}
+
+/// Read a "contig sizes" tab-separated file.
+pub(crate) fn load_sequence_lengths_file(
+    p: &PathBuf,
+) -> anyhow::Result<IndexMap<String, u64>> {
+    fn parse_line(line: &str) -> IResult<&str, (String, u64)> {
+        let (rest, chrom) = consume_string(line)?;
+        let (rest, length) = consume_digit(rest)?;
+        Ok((rest, (chrom, length)))
+    }
+
+    BufReader::new(std::fs::File::open(p)?)
+        .lines()
+        .map(|l| {
+            l.map_err(|e| anyhow!("failed to read from sizes, {e}")).and_then(
+                |l| {
+                    parse_line(&l)
+                        .map(|(_, this)| this)
+                        .map_err(|e| anyhow!("failed to parse sizes {l}, {e}"))
+                },
+            )
+        })
+        .collect::<anyhow::Result<IndexMap<_, _>>>()
 }
 
 #[cfg(test)]

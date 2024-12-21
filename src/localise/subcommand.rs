@@ -13,14 +13,13 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use crate::dmr::bedmethyl::BedMethylLine;
-use crate::localise::util::{
-    parse_sequence_lengths, LocalizedModCounts, StrandedFeatures,
-};
+use crate::localise::util::{LocalizedModCounts, StrandedFeatures};
 use crate::logging::init_logging;
 use crate::monoid::Moniod;
 use crate::tabix::HtsTabixHandler;
 use crate::util::{
-    get_master_progress_bar, get_ticker, GenomeRegion, StrandRule,
+    get_master_progress_bar, get_ticker, load_sequence_lengths_file,
+    GenomeRegion, StrandRule,
 };
 
 #[derive(Args)]
@@ -238,7 +237,9 @@ impl EntryLocalize {
 
         info!("loading sequence lengths from {:?}", &self.genome_sizes);
 
-        let sequence_lengths = parse_sequence_lengths(&self.genome_sizes)?;
+        let sequence_lengths = load_sequence_lengths_file(&self.genome_sizes)?
+            .into_iter()
+            .collect::<FxHashMap<String, u64>>();
         let tabix_index = HtsTabixHandler::from_path(&self.in_bedmethyl)
             .map(|x| Arc::new(x))?;
         let genome_regions = self.load_focus_regions(

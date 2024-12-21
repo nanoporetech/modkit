@@ -86,7 +86,7 @@ If any of the known motifs are not found during the search process an additional
 
 ## Simple description of the search algorithm
 
-The first step in `find-motifs` is to categorize each genomic position in the pileup into one of three groups based on the `fraction modified` [column in the bedMethyl](./intro_bedmethyl.md#bedmethyl-column-descriptions):
+The first step in `find-motifs` is to categorize each genomic position in the pileup into one of three groups based on the `fraction modified` [column in the bedMethyl](./intro_pileup.md#bedmethyl-column-descriptions):
 
 - Low-modified
 - Mid-modified
