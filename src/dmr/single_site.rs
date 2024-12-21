@@ -25,7 +25,7 @@ use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::BorrowingMoniod;
 use crate::thresholds::percentile_linear_interp;
 use crate::util::{
-    get_subroutine_progress_bar, get_ticker, Region, StrandRule,
+    get_subroutine_progress_bar, get_ticker, Region, Strand, StrandRule,
 };
 use crate::writers::TsvWriter;
 
@@ -419,6 +419,7 @@ struct SingleSiteDmrScore {
     counts_a: AggregatedCounts,
     counts_b: AggregatedCounts,
     position: u64,
+    strand: Strand,
     score: f64,
     map_pval: f64,
     effect_size: f64,
@@ -439,6 +440,7 @@ impl SingleSiteDmrScore {
             "end",
             "name",
             "score",
+            "strand",
             "a_counts",
             "a_total",
             "b_counts",
@@ -477,6 +479,7 @@ impl SingleSiteDmrScore {
         counts_b: &[AggregatedCounts],
         sample_index: &SingleSiteSampleIndex,
         position: u64,
+        strand: Strand,
         estimator: &PMapEstimator,
     ) -> anyhow::Result<Self> {
         let (replicate_epmap, replicate_effect_sizes) = if sample_index
@@ -517,6 +520,7 @@ impl SingleSiteDmrScore {
             counts_a: collapsed_a,
             counts_b: collapsed_b,
             position,
+            strand,
             score: llr_score,
             map_pval: epmap.e_pmap,
             effect_size: epmap.effect_size,
@@ -571,12 +575,14 @@ impl SingleSiteDmrScore {
             {}{sep}\
             {}{sep}\
             {}{sep}\
+            {}{sep}\
             {}\n",
                 chrom,
                 self.position,
                 self.position.saturating_add(1),
                 '.',
                 self.score,
+                self.strand.to_char(),
                 self.counts_a.string_counts(),
                 self.counts_a.total,
                 self.counts_b.string_counts(),
@@ -617,12 +623,14 @@ impl SingleSiteDmrScore {
             {}{sep}\
             {}{sep}\
             {}{sep}\
+            {}{sep}\
             {}",
             chrom,
             self.position,
             self.position.saturating_add(1),
             '.',
             self.score,
+            self.strand.to_char(),
             self.counts_a.string_counts(),
             self.counts_a.total,
             self.counts_b.string_counts(),
@@ -704,6 +712,7 @@ fn process_batch_of_positions(
                         &b_counts,
                         &sample_index,
                         pos.position,
+                        pos.strand,
                         &pmap_estimator,
                     )
                 })
