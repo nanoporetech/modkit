@@ -11,6 +11,7 @@ use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
+use crate::dmr::bedmethyl::BedMethylLine;
 use crate::find_motifs::motif_bed::MotifInfo;
 use crate::interval_chunks::{FocusPositions, MultiChromCoordinates};
 use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
@@ -141,6 +142,25 @@ impl PileupFeatureCounts {
             '-' => Some(Strand::Negative),
             _ => None,
         }
+    }
+}
+
+impl From<BedMethylLine> for PileupFeatureCounts {
+    fn from(item: BedMethylLine) -> PileupFeatureCounts {
+        PileupFeatureCounts::new(
+            item.strand.into(),
+            item.valid_coverage.try_into().unwrap_or(0),
+            item.raw_mod_code,
+            item.frac_modified(),
+            item.count_canonical.try_into().unwrap_or(0),
+            item.count_methylated.try_into().unwrap_or(0),
+            item.count_other.try_into().unwrap_or(0),
+            item.count_delete.try_into().unwrap_or(0),
+            item.count_fail.try_into().unwrap_or(0),
+            item.count_diff.try_into().unwrap_or(0),
+            item.count_nocall.try_into().unwrap_or(0),
+            None,
+        )
     }
 }
 

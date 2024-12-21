@@ -1,7 +1,7 @@
 # Summary
 
 - [Quick Start guides](./quick_start.md)
-    - [Constructing bedMethyl tables](./intro_bedmethyl.md)
+    - [Constructing bedMethyl tables](./intro_pileup.md)
     - [Make hemi-methylation bedMethyl tables](./intro_pileup_hemi.md)
     - [Updating and adjusting MM tags](./intro_adjust.md)
     - [Inspecting base modification probabilities](./intro_sample_probs.md)
@@ -20,6 +20,7 @@
     - [Validate ground truth results](./intro_validate.md)
     - [Calculating methylation entropy](./intro_entropy.md)
     - [Narrow output to specific positions](./intro_include_bed.md)
+    - [Merge multiple bedMethyl files](./intro_bedmethyl_merge.md)
 - [Extended subcommand help](./advanced_usage.md)
 - [Troubleshooting](./troubleshooting.md)
 - [Frequently asked questions](./faq.md)

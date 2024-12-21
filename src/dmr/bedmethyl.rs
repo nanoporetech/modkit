@@ -28,6 +28,11 @@ pub struct BedMethylLine {
     pub count_methylated: u64,
     pub valid_coverage: u64,
     pub count_canonical: u64,
+    pub count_other: u64,
+    pub count_delete: u64,
+    pub count_fail: u64,
+    pub count_diff: u64,
+    pub count_nocall: u64,
 }
 
 fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
@@ -51,7 +56,12 @@ fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
     let (rest, _score_again) = consume_digit(rest)?;
     let (rest, _pct_methyl) = consume_float(rest)?;
     let (rest, count_methylated) = consume_digit(rest)?;
-    let (_rest, count_canonical) = consume_digit(rest)?;
+    let (rest, count_canonical) = consume_digit(rest)?;
+    let (rest, count_other) = consume_digit(rest)?;
+    let (rest, count_delete) = consume_digit(rest)?;
+    let (rest, count_fail) = consume_digit(rest)?;
+    let (rest, count_diff) = consume_digit(rest)?;
+    let (rest, count_nocall) = consume_digit(rest)?;
 
     let interval = Iv { start, stop, val: () };
     Ok((
@@ -64,6 +74,11 @@ fn parse_bedmethyl_line(l: &str) -> IResult<&str, BedMethylLine> {
             count_methylated,
             valid_coverage,
             count_canonical,
+            count_other,
+            count_delete,
+            count_fail,
+            count_diff,
+            count_nocall,
         ),
     ))
 }
@@ -259,8 +274,12 @@ mod bedmethylline_tests {
                 '-'.try_into().unwrap(),
                 18,
                 19,
-                1
-
+                1,
+                0,
+                0,
+                1,
+                0,
+                2,
             );
             assert_eq!(bm_line, expected);
             let line = format!("chr20\t10034963\t10034964\tm\t19\t-\t10034963\t10034964\t255,0,0\t19{sep}94.74{sep}18{sep}1{sep}0{sep}0{sep}1{sep}0{sep}2");
@@ -276,7 +295,12 @@ mod bedmethylline_tests {
                 '+'.try_into().unwrap(),
                 2,
                 4,
-                1
+                1,
+                1,
+                0,
+                0,
+                2,
+                0,
             );
             assert_eq!(bm_line, expected);
         }
@@ -295,7 +319,12 @@ mod bedmethylline_tests {
                 '+'.try_into().unwrap(),
                 2,
                 4,
-                1
+                1,
+                1,
+                0,
+                0,
+                2,
+                0,
             );
             assert_eq!(bm_line, expected);
             let line = format!("oligo_1512_adapters\t9\t10\t76792,CG,0\t4\t+\t9\t10\t255,0,0\t4{sep}50.00{sep}2{sep}1{sep}1{sep}0{sep}0{sep}2{sep}0");

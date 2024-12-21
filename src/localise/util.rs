@@ -1,7 +1,3 @@
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
-
 use anyhow::{anyhow, bail};
 use charming::component::{
     Axis, DataZoom, DataZoomType, Feature, Legend, Restore, SaveAsImage, Title,
@@ -14,7 +10,6 @@ use charming::{Chart, HtmlRenderer};
 use clap::ValueEnum;
 use indicatif::{MultiProgress, ProgressIterator};
 use itertools::{Itertools, MinMaxResult};
-use nom::IResult;
 use prettytable::row;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -22,7 +17,6 @@ use rustc_hash::FxHashMap;
 use crate::dmr::bedmethyl::BedMethylLine;
 use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::Moniod;
-use crate::parsing_utils::{consume_digit, consume_string};
 use crate::tabix::HtsTabixHandler;
 use crate::util::{
     get_subroutine_progress_bar, GenomeRegion, ModPositionInfo, StrandRule,
@@ -238,27 +232,4 @@ pub(super) enum StrandedFeatures {
     Same,
     #[clap(name = "opposite")]
     Opposite,
-}
-
-pub(super) fn parse_sequence_lengths(
-    p: &PathBuf,
-) -> anyhow::Result<FxHashMap<String, u64>> {
-    fn parse_line(line: &str) -> IResult<&str, (String, u64)> {
-        let (rest, chrom) = consume_string(line)?;
-        let (rest, length) = consume_digit(rest)?;
-        Ok((rest, (chrom, length)))
-    }
-
-    BufReader::new(File::open(p)?)
-        .lines()
-        .map(|l| {
-            l.map_err(|e| anyhow!("failed to read from sizes, {e}")).and_then(
-                |l| {
-                    parse_line(&l)
-                        .map(|(_, this)| this)
-                        .map_err(|e| anyhow!("failed to parse sizes {l}, {e}"))
-                },
-            )
-        })
-        .collect::<anyhow::Result<FxHashMap<_, _>>>()
 }

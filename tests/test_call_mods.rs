@@ -229,7 +229,7 @@ fn test_call_mods_same_pileup() {
         .unwrap();
 
     let mod_call_out_bam =
-        std::env::temp_dir().join("test_call_mods_same_pileup.bam");
+        std::env::temp_dir().join("test_call_mods_same_pileup_called_mods.bam");
     run_modkit(&[
         "call-mods",
         update_tags_bam.to_str().unwrap(),
@@ -284,7 +284,19 @@ fn test_call_mods_same_pileup() {
     let in_situ_records = parse_bedmethyl_fp(&in_situ_threshold_pileup);
     assert_eq!(called_records.len(), in_situ_records.len());
     for (x, y) in called_records.into_iter().zip(in_situ_records) {
-        assert_eq!(x, y, "{x:?}=/={y:?}");
+        assert_eq!(x.chrom, y.chrom);
+        assert_eq!(x.start(), y.start());
+        assert_eq!(x.raw_mod_code, y.raw_mod_code);
+        assert_eq!(x.strand, y.strand);
+        assert_eq!(x.count_methylated, y.count_methylated);
+        assert_eq!(x.valid_coverage, y.valid_coverage);
+        assert_eq!(x.count_canonical, y.count_canonical);
+        assert_eq!(x.count_other, y.count_other);
+        assert_eq!(
+            x.count_diff + x.count_nocall,
+            y.count_fail + y.count_diff + y.count_nocall,
+            "{x:?}\n{y:?}"
+        )
     }
 }
 

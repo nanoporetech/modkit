@@ -1,6 +1,7 @@
 extern crate core;
 
 pub mod adjust;
+pub mod bedmethyl_util;
 pub mod commands;
 pub mod entropy;
 pub mod errs;

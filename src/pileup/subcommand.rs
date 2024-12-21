@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
 
 use crate::command_utils::{
-    get_threshold_from_options, parse_edge_filter_input,
+    calculate_chunk_size, get_threshold_from_options, parse_edge_filter_input,
     parse_per_mod_thresholds, parse_thresholds,
 };
 use crate::fasta::MotifLocationsLookup;
@@ -434,25 +434,11 @@ impl ModBamPileup {
             did not find any mapped reads, perform alignment first or use \
              modkit extract and/or modkit summary to inspect unaligned modBAMs",
         )?;
-        let chunk_size = if let Some(chunk_size) = self.chunk_size {
-            if chunk_size < self.threads {
-                warn!(
-                    "chunk size {chunk_size} is less than number of threads \
-                     ({}), this will limit parallelism",
-                    self.threads
-                );
-            }
-            chunk_size
-        } else {
-            let cs = (self.threads as f32 * 1.5).floor() as usize;
-            info!(
-                "calculated chunk size: {cs}, interval size {}, processing {} \
-                 positions concurrently",
-                self.interval_size,
-                cs * self.interval_size as usize
-            );
-            cs
-        };
+        let chunk_size = calculate_chunk_size(
+            self.chunk_size,
+            self.interval_size,
+            self.threads,
+        );
 
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")

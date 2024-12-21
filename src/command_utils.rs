@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context};
 use itertools::Itertools;
-use log::{debug, info};
+use log::{debug, info, warn};
 use rust_htslib::bam::{self, Header};
 
 use crate::adjust::OverlappingRegexOffset;
@@ -273,6 +273,32 @@ pub(crate) fn parse_edge_filter_input(
              start and end of each read"
         );
         Ok(EdgeFilter::new(trim, trim, inverted))
+    }
+}
+
+pub(crate) fn calculate_chunk_size(
+    chunk_size: Option<usize>,
+    interval_size: u32,
+    threads: usize,
+) -> usize {
+    if let Some(chunk_size) = chunk_size {
+        if chunk_size < threads {
+            warn!(
+                "chunk size {chunk_size} is less than number of threads ({}), \
+                 this will limit parallelism",
+                threads
+            );
+        }
+        chunk_size
+    } else {
+        let cs = (threads as f32 * 1.5).floor() as usize;
+        info!(
+            "calculated chunk size: {cs}, interval size {}, processing {} \
+             positions concurrently",
+            interval_size,
+            cs * interval_size as usize
+        );
+        cs
     }
 }
 

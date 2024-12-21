@@ -875,12 +875,16 @@ fn test_pileup_chebi_code_same_output() {
                     BedMethylLine::new(
                         bm.chrom,
                         bm.interval,
-                        ModCodeRepr::Code('h'), /* change back so we can
-                                                 * compare */
+                        ModCodeRepr::Code('h'),
                         bm.strand,
                         bm.count_methylated,
                         bm.valid_coverage,
                         bm.count_canonical,
+                        bm.count_other,
+                        bm.count_delete,
+                        bm.count_fail,
+                        bm.count_diff,
+                        bm.count_nocall,
                     )
                 } else {
                     bm

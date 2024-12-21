@@ -31,6 +31,7 @@ impl ParseBedLine for BedMethylLine {
 
 pub(crate) struct HtsTabixHandler<T: ParseBedLine> {
     indexed_fp: PathBuf,
+    /// Mapping of name to tid
     contigs: FxHashMap<String, u64>,
     _t: PhantomData<T>,
 }
