@@ -80,6 +80,8 @@ The schema for the `regions.bed` file is below:
 
 Similar to `pileup` you can specify a motif on the command line with `--motif` and optionally combine the counts across the positive and negative strands with `--combine-strands`.
 If you specify a primary sequence base (with `--base`) or a motif (with `--motif`) that is not reverse-complement palindromic `modkit` will output methylation entropy per-strand.
+This option can be passed multiple times to use multiple motifs.
+When motifs specify different primary sequence bases, for example `--motif GATC 1` and `--motif CCGG 0`, all of the base modification statuses will be used in calculating the entropy values.
 
 
 For example if you want to calculate m6A entropy in DRACH motifs:

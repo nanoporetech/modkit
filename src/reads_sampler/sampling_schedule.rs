@@ -830,6 +830,9 @@ impl ReferenceSequencesLookup {
             )
         }
         // todo add more checks that the headers are all the same
+        //  - all seqs must be in the same order
+        //  - all seqs must be the same size
+        //  - use M5 if present
 
         let fasta_reader =
             bio::io::fasta::Reader::from_file(reference_fasta_fp)
@@ -891,7 +894,7 @@ impl ReferenceSequencesLookup {
                 })
                 .collect::<HashMap<usize, Vec<char>>>();
         if reference_sequences.is_empty() {
-            bail!("must have at least 1 vaid reference sequence")
+            bail!("must have at least 1 valid reference sequence")
         }
 
         Ok(Self {

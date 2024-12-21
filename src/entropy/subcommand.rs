@@ -2,12 +2,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{bail, Context};
-use clap::Args;
-use indicatif::MultiProgress;
-use log::{debug, error, info};
-use rayon::prelude::*;
-
 use crate::command_utils::parse_per_mod_thresholds;
 use crate::entropy::writers::{EntropyWriter, RegionsWriter, WindowsWriter};
 use crate::entropy::{process_entropy_window, SlidingWindows};
@@ -24,6 +18,11 @@ use crate::thresholds::{
     percentile_linear_interp,
 };
 use crate::util::{get_master_progress_bar, get_ticker};
+use anyhow::{bail, Context};
+use clap::Args;
+use indicatif::MultiProgress;
+use log::{debug, error, info};
+use rayon::prelude::*;
 
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
@@ -111,15 +110,18 @@ pub struct MethylationEntropy {
     /// Respect soft masking in the reference FASTA.
     #[arg(long, requires = "reference_fasta", default_value_t = false)]
     mask: bool,
-    /// Motif to use for entropy calculation, default will be CpG.
-    #[arg(long, num_args = 2)]
+    /// Motif to use for entropy calculation, multiple motifs can be used by
+    /// repeating this option. When multiple motifs are used that specify
+    /// different modified primary bases, all modification possibilities
+    /// will be used in the calculation.
+    #[arg(long, num_args = 2, action = clap::ArgAction::Append)]
     motif: Option<Vec<String>>,
     /// Use CpG motifs. Short hand for --motif CG 0 --combine-strands
     #[arg(long, default_value_t = false)]
     cpg: bool,
     /// Primary sequence base to calculate modification entropy on.
-    #[arg(long, conflicts_with = "motif")]
-    base: Option<DnaBase>,
+    #[arg(long, conflicts_with="cpg", action = clap::ArgAction::Append)]
+    base: Option<Vec<DnaBase>>,
     /// Regions over which to calculate descriptive statistics
     #[arg(long = "regions")]
     regions_fp: Option<PathBuf>,
@@ -208,43 +210,57 @@ impl MethylationEntropy {
             multi_pb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
 
-        let (motif, combine_strands) =
-            match (self.cpg, self.motif.as_ref(), self.base) {
+        let (motifs, combine_strands) =
+            match (self.cpg, self.motif.as_ref(), self.base.as_ref()) {
                 (true, _, _) => {
                     info!("using CpG motif and combining strands");
-                    (RegexMotif::parse_string("CG", 0).unwrap(), true)
+                    (vec![RegexMotif::parse_string("CG", 0).unwrap()], true)
                 }
-                (false, Some(raw_motif_parts), _) => {
+                (false, Some(raw_motif_parts), maybe_bases) => {
+                    if maybe_bases.is_some() && self.combine_strands {
+                        bail!(
+                            "cannot combine strands with single base \
+                             modifications"
+                        )
+                    }
+                    assert_eq!(
+                        raw_motif_parts.len() % 2,
+                        0,
+                        "illegal number of motif options {raw_motif_parts:?}"
+                    );
                     let mut motifs =
                         RegexMotif::from_raw_parts(raw_motif_parts, false)?;
-                    if motifs.len() == 1 {
-                        let motif = motifs.remove(0);
-                        if self.combine_strands && !motif.is_palendrome() {
+                    if self.combine_strands {
+                        if !motifs.iter().all(|m| m.is_palendrome()) {
                             bail!(
-                                "motif must be reverse-complement palindromic \
-                                 to combine strands"
+                                "motifs must be palindromic to combine strands"
                             )
                         }
-                        info!("using user-specified motif {}", motif);
-                        (motif, self.combine_strands)
-                    } else {
-                        bail!("cannot have more than 1 motif")
                     }
+                    if let Some(bases) = maybe_bases {
+                        let base_motifs = bases
+                            .iter()
+                            .map(|b| {
+                                RegexMotif::parse_string(&format!("{b}"), 0)
+                            })
+                            .collect::<anyhow::Result<Vec<RegexMotif>>>()?;
+                        motifs.extend(base_motifs);
+                    }
+                    info!("parsed motifs {motifs:?}");
+                    (motifs, self.combine_strands)
                 }
-                (false, None, Some(dna_base)) => {
+                (false, None, Some(bases)) => {
                     if self.combine_strands {
                         bail!(
                             "cannot combine strands with single base \
                              modifications"
                         )
                     }
-                    (
-                        RegexMotif::parse_string(
-                            &format!("{}", dna_base.char()),
-                            0,
-                        )?,
-                        false,
-                    )
+                    let motifs = bases
+                        .iter()
+                        .map(|b| RegexMotif::parse_string(&format!("{b}"), 0))
+                        .collect::<anyhow::Result<Vec<RegexMotif>>>()?;
+                    (motifs, false)
                 }
                 _ => bail!(
                     "invalid input options, must provide --motif, --base, or \
@@ -254,11 +270,7 @@ impl MethylationEntropy {
 
         let batch_size = (self.threads as f32 * 1.5f32).floor() as usize;
         let window_size = self.window_size;
-        info!(
-            "window size is set to {}, motif ({motif:?}) length is {}",
-            window_size,
-            motif.length()
-        );
+
         if combine_strands {
             info!("combining (+)-strand and (-)-strand modification calls");
         }
@@ -277,7 +289,7 @@ impl MethylationEntropy {
                 SlidingWindows::new_with_regions(
                     reference_sequence_lookup,
                     regions_fp,
-                    motif,
+                    motifs,
                     combine_strands,
                     self.num_positions,
                     window_size,
@@ -286,7 +298,7 @@ impl MethylationEntropy {
             } else {
                 SlidingWindows::new(
                     reference_sequence_lookup,
-                    motif,
+                    motifs,
                     combine_strands,
                     self.num_positions,
                     window_size,
