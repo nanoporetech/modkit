@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
 
+use anyhow::bail;
 use clap::{Args, Subcommand};
 use indicatif::ProgressIterator;
 use itertools::Itertools;
@@ -223,6 +224,9 @@ impl EntryMergeBedMethyl {
                     match HtsTabixHandler::from_path(&bedmethyl) {
                         Ok(reader) => reader,
                         Err(_) => {
+                            info!(
+                                "failed to initialize reader for {bedmethyl:?}"
+                            );
                             return None;
                         }
                     };
@@ -230,6 +234,13 @@ impl EntryMergeBedMethyl {
                 Some(index)
             })
             .collect::<Vec<HtsTabixHandler<BedMethylLine>>>();
+
+        if readers.is_empty() {
+            bail!(
+                "failed to get any bedMethyl readers, are the files \
+                 tabix-indexed and bgzip-compressed?"
+            );
+        }
 
         // get set of contigs from all files
         // done this way in case one file has a set of contigs that the other
