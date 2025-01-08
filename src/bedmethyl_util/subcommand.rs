@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 use indicatif::ProgressIterator;
 use itertools::Itertools;
-use log::{debug, error};
+use log::{debug, error, info};
+use log_once::debug_once;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
@@ -125,25 +126,37 @@ fn merge_data(
     // lines in a hashmap write the hashmap to a new bedmethyl
     // recreate hashmap and repeat process for next contig/regions
     for index in readers.iter() {
-        let lines = index.read_bedmethyl(&contig, &range, io_threads)?;
-
-        for line in lines {
-            let line = line?;
-
-            merged_data
-                .entry((line.start(), line.raw_mod_code, line.strand))
-                // modify the methyl data if an entry is found
-                .and_modify(|methyl| {
-                    methyl.count_methylated += line.count_methylated;
-                    methyl.valid_coverage += line.valid_coverage;
-                    methyl.count_canonical += line.count_canonical;
-                    methyl.count_other += line.count_other;
-                    methyl.count_delete += line.count_delete;
-                    methyl.count_fail += line.count_fail;
-                    methyl.count_diff += line.count_diff;
-                    methyl.count_nocall += line.count_nocall;
-                })
-                .or_insert(line);
+        let mut parse_fails = 0u64;
+        if let Ok(lines) = index.read_bedmethyl(&contig, &range, io_threads) {
+            let lines = lines.into_iter().filter_map(|r| match r {
+                Ok(record) => Some(record),
+                Err(_) => {
+                    parse_fails += 1;
+                    None
+                }
+            });
+            for line in lines {
+                merged_data
+                    .entry((line.start(), line.raw_mod_code, line.strand))
+                    // modify the methyl data if an entry is found
+                    .and_modify(|methyl| {
+                        methyl.count_methylated += line.count_methylated;
+                        methyl.valid_coverage += line.valid_coverage;
+                        methyl.count_canonical += line.count_canonical;
+                        methyl.count_other += line.count_other;
+                        methyl.count_delete += line.count_delete;
+                        methyl.count_fail += line.count_fail;
+                        methyl.count_diff += line.count_diff;
+                        methyl.count_nocall += line.count_nocall;
+                    })
+                    .or_insert(line);
+            }
+        }
+        if parse_fails > 0 {
+            debug_once!(
+                "failed to parse {parse_fails} bedmethyl records from {:?}",
+                index.indexed_fp
+            );
         }
     }
 
@@ -223,7 +236,12 @@ impl EntryMergeBedMethyl {
         // bedmethyl files do not have
         let tabix_contigs: HashSet<String> =
             readers.iter().flat_map(|handler| handler.get_contigs()).collect();
-        // get the chrom sizes so we know how large to make the chunks
+        info!(
+            "Collected {} contigs from {} readers",
+            tabix_contigs.len(),
+            readers.len()
+        );
+
         let reference_records = load_sequence_lengths_file(&self.genome_sizes)
             .map(|sizes| {
                 sizes
