@@ -160,6 +160,7 @@ impl<T: Send + Sync + Eq + Clone> StrandedPositionFilter<T> {
             .chain(self.neg_positions.keys())
             .unique()
             .copied()
+            .sorted()
             .collect::<Vec<u32>>();
 
         contig_ids
