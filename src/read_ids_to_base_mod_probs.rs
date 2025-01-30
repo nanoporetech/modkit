@@ -160,8 +160,11 @@ impl ReadIdsToBaseModProbs {
         suppress_progress: bool,
     ) -> ProbHistogram {
         let base_state_probs = self.mle_probs_per_base_mod(suppress_progress);
+        let pb = get_master_progress_bar(base_state_probs.len());
+        pb.set_message("preparing histograms");
         let prob_counts = base_state_probs
             .into_par_iter()
+            .progress_with(pb)
             .map(|(base_state, probs)| {
                 let max_p = probs
                     .iter()
