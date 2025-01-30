@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result as AnyhowResult};
 use clap::{Args, Subcommand, ValueEnum};
+use indicatif::ProgressIterator;
 use itertools::Itertools;
 use log::{debug, info};
 use rust_htslib::bam::{
@@ -44,7 +45,10 @@ use crate::summarize::{sampled_reads_to_summary, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{calc_thresholds_per_base, Percentiles};
 use crate::util;
-use crate::util::{add_modkit_pg_records, get_targets, get_ticker, Region};
+use crate::util::{
+    add_modkit_pg_records, get_master_progress_bar, get_targets, get_ticker,
+    Region,
+};
 use crate::validate::subcommand::ValidateFromModbam;
 use crate::writers::{
     MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
@@ -781,9 +785,13 @@ impl SampleModBaseProbs {
                 None
             };
 
-            let percentiles = read_ids_to_base_mod_calls
-                .mle_probs_per_base(self.suppress_progress)
+            let mle_probs_per_base = read_ids_to_base_mod_calls
+                .mle_probs_per_base(self.suppress_progress);
+            let pb = get_master_progress_bar(mle_probs_per_base.len());
+            pb.set_message("calculating percentiles");
+            let percentiles = mle_probs_per_base
                 .into_iter()
+                .progress_with(pb)
                 .map(|(canonical_base, mut probs)| {
                     Percentiles::new(&mut probs, &desired_percentiles)
                         .with_context(|| {

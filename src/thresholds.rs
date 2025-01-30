@@ -52,7 +52,7 @@ impl Percentiles {
         probs: &mut [f32],
         desired_percentiles: &[f32],
     ) -> AnyhowResult<Self> {
-        probs.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        probs.par_sort_by(|x, y| x.partial_cmp(y).unwrap());
         let qs = desired_percentiles
             .iter()
             .map(|q| percentile_linear_interp(&probs, *q).map(|p| (*q, p)))

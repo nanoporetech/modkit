@@ -862,6 +862,7 @@ impl ProbHistogram {
         extra_dna_colors: &HashMap<DnaBase, String>,
         extra_mod_colors: &HashMap<ModCodeRepr, String>,
     ) -> (Table, Chart, Chart) {
+        info!("preparing plots and tables");
         let mut table = Table::new();
         table.set_titles(row![
             "code",
@@ -903,6 +904,7 @@ impl ProbHistogram {
                     extra_dna_colors.get(x).or(DNA_BASE_COLORS.get(x)),
                 ),
             };
+            // dbg!(label, color);
             let color = if let Some(c) = color {
                 c.to_string()
             } else {
@@ -910,8 +912,10 @@ impl ProbHistogram {
                 gen.seed(label.as_str());
                 gen.to_rgb_string()
             };
+            // dbg!(label, color);
             colors.push(color);
             let total = counts.values().sum::<usize>() as f32;
+            // todo could this be a .scan?
             let (stats, _) = counts.iter().fold(
                 (BTreeMap::new(), 0f32),
                 |(mut acc, cum_sum), (b, c)| {
@@ -953,6 +957,9 @@ impl ProbHistogram {
             }
         }
         counts_chart = counts_chart.color(
+            colors.iter().map(|c| Color::Value(c.to_string())).collect(),
+        );
+        prop_chart = prop_chart.color(
             colors.iter().map(|c| Color::Value(c.to_string())).collect(),
         );
 

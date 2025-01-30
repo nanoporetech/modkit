@@ -44,7 +44,7 @@ fn test_bedmethyl_merge() {
     ])
     .unwrap();
     assert!(out_bed.exists());
-    dbg!(&out_bed);
+    // dbg!(&out_bed);
 
     let mut buff = vec![];
     let _ = rust_htslib::bgzf::Reader::from_path(bed_fp)
