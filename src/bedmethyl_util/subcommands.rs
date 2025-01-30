@@ -60,6 +60,7 @@ pub struct EntryMergeBedMethyl {
     #[arg(num_args(2..))]
     in_bedmethyl: Vec<PathBuf>,
     /// Specify the output file to write the results table.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, short = 'o', alias = "out")]
     out_bed: String,
     /// TSV of genome sizes, should be <chrom>\t<size_in_bp>
@@ -67,16 +68,24 @@ pub struct EntryMergeBedMethyl {
     genome_sizes: PathBuf,
 
     /// Force overwrite the output file.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     force: bool,
     /// Output a header with the bedMethyl.
-    #[arg(long, alias = "include_header", default_value_t = false)]
+    #[clap(help_heading = "Output Options")]
+    #[arg(
+        long = "header",
+        alias = "with-header",
+        alias = "include_header",
+        default_value_t = false
+    )]
     with_header: bool,
 
     /// Output bedMethyl where the delimiter of columns past column 10 are
     /// space-delimited instead of tab-delimited. This option can be useful
     /// for some browsers and parsers that don't expect the extra columns
     /// of the bedMethyl format.
+    #[clap(help_heading = "Output Options")]
     #[arg(
         long = "mixed-delim",
         alias = "mixed-delimiters",
@@ -89,11 +98,13 @@ pub struct EntryMergeBedMethyl {
     /// Larger values will lead to faster merging at the expense of memory
     /// usage, while smaller values will be slower with lower memory usage.
     /// This option will only impact large bedmethyl files.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, hide_short_help = true)]
     chunk_size: Option<usize>,
 
     /// Interval chunk size in base pairs to process concurrently. Smaller
     /// interval chunk sizes will use less memory but incur more overhead.
+    #[clap(help_heading = "Compute Options")]
     #[arg(
         short = 'i',
         long,
@@ -103,12 +114,15 @@ pub struct EntryMergeBedMethyl {
     interval_size: u32,
 
     /// Specify a file to write debug logs to.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Number of threads to use
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
     /// Number of tabix/bgzf threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, default_value_t = 2)]
     io_threads: usize,
 }
@@ -370,46 +384,54 @@ pub struct EntryToBigWig {
 
     /// Report the percentages on the negative strand as negative values. The
     /// data range will be [-100, 100].
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     negative_strand_values: bool,
 
     /// Set the number of threads to use. This tool will typically use ~225%
     /// CPU on a HDD. SDDs may be higher. (IO bound)
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 6)]
     pub nthreads: usize,
 
     /// Set the maximum of zooms to create.
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'z', long, default_value_t = 10)]
     pub nzooms: u32,
 
     /// Set the zoom resolutions to use (overrides the --nzooms argument).
+    #[clap(help_heading = "Output Options")]
     #[arg(long, value_delimiter = ',', num_args = 1..)]
     pub zooms: Option<Vec<u32>>,
 
     /// Don't use compression.
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'u', long, default_value_t = false)]
     pub uncompressed: bool,
 
     /// Number of items to bundle in r-tree.
     #[arg(long, default_value_t = 256)]
-    #[arg()]
+    #[clap(help_heading = "Output Options")]
     pub block_size: u32,
 
     /// Number of data points bundled at lowest level.
-    #[arg(long)]
-    #[arg(default_value_t = 1024)]
+    #[clap(help_heading = "Output Options")]
+    #[arg(long, default_value_t = 1024)]
     pub items_per_slot: u32,
 
     /// Do not create temporary files for intermediate data.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, default_value_t = false)]
     pub inmemory: bool,
 
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
 
     /// Hide the progress bar
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false)]
     suppress_progress: bool,
 }

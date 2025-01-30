@@ -1011,14 +1011,24 @@ impl MmTagInfo {
     }
 
     pub(crate) fn header(&self) -> String {
+        let mod_codes = self
+            .mod_base_codes
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<String>();
+
         if let Some(mode_repr) = self.mode.char() {
             format!(
-                "{}{}{mode_repr}",
+                "{}{}{mod_codes}{mode_repr}",
                 self.fundamental_base.char(),
                 self.strand.to_char()
             )
         } else {
-            format!("{}{}", self.fundamental_base.char(), self.strand.to_char())
+            format!(
+                "{}{}{mod_codes}",
+                self.fundamental_base.char(),
+                self.strand.to_char()
+            )
         }
     }
 }

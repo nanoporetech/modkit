@@ -30,6 +30,8 @@ cargo install --git https://github.com/nanoporetech/modkit.git
 9. [Repairing/adding MM/ML tags to reads with clipped sequences](./intro_repair.md)
 10. [Creating hemi-methylation pattern bedMethyl tables with `pileup-hemi`](./intro_pileup_hemi.md)
 11. [Performing differential methylation scoring with `dmr`](./intro_dmr.md)
+12. [Checking modified base tags in a modBAM](./intro_modbam_check_tags.md)
+13. [Convert bedMethyl files to bigWig for visualization](./intro_bedmethyl_merge.md#convert-bedmethyl-to-bigwig)
 
 ## Notes and troubleshooting
 1. [General troubleshooting](./troubleshooting.md)

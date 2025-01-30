@@ -42,8 +42,10 @@ impl EntryModBam {
 pub struct EntryCheckTags {
     /// Input modBam, can be a path to a file or one of `-` or
     /// `stdin` to specify a stream from standard input.
-    #[clap(help_heading = "IO Options")]
     in_bam: String,
+    /// Don't exit 1 when invalid records are found in the input.
+    #[arg(long, default_value_t = false)]
+    permissive: bool,
     /// Write output tables into this directory. The directory will be created
     /// if it doesn't exist.
     #[clap(help_heading = "IO Options")]
@@ -226,6 +228,7 @@ impl EntryCheckTags {
             self.out_dir.as_ref(),
             self.prefix.as_ref(),
             self.force,
+            self.permissive,
         )?;
         Ok(())
     }

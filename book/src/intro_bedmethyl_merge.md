@@ -31,3 +31,28 @@ For example, Human (hg19):
 chr1    249250621
 chr2    243199373
 ```
+
+# Convert bedMethyl to bigWig
+
+You may want to convert a bedMethyl to bigWig for easier visualization on a genome browser. 
+Modkit provides a `bedmethyl tobigwig` function that can extract a bigWig track from a bedMethyl.
+The bigWig format is more constrained than bedMethyl in that it can only display a single stream of data (floats).
+So you can't have a bigWig with 5hmC and 5mC values together, you need to make separate tracks. Here are some annotated examples:
+
+```bash
+# you can run pileup and stream the output through the new command '-' means output to stdout
+modkit pileup ${modbam} - \
+  # --mod-code a will make a track of 6mA
+  | tee >(modkit bedmethyl tobigwig - ${outdir}/subsample_pileup_a.bw --mod-code a -g ${sizes} --log ${outdir}/bm_a.log --negative-strand-values --suppress-progress) \
+  # you can use "bm" or "bedmethyl"
+  # --mod-code (or --mod-codes h,m) will combine the 5hmC and 5mC counts into a track
+  | tee >(modkit bm tobigwig - ${outdir}/subsample_pileup_hm.bw --mod-codes h,m -g ${sizes} --log ${outdir}/bm_hm.log --negative-strand-values --suppress-progress) \
+  # finally pipe out to the pileup
+  > ${pileup}
+
+# you can use a file also, if you have conflicting bases (e.g. 6mA and 5mC) - you'll get an error.
+modkit bm tobigwig ${pileup} ${outbw} --mod-code m,a -g ${sizes} --negative-strand-values
+```
+
+With this CLI you can capture any number of bigWig tracks whilst making a bedMethyl pileup at the same time.
+You can also make a bigWig from a pre-computed bedMethyl (and use tabix to get just sections of a pre-made bedMethyl).

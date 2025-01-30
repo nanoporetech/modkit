@@ -795,7 +795,7 @@ fn print_table(
 
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
-pub struct ValidateFromModbam {
+pub struct ValidateFromModBam {
     // running args
     // convert to list of bam bed inputs
     /// Argument accepts 2 values. The first value is the BAM file path with
@@ -804,6 +804,7 @@ pub struct ValidateFromModbam {
     /// should be the short name (single letter code or ChEBI ID) for a
     /// modified base or `-` to specify a canonical base ground truth position.
     /// This argument can be provided more than once for multiple samples.
+    #[clap(help_heading = "Sample Options")]
     #[arg(
 	long,
 	action = clap::ArgAction::Append,
@@ -819,6 +820,7 @@ pub struct ValidateFromModbam {
     /// if collapsing 'h', with 'm' and canonical options, half of the
     /// probability of 'h' will be added to both 'm' and 'C'. A full
     /// description of the methods can be found in collapse.md.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, hide_short_help = true)]
     ignore: Option<String>,
     /// Discard base modification calls that are this many bases from the start
@@ -826,6 +828,7 @@ pub struct ValidateFromModbam {
     /// to asymmetrically filter out base modification calls from the start
     /// and end of the reads. For example, 4,8 will filter out base
     /// modification calls in the first 4 and last 8 bases of the read.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     edge_filter: Option<String>,
     /// Invert the edge filter, instead of filtering out base modification
@@ -834,18 +837,22 @@ pub struct ValidateFromModbam {
     /// out) base modification calls in the first 4 and last 8 bases of the
     /// read, using this flag will keep only base modification calls in the
     /// first 4 and last 8 bases.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
     /// Canonical base to evaluate. By default, this will be derived from mod
     /// codes in ground truth BED files. For ground truth with only canonical
     /// sites and/or ChEBI codes this values must be set.
+    #[clap(help_heading = "Sample Options")]
     #[clap(short = 'c', long)]
     canonical_base: Option<DnaBase>,
     /// Only use reads with alignment identity >= this number, in Q-space
     /// (phred score).
+    #[clap(help_heading = "Selection Options")]
     #[arg(long = "min-identity")]
     min_alignment_identity: Option<f32>,
     /// Remove reads with fewer aligned reference bases than this threshold.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long = "min-length")]
     min_alignment_length: Option<u64>,
 
@@ -853,30 +860,36 @@ pub struct ValidateFromModbam {
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will
     /// filter out the 10% lowest confidence modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(short = 'p', long, default_value_t = 0.1)]
     filter_quantile: f32,
     /// Specify modified base probability filter threshold value. If specified,
     /// --filter-threshold will override --filter-quantile.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(long, alias = "pass_threshold")]
     filter_threshold: Option<f32>,
 
     // misc args
     /// Number of threads to use
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
     /// Hide the progress bar.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
     /// Specify a file for machine parseable output.
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'o', long, alias = "out")]
     out_filepath: Option<PathBuf>,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
 }
 
-impl ValidateFromModbam {
+impl ValidateFromModBam {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         let mut out_handle: Option<File> = None;

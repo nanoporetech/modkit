@@ -36,9 +36,11 @@ pub struct EntryLocalize {
     regions: PathBuf,
     /// Create plots showing %-modification vs. offset. Argument should be a
     /// path to a file.
+    #[clap(help_heading = "Output Options")]
     #[arg(long = "chart")]
     chart_filepath: Option<PathBuf>,
     /// Give the HTML document and chart a name.
+    #[clap(help_heading = "Output Options")]
     #[arg(long = "name", requires = "chart_filepath")]
     chart_name: Option<String>,
     /// Number of base pairs to search around, for example if your BED region
@@ -75,17 +77,22 @@ pub struct EntryLocalize {
     #[arg(long, short = 'o')]
     out_file: Option<PathBuf>,
     /// Specify a file to write debug logs to.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Number of threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
     /// Number of tabix/bgzf IO threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, default_value_t = 2)]
     io_threads: usize,
     /// Force overwrite of existing output file.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, short = 'f', default_value_t = false)]
     force: bool,
+    #[clap(help_heading = "Compute Options")]
     #[arg(
         long = "batch-size",
         hide_short_help = true,

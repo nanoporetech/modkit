@@ -63,8 +63,9 @@ Commands:
                 windows
   localize      Investigate patterns of base modifications, by aggregating
                 pileup counts "localized" around genomic features of interest
-  stats         Calculate base modification levels over entire regions
+  stats         Calculate base modification levels over regions
   bedmethyl     Utilities to work with bedMethyl files
+  modbam        Utilities to work with modBAM files
   help          Print this message or the help of the given subcommand(s)
 
 Options:
@@ -89,10 +90,34 @@ Arguments:
           into. Specify "-" or "stdout" to direct output to stdout
 
 Options:
+      --preset <PRESET>
+          Optional preset options for specific applications. traditional:
+          Prepares bedMethyl analogous to that generated from other technologies
+          for the analysis of 5mC modified bases. Shorthand for --cpg
+          --combine-strands --ignore h
+          
+          [possible values: traditional]
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification
+          calls at the ends of reads, only _keep_ base modification calls at the
+          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
+          base modification calls in the first 4 and last 8 bases of the read,
+          using this flag will keep only base modification calls in the first 4
+          and last 8 bases
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           Specify a file for debug logs to be written to, otherwise ignore them.
           Setting a file is recommended. (alias: log)
 
+      --suppress-progress
+          Hide the progress bar
+
+Selection Options:
       --region <REGION>
           Process only the specified region of the BAM when performing pileup.
           Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas
@@ -106,6 +131,22 @@ Options:
           
           [default: 8000]
 
+      --include-bed <INCLUDE_BED>
+          BED file that will restrict threshold estimation and pileup results to
+          positions overlapping intervals in the file. (alias:
+          include-positions)
+
+      --include-unmapped
+          Include unmapped base modifications when estimating the pass threshold
+
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the
+          start or the end of the read. Two comma-separated values may be
+          provided to asymmetrically filter out base modification calls from the
+          start and end of the reads. For example, 4,8 will filter out base
+          modification calls in the first 4 and last 8 bases of the read
+
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use while processing chunks concurrently
           
@@ -130,9 +171,7 @@ Options:
           threads are specified the chunk_size will be 6. A warning will be
           shown if this option is less than the number of threads specified
 
-      --suppress-progress
-          Hide the progress bar
-
+Sampling Options:
   -n, --num-reads <NUM_READS>
           Sample this many reads when estimating the filtering threshold. Reads
           will be sampled evenly across aligned genome. If a region is
@@ -154,6 +193,7 @@ Options:
           Set a random seed for deterministic running, the default is
           non-deterministic
 
+Filtering Options:
       --no-filtering
           Do not perform any filtering, include all mod base calls in output.
           See filtering.md for details on filtering
@@ -199,14 +239,7 @@ Options:
           
           [default: 1000000]
 
-      --include-bed <INCLUDE_BED>
-          BED file that will restrict threshold estimation and pileup results to
-          positions overlapping intervals in the file. (alias:
-          include-positions)
-
-      --include-unmapped
-          Include unmapped base modifications when estimating the pass threshold
-
+Modified Base Options:
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base
           modification probability equally across other options. For example, if
@@ -249,14 +282,6 @@ Options:
   -k, --mask
           Respect soft masking in the reference FASTA
 
-      --preset <PRESET>
-          Optional preset options for specific applications. traditional:
-          Prepares bedMethyl analogous to that generated from other technologies
-          for the analysis of 5mC modified bases. Shorthand for --cpg
-          --combine-strands --ignore h
-          
-          [possible values: traditional]
-
       --combine-mods
           Combine base modification calls, all counts of modified bases are
           summed together. See collapse.md for details
@@ -266,21 +291,7 @@ Options:
           positive and negative strands into the counts for the positive strand
           position
 
-      --edge-filter <EDGE_FILTER>
-          Discard base modification calls that are this many bases from the
-          start or the end of the read. Two comma-separated values may be
-          provided to asymmetrically filter out base modification calls from the
-          start and end of the reads. For example, 4,8 will filter out base
-          modification calls in the first 4 and last 8 bases of the read
-
-      --invert-edge-filter
-          Invert the edge filter, instead of filtering out base modification
-          calls at the ends of reads, only _keep_ base modification calls at the
-          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
-          base modification calls in the first 4 and last 8 bases of the read,
-          using this flag will keep only base modification calls in the first 4
-          and last 8 bases
-
+Output Options:
       --only-tabs
           **Deprecated** The default output has all tab-delimiters. For
           bedMethyl output, separate columns with only tabs. The default is to
@@ -303,7 +314,7 @@ Options:
           and one for the negative strand. So for 5mC (m) and 5hmC (h) there
           will be 4 files produced
 
-      --with-header
+      --header
           Output a header with the bedMethyl
 
       --prefix <PREFIX>
@@ -315,9 +326,6 @@ Options:
           pairs. The output will be multiple bedMethyl files with the format
           `<prefix>_<tag_value_1>_<tag_value_2>_<tag_value_n>.bed` prefix is
           optional and set with the `--prefix` flag
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## adjust-mods
@@ -338,25 +346,54 @@ Arguments:
           one of `-` or `stdin` to specify a stream from standard output
 
 Options:
-      --ignore <IGNORE>
-          Modified base code to ignore/remove, see
-          https://samtools.github.io/hts-specs/SAMtags.pdf for details on the
-          modified base codes
-
-  -t, --threads <THREADS>
-          Number of threads to use
-          
-          [default: 4]
-
   -f, --ff
           Fast fail, stop processing at the first invalid sequence record.
           Default behavior is to continue and report failed/skipped records at
           the end
 
+  -h, --help
+          Print help (see a summary with '-h')
+
+Output Options:
+      --log-filepath <LOG_FILEPATH>
+          Output debug logs to file at this path
+
+      --output-sam
+          Output SAM format instead of BAM
+
+Modified Base Options:
+      --ignore <IGNORE>
+          Modified base code to ignore/remove, see
+          https://samtools.github.io/hts-specs/SAMtags.pdf for details on the
+          modified base codes
+
       --convert <CONVERT> <CONVERT>
           Convert one mod-tag to another, summing the probabilities together if
           the retained mod tag is already present
 
+      --motif <MOTIF> <MOTIF>
+          Filter out any base modification call that isn't part of a basecall
+          sequence motif. This argument can be passed multiple times. Format is
+          <motif_sequence> <offset>. For example the argument to match CpG
+          dinucleotides is `--motif CG 0`, or to match CG[5mC]G the argument
+          would be `--motif CGCG 2`. Single bases can be used as motifs to keep
+          only base modification calls for a specific primary base, for example
+          `--motif C 0`
+
+      --cpg
+          Shorthand for --motif CG 0
+
+      --discard-motifs
+          Discard base modification calls that match the provided motifs
+          (instead of keeping them)
+
+Compute Options:
+  -t, --threads <THREADS>
+          Number of threads to use
+          
+          [default: 4]
+
+Selection Options:
       --edge-filter <EDGE_FILTER>
           Discard base modification calls that are this many bases from the
           start or the end of the read. Two comma-separated values may be
@@ -372,12 +409,15 @@ Options:
           using this flag will keep only base modification calls in the first 4
           and last 8 bases
 
-      --output-sam
-          Output SAM format instead of BAM
-
       --filter-probs
           Filter out the lowest confidence base modification probabilities
 
+      --only-mapped
+          Only use base modification probabilities from bases that are aligned
+          when estimating the filter threshold (i.e. ignore soft-clipped, and
+          inserted bases)
+
+Sampling Options:
   -n, --num-reads <NUM_READS>
           Sample approximately this many reads when estimating the filtering
           threshold. If alignments are present reads will be sampled evenly
@@ -403,6 +443,7 @@ Options:
           
           [default: 1000000]
 
+Filtering Options:
   -p, --filter-percentile <FILTER_PERCENTILE>
           Filter out modified base calls where the probability of the predicted
           variant is below this confidence percentile. For example, 0.1 will
@@ -431,36 +472,9 @@ Options:
           the `--filter-threshold` option is also passed. See the online
           documentation for more details
 
-      --only-mapped
-          Only use base modification probabilities from bases that are aligned
-          when estimating the filter threshold (i.e. ignore soft-clipped, and
-          inserted bases)
-
-      --motif <MOTIF> <MOTIF>
-          Filter out any base modification call that isn't part of a basecall
-          sequence motif. This argument can be passed multiple times. Format is
-          <motif_sequence> <offset>. For example the argument to match CpG
-          dinucleotides is `--motif CG 0`, or to match CG[5mC]G the argument
-          would be `--motif CGCG 2`. Single bases can be used as motifs to keep
-          only base modification calls for a specific primary base, for example
-          `--motif C 0`
-
-      --cpg
-          Shorthand for --motif CG 0
-
-      --discard-motifs
-          Discard base modification calls that match the provided motifs
-          (instead of keeping them)
-
+Logging Options:
       --suppress-progress
           Hide the progress bar
-
-  -h, --help
-          Print help (see a summary with '-h')
-
-Logging:
-      --log-filepath <LOG_FILEPATH>
-          Output debug logs to file at this path
 ```
 
 ## update-tags
@@ -477,29 +491,33 @@ Arguments:
              specify a stream from standard output
 
 Options:
-  -m, --mode <MODE>
-          Mode, change mode to this value, options {'explicit', 'implicit'}. See
-          spec at: https://samtools.github.io/hts-specs/SAMtags.pdf. 'explicit'
-          ('?') means residues without modification probabilities will not be
-          assumed canonical or modified. 'implicit' means residues without
-          explicit modification probabilities are assumed to be canonical
-          [possible values: explicit, implicit]
-  -t, --threads <THREADS>
-          Number of threads to use [default: 4]
-      --no-implicit-probs
-          Don't add implicit canonical calls. This flag is important when
-          converting from one of the implicit modes ( `.` or `""`) to explicit
-          mode (`?`). By passing this flag, the bases without associated base
-          modification probabilities will not be assumed to be canonical. No
-          base modification probability will be written for these bases, meaning
-          there is no information. The mode will automatically be set to the
-          explicit mode `?`
-      --log-filepath <LOG_FILEPATH>
-          Output debug logs to file at this path
-      --output-sam
-          Output SAM format instead of BAM
-  -h, --help
-          Print help
+  -m, --mode <MODE>        Mode, change mode to this value, options {'explicit',
+                           'implicit'}. See spec at:
+                           https://samtools.github.io/hts-specs/SAMtags.pdf.
+                           'explicit' ('?') means residues without modification
+                           probabilities will not be assumed canonical or
+                           modified. 'implicit' means residues without explicit
+                           modification probabilities are assumed to be
+                           canonical [possible values: explicit, implicit]
+      --no-implicit-probs  Don't add implicit canonical calls. This flag is
+                           important when converting from one of the implicit
+                           modes ( `.` or `""`) to explicit mode (`?`). By
+                           passing this flag, the bases without associated base
+                           modification probabilities will not be assumed to be
+                           canonical. No base modification probability will be
+                           written for these bases, meaning there is no
+                           information. The mode will automatically be set to
+                           the explicit mode `?`
+  -h, --help               Print help
+
+Compute Options:
+  -t, --threads <THREADS>  Number of threads to use [default: 4]
+
+Logging Options:
+      --log-filepath <LOG_FILEPATH>  Output debug logs to file at this path
+
+Output Options:
+      --output-sam  Output SAM format instead of BAM
 ```
 
 ## sample-probs
@@ -516,11 +534,23 @@ Arguments:
           standard input
 
 Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
           
           [default: 4]
 
+  -i, --interval-size <INTERVAL_SIZE>
+          Interval chunk size in base pairs to process concurrently. Smaller
+          interval chunk sizes will use less memory but incur more overhead.
+          Only used when sampling probs from an indexed bam
+          
+          [default: 1000000]
+
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           Specify a file for debug logs to be written to, otherwise ignore them.
           Setting a file is recommended
@@ -528,6 +558,7 @@ Options:
       --suppress-progress
           Hide the progress bar
 
+Output Options:
   -p, --percentiles <PERCENTILES>
           Percentiles to calculate, a space separated list of floats
           
@@ -543,6 +574,18 @@ Options:
       --force
           Overwrite results if present
 
+      --hist
+          Output histogram of base modification prediction probabilities
+
+      --dna-color <PRIMARY_BASE_COLORS> <PRIMARY_BASE_COLORS>
+          Set colors of primary bases in histogram, should be RGB format, e.g.
+          "#0000FF" is defailt for canonical cytosine
+
+      --mod-color <MOD_BASE_COLORS> <MOD_BASE_COLORS>
+          Set colors of modified bases in histogram, should be RGB format, e.g.
+          "#FF00FF" is default for 5hmC
+
+Modified Base Options:
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base
           modification probability equally across other options. For example, if
@@ -550,6 +593,7 @@ Options:
           probability of 'h' will be added to both 'm' and 'C'. A full
           description of the methods can be found in collapse.md
 
+Selection Options:
       --edge-filter <EDGE_FILTER>
           Discard base modification calls that are this many bases from the
           start or the end of the read. Two comma-separated values may be
@@ -565,17 +609,20 @@ Options:
           using this flag will keep only base modification calls in the first 4
           and last 8 bases
 
-      --hist
-          Output histogram of base modification prediction probabilities
+      --region <REGION>
+          Process only the specified region of the BAM when collecting
+          probabilities. Format should be <chrom_name>:<start>-<end> or
+          <chrom_name>
 
-      --dna-color <PRIMARY_BASE_COLORS> <PRIMARY_BASE_COLORS>
-          Set colors of primary bases in histogram, should be RGB format, e.g.
-          "#0000FF" is defailt for canonical cytosine
+      --include-bed <INCLUDE_BED>
+          Only sample base modification probabilities that are aligned to the
+          positions in this BED file. (alias: include-positions)
 
-      --mod-color <MOD_BASE_COLORS> <MOD_BASE_COLORS>
-          Set colors of modified bases in histogram, should be RGB format, e.g.
-          "#FF00FF" is default for 5hmC
+      --only-mapped
+          Only use base modification probabilities that are aligned (i.e. ignore
+          soft-clipped, and inserted bases)
 
+Sampling Options:
   -n, --num-reads <NUM_READS>
           Approximate maximum number of reads to use, especially recommended
           when using a large BAM without an index. If an indexed BAM is
@@ -596,29 +643,6 @@ Options:
   -s, --seed <SEED>
           Random seed for deterministic running, the default is
           non-deterministic, only used when no BAM index is provided
-
-      --region <REGION>
-          Process only the specified region of the BAM when collecting
-          probabilities. Format should be <chrom_name>:<start>-<end> or
-          <chrom_name>
-
-  -i, --interval-size <INTERVAL_SIZE>
-          Interval chunk size in base pairs to process concurrently. Smaller
-          interval chunk sizes will use less memory but incur more overhead.
-          Only used when sampling probs from an indexed bam
-          
-          [default: 1000000]
-
-      --include-bed <INCLUDE_BED>
-          Only sample base modification probabilities that are aligned to the
-          positions in this BED file. (alias: include-positions)
-
-      --only-mapped
-          Only use base modification probabilities that are aligned (i.e. ignore
-          soft-clipped, and inserted bases)
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## summary
@@ -635,21 +659,35 @@ Arguments:
           specify a stream from standard input
 
 Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
           
           [default: 4]
 
+  -i, --interval-size <INTERVAL_SIZE>
+          When using regions, interval chunk size in base pairs to process
+          concurrently. Smaller interval chunk sizes will use less memory but
+          incur more overhead
+          
+          [default: 1000000]
+
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           Specify a file for debug logs to be written to, otherwise ignore them.
           Setting a file is recommended
 
-      --tsv
-          Output summary as a tab-separated variables stdout instead of a table
-
       --suppress-progress
           Hide the progress bar
 
+Output Options:
+      --tsv
+          Output summary as a tab-separated variables stdout instead of a table
+
+Sampling Options:
   -n, --num-reads <NUM_READS>
           Approximate maximum number of reads to use, especially recommended
           when using a large BAM without an index. If an indexed BAM is
@@ -666,14 +704,15 @@ Options:
           will sample 1/10th of the reads
 
       --no-sampling
-          No sampling, use all of the reads to calculate the filter thresholds
-          and generating the summary
+          No sampling, use all the reads to calculate the filter thresholds and
+          generating the summary
 
   -s, --seed <SEED>
           Sets a random seed for deterministic running (when using
           --sample-frac), the default is non-deterministic, only used when no
           BAM index is provided
 
+Filtering Options:
       --no-filtering
           Do not perform any filtering, include all base modification calls in
           the summary. See filtering.md for details on filtering
@@ -706,6 +745,7 @@ Options:
           the `--filter-threshold` option is also passed. See the online
           documentation for more details
 
+Modified Base Options:
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base
           modification probability equally across other options. For example, if
@@ -713,6 +753,7 @@ Options:
           probability of 'h' will be added to both 'm' and 'C'. A full
           description of the methods can be found in collapse.md
 
+Selection Options:
       --edge-filter <EDGE_FILTER>
           Discard base modification calls that are this many bases from the
           start or the end of the read. Two comma-separated values may be
@@ -740,16 +781,6 @@ Options:
           Process only the specified region of the BAM when collecting
           probabilities. Format should be <chrom_name>:<start>-<end> or
           <chrom_name>
-
-  -i, --interval-size <INTERVAL_SIZE>
-          When using regions, interval chunk size in base pairs to process
-          concurrently. Smaller interval chunk sizes will use less memory but
-          incur more overhead
-          
-          [default: 1000000]
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## call-mods
@@ -927,6 +958,10 @@ the ground truth modified base status at reference positions
 Usage: modkit validate [OPTIONS]
 
 Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Sample Options:
       --bam-and-bed <BAM> <BED>
           Argument accepts 2 values. The first value is the BAM file path with
           modified base tags. The second is a bed file with ground truth
@@ -936,6 +971,14 @@ Options:
           position. This argument can be provided more than once for multiple
           samples
 
+  -c, --canonical-base <CANONICAL_BASE>
+          Canonical base to evaluate. By default, this will be derived from mod
+          codes in ground truth BED files. For ground truth with only canonical
+          sites and/or ChEBI codes this values must be set
+          
+          [possible values: A, C, G, T]
+
+Modified Base Options:
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base
           modification probability equally across other options. For example, if
@@ -943,6 +986,7 @@ Options:
           probability of 'h' will be added to both 'm' and 'C'. A full
           description of the methods can be found in collapse.md
 
+Selection Options:
       --edge-filter <EDGE_FILTER>
           Discard base modification calls that are this many bases from the
           start or the end of the read. Two comma-separated values may be
@@ -958,13 +1002,6 @@ Options:
           using this flag will keep only base modification calls in the first 4
           and last 8 bases
 
-  -c, --canonical-base <CANONICAL_BASE>
-          Canonical base to evaluate. By default, this will be derived from mod
-          codes in ground truth BED files. For ground truth with only canonical
-          sites and/or ChEBI codes this values must be set
-          
-          [possible values: A, C, G, T]
-
       --min-identity <MIN_ALIGNMENT_IDENTITY>
           Only use reads with alignment identity >= this number, in Q-space
           (phred score)
@@ -972,6 +1009,7 @@ Options:
       --min-length <MIN_ALIGNMENT_LENGTH>
           Remove reads with fewer aligned reference bases than this threshold
 
+Filtering Options:
   -p, --filter-quantile <FILTER_QUANTILE>
           Filter out modified base calls where the probability of the predicted
           variant is below this confidence percentile. For example, 0.1 will
@@ -983,23 +1021,23 @@ Options:
           Specify modified base probability filter threshold value. If
           specified, --filter-threshold will override --filter-quantile
 
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
           
           [default: 4]
 
+Logging Options:
       --suppress-progress
           Hide the progress bar
-
-  -o, --out-filepath <OUT_FILEPATH>
-          Specify a file for machine parseable output
 
       --log-filepath <LOG_FILEPATH>
           Specify a file for debug logs to be written to, otherwise ignore them.
           Setting a file is recommended. (alias: log)
 
-  -h, --help
-          Print help (see a summary with '-h')
+Output Options:
+  -o, --out-filepath <OUT_FILEPATH>
+          Specify a file for machine parseable output
 ```
 
 ## pileup-hemi
@@ -1019,6 +1057,10 @@ Options:
           Output file to write results into. Will write to stdout if not
           provided
 
+  -h, --help
+          Print help (see a summary with '-h')
+
+Modified Base Options:
       --cpg
           Aggregate double-stranded base modifications for CpG dinucleotides.
           This flag is short-hand for --motif CG 0
@@ -1036,10 +1078,37 @@ Options:
   -r, --ref <REFERENCE_FASTA>
           Reference sequence in FASTA format
 
+      --ignore <IGNORE>
+          Ignore a modified base class  _in_situ_ by redistributing base
+          modification probability equally across other options. For example, if
+          collapsing 'h', with 'm' and canonical options, half of the
+          probability of 'h' will be added to both 'm' and 'C'. A full
+          description of the methods can be found in collapse.md
+
+      --force-allow-implicit
+          Force allow implicit-canonical mode. By default modkit does not allow
+          pileup with the implicit mode (e.g. C+m, no '.' or '?'). The
+          `update-tags` subcommand is provided to update tags to the new mode.
+          This option allows the interpretation of implicit mode tags: residues
+          without modified base probability will be interpreted as being the
+          non-modified base
+
+  -k, --mask
+          Respect soft masking in the reference FASTA
+
+      --combine-mods
+          Combine base modification calls, all counts of modified bases are
+          summed together. See collapse.md for details
+
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           Specify a file for debug logs to be written to, otherwise ignore them.
           Setting a file is recommended. (alias: log)
 
+      --suppress-progress
+          Hide the progress bar
+
+Selection Options:
       --region <REGION>
           Process only the specified region of the BAM when performing pileup.
           Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas
@@ -1053,6 +1122,30 @@ Options:
           
           [default: 8000]
 
+      --include-bed <INCLUDE_BED>
+          BED file that will restrict threshold estimation and pileup results to
+          positions overlapping intervals in the file. (alias:
+          include-positions)
+
+      --include-unmapped
+          Include unmapped base modifications when estimating the pass threshold
+
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the
+          start or the end of the read. Two comma-separated values may be
+          provided to asymmetrically filter out base modification calls from the
+          start and end of the reads. For example, 4,8 will filter out base
+          modification calls in the first 4 and last 8 bases of the read
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification
+          calls at the ends of reads, only _keep_ base modification calls at the
+          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
+          base modification calls in the first 4 and last 8 bases of the read,
+          using this flag will keep only base modification calls in the first 4
+          and last 8 bases
+
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use while processing chunks concurrently
           
@@ -1077,9 +1170,7 @@ Options:
           threads are specified the chunk_size will be 6. A warning will be
           shown if this option is less than the number of threads specified
 
-      --suppress-progress
-          Hide the progress bar
-
+Sampling Options:
   -n, --num-reads <NUM_READS>
           Sample this many reads when estimating the filtering threshold. Reads
           will be sampled evenly across aligned genome. If a region is
@@ -1101,6 +1192,7 @@ Options:
           Set a random seed for deterministic running, the default is
           non-deterministic
 
+Filtering Options:
       --no-filtering
           Do not perform any filtering, include all mod base calls in output.
           See filtering.md for details on filtering
@@ -1146,51 +1238,7 @@ Options:
           
           [default: 1000000]
 
-      --include-bed <INCLUDE_BED>
-          BED file that will restrict threshold estimation and pileup results to
-          positions overlapping intervals in the file. (alias:
-          include-positions)
-
-      --include-unmapped
-          Include unmapped base modifications when estimating the pass threshold
-
-      --ignore <IGNORE>
-          Ignore a modified base class  _in_situ_ by redistributing base
-          modification probability equally across other options. For example, if
-          collapsing 'h', with 'm' and canonical options, half of the
-          probability of 'h' will be added to both 'm' and 'C'. A full
-          description of the methods can be found in collapse.md
-
-      --force-allow-implicit
-          Force allow implicit-canonical mode. By default modkit does not allow
-          pileup with the implicit mode (e.g. C+m, no '.' or '?'). The
-          `update-tags` subcommand is provided to update tags to the new mode.
-          This option allows the interpretation of implicit mode tags: residues
-          without modified base probability will be interpreted as being the
-          non-modified base
-
-  -k, --mask
-          Respect soft masking in the reference FASTA
-
-      --combine-mods
-          Combine base modification calls, all counts of modified bases are
-          summed together. See collapse.md for details
-
-      --edge-filter <EDGE_FILTER>
-          Discard base modification calls that are this many bases from the
-          start or the end of the read. Two comma-separated values may be
-          provided to asymmetrically filter out base modification calls from the
-          start and end of the reads. For example, 4,8 will filter out base
-          modification calls in the first 4 and last 8 bases of the read
-
-      --invert-edge-filter
-          Invert the edge filter, instead of filtering out base modification
-          calls at the ends of reads, only _keep_ base modification calls at the
-          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
-          base modification calls in the first 4 and last 8 bases of the read,
-          using this flag will keep only base modification calls in the first 4
-          and last 8 bases
-
+Output Options:
       --only-tabs
           **Deprecated** The default output has all tab-delimiters. For
           bedMethyl output, separate columns with only tabs. The default is to
@@ -1204,9 +1252,6 @@ Options:
           space-delimited instead of tab-delimited. This option can be useful
           for some browsers and parsers that don't expect the extra columns of
           the bedMethyl format
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## entropy
@@ -1219,13 +1264,6 @@ Options:
   -s, --in-bam <IN_BAMS>
           Input mod-BAM, may be repeated multiple times to calculate entropy
           across all input mod-BAMs
-
-  -o, --out-bed <OUT_BED>
-          Output BED file, if using `--region` this must be a directory
-
-      --prefix <PREFIX>
-          Only used with `--regions`, prefix files in output directory with this
-          string
 
   -n, --num-positions <NUM_POSITIONS>
           Number of modified positions to consider at a time
@@ -1243,50 +1281,6 @@ Options:
           patterns of other bases can be used CGACGATCGGCG
           
           [default: 50]
-
-      --no-filtering
-          Do not perform any filtering, include all mod base calls in output
-
-      --num-reads <NUM_READS>
-          Sample this many reads when estimating the filtering threshold. Reads
-          will be sampled evenly across aligned genome. If a region is
-          specified, either with the --region option or the --sample-region
-          option, then reads will be sampled evenly across the region given.
-          This option is useful for large BAM files. In practice, 10-50 thousand
-          reads is sufficient to estimate the model output distribution and
-          determine the filtering threshold
-          
-          [default: 10042]
-
-  -p, --filter-percentile <FILTER_PERCENTILE>
-          Filter out modified base calls where the probability of the predicted
-          variant is below this confidence percentile. For example, 0.1 will
-          filter out the 10% lowest confidence modification calls
-          
-          [default: 0.1]
-
-      --filter-threshold <FILTER_THRESHOLD>
-          Specify the filter threshold globally or for the canonical calls. When
-          specified, base modification call probabilities will be required to be
-          greater than or equal to this number. If `--mod-thresholds` is also
-          specified, _this_ value will be used for canonical calls
-
-      --mod-thresholds <MOD_THRESHOLDS>
-          Specify a passing threshold to use for a base modification,
-          independent of the threshold for the primary sequence base or the
-          default. For example, to set the pass threshold for 5hmC to 0.8 use
-          `--mod-threshold h:0.8`. The pass threshold will still be estimated as
-          usual and used for canonical cytosine and other modifications unless
-          the `--filter-threshold` option is also passed. See the online
-          documentation for more details
-
-  -t, --threads <THREADS>
-          Number of threads to use
-          
-          [default: 4]
-
-      --io-threads <IO_THREADS>
-          Number of BAM-reading threads to use
 
       --ref <REFERENCE_FASTA>
           Reference sequence in FASTA format
@@ -1323,11 +1317,21 @@ Options:
           
           [default: 3]
 
-      --log-filepath <LOG_FILEPATH>
-          Send debug logs to this file, setting this file is recommended
+      --max-filtered-positions <MAX_FILTERED_POSITIONS>
+          Maximum number of filtered positions a read is allowed to have in a
+          window, more than this number and the read will be discarded. Default
+          will be 50% of `num_positions`
 
-      --suppress-progress
-          Hide progress bars
+  -h, --help
+          Print help (see a summary with '-h')
+
+Output Options:
+  -o, --out-bed <OUT_BED>
+          Output BED file, if using `--region` this must be a directory
+
+      --prefix <PREFIX>
+          Only used with `--regions`, prefix files in output directory with this
+          string
 
       --force
           Force overwrite output
@@ -1338,13 +1342,62 @@ Options:
       --drop-zeros
           Omit windows with zero entropy
 
-      --max-filtered-positions <MAX_FILTERED_POSITIONS>
-          Maximum number of filtered positions a read is allowed to have in a
-          window, more than this number and the read will be discarded. Default
-          will be 50% of `num_positions`
+Filtering Options:
+      --no-filtering
+          Do not perform any filtering, include all mod base calls in output
 
-  -h, --help
-          Print help (see a summary with '-h')
+  -p, --filter-percentile <FILTER_PERCENTILE>
+          Filter out modified base calls where the probability of the predicted
+          variant is below this confidence percentile. For example, 0.1 will
+          filter out the 10% lowest confidence modification calls
+          
+          [default: 0.1]
+
+      --filter-threshold <FILTER_THRESHOLD>
+          Specify the filter threshold globally or for the canonical calls. When
+          specified, base modification call probabilities will be required to be
+          greater than or equal to this number. If `--mod-thresholds` is also
+          specified, _this_ value will be used for canonical calls
+
+      --mod-thresholds <MOD_THRESHOLDS>
+          Specify a passing threshold to use for a base modification,
+          independent of the threshold for the primary sequence base or the
+          default. For example, to set the pass threshold for 5hmC to 0.8 use
+          `--mod-threshold h:0.8`. The pass threshold will still be estimated as
+          usual and used for canonical cytosine and other modifications unless
+          the `--filter-threshold` option is also passed. See the online
+          documentation for more details
+
+Sampling Options:
+      --num-reads <NUM_READS>
+          Sample this many reads when estimating the filtering threshold. Reads
+          will be sampled evenly across aligned genome. If a region is
+          specified, either with the --region option or the --sample-region
+          option, then reads will be sampled evenly across the region given.
+          This option is useful for large BAM files. In practice, 10-50 thousand
+          reads is sufficient to estimate the model output distribution and
+          determine the filtering threshold
+          
+          [default: 10042]
+
+Compute Options:
+  -t, --threads <THREADS>
+          Number of threads to use
+          
+          [default: 4]
+
+      --io-threads <IO_THREADS>
+          Number of BAM-reading threads to use
+
+Logging Options:
+      --log-filepath <LOG_FILEPATH>
+          Send debug logs to this file, setting this file is recommended
+
+      --verbose-logging
+          Log regions that have zero or insufficient coverage. Requires log file
+
+      --suppress-progress
+          Hide progress bars
 ```
 
 ## localize
@@ -1365,13 +1418,6 @@ Options:
           BED file of regions to calculate enrichment around. These BED records
           serve as the points from which the `--window` number of bases is
           centered
-
-      --chart <CHART_FILEPATH>
-          Create plots showing %-modification vs. offset. Argument should be a
-          path to a file
-
-      --name <CHART_NAME>
-          Give the HTML document and chart a name
 
   -w, --window <EXPAND_WINDOW>
           Number of base pairs to search around, for example if your BED region
@@ -1404,9 +1450,25 @@ Options:
   -o, --out-file <OUT_FILE>
           Optionally specify a file to write output to, default is stdout
 
+  -h, --help
+          Print help (see a summary with '-h')
+
+Output Options:
+      --chart <CHART_FILEPATH>
+          Create plots showing %-modification vs. offset. Argument should be a
+          path to a file
+
+      --name <CHART_NAME>
+          Give the HTML document and chart a name
+
+  -f, --force
+          Force overwrite of existing output file
+
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           Specify a file to write debug logs to
 
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
           
@@ -1417,19 +1479,13 @@ Options:
           
           [default: 2]
 
-  -f, --force
-          Force overwrite of existing output file
-
       --batch-size <BATCH_SIZE_BP>
           [default: 500000]
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## stats
 ```text
-Calculate base modification levels over entire regions
+Calculate base modification levels over regions
 
 Usage: modkit stats [OPTIONS] --regions <REGIONS> --out-table <OUT_TABLE> <IN_BEDMETHYL>
 
@@ -1446,20 +1502,23 @@ Options:
           information on all base modification codes encountered
   -m, --min-coverage <MIN_COVERAGE>
           Only use records with at least this much valid coverage [default: 1]
-  -o, --out-table <OUT_TABLE>
-          Specify the output file to write the results table
-      --force
-          Force overwrite the output file
-      --no-header
-          Don't add the header describing the columns to the output
-      --log-filepath <LOG_FILEPATH>
-          Specify a file to write debug logs to
-  -t, --threads <THREADS>
-          Number of threads to use [default: 4]
-      --io-threads <IO_THREADS>
-          Number of tabix/bgzf threads to use [default: 2]
   -h, --help
           Print help
+
+Output Options:
+  -o, --out-table <OUT_TABLE>  Specify the output file to write the results
+                               table
+      --force                  Force overwrite the output file
+      --no-header              Don't add the header describing the columns to
+                               the output
+
+Logging Options:
+      --log-filepath <LOG_FILEPATH>  Specify a file to write debug logs to
+
+Compute Options:
+  -t, --threads <THREADS>        Number of threads to use [default: 4]
+      --io-threads <IO_THREADS>  Number of tabix/bgzf threads to use [default:
+                                 2]
 ```
 
 ## extract full
@@ -1479,13 +1538,18 @@ Arguments:
           out
 
 Options:
+      --reference <REFERENCE>
+          Path to reference FASTA to extract reference context information from.
+          Required for motif selection
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
           
           [default: 4]
-
-      --bgzf
-          Write output as BGZF compressed file
 
       --out-threads <OUT_THREADS>
           Number of threads to use for parallel bgzf writing
@@ -1498,9 +1562,41 @@ Options:
           
           [default: 10000]
 
+      --ignore-index
+          Ignore the BAM index (if it exists) and default to a serial scan of
+          the BAM
+
+  -i, --interval-size <INTERVAL_SIZE>
+          Interval chunk size in base pairs to process concurrently. Smaller
+          interval chunk sizes will use less memory but incur more overhead.
+          Only used when an indexed modBAM is provided
+          
+          [default: 100000]
+
+Output Options:
+      --bgzf
+          Write output as BGZF compressed file
+
+      --force
+          Force overwrite of output file
+
+      --kmer-size <KMER_SIZE>
+          Set the query and reference k-mer size (if a reference is provided).
+          Maximum number for this value is 50
+          
+          [default: 5]
+
+      --no-headers
+          Don't print the header lines in the output tables
+
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           Path to file to write run log
 
+      --suppress-progress
+          Hide the progress bar
+
+Selection Options:
       --mapped-only
           Include only mapped bases in output (alias: mapped)
 
@@ -1523,25 +1619,6 @@ Options:
           Process only reads that are aligned to a specified region of the BAM.
           Format should be <chrom_name>:<start>-<end> or <chrom_name>
 
-      --force
-          Force overwrite of output file
-
-      --suppress-progress
-          Hide the progress bar
-
-      --kmer-size <KMER_SIZE>
-          Set the query and reference k-mer size (if a reference is provided).
-          Maximum number for this value is 50
-          
-          [default: 5]
-
-      --ignore-index
-          Ignore the BAM index (if it exists) and default to a serial scan of
-          the BAM
-
-      --no-headers
-          Don't print the header lines in the output tables
-
       --include-bed <INCLUDE_BED>
           BED file with regions to include (alias: include-positions).
           Implicitly only includes mapped sites
@@ -1549,6 +1626,29 @@ Options:
   -v, --exclude-bed <EXCLUDE_BED>
           BED file with regions to _exclude_ (alias: exclude)
 
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the
+          start or the end of the read. Two comma-separated values may be
+          provided to asymmetrically filter out base modification calls from the
+          start and end of the reads. For example, 4,8 will filter out base
+          modification calls in the first 4 and last 8 bases of the read
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification
+          calls at the ends of reads, only _keep_ base modification calls at the
+          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
+          base modification calls in the first 4 and last 8 bases of the read,
+          using this flag will keep only base modification calls in the first 4
+          and last 8 bases
+
+      --ignore-implicit
+          Ignore implicitly canonical base modification calls. When the `.` flag
+          is used in the MM tag, this implies that bases missing a base
+          modification probability are to be assumed canonical. Set this flag to
+          omit those base modifications from the output. For additional details
+          see the SAM spec: https://samtools.github.io/hts-specs/SAMtags.pdf
+
+Modified Base Options:
       --motif <MOTIF> <MOTIF>
           Output read-level base modification probabilities restricted to the
           reference sequence motifs provided. The first argument should be the
@@ -1566,48 +1666,12 @@ Options:
   -k, --mask
           When using motifs, respect soft masking in the reference sequence
 
-      --edge-filter <EDGE_FILTER>
-          Discard base modification calls that are this many bases from the
-          start or the end of the read. Two comma-separated values may be
-          provided to asymmetrically filter out base modification calls from the
-          start and end of the reads. For example, 4,8 will filter out base
-          modification calls in the first 4 and last 8 bases of the read
-
-      --invert-edge-filter
-          Invert the edge filter, instead of filtering out base modification
-          calls at the ends of reads, only _keep_ base modification calls at the
-          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
-          base modification calls in the first 4 and last 8 bases of the read,
-          using this flag will keep only base modification calls in the first 4
-          and last 8 bases
-
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base
           modification probability equally across other options. For example, if
           collapsing 'h', with 'm' and canonical options, half of the
           probability of 'h' will be added to both 'm' and 'C'. A full
           description of the methods can be found in collapse.md
-
-  -i, --interval-size <INTERVAL_SIZE>
-          Interval chunk size in base pairs to process concurrently. Smaller
-          interval chunk sizes will use less memory but incur more overhead.
-          Only used when an indexed modBAM is provided
-          
-          [default: 100000]
-
-      --ignore-implicit
-          Ignore implicitly canonical base modification calls. When the `.` flag
-          is used in the MM tag, this implies that bases missing a base
-          modification probability are to be assumed canonical. Set this flag to
-          omit those base modifications from the output. For additional details
-          see the SAM spec: https://samtools.github.io/hts-specs/SAMtags.pdf
-
-      --reference <REFERENCE>
-          Path to reference FASTA to extract reference context information from.
-          Required for motif selection
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## extract calls
@@ -1630,13 +1694,19 @@ Arguments:
           out
 
 Options:
+      --reference <REFERENCE>
+          Path to reference FASTA to extract reference context information from.
+          If no reference is provided, `ref_kmer` column will be "." in the
+          output. (alias: ref)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
           
           [default: 4]
-
-      --bgzf
-          Write output as BGZF compressed file
 
       --out-threads <OUT_THREADS>
           Number of threads to use for parallel bgzf writing
@@ -1649,9 +1719,41 @@ Options:
           
           [default: 10000]
 
+      --ignore-index
+          Ignore the BAM index (if it exists) and default to a serial scan of
+          the BAM
+
+  -i, --interval-size <INTERVAL_SIZE>
+          Interval chunk size in base pairs to process concurrently. Smaller
+          interval chunk sizes will use less memory but incur more overhead.
+          Only used when an indexed modBAM is provided
+          
+          [default: 100000]
+
+Output Options:
+      --bgzf
+          Write output as BGZF compressed file
+
+      --force
+          Force overwrite of output file
+
+      --kmer-size <KMER_SIZE>
+          Set the query and reference k-mer size (if a reference is provided).
+          Maximum number for this value is 50
+          
+          [default: 5]
+
+      --no-headers
+          Don't print the header lines in the output tables
+
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           Path to file to write run log
 
+      --suppress-progress
+          Hide the progress bar
+
+Selection Options:
       --mapped-only
           Include only mapped bases in output (alias: mapped)
 
@@ -1674,25 +1776,6 @@ Options:
           Process only reads that are aligned to a specified region of the BAM.
           Format should be <chrom_name>:<start>-<end> or <chrom_name>
 
-      --force
-          Force overwrite of output file
-
-      --suppress-progress
-          Hide the progress bar
-
-      --kmer-size <KMER_SIZE>
-          Set the query and reference k-mer size (if a reference is provided).
-          Maximum number for this value is 50
-          
-          [default: 5]
-
-      --ignore-index
-          Ignore the BAM index (if it exists) and default to a serial scan of
-          the BAM
-
-      --no-headers
-          Don't print the header lines in the output tables
-
       --include-bed <INCLUDE_BED>
           BED file with regions to include (alias: include-positions).
           Implicitly only includes mapped sites
@@ -1700,6 +1783,33 @@ Options:
   -v, --exclude-bed <EXCLUDE_BED>
           BED file with regions to _exclude_ (alias: exclude)
 
+      --edge-filter <EDGE_FILTER>
+          Discard base modification calls that are this many bases from the
+          start or the end of the read. Two comma-separated values may be
+          provided to asymmetrically filter out base modification calls from the
+          start and end of the reads. For example, 4,8 will filter out base
+          modification calls in the first 4 and last 8 bases of the read
+
+      --invert-edge-filter
+          Invert the edge filter, instead of filtering out base modification
+          calls at the ends of reads, only _keep_ base modification calls at the
+          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
+          base modification calls in the first 4 and last 8 bases of the read,
+          using this flag will keep only base modification calls in the first 4
+          and last 8 bases
+
+      --ignore-implicit
+          Ignore implicitly canonical base modification calls. When the `.` flag
+          is used in the MM tag, this implies that bases missing a base
+          modification probability are to be assumed canonical. Set this flag to
+          omit those base modifications from the output. For additional details
+          see the SAM spec: https://samtools.github.io/hts-specs/SAMtags.pdf
+
+      --pass-only
+          Only output base modification calls that pass the minimum confidence
+          threshold. (alias: pass)
+
+Modified Base Options:
       --motif <MOTIF> <MOTIF>
           Output read-level base modification probabilities restricted to the
           reference sequence motifs provided. The first argument should be the
@@ -1717,21 +1827,6 @@ Options:
   -k, --mask
           When using motifs, respect soft masking in the reference sequence
 
-      --edge-filter <EDGE_FILTER>
-          Discard base modification calls that are this many bases from the
-          start or the end of the read. Two comma-separated values may be
-          provided to asymmetrically filter out base modification calls from the
-          start and end of the reads. For example, 4,8 will filter out base
-          modification calls in the first 4 and last 8 bases of the read
-
-      --invert-edge-filter
-          Invert the edge filter, instead of filtering out base modification
-          calls at the ends of reads, only _keep_ base modification calls at the
-          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
-          base modification calls in the first 4 and last 8 bases of the read,
-          using this flag will keep only base modification calls in the first 4
-          and last 8 bases
-
       --ignore <IGNORE>
           Ignore a modified base class  _in_situ_ by redistributing base
           modification probability equally across other options. For example, if
@@ -1739,29 +1834,7 @@ Options:
           probability of 'h' will be added to both 'm' and 'C'. A full
           description of the methods can be found in collapse.md
 
-  -i, --interval-size <INTERVAL_SIZE>
-          Interval chunk size in base pairs to process concurrently. Smaller
-          interval chunk sizes will use less memory but incur more overhead.
-          Only used when an indexed modBAM is provided
-          
-          [default: 100000]
-
-      --ignore-implicit
-          Ignore implicitly canonical base modification calls. When the `.` flag
-          is used in the MM tag, this implies that bases missing a base
-          modification probability are to be assumed canonical. Set this flag to
-          omit those base modifications from the output. For additional details
-          see the SAM spec: https://samtools.github.io/hts-specs/SAMtags.pdf
-
-      --reference <REFERENCE>
-          Path to reference FASTA to extract reference context information from.
-          If no reference is provided, `ref_kmer` column will be "." in the
-          output. (alias: ref)
-
-      --pass-only
-          Only output base modification calls that pass the minimum confidence
-          threshold. (alias: pass)
-
+Filtering Options:
       --filter-threshold <FILTER_THRESHOLD>
           Specify the filter threshold globally or per-base. Global filter
           threshold can be specified with by a decimal number (e.g. 0.75).
@@ -1786,6 +1859,14 @@ Options:
       --no-filtering
           Don't estimate the pass threshold, all calls will "pass"
 
+  -p, --filter-percentile <FILTER_PERCENTILE>
+          Filter out modified base calls where the probability of the predicted
+          variant is below this confidence percentile. For example, 0.1 will
+          filter out the 10% lowest confidence modification calls
+          
+          [default: 0.1]
+
+Sampling Options:
       --sampling-interval-size <SAMPLING_INTERVAL_SIZE>
           Interval chunk size in base pairs to process concurrently when
           estimating the threshold probability
@@ -1813,16 +1894,6 @@ Options:
           Set a random seed for deterministic running, the default is
           non-deterministic when using `sampling_frac`. When using `num_reads`
           the output is still deterministic
-
-  -p, --filter-percentile <FILTER_PERCENTILE>
-          Filter out modified base calls where the probability of the predicted
-          variant is below this confidence percentile. For example, 0.1 will
-          filter out the 10% lowest confidence modification calls
-          
-          [default: 0.1]
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## motif bed
@@ -1852,6 +1923,21 @@ Options:
   -i, --in-bedmethyl <IN_BEDMETHYL>
           Input bedmethyl table, can be used directly from modkit pileup
 
+  -r, --ref <REFERENCE_FASTA>
+          Reference sequence in FASTA format used for the pileup
+
+      --contig <CONTIG>
+          Use only bedMethyl records from this contig, requires that the
+          bedMethyl be BGZIP-compressed and tabix-indexed
+
+      --force-override-spec
+          Force override SAM specification of association of modification codes
+          to primary sequence bases
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
           
@@ -1862,19 +1948,14 @@ Options:
           
           [default: 2]
 
-  -r, --ref <REFERENCE_FASTA>
-          Reference sequence in FASTA format used for the pileup
-
-      --contig <CONTIG>
-          Use only bedMethyl records from this contig, requires that the
-          bedMethyl be BGZIP-compressed and tabix-indexed
-
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           Output log to this file
 
       --suppress-progress
           Disable the progress bars
 
+Output Options:
   -o, --out-table <OUT_TABLE>
           Optionally output a machine-parsable TSV (human-readable table will
           always be output to the log)
@@ -1883,6 +1964,15 @@ Options:
           Optionally output machine parsable table with known motif modification
           frequencies that were not found during search
 
+      --known-motif <KNOWN_MOTIFS> <KNOWN_MOTIFS> <KNOWN_MOTIFS>
+          Format should be <sequence> <offset> <mod_code>
+
+      --known-motifs-table <KNOWN_MOTIFS_TABLE>
+          Path to known motifs in tabular format. Tab-separated values:
+          <mod_code>\t<motif_seq>\t<offset>. May have the same header as the
+          output table from this command
+
+Search Options:
       --low-thresh <LOW_THRESHOLD>
           Fraction modified threshold below which consider a genome location to
           be "low modification"
@@ -1945,24 +2035,9 @@ Options:
           
           [default: 2 2]
 
-      --known-motif <KNOWN_MOTIFS> <KNOWN_MOTIFS> <KNOWN_MOTIFS>
-          Format should be <sequence> <offset> <mod_code>
-
-      --known-motifs-table <KNOWN_MOTIFS_TABLE>
-          Path to known motifs in tabular format. Tab-separated values:
-          <mod_code>\t<motif_seq>\t<offset>. May have the same header as the
-          output table from this command
-
       --mod-code <MOD_CODES>
           Specify which modification codes to process, default will process all
           modification codes found in the input bedMethyl file
-
-      --force-override-spec
-          Force override SAM specification of association of modification codes
-          to primary sequence bases
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## motif evaluate
@@ -1975,40 +2050,12 @@ Options:
   -i, --in-bedmethyl <IN_BEDMETHYL>
           Input bedmethyl table, can be used directly from modkit pileup
 
-  -t, --threads <THREADS>
-          Number of threads to use
-          
-          [default: 4]
-
-      --io-threads <IO_THREADS>
-          Number of tabix/bgzf IO threads to use
-          
-          [default: 2]
-
   -r, --ref <REFERENCE_FASTA>
           Reference sequence in FASTA format used for the pileup
 
       --contig <CONTIG>
           Use only bedMethyl records from this contig, requires that the
           bedMethyl be BGZIP-compressed and tabix-indexed
-
-      --log-filepath <LOG_FILEPATH>
-          Output log to this file
-
-      --suppress-progress
-          Disable the progress bars
-
-      --known-motif <KNOWN_MOTIFS> <KNOWN_MOTIFS> <KNOWN_MOTIFS>
-          Format should be <sequence> <offset> <mod_code>
-
-      --known-motifs-table <KNOWN_MOTIFS_TABLE>
-          Path to known motifs in tabular format. Tab-separated values:
-          <mod_code>\t<motif_seq>\t<offset>. May have the same header as the
-          output table from this command
-
-      --out <OUT_TABLE>
-          Machine-parsable table of refined motifs. Human-readable table always
-          printed to stderr and log
 
       --force-override-spec
           Force override SAM specification of association of modification codes
@@ -2042,6 +2089,37 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Compute Options:
+  -t, --threads <THREADS>
+          Number of threads to use
+          
+          [default: 4]
+
+      --io-threads <IO_THREADS>
+          Number of tabix/bgzf IO threads to use
+          
+          [default: 2]
+
+Logging Options:
+      --log-filepath <LOG_FILEPATH>
+          Output log to this file
+
+      --suppress-progress
+          Disable the progress bars
+
+Output Options:
+      --known-motif <KNOWN_MOTIFS> <KNOWN_MOTIFS> <KNOWN_MOTIFS>
+          Format should be <sequence> <offset> <mod_code>
+
+      --known-motifs-table <KNOWN_MOTIFS_TABLE>
+          Path to known motifs in tabular format. Tab-separated values:
+          <mod_code>\t<motif_seq>\t<offset>. May have the same header as the
+          output table from this command
+
+      --out <OUT_TABLE>
+          Machine-parsable table of refined motifs. Human-readable table always
+          printed to stderr and log
 ```
 
 ## motif refine
@@ -2055,6 +2133,21 @@ Options:
   -i, --in-bedmethyl <IN_BEDMETHYL>
           Input bedmethyl table, can be used directly from modkit pileup
 
+  -r, --ref <REFERENCE_FASTA>
+          Reference sequence in FASTA format used for the pileup
+
+      --contig <CONTIG>
+          Use only bedMethyl records from this contig, requires that the
+          bedMethyl be BGZIP-compressed and tabix-indexed
+
+      --force-override-spec
+          Force override SAM specification of association of modification codes
+          to primary sequence bases
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
           
@@ -2065,19 +2158,14 @@ Options:
           
           [default: 2]
 
-  -r, --ref <REFERENCE_FASTA>
-          Reference sequence in FASTA format used for the pileup
-
-      --contig <CONTIG>
-          Use only bedMethyl records from this contig, requires that the
-          bedMethyl be BGZIP-compressed and tabix-indexed
-
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           Output log to this file
 
       --suppress-progress
           Disable the progress bars
 
+Output Options:
       --known-motif <KNOWN_MOTIFS> <KNOWN_MOTIFS> <KNOWN_MOTIFS>
           Format should be <sequence> <offset> <mod_code>
 
@@ -2090,6 +2178,7 @@ Options:
           Machine-parsable table of refined motifs. Human-readable table always
           printed to stderr and log
 
+Refine Options:
       --min_refine_frac_mod <MIN_REFINE_FRAC_MODIFIED>
           Minimum fraction of sites in the genome to be "high-modification" for
           a motif to be further refined, otherwise it will be discarded
@@ -2102,6 +2191,7 @@ Options:
           
           [default: 300]
 
+Search Options:
       --low-thresh <LOW_THRESHOLD>
           Fraction modified threshold below which consider a genome location to
           be "low modification"
@@ -2157,13 +2247,6 @@ Options:
           a motif to be considered
           
           [default: 0.85]
-
-      --force-override-spec
-          Force override SAM specification of association of modification codes
-          to primary sequence bases
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## dmr pair
@@ -2177,23 +2260,6 @@ between the two samples. See the online documentation for additional details
 Usage: modkit dmr pair [OPTIONS] --ref <REFERENCE_FASTA>
 
 Options:
-  -a <CONTROL_BED_METHYL>
-          Bgzipped bedMethyl file for the first (usually control) sample. There
-          should be a tabix index with the same name and .tbi next to this file
-          or the --index-a option must be provided
-
-  -b <EXP_BED_METHYL>
-          Bgzipped bedMethyl file for the second (usually experimental) sample.
-          There should be a tabix index with the same name and .tbi next to this
-          file or the --index-b option must be provided
-
-  -o, --out-path <OUT_PATH>
-          Path to file to direct output, optional, no argument will direct
-          output to stdout
-
-      --header
-          Include header in output
-
   -r, --regions-bed <REGIONS_BED>
           BED file of regions over which to compare methylation levels. Should
           be tab-separated (spaces allowed in the "name" column). Requires
@@ -2204,6 +2270,57 @@ Options:
       --ref <REFERENCE_FASTA>
           Path to reference fasta for used in the pileup/alignment
 
+  -h, --help
+          Print help (see a summary with '-h')
+
+Sample Options:
+  -a <CONTROL_BED_METHYL>
+          Bgzipped bedMethyl file for the first (usually control) sample. There
+          should be a tabix index with the same name and .tbi next to this file
+          or the --index-a option must be provided
+
+  -b <EXP_BED_METHYL>
+          Bgzipped bedMethyl file for the second (usually experimental) sample.
+          There should be a tabix index with the same name and .tbi next to this
+          file or the --index-b option must be provided
+
+  -m, --base <MODIFIED_BASES>
+          Bases to use to calculate DMR, may be multiple. For example, to
+          calculate differentially methylated regions using only cytosine
+          modifications use --base C
+
+      --assign-code <MOD_CODE_ASSIGNMENTS>
+          Extra assignments of modification codes to their respective primary
+          bases. In general, modkit dmr will use the SAM specification to know
+          which modification codes are appropriate to use for a given primary
+          base. For example "h" is the code for 5hmC, so is appropriate for
+          cytosine bases, but not adenine bases. However, if your bedMethyl file
+          contains custom codes or codes that are not part of the specification,
+          you can specify which primary base they belong to here with
+          --assign-code x:C meaning associate modification code "x" with
+          cytosine (C) primary sequence bases. If a code is encountered that is
+          not part of the specification, the bedMethyl record will not be used,
+          this will be logged
+
+  -k, --mask
+          Respect soft masking in the reference FASTA
+
+      --min-valid-coverage <MIN_VALID_COVERAGE>
+          Minimum valid coverage required to use an entry from a bedMethyl. See
+          the help for pileup for the specification and description of valid
+          coverage
+          
+          [default: 0]
+
+Output Options:
+  -o, --out-path <OUT_PATH>
+          Path to file to direct output, optional, no argument will direct
+          output to stdout
+
+      --header
+          Include header in output
+
+Segmentation Options:
       --segment <SEGMENTATION_FP>
           Run segmentation, output segmented differentially methylated regions
           to this file
@@ -2245,27 +2362,23 @@ Options:
           from "Same" to "Different" state. Results will be shorter segments,
           but potentially higher sensitivity
 
-  -m, --base <MODIFIED_BASES>
-          Bases to use to calculate DMR, may be multiple. For example, to
-          calculate differentially methylated regions using only cytosine
-          modifications use --base C
-
-      --assign-code <MOD_CODE_ASSIGNMENTS>
-          Extra assignments of modification codes to their respective primary
-          bases. In general, modkit dmr will use the SAM specification to know
-          which modification codes are appropriate to use for a given primary
-          base. For example "h" is the code for 5hmC, so is appropriate for
-          cytosine bases, but not adenine bases. However, if your bedMethyl file
-          contains custom codes or codes that are not part of the specification,
-          you can specify which primary base they belong to here with
-          --assign-code x:C meaning associate modification code "x" with
-          cytosine (C) primary sequence bases. If a code is encountered that is
-          not part of the specification, the bedMethyl record will not be used,
-          this will be logged
-
+Logging Options:
       --log-filepath <LOG_FILEPATH>
           File to write logs to, it's recommended to use this option
 
+      --suppress-progress
+          Don't show progress bars
+
+      --missing <HANDLE_MISSING>
+          How to handle regions found in the `--regions` BED file. quiet =>
+          ignore regions that are not found in the tabix header warn => log
+          (debug) regions that are missing fatal => log (error) and exit the
+          program when a region is missing
+          
+          [default: warn]
+          [possible values: quiet, warn, fail]
+
+Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
           
@@ -2278,31 +2391,16 @@ Options:
           more memory. Default will be 50% more than the number of threads
           assigned
 
-  -k, --mask
-          Respect soft masking in the reference FASTA
-
-      --suppress-progress
-          Don't show progress bars
-
   -f, --force
           Force overwrite of output file, if it already exists
 
-      --missing <HANDLE_MISSING>
-          How to handle regions found in the `--regions` BED file. quiet =>
-          ignore regions that are not found in the tabix header warn => log
-          (debug) regions that are missing fatal => log (error) and exit the
-          program when a region is missing
+  -i, --interval-size <INTERVAL_SIZE>
+          Interval chunk size in base pairs to process concurrently. Smaller
+          interval chunk sizes will use less memory but incur more overhead
           
-          [default: warn]
-          [possible values: quiet, warn, fail]
+          [default: 100000]
 
-      --min-valid-coverage <MIN_VALID_COVERAGE>
-          Minimum valid coverage required to use an entry from a bedMethyl. See
-          the help for pileup for the specification and description of valid
-          coverage
-          
-          [default: 0]
-
+Single-site Options:
       --prior <PRIOR> <PRIOR>
           Prior distribution for estimating MAP-based p-value. Should be two
           arguments for alpha and beta (e.g. 1.0 1.0). See
@@ -2328,15 +2426,6 @@ Options:
           coverage for a single sample. For example, if there are 3 replicates
           with max_coverage of 30, the total coverage would normally be 90.
           Using --cap-coverages will down sample the data to 30X
-
-  -i, --interval-size <INTERVAL_SIZE>
-          Interval chunk size in base pairs to process concurrently. Smaller
-          interval chunk sizes will use less memory but incur more overhead
-          
-          [default: 100000]
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## dmr multi
@@ -2351,6 +2440,9 @@ the file name. See the online documentation for additional details
 Usage: modkit dmr multi [OPTIONS] --regions-bed <REGIONS_BED> --out-dir <OUT_DIR> --ref <REFERENCE_FASTA>
 
 Options:
+  -h, --help  Print help
+
+Sample Options:
   -s, --sample <SAMPLES> <SAMPLES>
           Two or more named samples to compare. Two arguments are required
           <path> <name>. This option should be repeated at least two times. When
@@ -2360,12 +2452,6 @@ Options:
           be tab-separated (spaces allowed in the "name" column). Requires
           chrom, chromStart and chromEnd. The Name column is optional. Strand is
           currently ignored
-      --header
-          Include header in output
-  -o, --out-dir <OUT_DIR>
-          Directory to place output DMR results in BED format
-  -p, --prefix <PREFIX>
-          Prefix files in directory with this label
       --ref <REFERENCE_FASTA>
           Path to reference fasta for the pileup
   -m, --base <MODIFIED_BASES>
@@ -2384,28 +2470,35 @@ Options:
           cytosine (C) primary sequence bases. If a code is encountered that is
           not part of the specification, the bedMethyl record will not be used,
           this will be logged
-      --log-filepath <LOG_FILEPATH>
-          File to write logs to, it's recommended to use this option
-  -t, --threads <THREADS>
-          Number of threads to use [default: 4]
   -k, --mask
           Respect soft masking in the reference FASTA
+
+Output Options:
+      --header             Include header in output
+  -o, --out-dir <OUT_DIR>  Directory to place output DMR results in BED format
+  -p, --prefix <PREFIX>    Prefix files in directory with this label
+  -f, --force              Force overwrite of output file, if it already exists
+
+Logging Options:
+      --log-filepath <LOG_FILEPATH>
+          File to write logs to, it's recommended to use this option
       --suppress-progress
           Don't show progress bars
-  -f, --force
-          Force overwrite of output file, if it already exists
       --missing <HANDLE_MISSING>
           How to handle regions found in the `--regions` BED file. quiet =>
           ignore regions that are not found in the tabix header warn => log
           (debug) regions that are missing fatal => log (error) and exit the
           program when a region is missing [default: warn] [possible values:
           quiet, warn, fail]
+
+Compute Options:
+  -t, --threads <THREADS>  Number of threads to use [default: 4]
+
+Sampe Options:
       --min-valid-coverage <MIN_VALID_COVERAGE>
           Minimum valid coverage required to use an entry from a bedMethyl. See
           the help for pileup for the specification and description of valid
           coverage [default: 0]
-  -h, --help
-          Print help
 ```
 
 ## bedmethyl merge
@@ -2422,16 +2515,20 @@ Arguments:
           $this_file.tbi
 
 Options:
-  -o, --out-bed <OUT_BED>
-          Specify the output file to write the results table
-
   -g, --genome-sizes <GENOME_SIZES>
           TSV of genome sizes, should be <chrom>\t<size_in_bp>
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Output Options:
+  -o, --out-bed <OUT_BED>
+          Specify the output file to write the results table
 
       --force
           Force overwrite the output file
 
-      --with-header
+      --header
           Output a header with the bedMethyl
 
       --mixed-delim
@@ -2440,6 +2537,7 @@ Options:
           for some browsers and parsers that don't expect the extra columns of
           the bedMethyl format
 
+Compute Options:
       --chunk-size <CHUNK_SIZE>
           Chunk size for how many start..end regions for each chromosome to
           read. Larger values will lead to faster merging at the expense of
@@ -2452,9 +2550,6 @@ Options:
           
           [default: 100000]
 
-      --log-filepath <LOG_FILEPATH>
-          Specify a file to write debug logs to
-
   -t, --threads <THREADS>
           Number of threads to use
           
@@ -2465,6 +2560,132 @@ Options:
           
           [default: 2]
 
+Logging Options:
+      --log-filepath <LOG_FILEPATH>
+          Specify a file to write debug logs to
+```
+
+## bedmethyl tobigwig
+```text
+Make a BigWig track from a bedMethyl file or stream. For details on the BigWig
+format see https://doi.org/10.1093/bioinformatics/btq351
+
+Usage: modkit bedmethyl tobigwig [OPTIONS] --sizes <CHROMSIZES> --mod-codes <MOD_CODES> <IN_BEDMETHYL> <OUT_FP>
+
+Arguments:
+  <IN_BEDMETHYL>  Input bedmethyl, uncompressed, "-" or "stdin" indicates an
+                  input stream
+  <OUT_FP>        Output bigWig to make
+
+Options:
+  -g, --sizes <CHROMSIZES>     A chromosome sizes file. Each line should be have
+                               a chromosome and its size in bases, separated by
+                               whitespace. A fasta index (.fai) works as well
+  -m, --mod-codes <MOD_CODES>  Make a bigWig track where the values are the
+                               percent of bases with this modification, use
+                               multiple comma-separated codes to combine counts.
+                               For example --mod-code m makes a track of the 5mC
+                               percentages and --mod-codes h,m will make a track
+                               of the combined counts from 5hmC and 5mC.
+                               Combining counts for different primary bases will
+                               cause an error (e.g. --mod-codes a,h)
+  -h, --help                   Print help
+
+Output Options:
+      --negative-strand-values
+          Report the percentages on the negative strand as negative values. The
+          data range will be [-100, 100]
+  -z, --nzooms <NZOOMS>
+          Set the maximum of zooms to create [default: 10]
+      --zooms <ZOOMS>...
+          Set the zoom resolutions to use (overrides the --nzooms argument)
+  -u, --uncompressed
+          Don't use compression
+      --block-size <BLOCK_SIZE>
+          Number of items to bundle in r-tree [default: 256]
+      --items-per-slot <ITEMS_PER_SLOT>
+          Number of data points bundled at lowest level [default: 1024]
+
+Compute Options:
+  -t, --nthreads <NTHREADS>  Set the number of threads to use. This tool will
+                             typically use ~225% CPU on a HDD. SDDs may be
+                             higher. (IO bound) [default: 6]
+      --inmemory             Do not create temporary files for intermediate data
+
+Logging Options:
+      --log-filepath <LOG_FILEPATH>
+          Specify a file for debug logs to be written to, otherwise ignore them.
+          Setting a file is recommended. (alias: log)
+      --suppress-progress
+          Hide the progress bar
+```
+
+## modbam check-tags
+```text
+Usage: modkit modbam check-tags [OPTIONS] <IN_BAM>
+
+Arguments:
+  <IN_BAM>
+          Input modBam, can be a path to a file or one of `-` or `stdin` to
+          specify a stream from standard input
+
+Options:
   -h, --help
           Print help (see a summary with '-h')
+
+IO Options:
+  -o, --out-dir <OUT_DIR>
+          Write output tables into this directory. The directory will be created
+          if it doesn't exist
+
+  -f, --force
+          Force overwrite of previous output
+
+      --prefix <PREFIX>
+          Prefix output files with this string
+
+Compute Options:
+  -t, --threads <THREADS>
+          Number of threads to use
+          
+          [default: 4]
+
+      --ignore-index
+          Perform a linear scan of the modBAM even if the index is found
+
+  -i, --interval-size <INTERVAL_SIZE>
+          When using regions, interval chunk size in base pairs to process
+          concurrently. Smaller interval chunk sizes will use less memory but
+          incur more overhead
+          
+          [default: 5000000]
+
+Logging Options:
+      --log-filepath <LOG_FILEPATH>
+          Specify a file for debug logs to be written to, otherwise ignore them.
+          Setting a file is recommended
+
+      --suppress-progress
+          Hide the progress bar
+
+Selection Options:
+  -n, --num-reads <NUM_READS>
+          Approximate maximum number of reads to use, especially recommended
+          when using a large BAM without an index. If an indexed BAM is
+          provided, the reads will be sampled evenly over the length of the
+          aligned reference. If a region is passed with the --region option,
+          they will be sampled over the genomic region. Actual number of reads
+          used may deviate slightly from this number
+
+      --allow-non-primary
+          Check tags on non-primary alignments as well. Keep in mind this may
+          incur a double-counting of the read with its primary mapping
+
+      --only-mapped
+          Only check alignments that are mapped
+
+      --region <REGION>
+          Process only the specified region of the BAM when collecting
+          probabilities. Format should be <chrom_name>:<start>-<end> or
+          <chrom_name>
 ```

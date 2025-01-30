@@ -346,6 +346,7 @@ pub struct EntryExtractCalls {
 
     /// Only output base modification calls that pass the minimum confidence
     /// threshold. (alias: pass)
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, alias = "pass", default_value_t = false)]
     pass_only: bool,
     // sampling and filtering
@@ -359,6 +360,7 @@ pub struct EntryExtractCalls {
     /// default for all other bases with: --filter-threshold A:0.70
     /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
     /// adenine and 0.9 for all other base modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         long,
         group = "thresholds",
@@ -373,6 +375,7 @@ pub struct EntryExtractCalls {
     /// as usual and used for canonical cytosine and other modifications
     /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         long,
         alias = "mod-threshold",
@@ -381,6 +384,7 @@ pub struct EntryExtractCalls {
     )]
     mod_thresholds: Option<Vec<String>>,
     /// Don't estimate the pass threshold, all calls will "pass".
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         conflicts_with_all = ["mod_thresholds", "filter_threshold", "pass_only"],
         long,
@@ -390,12 +394,14 @@ pub struct EntryExtractCalls {
     no_filtering: bool,
     /// Interval chunk size in base pairs to process concurrently when
     /// estimating the threshold probability.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
     /// Sample this fraction of the reads when estimating the pass-threshold.
     /// In practice, 10-100 thousand reads is sufficient to estimate the model
     /// output distribution and determine the filtering threshold. See
     /// filtering.md for details on filtering.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'f',
@@ -410,6 +416,7 @@ pub struct EntryExtractCalls {
     /// This option is useful for large BAM files. In practice, 10-50 thousand
     /// reads is sufficient to estimate the model output distribution and
     /// determine the filtering threshold.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -420,6 +427,7 @@ pub struct EntryExtractCalls {
     /// Set a random seed for deterministic running, the default is
     /// non-deterministic when using `sampling_frac`. When using `num_reads`
     /// the output is still deterministic.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         long,
         conflicts_with = "num_reads",
@@ -430,6 +438,7 @@ pub struct EntryExtractCalls {
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will
     /// filter out the 10% lowest confidence modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         group = "thresholds",
         short = 'p',

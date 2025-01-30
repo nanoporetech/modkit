@@ -64,11 +64,20 @@ do
   echo "\`\`\`" >> ${doc_file}
 done
 
-for subcommand in "merge"; do
+for subcommand in "merge" "tobigwig"; do
   echo "" >> ${doc_file}
   echo "## bedmethyl ${subcommand}" >> ${doc_file}
   echo "\`\`\`text" >> ${doc_file}
   ./target/debug/modkit bedmethyl $subcommand --help >> ${doc_file}
   echo "\`\`\`" >> ${doc_file}
 done
+
+for subcommand in "check-tags"; do
+  echo "" >> ${doc_file}
+  echo "## modbam ${subcommand}" >> ${doc_file}
+  echo "\`\`\`text" >> ${doc_file}
+  ./target/debug/modkit modbam $subcommand --help >> ${doc_file}
+  echo "\`\`\`" >> ${doc_file}
+done
+
 
