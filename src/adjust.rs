@@ -1,12 +1,13 @@
-use anyhow::anyhow;
+use anyhow::bail;
 use derive_new::new;
-use log::{debug, info};
+use log::{debug, error, info};
 use rayon::prelude::*;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::{self, Read};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::ops::AddAssign;
 
-use crate::errs::{InputError, RunError};
+use crate::errs::{MkError, MkResult};
 use crate::find_motifs::motif_bed::OverlappingRegex;
 use crate::mod_bam::{
     format_mm_ml_tag, BaseModProbs, CollapseMethod, EdgeFilter, ModBaseInfo,
@@ -15,7 +16,7 @@ use crate::mod_bam::{
 use crate::mod_base_code::DnaBase;
 use crate::monoid::Moniod;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{get_query_name_string, get_ticker};
+use crate::util::{format_errors_table, get_query_name_string, get_ticker};
 
 #[derive(new)]
 pub(crate) struct OverlappingRegexOffset(OverlappingRegex, usize);
@@ -46,7 +47,7 @@ impl<'a> SequenceMotifs<'a> {
                 if let Ok(base) = next
                     .as_str()
                     .parse::<char>()
-                    .map_err(|e| anyhow!("{e}"))
+                    .map_err(|_e| MkError::InvalidDnaBase)
                     .and_then(|c| DnaBase::parse(c))
                 {
                     simple.push(base.char() as u8);
@@ -118,7 +119,7 @@ fn adjust_mod_probs<'a>(
     filter_only: bool,
     sequence_motifs: &Option<SequenceMotifs<'a>>,
     discard_motifs: bool,
-) -> Result<bam::Record, RunError> {
+) -> MkResult<bam::Record> {
     let mod_base_info = ModBaseInfo::new_from_record(&record)?;
     let mm_style = mod_base_info.mm_style;
     let ml_style = mod_base_info.ml_style;
@@ -126,14 +127,12 @@ fn adjust_mod_probs<'a>(
     let mut mm_agg = String::new();
     let mut ml_agg = Vec::new();
 
-    let record_name = get_query_name_string(&record)
-        .unwrap_or("FAILED-UTF8-DECODE".to_string());
+    let record_name = get_query_name_string(&record)?;
     let (converters, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
 
     let positions =
         sequence_motifs.as_ref().map(|ms| ms.find_positions(&record));
 
-    // the base here becomes an issue when filtering if we allow generic MM tags
     for (base, strand, seq_pos_mod_probs) in mod_prob_iter {
         let converter = converters.get(&base).unwrap();
         // edge filter
@@ -162,33 +161,16 @@ fn adjust_mod_probs<'a>(
                 seq_pos_mod_probs = seq_pos_mod_probs.into_collapsed(method);
             }
             // call mods
-            match (caller, DnaBase::parse(base)) {
-                (Some(caller), Ok(dna_base)) => {
+            // todo refactor
+            match caller {
+                Some(caller) => {
                     if filter_only {
                         seq_pos_mod_probs = caller
-                            .filter_seq_pos_mod_probs(
-                                &dna_base,
-                                seq_pos_mod_probs,
-                            )
-                            .map_err(|e| {
-                                RunError::new_input_error(e.to_string())
-                            })?;
+                            .filter_seq_pos_mod_probs(&base, seq_pos_mod_probs);
                     } else {
                         seq_pos_mod_probs = caller
-                            .call_seq_pos_mod_probs(
-                                &dna_base,
-                                seq_pos_mod_probs,
-                            )
-                            .map_err(|e| {
-                                RunError::new_input_error(e.to_string())
-                            })?;
+                            .call_seq_pos_mod_probs(&base, seq_pos_mod_probs);
                     }
-                }
-                (Some(_), Err(e)) => {
-                    let e = e.context(
-                        "failed to parse DNA base, cannot use threshold.",
-                    );
-                    return Err(RunError::new_input_error(e.to_string()));
                 }
                 _ => {}
             }
@@ -198,8 +180,12 @@ fn adjust_mod_probs<'a>(
                     .filter_motif_positions(positions, discard_motifs)
             }
 
-            let (mm, mut ml) =
-                format_mm_ml_tag(seq_pos_mod_probs, strand, converter);
+            let (mm, mut ml) = format_mm_ml_tag(
+                seq_pos_mod_probs,
+                base,
+                &converter.cumulative_counts,
+                strand,
+            );
             mm_agg.push_str(&mm);
             ml_agg.extend_from_slice(&mut ml);
         } else {
@@ -207,18 +193,8 @@ fn adjust_mod_probs<'a>(
         }
     }
 
-    record.remove_aux(mm_style.as_bytes()).map_err(|e| {
-        RunError::new_failed(format!(
-            "failed to remove MM tag, {}",
-            e.to_string()
-        ))
-    })?;
-    record.remove_aux(ml_style.as_bytes()).map_err(|e| {
-        RunError::new_failed(format!(
-            "failed to remove ML tag, {}",
-            e.to_string()
-        ))
-    })?;
+    record.remove_aux(mm_style.as_bytes())?;
+    record.remove_aux(ml_style.as_bytes())?;
 
     let mm = Aux::String(&mm_agg);
     let ml_arr: AuxArray<u8> = {
@@ -226,12 +202,8 @@ fn adjust_mod_probs<'a>(
         sl.into()
     };
     let ml = Aux::ArrayU8(ml_arr);
-    record.push_aux(mm_style.as_bytes(), mm).map_err(|e| {
-        RunError::new_failed(format!("failed to add MM tag, {}", e.to_string()))
-    })?;
-    record.push_aux(ml_style.as_bytes(), ml).map_err(|e| {
-        RunError::new_failed(format!("failed to add ML tag, {}", e.to_string()))
-    })?;
+    record.push_aux(mm_style.as_bytes(), mm)?;
+    record.push_aux(ml_style.as_bytes(), ml)?;
 
     Ok(record)
 }
@@ -255,67 +227,88 @@ pub(crate) fn adjust_modbam(
     }
     spinner.set_message(verb);
     let mut total = 0usize;
-    let mut total_failed = 0usize;
-    let mut total_skipped = 0usize;
+    let mut error_counts = FxHashMap::<String, usize>::default();
     let sequence_motifs = motifs.as_ref().map(|x| SequenceMotifs::new(x));
-    for (i, result) in reader.records().enumerate() {
-        if let Ok(record) = result {
-            let record_name =
-                get_query_name_string(&record).unwrap_or("???".to_owned());
-            match adjust_mod_probs(
-                record,
-                &collapse_methods,
-                threshold_caller,
-                edge_filter,
-                filter_only,
-                &sequence_motifs,
-                discard_motifs,
-            ) {
-                Err(RunError::BadInput(InputError(err)))
-                | Err(RunError::Failed(err)) => {
-                    if fail_fast {
-                        return Err(anyhow!("{}", err.to_string()));
-                    } else {
-                        debug!("read {} failed, {}", record_name, err);
-                        total_failed += 1;
-                    }
-                }
-                Err(RunError::Skipped(_reason)) => {
-                    total_skipped += 1;
-                }
-                Ok(record) => {
-                    if let Err(err) = writer.write(&record) {
+    for (i, result) in reader
+        .records()
+        .map(|r| r.map_err(|e| MkError::HtsLibError(e)))
+        .enumerate()
+    {
+        match result {
+            Ok(record) => {
+                match adjust_mod_probs(
+                    record,
+                    &collapse_methods,
+                    threshold_caller,
+                    edge_filter,
+                    filter_only,
+                    &sequence_motifs,
+                    discard_motifs,
+                ) {
+                    Err(mk_error) => {
                         if fail_fast {
-                            return Err(anyhow!(
-                                "failed to write {}",
-                                err.to_string()
-                            ));
+                            spinner.set_draw_target(
+                                indicatif::ProgressDrawTarget::hidden(),
+                            );
+                            error!("encountered error, failing fast");
+                            bail!("{mk_error}")
                         } else {
-                            debug!("failed to write {}", err);
-                            total_failed += 1;
+                            error_counts
+                                .entry(mk_error.to_string())
+                                .or_insert(0usize)
+                                .add_assign(1usize);
                         }
-                    } else {
-                        spinner.inc(1);
-                        total = i + 1;
+                    }
+                    Ok(record) => {
+                        if let Err(err) = writer
+                            .write(&record)
+                            .map_err(|e| MkError::HtsLibError(e))
+                        {
+                            if fail_fast {
+                                spinner.set_draw_target(
+                                    indicatif::ProgressDrawTarget::hidden(),
+                                );
+                                error!("encountered error, failing fast");
+                                bail!("{err}")
+                            } else {
+                                error_counts
+                                    .entry(err.to_string())
+                                    .or_insert(0usize)
+                                    .add_assign(1usize);
+                            }
+                        } else {
+                            spinner.inc(1);
+                            total = i + 1;
+                        }
                     }
                 }
             }
-        } else {
-            if fail_fast {
-                let err = result.err().unwrap().to_string();
-                return Err(anyhow!("{}", err));
+            Err(mk_error) => {
+                if fail_fast {
+                    spinner.set_draw_target(
+                        indicatif::ProgressDrawTarget::hidden(),
+                    );
+                    error!("encountered error, failing fast");
+                    bail!("{mk_error}")
+                } else {
+                    error_counts
+                        .entry(mk_error.to_string())
+                        .or_insert(0usize)
+                        .add_assign(1usize);
+                }
             }
-            total_failed += 1;
         }
     }
     spinner.finish_and_clear();
 
-    info!(
-        "done, {} records processed, {} failed, {} skipped",
-        total + 1,
-        total_failed,
-        total_skipped
-    );
+    info!("done, {} records processed", total,);
+
+    if !error_counts.is_empty() {
+        info!("error/skip counts:");
+        let error_table = format_errors_table(&error_counts);
+        info!("\n{error_table}");
+    }
+
     Ok(())
 }
 

@@ -1,11 +1,10 @@
-use crate::errs::RunError;
 use crate::logging::init_logging;
 use crate::mod_bam::{
     format_mm_ml_tag, BaseModProbs, DeltaListConverter, ModBaseInfo,
     SeqPosBaseModProbs, ML_TAGS, MM_TAGS, MN_TAG,
 };
 use crate::util::{
-    get_forward_sequence, get_query_name_string, get_ticker,
+    get_forward_sequence_str, get_query_name_string, get_ticker,
     record_is_not_primary,
 };
 use anyhow::{anyhow, bail, Context};
@@ -46,6 +45,10 @@ pub struct RepairTags {
 impl RepairTags {
     pub(crate) fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        warn!(
+            "in the next version of modkit this command will be `modkit \
+             modbam repair`"
+        );
 
         let reader_threads = {
             let half = self.threads / 2;
@@ -305,14 +308,15 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
     let modbase_info = ModBaseInfo::new_from_record(&record_pair.donor)
         .map_err(|e| anyhow!("record {read_name} failed, {}", e.to_string()))?;
 
-    let donor_seq = get_forward_sequence(&record_pair.donor).map_err(|e| {
-        anyhow!(
-            "donor sequence for record {read_name} failed, {}",
-            e.to_string()
-        )
-    })?;
-    let acceptor_seq =
-        get_forward_sequence(&record_pair.acceptor).map_err(|e| {
+    let donor_seq =
+        get_forward_sequence_str(&record_pair.donor).map_err(|e| {
+            anyhow!(
+                "donor sequence for record {read_name} failed, {}",
+                e.to_string()
+            )
+        })?;
+    let acceptor_seq = get_forward_sequence_str(&record_pair.acceptor)
+        .map_err(|e| {
             anyhow!(
                 "acceptor sequence for record {read_name} failed, {}",
                 e.to_string()
@@ -342,11 +346,9 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
         let mut ml_agg = Vec::new();
 
         let (_, base_mod_probs_iter) = modbase_info.into_iter_base_mod_probs();
-        for (primary_base, strand, seq_pos_base_mod_probs) in
-            base_mod_probs_iter
-        {
+        for (dna_base, strand, seq_pos_base_mod_probs) in base_mod_probs_iter {
             let converter =
-                DeltaListConverter::new(&acceptor_seq, primary_base);
+                DeltaListConverter::new_base(acceptor_seq.as_bytes(), dna_base);
             let skip_mode = seq_pos_base_mod_probs.get_skip_mode();
             let adjusted = seq_pos_base_mod_probs
                 .pos_to_base_mod_probs
@@ -363,8 +365,9 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
                 SeqPosBaseModProbs::new(skip_mode, adjusted);
             let (mm, mut ml) = format_mm_ml_tag(
                 repaired_seq_pos_base_mod_probs,
+                dna_base,
+                &converter.cumulative_counts,
                 strand,
-                &converter,
             );
             mm_agg.push_str(&mm);
             ml_agg.extend_from_slice(&mut ml);
@@ -384,24 +387,9 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
         }
         let _ = repaired_record.remove_aux(MN_TAG.as_bytes());
 
-        repaired_record.push_aux(mm_style.as_bytes(), mm).map_err(|e| {
-            RunError::new_failed(format!(
-                "failed to add MM tag, {}",
-                e.to_string()
-            ))
-        })?;
-        repaired_record.push_aux(ml_style.as_bytes(), ml).map_err(|e| {
-            RunError::new_failed(format!(
-                "failed to add ML tag, {}",
-                e.to_string()
-            ))
-        })?;
-        repaired_record.push_aux(MN_TAG.as_bytes(), mn).map_err(|e| {
-            RunError::new_failed(format!(
-                "failed to add MM tag, {}",
-                e.to_string()
-            ))
-        })?;
+        repaired_record.push_aux(mm_style.as_bytes(), mm)?;
+        repaired_record.push_aux(ml_style.as_bytes(), ml)?;
+        repaired_record.push_aux(MN_TAG.as_bytes(), mn)?;
 
         Ok(repaired_record)
     }

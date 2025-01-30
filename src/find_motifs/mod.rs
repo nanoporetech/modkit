@@ -29,7 +29,7 @@ use crate::parsing_utils::consume_string;
 use crate::util::{get_subroutine_progress_bar, get_ticker, StrandRule};
 
 mod args;
-pub(super) mod iupac;
+pub(crate) mod iupac;
 pub mod motif_bed;
 pub mod subcommand;
 pub(super) mod util;

@@ -1,24 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 
-use crate::errs::RunError;
-use crate::mod_bam::{
-    filter_records_iter, prob_to_qual, BaseModCall, BaseModProbs,
-    CollapseMethod, EdgeFilter, ModBaseInfo, SeqPosBaseModProbs, SkipMode,
-    TrackingModRecordIter,
-};
-use crate::mod_base_code::{
-    BaseAndState, BaseState, DnaBase, ModCodeRepr, ProbHistogram,
-};
-use crate::monoid::Moniod;
-use crate::position_filter::StrandedPositionFilter;
-use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
-use crate::record_processor::{RecordProcessor, WithRecords};
-use crate::util::{
-    self, get_aligned_pairs_forward, get_master_progress_bar,
-    get_query_name_string, get_reference_mod_strand, get_spinner, Kmer, Strand,
-};
-use anyhow::bail;
 use bio::alphabets::dna::revcomp;
 use derive_new::new;
 use indicatif::ParallelProgressIterator;
@@ -29,6 +11,24 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Cigar;
 use rust_htslib::bam::{self, Read, Records};
 use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::errs::{MkError, MkResult};
+use crate::mod_bam::{
+    prob_to_qual, BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
+    ModBaseInfo, SeqPosBaseModProbs, SkipMode, TrackingModRecordIter,
+    WithModBaseInfos,
+};
+use crate::mod_base_code::{
+    BaseAndState, BaseState, DnaBase, ModCodeRepr, ProbHistogram,
+};
+use crate::monoid::Moniod;
+use crate::position_filter::StrandedPositionFilter;
+use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
+use crate::record_processor::{RecordProcessor, WithRecords};
+use crate::util::{
+    self, get_aligned_pairs_forward, get_master_progress_bar,
+    get_query_name_string, get_reference_mod_strand, get_ticker, Kmer, Strand,
+};
 
 /// Read IDs mapped to their base modification probabilities, organized
 /// by the canonical base. This data structure contains essentially all
@@ -237,7 +237,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
             None
         };
         let mod_base_info_iter =
-            filter_records_iter(records).filter(|(record, _)| {
+            records.with_mod_base_info().filter(|(record, _)| {
                 if only_mapped || edge_filter.is_some() {
                     !record.is_unmapped()
                 } else {
@@ -283,18 +283,12 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
                     let (_, base_mod_probs_iter) =
                         mod_base_info.into_iter_base_mod_probs();
                     let mut added_probs_for_record = false;
-                    for (raw_canonical_base, strand, seq_pos_base_mod_probs) in
+                    for (dna_base, strand, seq_pos_base_mod_probs) in
                         base_mod_probs_iter
                     {
-                        let canonical_base = match (
-                            DnaBase::parse(raw_canonical_base),
-                            strand,
-                        ) {
-                            (Err(_), _) => continue,
-                            (Ok(dna_base), Strand::Positive) => dna_base,
-                            (Ok(dna_base), Strand::Negative) => {
-                                dna_base.complement()
-                            }
+                        let canonical_base = match strand {
+                            Strand::Positive => dna_base,
+                            Strand::Negative => dna_base.complement(),
                         };
 
                         let seq_pos_base_mod_probs = seq_pos_base_mod_probs
@@ -521,11 +515,9 @@ impl ReadBaseModProfile {
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
         kmer_size: usize,
-    ) -> Result<Self, RunError> {
+    ) -> MkResult<Self> {
         let mod_base_info = ModBaseInfo::new_from_record(record)?;
-        let record_name = get_query_name_string(record).map_err(|e| {
-            RunError::new_input_error(format!("invalid query name, {e}"))
-        })?;
+        let record_name = get_query_name_string(record)?;
         Self::process_record(
             record,
             &record_name,
@@ -564,7 +556,7 @@ impl ReadBaseModProfile {
         num_clip_start: usize,
         num_clip_end: usize,
     ) -> Vec<ModProfile> {
-        let inferred = base_mod_probs.inferred;
+        let inferred = base_mod_probs.inferred_unmodified;
         base_mod_probs
             .iter_probs()
             .map(|(raw_mod_code, prob)| {
@@ -594,7 +586,7 @@ impl ReadBaseModProfile {
         collapse_method: Option<&CollapseMethod>,
         edge_filter: Option<&EdgeFilter>,
         kmer_size: usize,
-    ) -> Result<Self, RunError> {
+    ) -> MkResult<Self> {
         let read_length = record.seq_len();
         let (num_clip_start, num_clip_end) =
             match ReadsBaseModProfile::get_soft_clipped(&record) {
@@ -610,9 +602,7 @@ impl ReadBaseModProfile {
                         "record: {record_name}, has improper CIGAR, {}",
                         e.to_string()
                     );
-                    return Err(RunError::new_failed(
-                        "improper CIGAR".to_string(),
-                    ));
+                    return Err(MkError::InvalidCigar);
                 }
             };
 
@@ -646,7 +636,7 @@ impl ReadBaseModProfile {
                                     // panic when there
                                     // is some bug/invalid CIGAR in a dependency
                                     read_length
-                                        .checked_sub(qpos as usize + 1)
+                                        .checked_sub(qpos + 1usize)
                                         // todo make sure you dont need to check
                                         // that r_pos is < 0
                                         .map(|qpos_adj| {
@@ -685,19 +675,15 @@ impl ReadBaseModProfile {
                     if x.is_none() {
                         debug!(
                             "\
-                        record: {record_name}, all positions for primary base \
-                             {base} were removed by edge filter."
+                        {record_name}: all positions for primary base {base} \
+                             were removed by edge filter."
                         )
                     }
                     x
                 } else {
                     Some(probs)
                 };
-                filtered.and_then(|probs| {
-                    DnaBase::parse(base)
-                        .map(|dna_base| (dna_base, strand, probs))
-                        .ok()
-                })
+                filtered.map(|probs| (base, strand, probs))
             })
             .map(|(base, strand, mut probs)| {
                 if let Some(collapse_method) = collapse_method {
@@ -806,9 +792,7 @@ pub(crate) struct ReadsBaseModProfile {
 }
 
 impl ReadsBaseModProfile {
-    fn get_soft_clipped(
-        record: &bam::Record,
-    ) -> anyhow::Result<(usize, usize)> {
+    fn get_soft_clipped(record: &bam::Record) -> MkResult<(usize, usize)> {
         if record.is_unmapped() {
             return Ok((0, 0));
         }
@@ -826,7 +810,7 @@ impl ReadsBaseModProfile {
             (ControlFlow::Break(s), ControlFlow::Break(e)) => {
                 Ok((s as usize, e as usize))
             }
-            _ => bail!("illegal cigar, entirely soft clip ops {cigar:?}"),
+            _ => return Err(MkError::InvalidCigar),
         }
     }
 
@@ -904,10 +888,9 @@ impl RecordProcessor for ReadsBaseModProfile {
             TrackingModRecordIter::new(records, false, allow_non_primary);
         let mut agg = Vec::new();
         let mut seen = HashSet::new();
-        let pb = if with_progress { Some(get_spinner()) } else { None };
+        let pb = if with_progress { Some(get_ticker()) } else { None };
 
         let mut n_fails = 0usize;
-        let mut n_skips = 0usize;
         for (record, record_name, modbase_info) in &mut mod_iter {
             if let Some(cut) = cut {
                 if record.reference_start() < cut as i64 {
@@ -941,12 +924,7 @@ impl RecordProcessor for ReadsBaseModProfile {
                             }
                             record_sampler.used(token);
                         }
-                        Err(run_error) => match run_error {
-                            RunError::Failed(_) | RunError::BadInput(_) => {
-                                n_fails += 1;
-                            }
-                            RunError::Skipped(_) => n_skips += 1,
-                        },
+                        Err(_) => n_fails += 1,
                     }
                 }
                 Indicator::Skip => continue,
@@ -955,7 +933,7 @@ impl RecordProcessor for ReadsBaseModProfile {
         }
 
         let num_failed = mod_iter.num_failed + n_fails;
-        let num_skipped = mod_iter.num_skipped + n_skips;
+        let num_skipped = mod_iter.num_skipped;
 
         Ok(ReadsBaseModProfile {
             profiles: agg,

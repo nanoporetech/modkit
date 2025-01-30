@@ -3,8 +3,14 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::str;
-use std::string::FromUtf8Error;
 
+use crate::errs::{MkError, MkResult};
+use crate::mod_base_code::{DnaBase, ParseChar};
+use crate::monoid::Moniod;
+use crate::parsing_utils::{
+    consume_char, consume_digit, consume_dot, consume_float, consume_string,
+    consume_string_spaces,
+};
 use anyhow::{anyhow, bail};
 use anyhow::{Context, Result as AnyhowResult};
 use bio::alphabets::dna::complement;
@@ -20,19 +26,13 @@ use nom::character::complete::one_of;
 use nom::combinator::map_res;
 use nom::multi::many0;
 use nom::IResult;
+use prettytable::row;
 use regex::Regex;
 use rust_htslib::bam::{
     self, ext::BamRecordExtensions, header::HeaderRecord, record::Aux,
     HeaderView, Read,
 };
-
-use crate::errs::{InputError, RunError};
-use crate::mod_base_code::{DnaBase, ParseChar};
-use crate::monoid::Moniod;
-use crate::parsing_utils::{
-    consume_char, consume_digit, consume_dot, consume_float, consume_string,
-    consume_string_spaces,
-};
+use rustc_hash::FxHashMap;
 
 pub(crate) const TAB: char = '\t';
 
@@ -132,29 +132,29 @@ pub(crate) fn get_aligned_pairs_forward(
     })
 }
 
-pub(crate) fn get_query_name_string(
-    record: &bam::Record,
-) -> Result<String, FromUtf8Error> {
+pub(crate) fn get_query_name_string(record: &bam::Record) -> MkResult<String> {
     String::from_utf8(record.qname().to_vec())
+        .map_err(|_e| MkError::InvalidRecordName)
 }
 
 #[inline]
-pub(crate) fn get_forward_sequence(
-    record: &bam::Record,
-) -> Result<String, RunError> {
-    let raw_seq = if record.is_reverse() {
+pub(crate) fn get_forward_sequence(record: &bam::Record) -> Vec<u8> {
+    if record.is_reverse() {
         bio::alphabets::dna::revcomp(record.seq().as_bytes())
     } else {
         record.seq().as_bytes()
-    };
-    let seq = String::from_utf8(raw_seq).map_err(|e| {
-        RunError::new_input_error(format!(
-            "failed to convert sequence to string, {}",
-            e
-        ))
-    })?;
+    }
+}
+
+#[inline]
+pub(crate) fn get_forward_sequence_str(
+    record: &bam::Record,
+) -> MkResult<String> {
+    let seq_bs = get_forward_sequence(record);
+    let seq = String::from_utf8(seq_bs)
+        .map_err(|e| MkError::InvalidReadSequence(e))?;
     if seq.len() == 0 {
-        return Err(RunError::new_failed("seq is empty"));
+        return Err(MkError::EmptyReadSequence);
     }
     Ok(seq)
 }
@@ -162,17 +162,17 @@ pub(crate) fn get_forward_sequence(
 pub(crate) fn get_tag<T>(
     record: &bam::Record,
     tag_keys: &[&'static str; 2],
-    parser: &dyn Fn(&Aux, &str) -> Result<T, RunError>,
-) -> Result<(T, &'static str), RunError> {
+    parser: &dyn Fn(&Aux) -> MkResult<T>,
+) -> MkResult<(T, &'static str)> {
     let tag_new = record.aux(tag_keys[0].as_bytes());
     let tag_old = record.aux(tag_keys[1].as_bytes());
 
     let (tag, t) = match (tag_new, tag_old) {
         (Ok(aux), _) => Ok((aux, tag_keys[0])),
         (Err(_), Ok(aux)) => Ok((aux, tag_keys[1])),
-        _ => Err(RunError::new_skipped("AUX data not found")),
+        _ => Err(MkError::AuxMissing),
     }?;
-    parser(&tag, t).map(|v| (v, t))
+    parser(&tag).map(|v| (v, t))
 }
 
 pub(crate) fn parse_nm(record: &bam::Record) -> anyhow::Result<u32> {
@@ -229,7 +229,7 @@ pub(crate) fn parse_md(record: &bam::Record) -> anyhow::Result<Vec<MdTag>> {
                     .as_str()
                     .to_uppercase()
                     .chars()
-                    .map(|b| DnaBase::parse_char(b))
+                    .map(|b| DnaBase::parse_char(b).map_err(|e| e.into()))
                     .collect::<anyhow::Result<Vec<DnaBase>>>()
                     .map(|bases| MdTag::Deletion(bases))
             } else if let Some(md_mismatch) = op.get(3) {
@@ -237,7 +237,7 @@ pub(crate) fn parse_md(record: &bam::Record) -> anyhow::Result<Vec<MdTag>> {
                     .as_str()
                     .parse::<char>()
                     .map_err(|e| anyhow!("invalid mismatch char, {e}"))
-                    .and_then(|b| DnaBase::parse_char(b))
+                    .and_then(|b| DnaBase::parse_char(b).map_err(|e| e.into()))
                     .map(|b| MdTag::Mismatch(b))
             } else {
                 bail!("invalid MD, should match one of the groups")
@@ -254,11 +254,11 @@ pub enum Strand {
 }
 
 impl Strand {
-    pub fn parse_char(x: char) -> Result<Self, InputError> {
+    pub fn parse_char(x: char) -> MkResult<Self> {
         match x {
             '+' => Ok(Self::Positive),
             '-' => Ok(Self::Negative),
-            _ => Err(format!("failed to parse strand {}", x).into()),
+            _ => Err(MkError::InvalidStrand),
         }
     }
     pub fn to_char(&self) -> char {
@@ -454,16 +454,13 @@ impl Region {
         self.end - self.start
     }
 
-    fn parse_raw_with_start_and_end(raw: &str) -> Result<Self, InputError> {
+    fn parse_raw_with_start_and_end(raw: &str) -> MkResult<Self> {
         let mut splitted = raw.split(':');
-        let chrom_name = splitted
-            .nth(0)
-            .ok_or(InputError::new(&format!("failed to parse region {raw}")))?;
+        let chrom_name =
+            splitted.nth(0).ok_or(MkError::InvalidRegion(raw.to_string()))?;
         let start_end = splitted.collect::<Vec<&str>>();
         if start_end.len() != 1 {
-            return Err(InputError::new(&format!(
-                "failed to parse region {raw}"
-            )));
+            return Err(MkError::InvalidRegion(raw.to_string()));
         } else {
             let start_end = start_end[0];
             let splitted = start_end
@@ -472,30 +469,23 @@ impl Region {
                     let cleaned = x.replace(",", "");
                     cleaned
                         .parse::<u32>()
-                        .map_err(|e| InputError::new(&e.to_string()))
+                        .map_err(|_| MkError::InvalidRegion(raw.to_string()))
                 })
                 .collect::<Result<Vec<u32>, _>>()?;
             if splitted.len() != 2 {
-                return Err(InputError::new(&format!(
-                    "failed to parse region {raw}"
-                )));
+                return Err(MkError::InvalidRegion(raw.to_string()));
             } else {
                 let start = splitted[0];
                 let end = splitted[1];
                 if end <= start {
-                    return Err(InputError::new(&format!(
-                        "failed to parse region {raw}, end must be after start"
-                    )));
+                    return Err(MkError::InvalidRegion(raw.to_string()));
                 }
                 Ok(Self { name: chrom_name.to_owned(), start, end })
             }
         }
     }
 
-    pub fn parse_str(
-        raw: &str,
-        header: &HeaderView,
-    ) -> Result<Self, InputError> {
+    pub fn parse_str(raw: &str, header: &HeaderView) -> MkResult<Self> {
         if raw.contains(':') {
             Self::parse_raw_with_start_and_end(raw)
         } else {
@@ -509,10 +499,7 @@ impl Region {
             if let Some(len) = target_length {
                 Ok(Self { name: raw.to_owned(), start: 0, end: len as u32 })
             } else {
-                Err(InputError::new(&format!(
-                    "failed to find matching reference sequence for {raw} in \
-                     BAM header"
-                )))
+                Err(MkError::ContigMissing)
             }
         }
     }
@@ -982,6 +969,25 @@ pub(crate) fn read_sequence_lengths_file(
             )
         })
         .collect::<anyhow::Result<IndexMap<_, _>>>()
+}
+
+pub(crate) fn format_errors_table(
+    error_counts: &FxHashMap<String, usize>,
+) -> prettytable::Table {
+    let mut tab = get_human_readable_table();
+    tab.set_titles(row!["error", "count"]);
+    error_counts.iter().sorted_by(|(_, a), (_, b)| a.cmp(b)).for_each(
+        |(er, c)| {
+            tab.add_row(row![er, c]);
+        },
+    );
+    tab
+}
+
+pub(crate) fn get_human_readable_table() -> prettytable::Table {
+    let mut tab = prettytable::Table::new();
+    tab.set_format(*prettytable::format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
+    tab
 }
 
 #[cfg(test)]

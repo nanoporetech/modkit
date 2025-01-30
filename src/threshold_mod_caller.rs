@@ -109,7 +109,7 @@ impl MultipleThresholdModCaller {
         &self,
         canonical_base: &DnaBase,
         seq_pos_mod_probs: SeqPosBaseModProbs,
-    ) -> anyhow::Result<SeqPosBaseModProbs> {
+    ) -> SeqPosBaseModProbs {
         let pos_to_base_mod_probs = seq_pos_mod_probs
             .pos_to_base_mod_probs
             .into_iter()
@@ -123,14 +123,14 @@ impl MultipleThresholdModCaller {
         // modification probabilities below the threshold will be
         // dropped, so it's invalid to call them canonical as would be
         // implied with Implicit mode.
-        Ok(SeqPosBaseModProbs::new(SkipMode::Explicit, pos_to_base_mod_probs))
+        SeqPosBaseModProbs::new(SkipMode::Explicit, pos_to_base_mod_probs)
     }
 
     pub fn filter_seq_pos_mod_probs(
         &self,
         canonical_base: &DnaBase,
         seq_pos_base_mod_probs: SeqPosBaseModProbs,
-    ) -> anyhow::Result<SeqPosBaseModProbs> {
+    ) -> SeqPosBaseModProbs {
         let pos_to_base_mod_probs = seq_pos_base_mod_probs
             .pos_to_base_mod_probs
             .into_iter()
@@ -144,7 +144,7 @@ impl MultipleThresholdModCaller {
         // modification probabilities below the threshold will be
         // dropped, so it's invalid to call them canonical as would be
         // implied with Implicit mode.
-        Ok(SeqPosBaseModProbs::new(SkipMode::Explicit, pos_to_base_mod_probs))
+        SeqPosBaseModProbs::new(SkipMode::Explicit, pos_to_base_mod_probs)
     }
 
     pub fn iter_thresholds(&self) -> impl Iterator<Item = (&DnaBase, &f32)> {
@@ -400,12 +400,12 @@ mod threshold_mod_caller_tests {
             0f32,
         );
         let mut base_mod_probs = BaseModProbs::new_init('m', 0.1);
-        base_mod_probs.insert_base_mod_prob('h'.into(), 0.8);
+        base_mod_probs.add_base_mod_prob('h'.into(), 0.8).unwrap();
         let call = caller.call(&DnaBase::C, &base_mod_probs);
         assert_eq!(call, BaseModCall::Modified(0.8, 'h'.into()));
 
         let mut base_mod_probs = BaseModProbs::new_init('m', 0.2);
-        base_mod_probs.insert_base_mod_prob('h'.into(), 0.7);
+        base_mod_probs.add_base_mod_prob('h'.into(), 0.7).unwrap();
         let call = caller.call(&DnaBase::C, &base_mod_probs);
         assert_eq!(call, BaseModCall::Filtered);
 
@@ -418,7 +418,7 @@ mod threshold_mod_caller_tests {
             0f32,
         );
         let mut base_mod_probs = BaseModProbs::new_init('m', 0.2);
-        base_mod_probs.insert_base_mod_prob('h'.into(), 0.7);
+        base_mod_probs.add_base_mod_prob('h'.into(), 0.7).unwrap();
         let call = caller.call(&DnaBase::C, &base_mod_probs);
         assert_base_mod_call_canonical(call, 0.1).unwrap();
     }
@@ -446,15 +446,15 @@ mod threshold_mod_caller_tests {
             0f32,
         );
         let mut base_mod_probs = BaseModProbs::new_init('m', 0.1);
-        base_mod_probs.insert_base_mod_prob('h'.into(), 0.8);
+        base_mod_probs.add_base_mod_prob('h'.into(), 0.8).unwrap();
         let call = caller.call_probs(&DnaBase::C, base_mod_probs).unwrap();
 
         let mut expected = BaseModProbs::new_init('h', 1.0);
-        expected.insert_base_mod_prob('m'.into(), 0.0);
+        expected.add_base_mod_prob('m'.into(), 0.0).unwrap();
         assert!(base_mod_probs_eq(&call, &expected));
 
         let mut base_mod_probs = BaseModProbs::new_init('m', 0.2);
-        base_mod_probs.insert_base_mod_prob('h'.into(), 0.7);
+        base_mod_probs.add_base_mod_prob('h'.into(), 0.7).unwrap();
         let call = caller.call_probs(&DnaBase::C, base_mod_probs);
         assert!(call.is_none());
 
@@ -467,10 +467,10 @@ mod threshold_mod_caller_tests {
             0f32,
         );
         let mut base_mod_probs = BaseModProbs::new_init('m', 0.2);
-        base_mod_probs.insert_base_mod_prob('h'.into(), 0.7);
+        base_mod_probs.add_base_mod_prob('h'.into(), 0.7).unwrap();
         let call = caller.call_probs(&DnaBase::C, base_mod_probs).unwrap();
         let mut expected_base_mod_probs = BaseModProbs::new_init('m', 0f32);
-        expected_base_mod_probs.insert_base_mod_prob('h'.into(), 0f32);
+        expected_base_mod_probs.add_base_mod_prob('h'.into(), 0f32).unwrap();
         assert_eq!(call, expected_base_mod_probs);
     }
 }

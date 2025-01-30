@@ -17,12 +17,13 @@ use crate::thresholds::{
     get_modbase_probs_from_bam, log_calculated_thresholds,
     percentile_linear_interp,
 };
-use crate::util::{get_master_progress_bar, get_ticker};
+use crate::util::{format_errors_table, get_master_progress_bar, get_ticker};
 use anyhow::{bail, Context};
 use clap::Args;
 use indicatif::MultiProgress;
 use log::{debug, error, info};
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
@@ -138,6 +139,13 @@ pub struct MethylationEntropy {
     /// Send debug logs to this file, setting this file is recommended.
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
+    /// Log regions that have zero or insufficient coverage. Requires log file.
+    #[arg(
+        long = "verbose-logging",
+        requires = "log_filepath",
+        default_value_t = false
+    )]
+    verbose: bool,
     /// Hide progress bars
     #[arg(long, hide_short_help = true, default_value_t = false)]
     suppress_progress: bool,
@@ -179,7 +187,7 @@ impl MethylationEntropy {
         let mut writer: Box<dyn EntropyWriter> =
             match (self.out_bed.as_ref(), self.regions_fp.is_some()) {
                 (Some(out_fp), false) => Box::new(
-                    WindowsWriter::new_file(out_fp, self.header)
+                    WindowsWriter::new_file(out_fp, self.header, self.verbose)
                         .context("failed to make writer to file")?,
                 ),
                 (Some(out_dir), true) => Box::new(
@@ -187,6 +195,7 @@ impl MethylationEntropy {
                         out_dir,
                         self.prefix.as_ref(),
                         self.header,
+                        self.verbose,
                     )
                     .context(
                         "failed to make regions writer, output must be a \
@@ -194,7 +203,7 @@ impl MethylationEntropy {
                     )?,
                 ),
                 (None, false) => Box::new(
-                    WindowsWriter::new_stdout(self.header)
+                    WindowsWriter::new_stdout(self.header, self.verbose)
                         .context("failed to make writer to stdout")?,
                 ),
                 (None, true) => {
@@ -326,7 +335,6 @@ impl MethylationEntropy {
         let genome_prog = multi_pb
             .add(get_master_progress_bar(sliding_windows.total_length()));
         let rows_written = multi_pb.add(get_ticker());
-        let skipped_windows = multi_pb.add(get_ticker());
         let windows_failed = multi_pb.add(get_ticker());
         let batches_failed = multi_pb.add(get_ticker());
 
@@ -336,7 +344,6 @@ impl MethylationEntropy {
         genome_prog.set_message("genome positions processed");
         rows_written.set_message("rows written");
         windows_failed.set_message(format!("{what} failed"));
-        skipped_windows.set_message(format!("{what} with zero coverage"));
         batches_failed.set_message("batches failed");
 
         pool.spawn(move || {
@@ -390,6 +397,7 @@ impl MethylationEntropy {
             }
         });
 
+        let mut failure_reasons = FxHashMap::default();
         for batch_result in rcv.iter() {
             match batch_result {
                 Ok(entropy_calculation) => {
@@ -398,8 +406,8 @@ impl MethylationEntropy {
                         &chrom_id_to_name,
                         self.drop_zeros,
                         &rows_written,
-                        &skipped_windows,
                         &windows_failed,
+                        &mut failure_reasons,
                     )?;
                 }
                 Err(e) => {
@@ -411,12 +419,15 @@ impl MethylationEntropy {
 
         multi_pb.clear()?;
         info!(
-            "finished, {} {what} processed successfully, {} windows with zero \
-             coverage, {} windows failed",
+            "finished, {} {what} processed successfully, {} windows failed",
             rows_written.position(),
-            skipped_windows.position(),
             windows_failed.position()
         );
+
+        if !failure_reasons.is_empty() {
+            let error_table = format_errors_table(&failure_reasons);
+            info!("error/skip counts:\n{error_table}");
+        }
 
         Ok(())
     }

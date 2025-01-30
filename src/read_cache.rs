@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 
 use log::{debug, error};
+use log_once::info_once;
 use rust_htslib::bam;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::errs::RunError;
+use crate::errs::{MkError, MkResult};
 use crate::find_motifs::motif_bed::MotifInfo;
 use crate::mod_bam::{
     BaseModCall, CollapseMethod, DuplexModCall, EdgeFilter, ModBaseInfo,
@@ -24,8 +25,8 @@ pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that
     /// read organized by the canonical base (the 'char') todo: should use
     /// DnaBase here
-    pos_reads: FxHashMap<String, FxHashMap<char, RefPosBaseModCalls>>,
-    neg_reads: FxHashMap<String, FxHashMap<char, RefPosBaseModCalls>>,
+    pos_reads: FxHashMap<String, FxHashMap<DnaBase, RefPosBaseModCalls>>,
+    neg_reads: FxHashMap<String, FxHashMap<DnaBase, RefPosBaseModCalls>>,
     /// these reads don't have mod tags or should be skipped for some other
     /// reason
     skip_set: HashSet<String>,
@@ -73,7 +74,9 @@ impl<'a> ReadCache<'a> {
         mod_strand: Strand,
         canonical_base: DnaBase,
         threshold_base: DnaBase,
-    ) -> Result<(), RunError> {
+    ) {
+        // todo could be more clever about filtering these calls to be within
+        // the region  we're working on..
         let aligned_pairs = util::get_aligned_pairs_forward(&record)
             .filter_map(|ap| ap.ok())
             .collect::<FxHashMap<usize, u64>>();
@@ -92,6 +95,7 @@ impl<'a> ReadCache<'a> {
                 }
             })
             .collect::<FxHashMap<u64, BaseModCall>>();
+        // todo could make this "bail" here if there aren't any positions..
 
         let read_table = match mod_strand {
             Strand::Positive => &mut self.pos_reads,
@@ -100,19 +104,16 @@ impl<'a> ReadCache<'a> {
         read_table
             .entry(record_name.to_owned())
             .or_insert(FxHashMap::default())
-            .insert(canonical_base.char(), ref_pos_base_mod_calls);
-        Ok(())
+            .insert(canonical_base, ref_pos_base_mod_calls);
     }
 
     /// Add a record to the cache.
-    fn add_record(&mut self, record: &bam::Record) -> Result<(), RunError> {
-        let record_name = util::get_query_name_string(record)
-            .map_err(|e| RunError::new_input_error(e.to_string()))?;
+    fn add_record(&mut self, record: &bam::Record) -> MkResult<()> {
+        let record_name = util::get_query_name_string(record)?;
 
         let mod_base_info = ModBaseInfo::new_from_record(record)?;
         if mod_base_info.is_empty() {
-            let msg = format!("record {} has no mod calls", &record_name);
-            return Err(RunError::Skipped(msg));
+            return Err(MkError::NoModifiedBaseInformation);
         }
 
         // todo(ar) shouln't have to perform this sweep, should be able to keep
@@ -121,17 +122,17 @@ impl<'a> ReadCache<'a> {
         for (_base, _strand, seq_pos_probs) in
             mod_base_info.iter_seq_base_mod_probs()
         {
-            if seq_pos_probs.get_skip_mode() == SkipMode::ImplicitProbModified
+            if seq_pos_probs.get_skip_mode()
+                == SkipMode::DefaultImplicitUnmodified
                 && !self.force_allow
             {
-                let msg = format!(
-                    "record {} has un-allowed mode ({:?}), use \
+                info_once!(
+                    "record has un-allowed mode ({:?}), use \
                      '--force-allow-implicit' or 'modkit update-tags --mode \
-                     ambiguous'",
-                    &record_name,
+                     explicit'",
                     seq_pos_probs.get_skip_mode()
                 );
-                return Err(RunError::Skipped(msg));
+                return Err(MkError::InvalidImplicitMode);
             }
         }
 
@@ -141,102 +142,78 @@ impl<'a> ReadCache<'a> {
         // read.
         let mut added_base_mod_probs = false;
         let (_, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
-        for (base, mod_strand, seq_base_mod_probs) in mod_prob_iter {
-            match DnaBase::parse(base) {
-                Ok(dna_base) => {
-                    // aka the base the modification is actually called on
-                    let threshold_base = match mod_strand {
-                        Strand::Positive => dna_base,
-                        Strand::Negative => dna_base.complement(),
-                    };
-                    let seq_base_mod_probs =
-                        if let Some(edge_filter) = &self.edge_filter {
-                            seq_base_mod_probs.edge_filter_positions(
-                                edge_filter,
-                                record.seq_len(),
-                            )
-                        } else {
-                            Some(seq_base_mod_probs)
-                        };
-                    // not idiomatic, but fights rightward drift..?
-                    if seq_base_mod_probs.is_none() {
-                        debug!(
-                            "all base mod positions were removed by edge \
-                             filter for {record_name} and base {base}"
-                        );
-                        continue;
-                    }
-                    let mut seq_base_mod_probs = seq_base_mod_probs.unwrap();
-                    if let Some(method) = &self.method {
-                        seq_base_mod_probs =
-                            seq_base_mod_probs.into_collapsed(method);
-                    }
-                    // could move this into it's own routine..?
-                    let mod_codes = seq_base_mod_probs
-                        .pos_to_base_mod_probs
-                        .values()
-                        .flat_map(|base_mod_probs| {
-                            base_mod_probs
-                                .iter_probs()
-                                .map(|(&mod_code_repr, _)| mod_code_repr)
-                        })
-                        .collect::<FxHashSet<ModCodeRepr>>();
-
-                    let mod_codes_for_read =
-                        match (mod_strand, record.is_reverse()) {
-                            // C+C positive stranded
-                            (Strand::Positive, false) => {
-                                &mut self.pos_mod_codes
-                            }
-                            (Strand::Positive, true) => &mut self.neg_mod_codes,
-                            // G-C negative stranded
-                            (Strand::Negative, false) => {
-                                &mut self.neg_mod_codes
-                            }
-                            (Strand::Negative, true) => &mut self.pos_mod_codes,
-                        };
-                    mod_codes_for_read
-                        .entry(record_name.to_owned())
-                        .or_insert(FxHashMap::default())
-                        .entry(threshold_base)
-                        .or_insert(HashSet::new())
-                        .extend(mod_codes);
-
-                    self.add_modbase_probs_for_record_and_canonical_base(
-                        &record_name,
-                        record,
-                        seq_base_mod_probs,
-                        mod_strand,
-                        dna_base,
-                        threshold_base,
-                    )?;
-                    added_base_mod_probs = true
-                }
-                Err(e) => {
-                    let message = format!(
-                        "record {record_name} has unallowed DNA base {base}, \
-                         {}",
-                        e.to_string()
-                    );
-                    debug!("{}", &message);
-                    // short circuit
-                    return Err(RunError::new_failed(message));
-                }
+        for (dna_base, mod_strand, seq_base_mod_probs) in mod_prob_iter {
+            // aka the base the modification is actually called on
+            let threshold_base = match mod_strand {
+                Strand::Positive => dna_base,
+                Strand::Negative => dna_base.complement(),
+            };
+            let seq_base_mod_probs =
+                if let Some(edge_filter) = &self.edge_filter {
+                    seq_base_mod_probs
+                        .edge_filter_positions(edge_filter, record.seq_len())
+                } else {
+                    Some(seq_base_mod_probs)
+                };
+            // not idiomatic, but fights rightward drift..?
+            if seq_base_mod_probs.is_none() {
+                debug!(
+                    "all base mod positions were removed by edge filter for \
+                     {record_name} and base {dna_base}"
+                );
+                continue;
             }
+            let mut seq_base_mod_probs = seq_base_mod_probs.unwrap();
+            if let Some(method) = &self.method {
+                seq_base_mod_probs = seq_base_mod_probs.into_collapsed(method);
+            }
+            // could move this into it's own routine..?
+            let mod_codes = seq_base_mod_probs
+                .pos_to_base_mod_probs
+                .values()
+                .flat_map(|base_mod_probs| {
+                    base_mod_probs
+                        .iter_probs()
+                        .map(|(&mod_code_repr, _)| mod_code_repr)
+                })
+                .collect::<FxHashSet<ModCodeRepr>>();
+
+            let mod_codes_for_read = match (mod_strand, record.is_reverse()) {
+                // C+C positive stranded
+                (Strand::Positive, false) => &mut self.pos_mod_codes,
+                (Strand::Positive, true) => &mut self.neg_mod_codes,
+                // G-C negative stranded
+                (Strand::Negative, false) => &mut self.neg_mod_codes,
+                (Strand::Negative, true) => &mut self.pos_mod_codes,
+            };
+            mod_codes_for_read
+                .entry(record_name.to_owned())
+                .or_insert(FxHashMap::default())
+                .entry(threshold_base)
+                .or_insert(HashSet::new())
+                .extend(mod_codes);
+
+            self.add_modbase_probs_for_record_and_canonical_base(
+                &record_name,
+                record,
+                seq_base_mod_probs,
+                mod_strand,
+                dna_base,
+                threshold_base,
+            );
+            added_base_mod_probs = true
         }
         if added_base_mod_probs {
             Ok(())
         } else {
-            Err(RunError::Skipped(format!(
-                "all base mod positions removed in filtering"
-            )))
+            Err(MkError::NoModifiedBaseInformation)
         }
     }
 
     #[inline]
     fn get_mod_call_from_mapping(
-        strand_calls: &FxHashMap<char, RefPosBaseModCalls>,
-        canonical_base: char,
+        strand_calls: &FxHashMap<DnaBase, RefPosBaseModCalls>,
+        canonical_base: DnaBase,
         position: u32,
     ) -> Option<BaseModCall> {
         strand_calls.get(&canonical_base).and_then(|ref_pos_mod_calls| {
@@ -256,7 +233,7 @@ impl<'a> ReadCache<'a> {
         &mut self,
         record: &bam::Record,
         position: u32,
-        canonical_base: char, // todo make this DnaBase
+        canonical_base: DnaBase, // todo make this DnaBase
     ) -> (Option<BaseModCall>, Option<BaseModCall>) {
         let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
         if self.skip_set.contains(&read_id) {
@@ -294,11 +271,8 @@ impl<'a> ReadCache<'a> {
                 (None, None) => {
                     match self.add_record(record) {
                         Ok(_) => {}
-                        Err(run_error) => {
-                            debug!(
-                                "read {read_id} failed to get mod tags {}",
-                                run_error.to_string()
-                            );
+                        Err(e) => {
+                            debug!("{read_id}: {e}",);
                             self.skip_set.insert(read_id.clone());
                         }
                     }
@@ -351,8 +325,8 @@ impl<'a> ReadCache<'a> {
                 (None, None) => {
                     match self.add_record(record) {
                         Ok(_) => {}
-                        Err(run_error) => {
-                            debug!("read {read_id}, {}", run_error.to_string());
+                        Err(e) => {
+                            debug!("{read_id}: {e}",);
                             self.skip_set.insert(read_id.clone());
                         }
                     }
@@ -412,7 +386,7 @@ impl<'a> DuplexReadCache<'a> {
         &mut self,
         record: &bam::Record,
         position: u32,
-        read_base: char,
+        read_base: DnaBase,
     ) -> Option<BaseModCall> {
         if record.is_reverse() {
             match self.read_cache.get_mod_call(&record, position, read_base) {
@@ -431,7 +405,7 @@ impl<'a> DuplexReadCache<'a> {
         &mut self,
         record: &bam::Record,
         position: u32,
-        read_base: char,
+        read_base: DnaBase,
     ) -> Option<BaseModCall> {
         if record.is_reverse() {
             match self.read_cache.get_mod_call(&record, position, read_base) {
@@ -463,11 +437,8 @@ impl<'a> DuplexReadCache<'a> {
             (read_base, read_base.complement())
         };
 
-        let pos_base_mod_call = self.get_pos_strand_base_mod_call(
-            record,
-            position,
-            pos_base.char(),
-        );
+        let pos_base_mod_call =
+            self.get_pos_strand_base_mod_call(record, position, pos_base);
         let negative_position = motif.negative_strand_position(position);
 
         if negative_position.is_none() {
@@ -479,7 +450,7 @@ impl<'a> DuplexReadCache<'a> {
         let neg_strand_base_mod_call = self.get_neg_strand_base_mod_call(
             record,
             negative_position,
-            neg_base.char(),
+            neg_base,
         );
         match (pos_base_mod_call, neg_strand_base_mod_call) {
             (Some(pos), Some(neg)) => Some(DuplexModCall::from_base_mod_calls(
@@ -502,7 +473,8 @@ mod read_cache_tests {
 
     use rust_htslib::bam::{self, FetchDefinition, Read, Reader as BamReader};
 
-    use crate::mod_bam::{base_mod_probs_from_record, DeltaListConverter};
+    use crate::mod_bam::ModBaseInfo;
+    use crate::mod_base_code::DnaBase;
     use crate::read_cache::ReadCache;
     use crate::test_utils::dna_complement;
     use crate::threshold_mod_caller::MultipleThresholdModCaller;
@@ -519,22 +491,25 @@ mod read_cache_tests {
             .map(|(forward_q_pos, r_pos)| (r_pos, forward_q_pos))
             .collect::<HashMap<u64, usize>>();
 
-        let forward_sequence = util::get_forward_sequence(&record)
+        let forward_sequence = util::get_forward_sequence_str(&record)
             .map(|seq| seq.chars().collect::<Vec<char>>())
             .unwrap();
 
         let caller = MultipleThresholdModCaller::new_passthrough();
         let mut cache = ReadCache::new(None, &caller, None, false);
         cache.add_record(&record).unwrap();
-        let converter =
-            DeltaListConverter::new_from_record(&record, 'C').unwrap();
+        let mod_base_info = ModBaseInfo::new_from_record(record).unwrap();
+        // let converter =
+        //     DeltaListConverter::new_from_record(&record, 'C').unwrap();
+        // let base_mod_probs =
+        //     base_mod_probs_from_record(&record, &converter).unwrap();
         let base_mod_probs =
-            base_mod_probs_from_record(&record, &converter).unwrap();
+            mod_base_info.pos_seq_base_mod_probs.get(&DnaBase::C).unwrap();
 
         let read_base_mod_probs = cache
             .pos_reads
             .get(&query_name)
-            .and_then(|base_to_calls| base_to_calls.get(&'C'))
+            .and_then(|base_to_calls| base_to_calls.get(&DnaBase::C))
             .unwrap();
 
         assert_eq!(
@@ -609,8 +584,11 @@ mod read_cache_tests {
                 } else {
                     record.seq()[alignment.qpos().unwrap()] as char
                 };
-                let mod_base_call =
-                    read_cache.get_mod_call(&record, pileup.pos(), read_base);
+                let mod_base_call = read_cache.get_mod_call(
+                    &record,
+                    pileup.pos(),
+                    DnaBase::parse(read_base).unwrap(),
+                );
                 let read_id = String::from_utf8_lossy(record.qname());
                 println!("{}\t{}\t{:?}", read_id, pileup.pos(), mod_base_call);
             }

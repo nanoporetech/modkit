@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result as AnyhowResult};
+use anyhow::{Context, Result as AnyhowResult};
 
-use log::{debug, info};
-use rayon::prelude::*;
-
+use crate::errs::{MkError, MkResult};
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
@@ -13,19 +11,15 @@ use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::Region;
+use log::{debug, info};
+use rayon::prelude::*;
 
-pub(crate) fn percentile_linear_interp(
-    xs: &[f32],
-    q: f32,
-) -> AnyhowResult<f32> {
+pub(crate) fn percentile_linear_interp(xs: &[f32], q: f32) -> MkResult<f32> {
     if xs.len() < 2 {
-        Err(anyhow!(
-            "not enough data points (got {}) to calculate percentile",
-            xs.len()
-        ))
+        Err(MkError::PercentileNotEnoughDatapoints(xs.len()))
     } else {
         if q > 1.0 {
-            return Err(anyhow!("quantile must be less than 1.0 got {q}"));
+            return Err(MkError::PercentileInvalidQuantile(q));
         }
         if q == 1.0f32 {
             Ok(xs[xs.len() - 1])

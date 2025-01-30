@@ -17,7 +17,7 @@ use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
 use crate::entropy::methylation_entropy::calc_me_entropy;
-use crate::errs::RunError;
+use crate::errs::{MkError, MkResult};
 use crate::find_motifs::motif_bed::RegexMotif;
 use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
@@ -367,13 +367,13 @@ impl GenomeWindow {
 
     fn encode_patterns(
         &self,
-        chrom: &str,
+        chrom_id: u32,
         strand: Strand,
         patterns: &Vec<Vec<BaseModCall>>,
         mod_code_lookup: &FxHashMap<ModCodeRepr, char>,
         position_valid_coverages: &[u32],
         min_coverage: u32,
-    ) -> Result<Vec<String>, RunError> {
+    ) -> MkResult<Vec<String>> {
         // todo remove these checks after testing
         assert!(
             self.start(&strand).is_some(),
@@ -415,30 +415,24 @@ impl GenomeWindow {
             let zero_coverage =
                 position_valid_coverages.iter().all(|&cov| cov == 0);
             if zero_coverage {
-                return Err(RunError::Skipped(format!("zero reads")));
+                return Err(MkError::EntropyZeroCoverage {
+                    chrom_id,
+                    start: self.start(&strand).unwrap(),
+                    end: self.end(&strand).unwrap(),
+                });
             } else {
-                let message = format!(
-                    "window {}:{}-{} does not have enough coverage at all \
-                     positions {:?}",
-                    chrom,
-                    self.start(&strand).expect(
-                        "no start, should not be encoding patterns without \
-                         start and end for strand"
-                    ),
-                    self.end(&strand).expect(
-                        "no end, should not be encoding patterns without \
-                         start and end for strand"
-                    ),
-                    position_valid_coverages,
-                );
-                return Err(RunError::Failed(message));
+                let err = MkError::EntropyInsufficientCoverage {
+                    chrom_id,
+                    start: self.start(&strand).unwrap(),
+                    end: self.end(&strand).unwrap(),
+                };
+                return Err(err);
             }
         }
     }
 
     fn into_entropy(
         &self,
-        chrom: &str,
         chrom_id: u32,
         min_valid_coverage: u32,
     ) -> WindowEntropy {
@@ -452,7 +446,7 @@ impl GenomeWindow {
                 position_valid_coverages,
                 ..
             } => Some(self.encode_patterns(
-                chrom,
+                chrom_id,
                 Strand::Positive,
                 read_patterns,
                 &mod_code_lookup,
@@ -465,7 +459,7 @@ impl GenomeWindow {
                 pos_position_valid_coverages,
                 ..
             } => Some(self.encode_patterns(
-                chrom,
+                chrom_id,
                 Strand::Positive,
                 pos_read_patterns,
                 &mod_code_lookup,
@@ -481,7 +475,7 @@ impl GenomeWindow {
                 neg_position_valid_coverages,
                 ..
             } => Some(self.encode_patterns(
-                chrom,
+                chrom_id,
                 Strand::Negative,
                 neg_read_patterns,
                 &mod_code_lookup,
@@ -508,15 +502,20 @@ impl GenomeWindow {
         //     );
         // }
 
-        // todo remove this after testing or make it a result/debug conditional
-        if let Some(Ok(patterns)) = positive_encoded_patterns.as_ref() {
-            assert!(
-                patterns.iter().all(|x| x.len() == window_size),
-                "patterns are the wrong size {positive_encoded_patterns:?}"
-            );
-        }
-        if let Some(Ok(neg_patterns)) = negative_patterns.as_ref() {
-            assert!(neg_patterns.iter().all(|x| x.len() == window_size));
+        // TODO: make sure there is a proper entropy test
+        #[cfg(debug_assertions)]
+        {
+            if let Some(Ok(patterns)) = positive_encoded_patterns.as_ref() {
+                debug_assert!(
+                    patterns.iter().all(|x| x.len() == window_size),
+                    "patterns are the wrong size {positive_encoded_patterns:?}"
+                );
+            }
+            if let Some(Ok(neg_patterns)) = negative_patterns.as_ref() {
+                debug_assert!(neg_patterns
+                    .iter()
+                    .all(|x| x.len() == window_size));
+            }
         }
 
         let pos_me_entropy = positive_encoded_patterns.map(|maybe_patterns| {
@@ -603,7 +602,6 @@ impl GenomeWindows {
 
     fn into_entropy_calculation(
         self,
-        chrom: &str,
         chrom_id: u32,
         min_coverage: u32,
     ) -> EntropyCalculation {
@@ -613,7 +611,7 @@ impl GenomeWindows {
         let window_entropies = self
             .entropy_windows
             .par_iter()
-            .map(|ew| ew.into_entropy(chrom, chrom_id, min_coverage))
+            .map(|ew| ew.into_entropy(chrom_id, min_coverage))
             .collect::<Vec<_>>();
         let chrom_id = self.chrom_id;
         if let Some(region_name) = self.region_name {
@@ -654,6 +652,8 @@ impl GenomeWindows {
                 &pos_entropies,
                 &pos_num_reads,
                 pos_num_fails,
+                chrom_id,
+                &interval,
             );
             // if neg_entropies is empty and there are no fails, we never saw
             // any negative strand me entropies
@@ -672,6 +672,8 @@ impl GenomeWindows {
                     &neg_entropies,
                     &neg_num_reads,
                     neg_num_fails,
+                    chrom_id,
+                    &interval,
                 ))
             };
 
@@ -1335,8 +1337,8 @@ pub(super) struct MethylationEntropy {
 #[derive(new, Debug)]
 pub(super) struct WindowEntropy {
     chrom_id: u32,
-    pos_me_entropy: Option<Result<MethylationEntropy, RunError>>,
-    neg_me_entropy: Option<Result<MethylationEntropy, RunError>>,
+    pos_me_entropy: Option<MkResult<MethylationEntropy>>,
+    neg_me_entropy: Option<MkResult<MethylationEntropy>>,
 }
 
 struct DescriptiveStats {
@@ -1360,22 +1362,28 @@ impl DescriptiveStats {
         measurements: &[f32],
         n_reads: &[usize],
         n_fails: usize,
-    ) -> Result<Self, RunError> {
+        chrom_id: u32,
+        interval: &Range<u64>,
+    ) -> MkResult<Self> {
         if measurements.is_empty() {
-            assert!(
+            debug_assert!(
                 n_reads.is_empty(),
                 "measurements and reads should be empty together"
             );
-            Err(RunError::new_failed("all reads failed"))
+            Err(MkError::EntropyZeroCoverage {
+                chrom_id,
+                start: interval.start,
+                end: interval.end,
+            })
         } else {
-            assert_eq!(
+            debug_assert_eq!(
                 measurements.len(),
                 n_reads.len(),
                 "measurements and n_reads should be the same length"
             );
             let mean_entropy = Self::mean(measurements);
-            let median_entropy = percentile_linear_interp(measurements, 0.5f32)
-                .map_err(|e| RunError::new_failed(e.to_string()))?;
+            let median_entropy =
+                percentile_linear_interp(measurements, 0.5f32)?;
             // safe because of above check
             let (min_entropy, max_entropy) = match measurements.iter().minmax()
             {
@@ -1457,8 +1465,8 @@ impl DescriptiveStats {
 pub(super) struct RegionEntropy {
     chrom_id: u32,
     interval: Range<u64>,
-    pos_entropy_stats: Result<DescriptiveStats, RunError>,
-    neg_entropy_stats: Option<Result<DescriptiveStats, RunError>>,
+    pos_entropy_stats: MkResult<DescriptiveStats>,
+    neg_entropy_stats: Option<MkResult<DescriptiveStats>>,
     region_name: String,
     window_entropies: Vec<WindowEntropy>,
 }
@@ -1554,12 +1562,10 @@ fn process_bam_fp(
                         strand,
                     );
                     messages.push(msg);
-                    // Some((mod_calls, strand, record, name))
                 }
             }
             Err(e) => {
                 debug!("read {name} failed to extract modbase info, {e}");
-                // None
             }
         };
     }
@@ -1576,9 +1582,7 @@ pub(super) fn process_entropy_window(
 ) -> anyhow::Result<EntropyCalculation> {
     let bam_fp = &bam_fps[0];
     let reader = bam::IndexedReader::from_path(bam_fp)?;
-    let header = reader.header();
     let chrom_id = entropy_windows.chrom_id;
-    let chrom = String::from_utf8_lossy(header.tid2name(chrom_id)).to_string();
     drop(reader);
 
     let results = bam_fps
@@ -1616,7 +1620,7 @@ pub(super) fn process_entropy_window(
         }
     }
 
-    Ok(entropy_windows.into_entropy_calculation(&chrom, chrom_id, min_coverage))
+    Ok(entropy_windows.into_entropy_calculation(chrom_id, min_coverage))
 }
 
 #[derive(new, Debug)]

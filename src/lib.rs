@@ -11,6 +11,7 @@ pub mod interval_chunks;
 pub mod logging;
 pub mod mod_bam;
 pub mod mod_base_code;
+pub mod modbam_util;
 pub mod monoid;
 pub mod pileup;
 pub mod position_filter;

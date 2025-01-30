@@ -1,12 +1,14 @@
 use crate::entropy::{EntropyCalculation, WindowEntropy};
-use crate::errs::RunError;
+use crate::errs::MkError;
 use crate::util::{Strand, TAB};
 use anyhow::{anyhow, bail};
 use indicatif::ProgressBar;
 use log::debug;
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{stdout, BufWriter, Write};
+use std::ops::AddAssign;
 use std::path::PathBuf;
 
 #[inline(always)]
@@ -16,8 +18,9 @@ fn write_entropy_windows<T: Write>(
     chrom_id_to_name: &HashMap<u32, String>,
     drop_zeros: bool,
     write_counter: &ProgressBar,
-    skip_counter: &ProgressBar,
     failure_counter: &ProgressBar,
+    failure_reasons: &mut FxHashMap<String, usize>,
+    verbose: bool,
 ) -> anyhow::Result<()> {
     for entropy in window_entropies {
         let name =
@@ -41,24 +44,56 @@ fn write_entropy_windows<T: Write>(
                     write_counter.inc(1);
                 }
             }
-            Some(Err(e)) => {
-                match e {
-                    RunError::Failed(_e) => {
-                        // debug!("(+) window failed, {e}");
-                        failure_counter.inc(1);
+            Some(Err(e)) => match e {
+                _ => {
+                    if verbose {
+                        match e {
+                            MkError::EntropyZeroCoverage {
+                                chrom_id,
+                                start,
+                                end,
+                            } => {
+                                if let Some(chrom) =
+                                    chrom_id_to_name.get(chrom_id)
+                                {
+                                    debug!(
+                                        "{chrom}:{start}-{end}: zero coverage"
+                                    );
+                                } else {
+                                    debug!(
+                                        "{chrom_id}:{start}-{end}: zero \
+                                         coverage"
+                                    );
+                                }
+                            }
+                            MkError::EntropyInsufficientCoverage {
+                                chrom_id,
+                                start,
+                                end,
+                            } => {
+                                if let Some(chrom) =
+                                    chrom_id_to_name.get(chrom_id)
+                                {
+                                    debug!(
+                                        "{chrom}:{start}-{end}: zero coverage"
+                                    );
+                                } else {
+                                    debug!(
+                                        "{chrom_id}:{start}-{end}: zero \
+                                         coverage"
+                                    );
+                                }
+                            }
+                            _ => {}
+                        }
                     }
-                    RunError::BadInput(reason) => {
-                        debug!("(+) window bad input, {}", &reason.0);
-                        failure_counter.inc(1);
-                    }
-                    RunError::Skipped(_e) => {
-                        skip_counter.inc(1);
-                        // debug!("window {}:{}-{} skipped, {e}",
-                        // name, entropy.interval.start,
-                        // entropy.interval.end);
-                    }
+                    failure_counter.inc(1);
+                    failure_reasons
+                        .entry(e.to_string())
+                        .or_insert(0usize)
+                        .add_assign(1usize);
                 }
-            }
+            },
             None => {}
         }
 
@@ -80,22 +115,11 @@ fn write_entropy_windows<T: Write>(
                 }
             }
             Some(Err(e)) => {
-                match e {
-                    RunError::Failed(_e) => {
-                        // debug!("(-) window failed, {e}");
-                        failure_counter.inc(1);
-                    }
-                    RunError::BadInput(reason) => {
-                        debug!("(-) window bad input, {}", &reason.0);
-                        failure_counter.inc(1);
-                    }
-                    RunError::Skipped(_e) => {
-                        skip_counter.inc(1);
-                        // debug!("window {}:{}-{} skipped, {e}",
-                        // name, entropy.interval.start,
-                        // entropy.interval.end);
-                    }
-                }
+                failure_counter.inc(1);
+                failure_reasons
+                    .entry(e.to_string())
+                    .or_insert(0usize)
+                    .add_assign(1usize);
             }
             None => {}
         }
@@ -110,9 +134,8 @@ pub(super) trait EntropyWriter {
         chrom_id_to_name: &HashMap<u32, String>,
         drop_zeros: bool,
         write_counter: &ProgressBar,
-        skip_counter: &ProgressBar,
         failure_counter: &ProgressBar,
-        // todo failure causes
+        failure_reasons: &mut FxHashMap<String, usize>,
     ) -> anyhow::Result<()>;
 }
 
@@ -121,34 +144,40 @@ const WINDOWS_HEADER: &'static str = "\
 
 pub(super) struct WindowsWriter<T: Write> {
     output: BufWriter<T>,
+    verbose: bool,
 }
 
 impl WindowsWriter<File> {
     pub(super) fn new_file(
         out_fp: &PathBuf,
         header: bool,
+        verbose: bool,
     ) -> anyhow::Result<Self> {
         let mut output = BufWriter::new(File::create(out_fp)?);
         if header {
             output.write(WINDOWS_HEADER.as_bytes())?;
         }
-        Ok(Self { output })
+        Ok(Self { output, verbose })
     }
 }
 
 impl WindowsWriter<std::io::Stdout> {
-    pub(super) fn new_stdout(header: bool) -> anyhow::Result<Self> {
+    pub(super) fn new_stdout(
+        header: bool,
+        verbose: bool,
+    ) -> anyhow::Result<Self> {
         let mut output = BufWriter::new(stdout());
         if header {
             output.write(WINDOWS_HEADER.as_bytes())?;
         }
-        Ok(Self { output })
+        Ok(Self { output, verbose })
     }
 }
 
 pub(super) struct RegionsWriter {
     regions_bed_out: BufWriter<File>,
     windows_bed_out: BufWriter<File>,
+    verbose: bool,
 }
 
 impl RegionsWriter {
@@ -156,6 +185,7 @@ impl RegionsWriter {
         out_dir: &PathBuf,
         prefix: Option<&String>,
         header: bool,
+        verbose: bool,
     ) -> anyhow::Result<Self> {
         if out_dir.is_file() {
             bail!("regions output location must be a directory")
@@ -202,7 +232,7 @@ impl RegionsWriter {
             )?;
         }
 
-        Ok(Self { windows_bed_out, regions_bed_out })
+        Ok(Self { windows_bed_out, regions_bed_out, verbose })
     }
 }
 
@@ -213,8 +243,8 @@ impl<T: Write> EntropyWriter for WindowsWriter<T> {
         chrom_id_to_name: &HashMap<u32, String>,
         drop_zeros: bool,
         write_counter: &ProgressBar,
-        skip_counter: &ProgressBar,
         failure_counter: &ProgressBar,
+        failure_reasons: &mut FxHashMap<String, usize>,
     ) -> anyhow::Result<()> {
         match entropy_calculation {
             EntropyCalculation::Windows(entropy_windows) => {
@@ -224,8 +254,9 @@ impl<T: Write> EntropyWriter for WindowsWriter<T> {
                     chrom_id_to_name,
                     drop_zeros,
                     write_counter,
-                    skip_counter,
                     failure_counter,
+                    failure_reasons,
+                    self.verbose,
                 )?;
             }
             EntropyCalculation::Region(_) => bail!("shouldn't have regions"),
@@ -241,8 +272,8 @@ impl EntropyWriter for RegionsWriter {
         chrom_id_to_name: &HashMap<u32, String>,
         drop_zeros: bool,
         write_counter: &ProgressBar,
-        skip_counter: &ProgressBar,
         failure_counter: &ProgressBar,
+        failure_reasons: &mut FxHashMap<String, usize>,
     ) -> anyhow::Result<()> {
         match entropy_calculation {
             EntropyCalculation::Region(region_entropy) => {
@@ -265,21 +296,13 @@ impl EntropyWriter for RegionsWriter {
                         self.regions_bed_out.write(row.as_bytes())?;
                         write_counter.inc(1);
                     }
-                    Err(e) => match e {
-                        RunError::Failed(_e) => {
-                            // debug!("(+) region failed, {e}");
-                            failure_counter.inc(1);
-                        }
-                        RunError::BadInput(reason) => {
-                            debug!("(+) region bad input?, {}", &reason.0);
-                            failure_counter.inc(1);
-                        }
-                        RunError::Skipped(_e) => {
-                            skip_counter.inc(1);
-                            // debug!("window {}:{}-{} skipped, {e}", name,
-                            // entropy.interval.start, entropy.interval.end);
-                        }
-                    },
+                    Err(e) => {
+                        failure_counter.inc(1);
+                        failure_reasons
+                            .entry(e.to_string())
+                            .or_insert(0usize)
+                            .add_assign(1usize);
+                    }
                 }
                 match region_entropy.neg_entropy_stats {
                     Some(Ok(neg_entropy_stats)) => {
@@ -293,21 +316,16 @@ impl EntropyWriter for RegionsWriter {
                         self.regions_bed_out.write(row.as_bytes())?;
                         write_counter.inc(1);
                     }
-                    Some(Err(e)) => match e {
-                        RunError::Failed(_e) => {
-                            // debug!("(-) region failed, {e}");
-                            failure_counter.inc(1);
+                    Some(Err(e)) => {
+                        if self.verbose {
+                            debug!("{chrom}:{start}-{end}, {e}");
                         }
-                        RunError::BadInput(reason) => {
-                            debug!("(-) region bad input?, {}", &reason.0);
-                            failure_counter.inc(1);
-                        }
-                        RunError::Skipped(_e) => {
-                            skip_counter.inc(1);
-                            // debug!("window {}:{}-{} skipped, {e}", name,
-                            // entropy.interval.start, entropy.interval.end);
-                        }
-                    },
+                        failure_counter.inc(1);
+                        failure_reasons
+                            .entry(e.to_string())
+                            .or_insert(0usize)
+                            .add_assign(1usize);
+                    }
                     None => {}
                 }
                 write_entropy_windows(
@@ -316,8 +334,9 @@ impl EntropyWriter for RegionsWriter {
                     chrom_id_to_name,
                     drop_zeros,
                     write_counter,
-                    skip_counter,
                     failure_counter,
+                    failure_reasons,
+                    self.verbose,
                 )?;
             }
             EntropyCalculation::Windows(_) => {

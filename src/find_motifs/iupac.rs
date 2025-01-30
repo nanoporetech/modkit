@@ -1,7 +1,7 @@
 use anyhow::bail;
 use std::fmt::{Display, Formatter};
 
-pub(super) mod nt_bytes {
+pub(crate) mod nt_bytes {
     pub const A: u8 = 65;
     pub const C: u8 = 67;
     pub const G: u8 = 71;

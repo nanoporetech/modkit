@@ -50,7 +50,7 @@ impl PositionModCalls {
     ) -> Option<String> {
         let filtered = caller.call(&self.canonical_base, &self.base_mod_probs)
             == BaseModCall::Filtered;
-        let inferred = self.base_mod_probs.inferred;
+        let inferred = self.base_mod_probs.inferred_unmodified;
         if filtered && pass_only {
             return None;
         }
