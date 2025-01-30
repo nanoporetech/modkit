@@ -130,6 +130,10 @@ impl ModCodeRepr {
     pub fn is_any(&self) -> bool {
         ANY_MOD_CODES.contains(self)
     }
+
+    pub(crate) fn any_mod_code(dna_base: &DnaBase) -> Self {
+        Self::Code(dna_base.char())
+    }
 }
 
 impl PartialOrd for ModCodeRepr {
@@ -140,12 +144,6 @@ impl PartialOrd for ModCodeRepr {
             (Self::ChEbi(x), Self::ChEbi(y)) => x.partial_cmp(y),
             (Self::ChEbi(_), Self::Code(_)) => Some(Ordering::Less),
         }
-    }
-}
-
-impl ModCodeRepr {
-    pub(crate) fn any_mod_code(dna_base: &DnaBase) -> Self {
-        Self::Code(dna_base.char())
     }
 }
 

@@ -12,6 +12,7 @@ mod common;
 fn test_merge_bedmethyl_help() {
     run_modkit(&["bedmethyl", "--help"]).unwrap();
     run_modkit(&["bedmethyl", "merge", "--help"]).unwrap();
+    run_modkit(&["bedmethyl", "tobigwig", "--help"]).unwrap();
 }
 
 #[test]

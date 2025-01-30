@@ -17,6 +17,8 @@ pub(crate) trait ParseBedLine {
     where
         Self: Sized;
     fn overlaps(&self, strand_rule: StrandRule) -> bool;
+
+    fn to_line(&self) -> String;
 }
 
 impl ParseBedLine for BedMethylLine {
@@ -26,6 +28,49 @@ impl ParseBedLine for BedMethylLine {
 
     fn overlaps(&self, strand_rule: StrandRule) -> bool {
         self.strand.overlaps(&strand_rule)
+    }
+
+    fn to_line(&self) -> String {
+        let tab = '\t';
+        let percent_modified = self.frac_modified() * 100f32;
+        format!(
+            "{}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}{tab}\
+             {}\n",
+            self.chrom,
+            self.interval.start,
+            self.interval.stop,
+            self.raw_mod_code,
+            self.valid_coverage,
+            self.strand,
+            self.interval.start,
+            self.interval.stop,
+            "255,0,0",
+            self.valid_coverage,
+            format!("{:.2}", percent_modified),
+            self.count_methylated,
+            self.count_canonical,
+            self.count_other,
+            self.count_delete,
+            self.count_fail,
+            self.count_diff,
+            self.count_nocall,
+        )
     }
 }
 

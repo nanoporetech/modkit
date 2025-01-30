@@ -904,6 +904,8 @@ impl GenomeRegion {
     }
 }
 
+// todo could make this a trait and have some of the other structs implement it,
+// like BedMethylLine
 #[derive(new, Debug)]
 pub(crate) struct ModPositionInfo<T> {
     pub n_valid: T,
@@ -959,7 +961,7 @@ where
 }
 
 /// Read a "contig sizes" tab-separated file.
-pub(crate) fn load_sequence_lengths_file(
+pub(crate) fn read_sequence_lengths_file(
     p: &PathBuf,
 ) -> anyhow::Result<IndexMap<String, u64>> {
     fn parse_line(line: &str) -> IResult<&str, (String, u64)> {
