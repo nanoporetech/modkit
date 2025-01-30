@@ -1,9 +1,9 @@
 use crate::common::run_modkit;
 use anyhow::{anyhow, Context};
 use mod_kit::dmr::bedmethyl::BedMethylLine;
-use mod_kit::errs::RunError;
+use mod_kit::errs::MkError;
 use mod_kit::mod_bam::{
-    parse_raw_mod_tags, BaseModCall, ModBaseInfo, SeqPosBaseModProbs,
+    BaseModCall, ModBaseInfo, RawModTags, SeqPosBaseModProbs,
 };
 use mod_kit::mod_base_code::{
     DnaBase, ModCodeRepr, ParseChar, METHYL_CYTOSINE, SIX_METHYL_ADENINE,
@@ -39,7 +39,7 @@ pub fn check_two_bams_mod_probs_are_the_same(
         for (base, strand, seq_pos_probs) in
             test_modbase_info.iter_seq_base_mod_probs()
         {
-            let ref_probs = ref_mod_probs.get(&(*base, strand)).unwrap();
+            let ref_probs = ref_mod_probs.get(&(base, strand)).unwrap();
             if ref_probs != seq_pos_probs {
                 let test_record_id =
                     String::from_utf8(test_record.qname().to_vec()).unwrap();
@@ -66,8 +66,8 @@ fn get_mod_probs(fp: &str) -> HashMap<String, ModBaseInfo> {
         .records()
         .map(|r| r.unwrap())
         .filter_map(|rec| match ModBaseInfo::new_from_record(&rec) {
-            Err(RunError::Skipped(_)) => None,
-            Err(_) => panic!("should extract modbase info"),
+            Err(MkError::NonPrimaryMissingMn) => None,
+            Err(e) => panic!("should extract modbase info, {e}"),
             Ok(modbase_info) => Some((
                 rec.qname().iter().map(|b| *b as char).collect::<String>(),
                 modbase_info,
@@ -147,14 +147,11 @@ fn test_call_mods_thresholds_correctly() {
         assert!(mod_base_info.neg_seq_base_mod_probs.is_empty());
         assert!(uncalled_info.neg_seq_base_mod_probs.is_empty());
 
-        for (primary_base, uncalled_probs) in
+        for (dna_base, uncalled_probs) in
             uncalled_info.pos_seq_base_mod_probs.iter()
         {
-            let called_probs = mod_base_info
-                .pos_seq_base_mod_probs
-                .get(&primary_base)
-                .unwrap();
-            let dna_base = DnaBase::parse_char(*primary_base).unwrap();
+            let called_probs =
+                mod_base_info.pos_seq_base_mod_probs.get(&dna_base).unwrap();
             let can_thresh = *canonical_thresholds.get(&dna_base).unwrap();
             assert!(check_probs(
                 &called_probs,
@@ -307,7 +304,7 @@ fn test_call_mods_supplementary_secondary() {
         let n_records = reader
             .records()
             .map(|r| r.unwrap())
-            .map(|record| parse_raw_mod_tags(&record).unwrap())
+            .map(|record| RawModTags::new_from_record(&record).unwrap())
             .count();
         assert_eq!(n_records, 3);
     }

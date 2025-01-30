@@ -2,7 +2,9 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 
-use anyhow::{anyhow, Result as AnyhowResult};
+use crate::errs::{MkError, MkResult};
+use crate::find_motifs::iupac::nt_bytes;
+use anyhow::anyhow;
 use clap::ValueEnum;
 use common_macros::hash_map;
 use derive_new::new;
@@ -10,7 +12,7 @@ use lazy_static::lazy_static;
 use rustc_hash::FxHashMap;
 
 pub trait ParseChar {
-    fn parse_char(c: char) -> AnyhowResult<Self>
+    fn parse_char(c: char) -> MkResult<Self>
     where
         Self: Sized;
     fn char(&self) -> char;
@@ -183,13 +185,13 @@ pub enum DnaBase {
 }
 
 impl DnaBase {
-    pub(crate) fn parse(nt: char) -> AnyhowResult<Self> {
+    pub(crate) fn parse(nt: char) -> MkResult<Self> {
         match nt {
             'A' => Ok(Self::A),
             'C' => Ok(Self::C),
             'G' => Ok(Self::G),
             'T' => Ok(Self::T),
-            _ => Err(anyhow!("unknown? {nt}".to_string())),
+            _ => Err(MkError::InvalidDnaBase),
         }
     }
 
@@ -216,8 +218,22 @@ impl DnaBase {
     }
 }
 
+impl TryFrom<u8> for DnaBase {
+    type Error = MkError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            nt_bytes::A => Ok(Self::A),
+            nt_bytes::C => Ok(Self::C),
+            nt_bytes::G => Ok(Self::G),
+            nt_bytes::T => Ok(Self::T),
+            _ => Err(MkError::InvalidDnaBase),
+        }
+    }
+}
+
 impl ParseChar for DnaBase {
-    fn parse_char(c: char) -> AnyhowResult<Self> {
+    fn parse_char(c: char) -> MkResult<Self> {
         DnaBase::parse(c)
     }
     fn char(&self) -> char {

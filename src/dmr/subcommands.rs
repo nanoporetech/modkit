@@ -16,6 +16,7 @@ use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::single_site::SingleSiteDmrAnalysis;
 use crate::dmr::tabix::MultiSampleIndex;
 use crate::dmr::util::{parse_roi_bed, HandleMissing, RoiIter};
+use crate::errs::MkResult;
 use crate::genome_positions::GenomePositions;
 use crate::logging::init_logging;
 use crate::mod_base_code::{DnaBase, ModCodeRepr, MOD_CODE_TO_DNA_BASE};
@@ -288,7 +289,9 @@ impl PairwiseDmr {
                                          letter, {e}"
                                     )
                                 })
-                                .and_then(|raw| DnaBase::parse(raw))?;
+                                .and_then(|raw| {
+                                    DnaBase::parse(raw).map_err(|e| e.into())
+                                })?;
                             let mod_code = ModCodeRepr::parse(parts[0])?;
                             debug!(
                                 "assigning modification code {mod_code:?} to \
@@ -354,7 +357,7 @@ impl PairwiseDmr {
             .modified_bases
             .iter()
             .map(|c| DnaBase::parse(*c))
-            .collect::<anyhow::Result<Vec<DnaBase>>>()?;
+            .collect::<MkResult<Vec<DnaBase>>>()?;
 
         if self.regions_bed.is_some()
             & (self.control_bed_methyl.len() > 1
@@ -655,7 +658,7 @@ impl MultiSampleDmr {
             .modified_bases
             .iter()
             .map(|c| DnaBase::parse(*c))
-            .collect::<anyhow::Result<Vec<DnaBase>>>()
+            .collect::<MkResult<Vec<DnaBase>>>()
             .context("failed to parse modified base")?;
 
         let (names, handlers) = handlers.into_iter().fold(

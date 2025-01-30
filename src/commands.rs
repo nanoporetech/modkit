@@ -1,18 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::num::ParseFloatError;
+use std::ops::AddAssign;
 use std::path::{Path, PathBuf};
-
-use anyhow::{anyhow, bail, Context, Result as AnyhowResult};
-use clap::{Args, Subcommand, ValueEnum};
-use indicatif::ProgressIterator;
-use itertools::Itertools;
-use log::{debug, info};
-use rust_htslib::bam::{
-    self,
-    record::{Aux, AuxArray},
-    Read,
-};
-use rust_htslib::tpool;
 
 use crate::adjust::adjust_modbam;
 use crate::bedmethyl_util::subcommands::EntryBedMethyl;
@@ -23,7 +12,7 @@ use crate::command_utils::{
 };
 use crate::dmr::subcommands::BedMethylDmr;
 use crate::entropy::subcommand::MethylationEntropy;
-use crate::errs::{InputError, RunError};
+use crate::errs::{MkError, MkResult};
 use crate::extract::subcommand::ExtractMods;
 use crate::find_motifs::subcommand::{EntryFindMotifs, EntryMotifs};
 use crate::localise::subcommand::EntryLocalize;
@@ -32,6 +21,7 @@ use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS,
 };
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::modbam_util::subcommands::EntryModBam;
 use crate::monoid::Moniod;
 use crate::pileup::subcommand::{DuplexModBamPileup, ModBamPileup};
 use crate::position_filter::StrandedPositionFilter;
@@ -44,15 +34,26 @@ use crate::stats::subcommand::EntryStats;
 use crate::summarize::{sampled_reads_to_summary, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{calc_thresholds_per_base, Percentiles};
-use crate::util;
 use crate::util::{
-    add_modkit_pg_records, get_master_progress_bar, get_targets, get_ticker,
-    Region,
+    add_modkit_pg_records, format_errors_table, get_master_progress_bar,
+    get_targets, get_ticker, Region,
 };
 use crate::validate::subcommand::ValidateFromModbam;
 use crate::writers::{
     MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
 };
+use anyhow::{anyhow, bail, Context, Result as AnyhowResult};
+use clap::{Args, Subcommand, ValueEnum};
+use indicatif::ProgressIterator;
+use itertools::Itertools;
+use log::{debug, info, warn};
+use rust_htslib::bam::{
+    self,
+    record::{Aux, AuxArray},
+    Read,
+};
+use rust_htslib::tpool;
+use rustc_hash::FxHashMap;
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -121,12 +122,16 @@ pub enum Commands {
     /// counts "localized" around genomic features of interest.
     #[clap(alias = "localise")]
     Localize(EntryLocalize),
-    /// Calculate base modification levels over entire regions.
+    /// Calculate base modification levels over regions.
     Stats(EntryStats),
     /// Utilities to work with bedMethyl files
     #[clap(subcommand)]
     #[command(name = "bedmethyl", alias = "bm")]
     BedMethyl(EntryBedMethyl),
+    /// Utilities to work with modBAM files
+    #[clap(subcommand)]
+    #[command(name = "modbam")]
+    ModBam(EntryModBam),
 }
 
 impl Commands {
@@ -149,11 +154,10 @@ impl Commands {
             Self::Localize(x) => x.run(),
             Self::Stats(x) => x.run(),
             Self::BedMethyl(x) => x.run(),
+            Self::ModBam(x) => x.run(),
         }
     }
 }
-
-type CliResult<T> = Result<T, RunError>;
 
 fn get_sampling_options(
     no_sampling: bool,
@@ -189,7 +193,7 @@ pub struct Adjust {
     /// of `-` or `stdin` to specify a stream from standard output.
     out_bam: String,
     /// Output debug logs to file at this path.
-    #[arg(long, help_heading = "Logging")]
+    #[arg(long, help_heading = "Logging", alias = "log")]
     log_filepath: Option<PathBuf>,
 
     /// Modified base code to ignore/remove, see
@@ -341,6 +345,10 @@ pub struct Adjust {
 impl Adjust {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        warn!(
+            "in the next version of modkit this command will be `modkit \
+             modbam adjust-mods`"
+        );
         let io_threadpool = tpool::ThreadPool::new(self.threads as u32)?;
         let mut reader = get_serial_reader(self.in_bam.as_str())?;
         reader.set_thread_pool(&io_threadpool)?;
@@ -530,7 +538,7 @@ pub struct SampleModBaseProbs {
     threads: usize,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended.
-    #[arg(long)]
+    #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
@@ -632,6 +640,10 @@ pub struct SampleModBaseProbs {
 impl SampleModBaseProbs {
     fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        warn!(
+            "in the next version of modkit this command will be `modkit \
+             modbam sample-probs`"
+        );
         if let Some(p) = self.out_dir.as_ref() {
             SampledProbs::check_files(
                 p,
@@ -653,7 +665,7 @@ impl SampleModBaseProbs {
                     let dna_base = ch[0]
                         .parse::<char>()
                         .map_err(|e| anyhow!("DNA base should be a char, {e}"))
-                        .and_then(|c| DnaBase::parse(c));
+                        .and_then(|c| DnaBase::parse(c).map_err(|e| e.into()));
                     let color_code = ch[1].to_string();
                     dna_base.map(|b| (b, color_code))
                 })
@@ -842,7 +854,7 @@ pub struct ModSummarize {
     threads: usize,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended.
-    #[arg(long)]
+    #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Output summary as a tab-separated variables stdout instead of a table.
     #[arg(long = "tsv", default_value_t = false)]
@@ -870,7 +882,7 @@ pub struct ModSummarize {
     /// sample 1/10th of the reads.
     #[arg(group = "sampling_options", short = 'f', long)]
     sampling_frac: Option<f64>,
-    /// No sampling, use all of the reads to calculate the filter thresholds
+    /// No sampling, use all the reads to calculate the filter thresholds
     /// and generating the summary.
     #[arg(long, group = "sampling_options", default_value_t = false)]
     no_sampling: bool,
@@ -1120,7 +1132,7 @@ impl ModMode {
     fn to_skip_mode(self) -> SkipMode {
         match self {
             Self::explicit => SkipMode::Explicit,
-            Self::implicit => SkipMode::ProbModified,
+            Self::implicit => SkipMode::ImplicitUnmodified,
         }
     }
 }
@@ -1155,7 +1167,7 @@ pub struct Update {
     #[arg(long, default_value_t = false)]
     no_implicit_probs: bool,
     /// Output debug logs to file at this path.
-    #[arg(long)]
+    #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Output SAM format instead of BAM.
     #[arg(long, default_value_t = false)]
@@ -1166,7 +1178,7 @@ fn update_mod_tags(
     mut record: bam::Record,
     no_implicit_calls: bool,
     new_mode: SkipMode,
-) -> CliResult<bam::Record> {
+) -> MkResult<bam::Record> {
     let mod_base_info = ModBaseInfo::new_from_record(&record)?;
     let mm_style = mod_base_info.mm_style;
     let ml_style = mod_base_info.ml_style;
@@ -1175,28 +1187,32 @@ fn update_mod_tags(
     let mut ml_agg = Vec::new();
 
     let (converters, mod_prob_iter) = mod_base_info.into_iter_base_mod_probs();
-    for (base, strand, mut seq_pos_mod_probs) in mod_prob_iter {
-        let converter = converters.get(&base).unwrap();
+    for (dna_base, strand, mut seq_pos_mod_probs) in mod_prob_iter {
+        let converter = converters.get(&dna_base).unwrap();
         if no_implicit_calls && new_mode == SkipMode::Explicit {
             seq_pos_mod_probs = seq_pos_mod_probs.remove_implicit_probs();
         } else {
             seq_pos_mod_probs.set_skip_mode(new_mode);
         }
-        let (mm, mut ml) =
-            format_mm_ml_tag(seq_pos_mod_probs, strand, converter);
+        let (mm, mut ml) = format_mm_ml_tag(
+            seq_pos_mod_probs,
+            dna_base,
+            &converter.cumulative_counts,
+            strand,
+        );
         mm_agg.push_str(&mm);
         ml_agg.extend_from_slice(&mut ml);
     }
-    record.remove_aux(mm_style.as_bytes()).expect("failed to remove MM tag");
-    record.remove_aux(ml_style.as_bytes()).expect("failed to remove ML tag");
+    record.remove_aux(mm_style.as_bytes())?;
+    record.remove_aux(ml_style.as_bytes())?;
     let mm = Aux::String(&mm_agg);
     let ml_arr: AuxArray<u8> = {
         let sl = &ml_agg;
         sl.into()
     };
     let ml = Aux::ArrayU8(ml_arr);
-    record.push_aux(MM_TAGS[0].as_bytes(), mm).expect("failed to add MM tag");
-    record.push_aux(ML_TAGS[0].as_bytes(), ml).expect("failed to add ML tag");
+    record.push_aux(MM_TAGS[0].as_bytes(), mm)?;
+    record.push_aux(ML_TAGS[0].as_bytes(), ml)?;
 
     Ok(record)
 }
@@ -1204,6 +1220,10 @@ fn update_mod_tags(
 impl Update {
     fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        warn!(
+            "in the next version of modkit this command will be `modkit \
+             modbam update-tags`"
+        );
         let threads = self.threads;
         let mut reader = get_serial_reader(&self.in_bam)?;
         reader.set_threads(threads)?;
@@ -1216,8 +1236,7 @@ impl Update {
 
         spinner.set_message("Updating ModBAM");
         let mut total = 0usize;
-        let mut total_failed = 0usize;
-        let mut total_skipped = 0usize;
+        let mut error_counts = FxHashMap::<String, usize>::default();
 
         let to_mode = if let Some(input_mode) = self.mode {
             let skip_mode = input_mode.to_skip_mode();
@@ -1232,44 +1251,57 @@ impl Update {
                 SkipMode::Explicit
             } else {
                 info!("mode will be set to prob-modified, '.'");
-                SkipMode::ProbModified
+                SkipMode::ImplicitUnmodified
             }
         };
 
-        for (i, result) in reader.records().enumerate() {
-            if let Ok(record) = result {
-                let record_name = util::get_query_name_string(&record)
-                    .unwrap_or("???".to_owned());
-                match update_mod_tags(record, self.no_implicit_probs, to_mode) {
-                    Err(RunError::BadInput(InputError(err)))
-                    | Err(RunError::Failed(err)) => {
-                        debug!("read {} failed, {}", record_name, err);
-                        total_failed += 1;
-                    }
-                    Err(RunError::Skipped(_reason)) => {
-                        total_skipped += 1;
-                    }
-                    Ok(record) => {
-                        if let Err(err) = out_bam.write(&record) {
-                            debug!("failed to write {}", err);
-                            total_failed += 1;
-                        } else {
+        let record_iter = reader
+            .records()
+            .map(|res| res.map_err(|e| MkError::HtsLibError(e)))
+            .map(|res| {
+                res.and_then(|record| {
+                    update_mod_tags(record, self.no_implicit_probs, to_mode)
+                })
+            });
+
+        for (i, result) in record_iter.enumerate() {
+            match result {
+                Ok(record) => {
+                    match out_bam
+                        .write(&record)
+                        .map_err(|e| MkError::HtsLibError(e))
+                    {
+                        Ok(_) => {
                             spinner.inc(1);
                             total = i + 1;
                         }
+                        Err(mk_error) => {
+                            error_counts
+                                .entry(mk_error.to_string())
+                                .or_insert(0usize)
+                                .add_assign(1usize);
+                        }
                     }
                 }
-            } else {
-                total_failed += 1;
+                Err(mk_error) => {
+                    error_counts
+                        .entry(mk_error.to_string())
+                        .or_insert(0usize)
+                        .add_assign(1usize);
+                }
             }
         }
 
         spinner.finish_and_clear();
 
-        info!(
-            "done, {} records processed, {} failed, {} skipped",
-            total, total_failed, total_skipped
-        );
+        info!("done, {} records processed", total);
+
+        if !error_counts.is_empty() {
+            info!("error/skip counts:");
+            let error_table = format_errors_table(&error_counts);
+            info!("\n{error_table}");
+        }
+
         Ok(())
     }
 }
@@ -1287,7 +1319,7 @@ pub struct CallMods {
     out_bam: String,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended.
-    #[arg(long)]
+    #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     // /// Process only the specified region of the BAM when performing
     // transformation. /// Format should be <chrom_name>:<start>-<end> or
@@ -1448,6 +1480,10 @@ pub struct CallMods {
 impl CallMods {
     pub fn run(&self) -> AnyhowResult<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        warn!(
+            "in the next version of modkit this command will be `modkit \
+             modbam call-mods`"
+        );
         let io_threadpool = tpool::ThreadPool::new(self.threads as u32)?;
         let mut reader = get_serial_reader(&self.in_bam)?;
         reader.set_thread_pool(&io_threadpool)?;

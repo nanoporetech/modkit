@@ -20,7 +20,7 @@ use crate::find_motifs::{
 };
 use crate::logging::init_logging;
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
-use crate::util::get_subroutine_progress_bar;
+use crate::util::{get_human_readable_table, get_subroutine_progress_bar};
 
 use super::args::{InputArgs, KnownMotifsArgs, RefineArgs};
 
@@ -463,10 +463,7 @@ impl EntryFindMotifs {
                 agg
             });
 
-        let mut tab = Table::new();
-        tab.set_format(
-            *prettytable::format::consts::FORMAT_NO_LINESEP_WITH_TITLE,
-        );
+        let mut tab = get_human_readable_table();
         tab.set_titles(row![
             "motif",
             "frac_mod",

@@ -16,7 +16,7 @@ pub fn init_logging_smart(
     let file_endcoder = Box::new(PatternEncoder::new(
         "[{f}::{L}][{d(%Y-%m-%d %H:%M:%S)}][{l}] {m}{n}",
     ));
-    let console_encoder = Box::new(PatternEncoder::new("> {m}{n}"));
+    let console_encoder = Box::new(PatternEncoder::new("{h(>)} {m}{n}"));
     let stderr = ConsoleAppender::builder()
         .encoder(console_encoder)
         .target(Target::Stderr)

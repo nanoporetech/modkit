@@ -1,7 +1,7 @@
 use crate::common::{parse_mod_profile, run_simple_summary};
 use anyhow::Context;
 use common::run_modkit;
-use mod_kit::mod_bam::parse_raw_mod_tags;
+use mod_kit::mod_bam::RawModTags;
 use mod_kit::mod_base_code::{BaseState, DnaBase};
 use rust_htslib::{bam, bam::Read};
 use std::path::PathBuf;
@@ -94,7 +94,7 @@ fn test_adjust_convert_old_tags() {
     let mut reader =
         bam::Reader::from_path(out_file.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
-        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap();
+        let raw_mod_tags = RawModTags::new_from_record(&record).unwrap();
         assert!(!raw_mod_tags.mm_is_new_style());
         assert!(!raw_mod_tags.ml_is_new_style());
         let mm = raw_mod_tags.get_raw_mm();
@@ -261,7 +261,7 @@ fn test_adjust_to_no_mods() {
     let mut reader =
         bam::Reader::from_path(test_ignore_h_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
-        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap();
+        let raw_mod_tags = RawModTags::new_from_record(&record).unwrap();
         let mm = raw_mod_tags.get_raw_mm();
         assert!(mm.starts_with("C+m?"));
     }
@@ -276,7 +276,7 @@ fn test_adjust_to_no_mods() {
     let mut reader =
         bam::Reader::from_path(test_both_bam.to_str().unwrap()).unwrap();
     for record in reader.records().map(|r| r.expect("should parse record")) {
-        let raw_mod_tags = parse_raw_mod_tags(&record).unwrap();
+        let raw_mod_tags = RawModTags::new_from_record(&record).unwrap();
         let mm = raw_mod_tags.get_raw_mm();
         assert!(mm.starts_with("C+C?"));
     }
@@ -423,7 +423,7 @@ fn test_adjust_mods_supplementary_secondary() {
         let n_records = reader
             .records()
             .map(|r| r.unwrap())
-            .map(|record| parse_raw_mod_tags(&record).unwrap())
+            .map(|record| RawModTags::new_from_record(&record).unwrap())
             .count();
         assert_eq!(n_records, 3);
     }

@@ -873,7 +873,7 @@ fn process_region<T: AsRef<Path>>(
                 continue;
             };
 
-            match read_cache.get_mod_call(&record, pos, read_base.char()) {
+            match read_cache.get_mod_call(&record, pos, read_base) {
                 // a read can report on the read-positive or read-negative
                 // strand (see the docs for .get_mod_call above) so the
                 // pos_call and neg_call below are _read oriented_, the

@@ -1,4 +1,3 @@
-use crate::errs::RunError;
 use crate::extract::args::InputArgs;
 use crate::find_motifs::motif_bed::{find_motif_hits, RegexMotif};
 use crate::interval_chunks::{ReferenceIntervalsFeeder, WithPrevEnd};
@@ -547,14 +546,7 @@ fn process_records_to_chan<'a, T: Read>(
             Ok(mod_profile) => {
                 ReadsBaseModProfile::new(vec![mod_profile], 0, 0)
             }
-            Err(run_error) => match run_error {
-                RunError::BadInput(_) | RunError::Failed(_) => {
-                    ReadsBaseModProfile::new(Vec::new(), 0, 1)
-                }
-                RunError::Skipped(_) => {
-                    ReadsBaseModProfile::new(Vec::new(), 1, 0)
-                }
-            },
+            Err(_) => ReadsBaseModProfile::new(Vec::new(), 0, 1),
         };
         let mod_profile =
             reference_position_filter.filter_read_base_mod_probs(mod_profile);

@@ -1,4 +1,4 @@
-use crate::util::{get_master_progress_bar, get_spinner};
+use crate::util::{get_master_progress_bar, get_ticker};
 
 use indicatif::ProgressBar;
 
@@ -63,7 +63,7 @@ impl RecordSampler {
         let spinner = if let Some(num) = self.num_reads {
             get_master_progress_bar(num)
         } else {
-            get_spinner()
+            get_ticker()
         };
         spinner.set_message("records sampled");
         spinner
