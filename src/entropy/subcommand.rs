@@ -33,10 +33,12 @@ pub struct MethylationEntropy {
     #[arg(short = 's', long = "in-bam", required = true)]
     in_bams: Vec<PathBuf>,
     /// Output BED file, if using `--region` this must be a directory.
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'o', long)]
     out_bed: Option<PathBuf>,
     /// Only used with `--regions`, prefix files in output directory with this
     /// string.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, requires = "regions_fp")]
     prefix: Option<String>,
     /// Number of modified positions to consider at a time
@@ -53,6 +55,7 @@ pub struct MethylationEntropy {
     #[arg(short = 'w', long, default_value_t = 50)]
     window_size: usize,
     /// Do not perform any filtering, include all mod base calls in output.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
     /// Sample this many reads when estimating the filtering threshold. Reads
@@ -62,11 +65,13 @@ pub struct MethylationEntropy {
     /// This option is useful for large BAM files. In practice, 10-50
     /// thousand reads is sufficient to estimate the model output
     /// distribution and determine the filtering threshold.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(long, default_value_t = 10_042)]
     num_reads: usize,
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will
     /// filter out the 10% lowest confidence modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         group = "thresholds",
         short = 'p',
@@ -79,6 +84,7 @@ pub struct MethylationEntropy {
     /// When specified, base modification call probabilities will be required
     /// to be greater than or equal to this number. If `--mod-thresholds`
     /// is also specified, _this_ value will be used for canonical calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         long,
         group = "thresholds",
@@ -93,6 +99,7 @@ pub struct MethylationEntropy {
     /// as usual and used for canonical cytosine and other modifications
     /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         long,
         alias = "mod-threshold",
@@ -100,9 +107,11 @@ pub struct MethylationEntropy {
     )]
     mod_thresholds: Option<Vec<String>>,
     /// Number of threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
     /// Number of BAM-reading threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, hide_short_help = true)]
     io_threads: Option<usize>,
     /// Reference sequence in FASTA format.
@@ -137,9 +146,11 @@ pub struct MethylationEntropy {
     #[arg(long = "min-coverage", default_value_t = 3)]
     min_valid_coverage: u32,
     /// Send debug logs to this file, setting this file is recommended.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Log regions that have zero or insufficient coverage. Requires log file.
+    #[clap(help_heading = "Logging Options")]
     #[arg(
         long = "verbose-logging",
         requires = "log_filepath",
@@ -147,15 +158,19 @@ pub struct MethylationEntropy {
     )]
     verbose: bool,
     /// Hide progress bars
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, hide_short_help = true, default_value_t = false)]
     suppress_progress: bool,
     /// Force overwrite output
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     force: bool,
     /// Write a header line
-    #[arg(long, default_value_t = false)]
+    #[clap(help_heading = "Output Options")]
+    #[arg(long, alias = "with-header", default_value_t = false)]
     header: bool,
     /// Omit windows with zero entropy
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     drop_zeros: bool,
     /// Maximum number of filtered positions a read is allowed to have in a

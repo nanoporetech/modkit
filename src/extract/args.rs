@@ -11,23 +11,29 @@ pub(super) struct InputArgs {
     /// out.
     pub out_path: String,
     /// Number of threads to use
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     pub threads: usize,
     /// Write output as BGZF compressed file.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     pub bgzf: bool,
     /// Number of threads to use for parallel bgzf writing.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, requires = "bgzf", default_value_t = 4)]
     pub out_threads: usize,
 
     /// Number of reads that can be in memory at a time. Increasing this value
     /// will increase thread usage, at the cost of memory usage.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 'q', long, default_value_t = 10_000)]
     pub queue_size: usize,
     /// Path to file to write run log.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     pub log_filepath: Option<PathBuf>,
     /// Include only mapped bases in output (alias: mapped).
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, alias = "mapped", default_value_t = false)]
     pub mapped_only: bool,
     /// Output aligned secondary and supplementary base modification
@@ -35,6 +41,7 @@ pub(super) struct InputArgs {
     /// all of the base modification probabilities (including soft-clipped
     /// ones, unless --mapped-only is used). The non-primary alignments
     /// will only have mapped bases in the output.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, alias = "non-primary", default_value_t = false)]
     pub allow_non_primary: bool,
     /// Number of reads to use. Note that when using a sorted, indexed modBAM
@@ -44,36 +51,45 @@ pub(super) struct InputArgs {
     /// requested number. When piping from stdin or using a modBAM without
     /// an index, the requested number of reads will be the first `num_reads`
     /// records.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     pub num_reads: Option<usize>,
     /// Process only reads that are aligned to a specified region of the BAM.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     pub region: Option<String>,
     /// Force overwrite of output file
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     pub force: bool,
     /// Hide the progress bar.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false, hide_short_help = true)]
     pub suppress_progress: bool,
     /// Set the query and reference k-mer size (if a reference is provided).
     /// Maximum number for this value is 50.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = 5)]
     pub kmer_size: usize,
     /// Ignore the BAM index (if it exists) and default to a serial scan of the
     /// BAM.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, default_value_t = false, hide_short_help = true)]
     pub ignore_index: bool,
 
     /// Don't print the header lines in the output tables.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     pub no_headers: bool,
 
     /// BED file with regions to include (alias: include-positions). Implicitly
     /// only includes mapped sites.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, alias = "include-positions")]
     pub include_bed: Option<PathBuf>,
     /// BED file with regions to _exclude_ (alias: exclude).
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, alias = "exclude", short = 'v')]
     pub exclude_bed: Option<PathBuf>,
     /// Output read-level base modification probabilities restricted to the
@@ -84,13 +100,16 @@ pub(super) struct InputArgs {
     /// is aligned to the first C on the top strand and the last C
     /// (complement to G) on the bottom strand. The --cpg argument is short
     /// hand for --motif CG 0. This argument can be passed multiple times.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference")]
     pub motif: Option<Vec<String>>,
     /// Only output counts at CpG motifs. Requires a reference sequence to be
     /// provided.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, requires = "reference", default_value_t = false)]
     pub cpg: bool,
     /// When using motifs, respect soft masking in the reference sequence.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(
         long,
         short = 'k',
@@ -105,6 +124,7 @@ pub(super) struct InputArgs {
     /// to asymmetrically filter out base modification calls from the start
     /// and end of the reads. For example, 4,8 will filter out base
     /// modification calls in the first 4 and last 8 bases of the read.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     pub edge_filter: Option<String>,
     /// Invert the edge filter, instead of filtering out base modification
@@ -113,6 +133,7 @@ pub(super) struct InputArgs {
     /// out) base modification calls in the first 4 and last 8 bases of the
     /// read, using this flag will keep only base modification calls in the
     /// first 4 and last 8 bases.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     pub invert_edge_filter: bool,
 
@@ -121,12 +142,14 @@ pub(super) struct InputArgs {
     /// if collapsing 'h', with 'm' and canonical options, half of the
     /// probability of 'h' will be added to both 'm' and 'C'. A full
     /// description of the methods can be found in collapse.md.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, hide_short_help = true)]
     pub ignore: Option<String>,
 
     /// Interval chunk size in base pairs to process concurrently. Smaller
     /// interval chunk sizes will use less memory but incur more overhead.
     /// Only used when an indexed modBAM is provided.
+    #[clap(help_heading = "Compute Options")]
     #[arg(
         short = 'i',
         long,
@@ -140,6 +163,7 @@ pub(super) struct InputArgs {
     /// modification probability are to be assumed canonical. Set this flag
     /// to omit those base modifications from the output. For additional
     /// details see the SAM spec: https://samtools.github.io/hts-specs/SAMtags.pdf.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, hide_short_help = true)]
     pub ignore_implicit: bool,
 }

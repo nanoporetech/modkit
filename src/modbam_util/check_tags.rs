@@ -20,6 +20,7 @@ use prettytable::row;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{self, Read, Records};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cmp::Ordering;
 use std::fs::File;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
@@ -128,7 +129,10 @@ impl ModTagViews {
             let mut table = get_human_readable_table();
             table.set_titles(row!["tag_header", "count"]);
             for (header, c) in
-                counts.iter().sorted_by(|(_, a), (_, b)| b.cmp(a))
+                counts.iter().sorted_by(|(x, a), (y, b)| match b.cmp(a) {
+                    Ordering::Equal => x.cmp(y),
+                    o @ _ => o,
+                })
             {
                 table.add_row(row![header, c]);
             }
@@ -167,6 +171,7 @@ impl ModTagViews {
         out_dir: Option<&PathBuf>,
         prefix: Option<&String>,
         force: bool,
+        permissive: bool,
     ) -> anyhow::Result<()> {
         let total_error = self.error_counts.values().sum::<usize>();
         let pass_rate = self.ok_record_counts as f32 / self.num_records as f32;
@@ -282,10 +287,11 @@ impl ModTagViews {
             prefix,
             &mods_table,
         )?;
-        if total_error > 0 {
-            bail!(msg)
-        } else {
+
+        if total_error == 0 || permissive {
             Ok(())
+        } else {
+            bail!(msg)
         }
     }
 }

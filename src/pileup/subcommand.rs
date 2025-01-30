@@ -45,26 +45,31 @@ pub struct ModBamPileup {
     out_bed: String,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Process only the specified region of the BAM when performing pileup.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas are
     /// allowed.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     region: Option<String>,
     /// Maximum number of records to use when calculating pileup. This argument
     /// is passed to the pileup engine. If you have high depth data,
     /// consider increasing this value substantially. Must be less than
     /// 2147483647 or an error will be raised.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, default_value_t = 8000, hide_short_help = true)]
     max_depth: u32,
 
     // processing args
     /// Number of threads to use while processing chunks concurrently.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
     /// Interval chunk size in base pairs to process concurrently. Smaller
     /// interval chunk sizes will use less memory but incur more overhead.
+    #[clap(help_heading = "Compute Options")]
     #[arg(
         short = 'i',
         long,
@@ -73,6 +78,7 @@ pub struct ModBamPileup {
     )]
     interval_size: u32,
     /// Size of queue for writing records
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, hide_short_help = true, default_value_t = 1000)]
     queue_size: usize,
 
@@ -83,9 +89,11 @@ pub struct ModBamPileup {
     /// so if 4 threads are specified the chunk_size will be 6.
     /// A warning will be shown if this option is less than the number of
     /// threads specified.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, hide_short_help = true)]
     chunk_size: Option<usize>,
     /// Hide the progress bar.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
 
@@ -97,6 +105,7 @@ pub struct ModBamPileup {
     /// This option is useful for large BAM files. In practice, 10-50
     /// thousand reads is sufficient to estimate the model output
     /// distribution and determine the filtering threshold.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -108,6 +117,7 @@ pub struct ModBamPileup {
     /// In practice, 10-100 thousand reads is sufficient to estimate the model
     /// output distribution and determine the filtering threshold. See
     /// filtering.md for details on filtering.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'f',
@@ -117,6 +127,7 @@ pub struct ModBamPileup {
     sampling_frac: Option<f64>,
     /// Set a random seed for deterministic running, the default is
     /// non-deterministic.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         long,
         conflicts_with = "num_reads",
@@ -126,11 +137,13 @@ pub struct ModBamPileup {
     seed: Option<u64>,
     /// Do not perform any filtering, include all mod base calls in output. See
     /// filtering.md for details on filtering.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will
     /// filter out the 10% lowest confidence modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         group = "thresholds",
         short = 'p',
@@ -149,6 +162,7 @@ pub struct ModBamPileup {
     /// default for all other bases with: --filter-threshold A:0.70
     /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
     /// adenine and 0.9 for all other base modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
     long,
     group = "thresholds",
@@ -163,6 +177,7 @@ pub struct ModBamPileup {
     /// as usual and used for canonical cytosine and other modifications
     /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
     long,
     alias = "mod-threshold",
@@ -173,18 +188,22 @@ pub struct ModBamPileup {
     /// probability. If this option is not provided, but --region is
     /// provided, the genomic interval passed to --region will be used.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(long)]
     sample_region: Option<String>,
     /// Interval chunk size in base pairs to process concurrently when
     /// estimating the threshold probability, can be larger than the pileup
     /// processing interval.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
     /// BED file that will restrict threshold estimation and pileup results to
     /// positions overlapping intervals in the file. (alias: include-positions)
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, hide_short_help = true, alias = "include-positions")]
     include_bed: Option<PathBuf>,
     /// Include unmapped base modifications when estimating the pass threshold.
+    #[clap(help_heading = "Selection Options")]
     #[arg(
         long,
         hide_short_help = true,
@@ -199,6 +218,7 @@ pub struct ModBamPileup {
     /// if collapsing 'h', with 'm' and canonical options, half of the
     /// probability of 'h' will be added to both 'm' and 'C'. A full
     /// description of the methods can be found in collapse.md.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<String>,
     /// Force allow implicit-canonical mode. By default modkit does not allow
@@ -207,6 +227,7 @@ pub struct ModBamPileup {
     /// mode. This option allows the interpretation of implicit mode tags:
     /// residues without modified base probability will be interpreted as
     /// being the non-modified base.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(
         long,
         hide_short_help = true,
@@ -229,16 +250,20 @@ pub struct ModBamPileup {
     /// fields such as "m,CG,0" and "m,CGCG,2". To use this option with
     /// `--combine-strands`, all motifs must be reverse-complement
     /// palindromic or an error will be raised.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
     motif: Option<Vec<String>>,
     /// Only output counts at CpG motifs. Requires a reference sequence to be
     /// provided as well as FAI index.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, requires = "reference_fasta", default_value_t = false)]
     cpg: bool,
     /// Reference sequence in FASTA format. Required for motif (e.g. CpG)
     /// filtering, requires FAI fasta index to be pre-generated.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long = "ref", alias = "reference", short = 'r')]
     reference_fasta: Option<PathBuf>,
+    #[clap(help_heading = "Modified Base Options")]
     /// Respect soft masking in the reference FASTA.
     #[arg(
         long,
@@ -260,6 +285,7 @@ pub struct ModBamPileup {
     preset: Option<Presets>,
     /// Combine base modification calls, all counts of modified bases are
     /// summed together. See collapse.md for details.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(
         long,
         default_value_t = false,
@@ -270,6 +296,7 @@ pub struct ModBamPileup {
     /// When performing motif analysis (such as CpG), sum the counts from the
     /// positive and negative strands into the counts for the positive
     /// strand position.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, default_value_t = false)]
     combine_strands: bool,
     /// Discard base modification calls that are this many bases from the start
@@ -277,6 +304,7 @@ pub struct ModBamPileup {
     /// to asymmetrically filter out base modification calls from the start
     /// and end of the reads. For example, 4,8 will filter out base
     /// modification calls in the first 4 and last 8 bases of the read.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, hide_short_help = true)]
     edge_filter: Option<String>,
     /// Invert the edge filter, instead of filtering out base modification
@@ -295,6 +323,7 @@ pub struct ModBamPileup {
     /// default behavior is more likely to be compatible with genome viewers.
     /// Enabling this option may make it easier to parse the output with
     /// tabular data handlers that expect a single kind of separator.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, hide_short_help = true,
         conflicts_with_all = ["bedgraph", "mixed_delimiters"],
     default_value_t = false)]
@@ -303,6 +332,7 @@ pub struct ModBamPileup {
     /// space-delimited instead of tab-delimited. This option can be useful
     /// for some browsers and parsers that don't expect the extra columns
     /// of the bedMethyl format.
+    #[clap(help_heading = "Output Options")]
     #[arg(
         long = "mixed-delim",
         alias = "mixed-delimiters",
@@ -316,6 +346,7 @@ pub struct ModBamPileup {
     /// Two files for each modification will be produced, one for the positive
     /// strand and one for the negative strand. So for 5mC (m) and 5hmC (h)
     /// there will be 4 files produced.
+    #[clap(help_heading = "Output Options")]
     #[arg(
         long,
         conflicts_with = "only_tabs",
@@ -324,8 +355,10 @@ pub struct ModBamPileup {
     )]
     bedgraph: bool,
     /// Output a header with the bedMethyl
+    #[clap(help_heading = "Output Options")]
     #[arg(
-        long,
+        long = "header",
+        alias = "with-header",
         alias = "include_header",
         conflicts_with_all = ["bedgraph", "partition_tag", "mixed_delimiters"],
         default_value_t = false,
@@ -333,12 +366,14 @@ pub struct ModBamPileup {
     with_header: bool,
     /// Prefix to prepend on bedgraph output file names. Without this option
     /// the files will be <mod_code>_<strand>.bedgraph
+    #[clap(help_heading = "Output Options")]
     #[arg(long)]
     prefix: Option<String>,
     /// Partition output into multiple bedMethyl files based on tag-value
     /// pairs. The output will be multiple bedMethyl files with the format
     /// `<prefix>_<tag_value_1>_<tag_value_2>_<tag_value_n>.bed` prefix is
     /// optional and set with the `--prefix` flag.
+    #[clap(help_heading = "Output Options")]
     #[arg(long)]
     partition_tag: Option<Vec<String>>,
 }
@@ -801,6 +836,7 @@ pub struct DuplexModBamPileup {
     out_bed: Option<PathBuf>,
     /// Aggregate double-stranded base modifications for CpG dinucleotides.
     /// This flag is short-hand for --motif CG 0.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, group = "motif_options", default_value_t = false)]
     cpg: bool,
 
@@ -812,33 +848,40 @@ pub struct DuplexModBamPileup {
     /// and the following C (opposite to G) on the negative strand. The motif
     /// must be reverse-complement palindromic or an error will be raised.
     /// See the documentation for more examples and details.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, group = "motif_options", num_args = 2)]
     motif: Option<Vec<String>>,
     /// Reference sequence in FASTA format.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long = "ref", alias = "reference", short = 'r')]
     reference_fasta: PathBuf,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended. (alias: log)
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Process only the specified region of the BAM when performing pileup.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>. Commas are
     /// allowed.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     region: Option<String>,
     /// Maximum number of records to use when calculating pileup. This argument
     /// is passed to the pileup engine. If you have high depth data,
     /// consider increasing this value substantially. Must be less than
     /// 2147483647 or an error will be raised.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, default_value_t = 8000, hide_short_help = true)]
     max_depth: u32,
 
     // processing args
     /// Number of threads to use while processing chunks concurrently.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
     /// Interval chunk size in base pairs to process concurrently. Smaller
     /// interval chunk sizes will use less memory but incur more overhead.
+    #[clap(help_heading = "Compute Options")]
     #[arg(
         short = 'i',
         long,
@@ -847,6 +890,7 @@ pub struct DuplexModBamPileup {
     )]
     interval_size: u32,
     /// Size of queue for writing records
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, hide_short_help = true, default_value_t = 1000)]
     queue_size: usize,
 
@@ -857,8 +901,10 @@ pub struct DuplexModBamPileup {
     /// so if 4 threads are specified the chunk_size will be 6.
     /// A warning will be shown if this option is less than the number of
     /// threads specified.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, hide_short_help = true)]
     chunk_size: Option<usize>,
+    #[clap(help_heading = "Logging Options")]
     /// Hide the progress bar.
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
@@ -871,6 +917,7 @@ pub struct DuplexModBamPileup {
     /// This option is useful for large BAM files. In practice, 10-50
     /// thousand reads is sufficient to estimate the model output
     /// distribution and determine the filtering threshold.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -882,6 +929,7 @@ pub struct DuplexModBamPileup {
     /// filter-percentile. In practice, 50-100 thousand reads is sufficient
     /// to estimate the model output distribution and determine the
     /// filtering threshold. See filtering.md for details on filtering.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'f',
@@ -891,6 +939,7 @@ pub struct DuplexModBamPileup {
     sampling_frac: Option<f64>,
     /// Set a random seed for deterministic running, the default is
     /// non-deterministic.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         long,
         conflicts_with = "num_reads",
@@ -900,11 +949,13 @@ pub struct DuplexModBamPileup {
     seed: Option<u64>,
     /// Do not perform any filtering, include all mod base calls in output. See
     /// filtering.md for details on filtering.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will
     /// filter out the 10% lowest confidence modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         group = "thresholds",
         short = 'p',
@@ -923,6 +974,7 @@ pub struct DuplexModBamPileup {
     /// default for all other bases with: --filter-threshold A:0.70
     /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
     /// adenine and 0.9 for all other base modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
     long,
     group = "thresholds",
@@ -937,6 +989,7 @@ pub struct DuplexModBamPileup {
     /// as usual and used for canonical cytosine and other modifications
     /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
     long,
     alias = "mod-threshold",
@@ -947,18 +1000,22 @@ pub struct DuplexModBamPileup {
     /// probability. If this option is not provided, but --region is
     /// provided, the genomic interval passed to --region will be used.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(long)]
     sample_region: Option<String>,
     /// Interval chunk size in base pairs to process concurrently when
     /// estimating the threshold probability, can be larger than the pileup
     /// processing interval.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
     /// BED file that will restrict threshold estimation and pileup results to
     /// positions overlapping intervals in the file. (alias: include-positions)
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, hide_short_help = true, alias = "include-positions")]
     include_bed: Option<PathBuf>,
     /// Include unmapped base modifications when estimating the pass threshold.
+    #[clap(help_heading = "Selection Options")]
     #[arg(
         long,
         hide_short_help = true,
@@ -973,6 +1030,7 @@ pub struct DuplexModBamPileup {
     /// if collapsing 'h', with 'm' and canonical options, half of the
     /// probability of 'h' will be added to both 'm' and 'C'. A full
     /// description of the methods can be found in collapse.md.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<String>,
     /// Force allow implicit-canonical mode. By default modkit does not allow
@@ -981,6 +1039,7 @@ pub struct DuplexModBamPileup {
     /// mode. This option allows the interpretation of implicit mode tags:
     /// residues without modified base probability will be interpreted as
     /// being the non-modified base.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(
         long,
         hide_short_help = true,
@@ -990,6 +1049,7 @@ pub struct DuplexModBamPileup {
     force_allow_implicit: bool,
 
     /// Respect soft masking in the reference FASTA.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(
         long,
         short = 'k',
@@ -1000,6 +1060,7 @@ pub struct DuplexModBamPileup {
     mask: bool,
     /// Combine base modification calls, all counts of modified bases are
     /// summed together. See collapse.md for details.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(
         long,
         default_value_t = false,
@@ -1012,6 +1073,7 @@ pub struct DuplexModBamPileup {
     /// to asymmetrically filter out base modification calls from the start
     /// and end of the reads. For example, 4,8 will filter out base
     /// modification calls in the first 4 and last 8 bases of the read.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, hide_short_help = true)]
     edge_filter: Option<String>,
     /// Invert the edge filter, instead of filtering out base modification
@@ -1020,6 +1082,7 @@ pub struct DuplexModBamPileup {
     /// out) base modification calls in the first 4 and last 8 bases of the
     /// read, using this flag will keep only base modification calls in the
     /// first 4 and last 8 bases.
+    #[clap(help_heading = "Selection Options")]
     #[arg(
         long,
         requires = "edge_filter",
@@ -1035,6 +1098,7 @@ pub struct DuplexModBamPileup {
     /// default behavior is more likely to be compatible with genome viewers.
     /// Enabling this option may make it easier to parse the output with
     /// tabular data handlers that expect a single kind of separator.
+    #[clap(help_heading = "Output Options")]
     #[arg(
         long,
         hide_short_help = true,
@@ -1046,6 +1110,7 @@ pub struct DuplexModBamPileup {
     /// space-delimited instead of tab-delimited. This option can be useful
     /// for some browsers and parsers that don't expect the extra columns
     /// of the bedMethyl format.
+    #[clap(help_heading = "Output Options")]
     #[arg(
         long = "mixed-delim",
         conflicts_with = "only_tabs",

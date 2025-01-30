@@ -60,19 +60,23 @@ pub struct PairwiseDmr {
     /// Bgzipped bedMethyl file for the first (usually control) sample. There
     /// should be a tabix index with the same name and .tbi next to this
     /// file or the --index-a option must be provided.
+    #[clap(help_heading = "Sample Options")]
     #[arg(short = 'a')]
     control_bed_methyl: Vec<PathBuf>,
     /// Bgzipped bedMethyl file for the second (usually experimental) sample.
     /// There should be a tabix index with the same name and .tbi next to
     /// this file or the --index-b option must be provided.
+    #[clap(help_heading = "Sample Options")]
     #[arg(short = 'b')]
     exp_bed_methyl: Vec<PathBuf>,
     /// Path to file to direct output, optional, no argument will direct output
     /// to stdout.
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'o', long)]
     out_path: Option<String>,
     /// Include header in output
-    #[arg(long, default_value_t = false)]
+    #[clap(help_heading = "Output Options")]
+    #[arg(long, alias = "with-header", default_value_t = false)]
     header: bool,
     /// BED file of regions over which to compare methylation levels. Should be
     /// tab-separated (spaces allowed in the "name" column). Requires
@@ -86,14 +90,17 @@ pub struct PairwiseDmr {
     reference_fasta: PathBuf,
     /// Run segmentation, output segmented differentially methylated regions to
     /// this file.
+    #[clap(help_heading = "Segmentation Options")]
     #[arg(long = "segment", conflicts_with = "regions_bed")]
     segmentation_fp: Option<PathBuf>,
 
     /// Maximum number of base pairs between modified bases for them to be
     /// segmented together.
+    #[clap(help_heading = "Segmentation Options")]
     #[arg(long, requires = "segmentation_fp", default_value_t = 5000)]
     max_gap_size: u64,
     /// Prior probability of a differentially methylated position
+    #[clap(help_heading = "Segmentation Options")]
     #[arg(
         long,
         requires = "segmentation_fp",
@@ -103,6 +110,7 @@ pub struct PairwiseDmr {
     dmr_prior: f64,
     /// Maximum probability of continuing a differentially methylated block,
     /// decay will be dynamic based on proximity to the next position.
+    #[clap(help_heading = "Segmentation Options")]
     #[arg(
         long,
         requires = "segmentation_fp",
@@ -112,6 +120,7 @@ pub struct PairwiseDmr {
     diff_stay: f64,
     /// Significance factor, effective p-value necessary to favor the
     /// "Different" state.
+    #[clap(help_heading = "Segmentation Options")]
     #[arg(
         long,
         requires = "segmentation_fp",
@@ -120,6 +129,7 @@ pub struct PairwiseDmr {
     )]
     significance_factor: f64,
     /// Use logarithmic decay for "Different" stay probability
+    #[clap(help_heading = "Segmentation Options")]
     #[arg(
         long,
         requires = "segmentation_fp",
@@ -130,6 +140,7 @@ pub struct PairwiseDmr {
     /// After this many base pairs, the transition probability will become the
     /// prior probability of encountering a differentially modified
     /// position.
+    #[clap(help_heading = "Segmentation Options")]
     #[arg(
         long,
         requires = "segmentation_fp",
@@ -140,6 +151,7 @@ pub struct PairwiseDmr {
     /// Preset HMM segmentation parameters for higher propensity to switch from
     /// "Same" to "Different" state. Results will be shorter segments, but
     /// potentially higher sensitivity.
+    #[clap(help_heading = "Segmentation Options")]
     #[arg(
         long,
         requires = "segmentation_fp",
@@ -150,6 +162,7 @@ pub struct PairwiseDmr {
     /// Bases to use to calculate DMR, may be multiple. For example, to
     /// calculate differentially methylated regions using only cytosine
     /// modifications use --base C.
+    #[clap(help_heading = "Sample Options")]
     #[arg(short, long="base", alias = "modified-bases", action=clap::ArgAction::Append)]
     modified_bases: Vec<char>,
     /// Extra assignments of modification codes to their respective primary
@@ -163,13 +176,16 @@ pub struct PairwiseDmr {
     /// code "x" with cytosine (C) primary sequence bases. If a code is
     /// encountered that is not part of the specification, the bedMethyl
     /// record will not be used, this will be logged.
+    #[clap(help_heading = "Sample Options")]
     #[arg(long="assign-code", action=clap::ArgAction::Append)]
     mod_code_assignments: Option<Vec<String>>,
 
     /// File to write logs to, it's recommended to use this option.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Number of threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
     /// Control the  batch size. The batch size is the number of regions to
@@ -177,32 +193,40 @@ pub struct PairwiseDmr {
     /// more regions at a time will decrease IO to load data, but will use
     /// more memory. Default will be 50% more than the number of
     /// threads assigned.
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, alias = "batch")]
     batch_size: Option<usize>,
     /// Respect soft masking in the reference FASTA.
+    #[clap(help_heading = "Sample Options")]
     #[arg(long, short = 'k', default_value_t = false)]
     mask: bool,
     /// Don't show progress bars
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false)]
     suppress_progress: bool,
     /// Force overwrite of output file, if it already exists.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 'f', long, default_value_t = false)]
     force: bool,
     /// How to handle regions found in the `--regions` BED file.
     /// quiet => ignore regions that are not found in the tabix header
     /// warn => log (debug) regions that are missing
     /// fatal => log (error) and exit the program when a region is missing.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long="missing", requires = "regions_bed", default_value_t=HandleMissing::warn)]
     handle_missing: HandleMissing,
     /// Minimum valid coverage required to use an entry from a bedMethyl. See
     /// the help for pileup for the specification and description of valid
     /// coverage.
+    #[clap(help_heading = "Sample Options")]
     #[arg(long, alias = "min-coverage", default_value_t = 0)]
     min_valid_coverage: u64,
     /// Prior distribution for estimating MAP-based p-value. Should be two
     /// arguments for alpha and beta (e.g. 1.0 1.0). See
     /// `dmr_scoring_details.md` for additional details on how the metric
     /// is calculated.
+
+    #[clap(help_heading = "Single-site Options")]
     #[arg(
         long,
         num_args = 2,
@@ -212,6 +236,7 @@ pub struct PairwiseDmr {
     prior: Option<Vec<f64>>,
     /// Consider only effect sizes greater than this when calculating the
     /// MAP-based p-value.
+    #[clap(help_heading = "Single-site Options")]
     #[arg(
         long,
         default_value_t = 0.05,
@@ -220,6 +245,7 @@ pub struct PairwiseDmr {
     )]
     delta: f64,
     /// Sample this many reads when estimating the max coverage thresholds.
+    #[clap(help_heading = "Single-site Options")]
     #[arg(
         long,
         short='N',
@@ -228,12 +254,14 @@ pub struct PairwiseDmr {
     )]
     n_sample_records: usize,
     /// Max coverages to enforce when calculating estimated MAP-based p-value.
+    #[clap(help_heading = "Single-site Options")]
     #[arg(long, num_args = 2, conflicts_with = "regions_bed")]
     max_coverages: Option<Vec<usize>>,
     /// When using replicates, cap coverage to be equal to the maximum coverage
     /// for a single sample. For example, if there are 3 replicates with
     /// max_coverage of 30, the total coverage would normally be 90. Using
     /// --cap-coverages will down sample the data to 30X.
+    #[clap(help_heading = "Single-site Options")]
     #[arg(
         long,
         conflicts_with = "regions_bed",
@@ -243,6 +271,7 @@ pub struct PairwiseDmr {
     cap_coverages: bool,
     /// Interval chunk size in base pairs to process concurrently. Smaller
     /// interval chunk sizes will use less memory but incur more overhead.
+    #[clap(help_heading = "Compute Options")]
     #[arg(
         short = 'i',
         long,
@@ -520,29 +549,36 @@ pub struct MultiSampleDmr {
     /// Two or more named samples to compare. Two arguments are required <path>
     /// <name>. This option should be repeated at least two times. When two
     /// samples have the same name, they will be combined.
+    #[clap(help_heading = "Sample Options")]
     #[arg(short = 's', long = "sample", num_args = 2)]
     samples: Vec<String>,
     /// BED file of regions over which to compare methylation levels. Should be
     /// tab-separated (spaces allowed in the "name" column). Requires
     /// chrom, chromStart and chromEnd. The Name column is optional. Strand
     /// is currently ignored.
+    #[clap(help_heading = "Sample Options")]
     #[arg(long, short = 'r', alias = "regions")]
     regions_bed: PathBuf,
     /// Include header in output
-    #[arg(long, default_value_t = false)]
+    #[clap(help_heading = "Output Options")]
+    #[arg(long, alias = "with-header", default_value_t = false)]
     header: bool,
     /// Directory to place output DMR results in BED format.
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'o', long)]
     out_dir: PathBuf,
     /// Prefix files in directory with this label
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'p', long)]
     prefix: Option<String>,
     /// Path to reference fasta for the pileup.
+    #[clap(help_heading = "Sample Options")]
     #[arg(long = "ref")]
     reference_fasta: PathBuf,
     /// Bases to use to calculate DMR, may be multiple. For example, to
     /// calculate differentially methylated regions using only cytosine
     /// modifications use --base C.
+    #[clap(help_heading = "Sample Options")]
     #[arg(short, long="base", alias = "modified-bases", action=clap::ArgAction::Append)]
     modified_bases: Vec<char>,
     /// Extra assignments of modification codes to their respective primary
@@ -556,32 +592,40 @@ pub struct MultiSampleDmr {
     /// code "x" with cytosine (C) primary sequence bases. If a code is
     /// encountered that is not part of the specification, the bedMethyl
     /// record will not be used, this will be logged.
+    #[clap(help_heading = "Sample Options")]
     #[arg(long="assign-code", action=clap::ArgAction::Append)]
     mod_code_assignments: Option<Vec<String>>,
     /// File to write logs to, it's recommended to use this option.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Number of threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
     /// Respect soft masking in the reference FASTA.
+    #[clap(help_heading = "Sample Options")]
     #[arg(long, short = 'k', default_value_t = false)]
     mask: bool,
     /// Don't show progress bars
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false)]
     suppress_progress: bool,
     /// Force overwrite of output file, if it already exists.
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'f', long, default_value_t = false)]
     force: bool,
     /// How to handle regions found in the `--regions` BED file.
     /// quiet => ignore regions that are not found in the tabix header
     /// warn => log (debug) regions that are missing
     /// fatal => log (error) and exit the program when a region is missing.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long="missing", requires = "regions_bed", default_value_t=HandleMissing::warn)]
     handle_missing: HandleMissing,
     /// Minimum valid coverage required to use an entry from a bedMethyl. See
     /// the help for pileup for the specification and description of valid
     /// coverage.
+    #[clap(help_heading = "Sampe Options")]
     #[arg(long, alias = "min-coverage", default_value_t = 0)]
     min_valid_coverage: u64,
 }

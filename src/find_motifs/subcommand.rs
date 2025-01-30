@@ -57,28 +57,34 @@ pub struct EntryFindMotifs {
     input_args: InputArgs,
     /// Optionally output a machine-parsable TSV (human-readable table will
     /// always be output to the log).
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'o', long)]
     out_table: Option<PathBuf>,
     /// Optionally output machine parsable table with known motif
     /// modification frequencies that were not found during search.
+    #[clap(help_heading = "Output Options")]
     #[arg(long = "eval-motifs-table")]
     out_known_table: Option<PathBuf>,
     #[clap(flatten)]
     refine_args: RefineArgs,
     /// Initial "fixed" seed window size in base pairs around the modified
     /// base. Example: --init-context-size 2 2
+    #[clap(help_heading = "Search Options")]
     #[arg(long, num_args=2, default_values_t=vec![2, 2])]
     init_context_size: Vec<usize>,
     /// Format should be <sequence> <offset> <mod_code>.
+    #[clap(help_heading = "Output Options")]
     #[arg(long="known-motif", num_args = 3, action = clap::ArgAction::Append)]
     pub known_motifs: Option<Vec<String>>,
     /// Path to known motifs in tabular format. Tab-separated values:
     /// <mod_code>\t<motif_seq>\t<offset>. May have the same header as the
     /// output table from this command.
+    #[clap(help_heading = "Output Options")]
     #[arg(long = "known-motifs-table")]
     pub known_motifs_table: Option<PathBuf>,
     /// Specify which modification codes to process, default will process all
     /// modification codes found in the input bedMethyl file
+    #[clap(help_heading = "Search Options")]
     #[arg(long = "mod-code")]
     mod_codes: Option<Vec<String>>,
     /// Force override SAM specification of association of modification codes
@@ -627,14 +633,17 @@ pub struct EntryRefineMotifs {
     known_motifs_args: KnownMotifsArgs,
     /// Machine-parsable table of refined motifs. Human-readable table always
     /// printed to stderr and log.
+    #[clap(help_heading = "Output Options")]
     #[arg(long = "out")]
     out_table: Option<PathBuf>,
     /// Minimum fraction of sites in the genome to be "high-modification"
     /// for a motif to be further refined, otherwise it will be discarded.
+    #[clap(help_heading = "Refine Options")]
     #[arg(long = "min_refine_frac_mod", default_value_t = 0.6)]
     min_refine_frac_modified: f32,
     /// Minimum number of total sites in the genome required for a motif to be
     /// further refined, otherwise it will be discarded.
+    #[clap(help_heading = "Refine Options")]
     #[arg(long, default_value_t = 300)]
     #[arg(long)]
     pub min_refine_sites: u64,
@@ -807,6 +816,7 @@ pub struct EntryEvaluateMotifs {
     known_motifs_args: KnownMotifsArgs,
     /// Machine-parsable table of refined motifs. Human-readable table always
     /// printed to stderr and log.
+    #[clap(help_heading = "Output Options")]
     #[arg(long = "out")]
     out_table: Option<PathBuf>,
     /// Force override SAM specification of association of modification codes

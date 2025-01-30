@@ -37,21 +37,27 @@ pub struct EntryStats {
     #[arg(short = 'm', long, alias = "min-cov", default_value_t = 1)]
     min_coverage: u64,
     /// Specify the output file to write the results table.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, short = 'o', alias = "out")]
     out_table: PathBuf,
     /// Force overwrite the output file.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     force: bool,
     /// Don't add the header describing the columns to the output
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     no_header: bool,
     /// Specify a file to write debug logs to.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Number of threads to use
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
     /// Number of tabix/bgzf threads to use
+    #[clap(help_heading = "Compute Options")]
     #[arg(long, default_value_t = 2)]
     io_threads: usize,
 }

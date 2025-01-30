@@ -38,7 +38,7 @@ use crate::util::{
     add_modkit_pg_records, format_errors_table, get_master_progress_bar,
     get_targets, get_ticker, Region,
 };
-use crate::validate::subcommand::ValidateFromModbam;
+use crate::validate::subcommand::ValidateFromModBam;
 use crate::writers::{
     MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
 };
@@ -108,7 +108,7 @@ pub enum Commands {
     /// Validate results from a set of mod-BAM files and associated BED files
     /// containing the ground truth modified base status at reference
     /// positions.
-    Validate(ValidateFromModbam),
+    Validate(ValidateFromModBam),
     #[clap(hide = true)]
     FindMotifs(EntryFindMotifs),
     /// Various commands to search for, evaluate, or further regine sequence
@@ -130,7 +130,7 @@ pub enum Commands {
     BedMethyl(EntryBedMethyl),
     /// Utilities to work with modBAM files
     #[clap(subcommand)]
-    #[command(name = "modbam")]
+    #[command(name = "modbam", alias = "mb")]
     ModBam(EntryModBam),
 }
 
@@ -193,15 +193,18 @@ pub struct Adjust {
     /// of `-` or `stdin` to specify a stream from standard output.
     out_bam: String,
     /// Output debug logs to file at this path.
-    #[arg(long, help_heading = "Logging", alias = "log")]
+    #[clap(help_heading = "Output Options")]
+    #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
 
     /// Modified base code to ignore/remove, see
     /// https://samtools.github.io/hts-specs/SAMtags.pdf for details on
     /// the modified base codes.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, conflicts_with = "convert")]
     ignore: Option<String>,
     /// Number of threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
     /// Fast fail, stop processing at the first invalid sequence record.
@@ -211,6 +214,7 @@ pub struct Adjust {
     fail_fast: bool,
     /// Convert one mod-tag to another, summing the probabilities together if
     /// the retained mod tag is already present.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, conflicts_with_all=["ignore", "filter_probs"])]
     convert: Option<Vec<String>>,
     /// Discard base modification calls that are this many bases from the start
@@ -218,6 +222,7 @@ pub struct Adjust {
     /// to asymmetrically filter out base modification calls from the start
     /// and end of the reads. For example, 4,8 will filter out base
     /// modification calls in the first 4 and last 8 bases of the read.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     edge_filter: Option<String>,
     /// Invert the edge filter, instead of filtering out base modification
@@ -226,15 +231,18 @@ pub struct Adjust {
     /// out) base modification calls in the first 4 and last 8 bases of the
     /// read, using this flag will keep only base modification calls in the
     /// first 4 and last 8 bases.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
     /// Output SAM format instead of BAM.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     output_sam: bool,
 
     // filtering options
     // sampling args
     /// Filter out the lowest confidence base modification probabilities.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, default_value_t = false)]
     filter_probs: bool,
     /// Sample approximately this many reads when estimating the filtering
@@ -245,6 +253,7 @@ pub struct Adjust {
     /// large BAM files. In practice, 10-50 thousand reads is sufficient to
     /// estimate the model output distribution and determine the filtering
     /// threshold.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         short = 'n',
         requires = "filter_probs",
@@ -257,11 +266,13 @@ pub struct Adjust {
     /// probability. If this option is not provided, but --region is
     /// provided, the genomic interval passed to --region will be used.
     /// Format should be <chrom_name>:<start>-<end> or <chrom_name>.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(long, requires = "filter_probs", hide_short_help = true)]
     sample_region: Option<String>,
     /// Interval chunk size to process concurrently when estimating the
     /// threshold probability, can be larger than the pileup processing
     /// interval.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         long,
         requires = "filter_probs",
@@ -272,6 +283,7 @@ pub struct Adjust {
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will
     /// filter out the 10% lowest confidence modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(short = 'p', requires = "filter_probs", long, default_value_t = 0.1)]
     filter_percentile: f32,
     /// Specify the filter threshold globally or per primary base. A global
@@ -284,6 +296,7 @@ pub struct Adjust {
     /// and a default for all other bases with: --filter-threshold A:0.70
     /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
     /// adenine and 0.9 for all other base modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         long,
         conflicts_with="filter_percentile",
@@ -300,6 +313,7 @@ pub struct Adjust {
     /// as usual and used for canonical cytosine and other modifications
     /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         requires="filter_probs",
         long = "mod-threshold",
@@ -310,6 +324,7 @@ pub struct Adjust {
     /// Only use base modification probabilities from bases that are aligned
     /// when estimating the filter threshold (i.e. ignore soft-clipped, and
     /// inserted bases).
+    #[clap(help_heading = "Selection Options")]
     #[arg(
         long,
         default_value_t = false,
@@ -327,17 +342,21 @@ pub struct Adjust {
     /// would be `--motif CGCG 2`. Single bases can be used as motifs
     /// to keep only base modification calls for a specific primary base,
     /// for example `--motif C 0`.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, action = clap::ArgAction::Append, num_args = 2)]
     motif: Option<Vec<String>>,
     /// Shorthand for --motif CG 0.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, default_value_t = false)]
     cpg: bool,
     /// Discard base modification calls that match the provided motifs (instead
     /// of keeping them).
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, requires = "motif", default_value_t = false)]
     discard_motifs: bool,
 
     /// Hide the progress bar.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false)]
     suppress_progress: bool,
 }
@@ -534,26 +553,33 @@ pub struct SampleModBaseProbs {
     /// `stdin` to specify a stream from standard input.
     in_bam: String,
     /// Number of threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Hide the progress bar.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
     /// Percentiles to calculate, a space separated list of floats.
+    #[clap(help_heading = "Output Options")]
     #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
     percentiles: String,
     /// Directory to deposit result tables into. Required for model probability
     /// histogram output.
+    #[clap(help_heading = "Output Options")]
     #[arg(short = 'o', long)]
     out_dir: Option<PathBuf>,
     /// Label to prefix output files with.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, requires = "out_dir")]
     prefix: Option<String>,
     /// Overwrite results if present.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, requires = "out_dir", default_value_t = false)]
     force: bool,
     /// Ignore a modified base class  _in_situ_ by redistributing base
@@ -561,6 +587,7 @@ pub struct SampleModBaseProbs {
     /// if collapsing 'h', with 'm' and canonical options, half of the
     /// probability of 'h' will be added to both 'm' and 'C'. A full
     /// description of the methods can be found in collapse.md.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, hide_short_help = true)]
     ignore: Option<String>,
     /// Discard base modification calls that are this many bases from the start
@@ -568,6 +595,7 @@ pub struct SampleModBaseProbs {
     /// to asymmetrically filter out base modification calls from the start
     /// and end of the reads. For example, 4,8 will filter out base
     /// modification calls in the first 4 and last 8 bases of the read.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     edge_filter: Option<String>,
     /// Invert the edge filter, instead of filtering out base modification
@@ -576,19 +604,23 @@ pub struct SampleModBaseProbs {
     /// out) base modification calls in the first 4 and last 8 bases of the
     /// read, using this flag will keep only base modification calls in the
     /// first 4 and last 8 bases.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
 
     // probability histogram options
     /// Output histogram of base modification prediction probabilities.
+    #[clap(help_heading = "Output Options")]
     #[arg(long = "hist", requires = "out_dir", default_value_t = false)]
     histogram: bool,
     /// Set colors of primary bases in histogram, should be RGB format, e.g.
     /// "#0000FF" is defailt for canonical cytosine
+    #[clap(help_heading = "Output Options")]
     #[arg(long="dna-color", requires = "histogram", num_args = 2, action = clap::ArgAction::Append)]
     primary_base_colors: Option<Vec<String>>,
     /// Set colors of modified bases in histogram, should be RGB format, e.g.
     /// "#FF00FF" is default for 5hmC
+    #[clap(help_heading = "Output Options")]
     #[arg(long="mod-color", requires = "histogram", num_args = 2, action = clap::ArgAction::Append)]
     mod_base_colors: Option<Vec<String>>,
 
@@ -598,6 +630,7 @@ pub struct SampleModBaseProbs {
     /// If a region is passed with the --region option, they will be sampled
     /// over the genomic region. Actual number of reads used may deviate
     /// slightly from this number.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -607,32 +640,39 @@ pub struct SampleModBaseProbs {
     num_reads: usize,
     /// Instead of using a defined number of reads, specify a fraction of reads
     /// to sample, for example 0.1 will sample 1/10th of the reads.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(group = "sampling_options", short = 'f', long)]
     sampling_frac: Option<f64>,
     /// No sampling, use all of the reads to calculate the filter thresholds.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(long, group = "sampling_options", default_value_t = false)]
     no_sampling: bool,
     /// Random seed for deterministic running, the default is
     /// non-deterministic, only used when no BAM index is provided.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
 
     /// Process only the specified region of the BAM when collecting
     /// probabilities. Format should be <chrom_name>:<start>-<end> or
     /// <chrom_name>.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     region: Option<String>,
     /// Interval chunk size in base pairs to process concurrently. Smaller
     /// interval chunk sizes will use less memory but incur more overhead.
     /// Only used when sampling probs from an indexed bam.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
     /// Only sample base modification probabilities that are aligned
     /// to the positions in this BED file. (alias: include-positions)
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, alias = "include-positions")]
     include_bed: Option<PathBuf>,
     /// Only use base modification probabilities that are aligned (i.e. ignore
     /// soft-clipped, and inserted bases).
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, default_value_t = false)]
     only_mapped: bool,
 }
@@ -850,16 +890,20 @@ pub struct ModSummarize {
     /// `stdin` to specify a stream from standard input.
     in_bam: String,
     /// Number of threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Output summary as a tab-separated variables stdout instead of a table.
+    #[clap(help_heading = "Output Options")]
     #[arg(long = "tsv", default_value_t = false)]
     tsv_format: bool,
     /// Hide the progress bar.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
 
@@ -870,6 +914,7 @@ pub struct ModSummarize {
     /// If a region is passed with the --region option, they will be sampled
     /// over the genomic region. Actual number of reads used may deviate
     /// slightly from this number.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'n',
@@ -880,26 +925,31 @@ pub struct ModSummarize {
     /// Instead of using a defined number of reads, specify a fraction of reads
     /// to sample when estimating the filter threshold. For example 0.1 will
     /// sample 1/10th of the reads.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(group = "sampling_options", short = 'f', long)]
     sampling_frac: Option<f64>,
     /// No sampling, use all the reads to calculate the filter thresholds
     /// and generating the summary.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(long, group = "sampling_options", default_value_t = false)]
     no_sampling: bool,
     /// Sets a random seed for deterministic running (when using
     /// --sample-frac), the default is non-deterministic, only used when no
     /// BAM index is provided.
+    #[clap(help_heading = "Sampling Options")]
     #[arg(short, requires = "sampling_frac", long)]
     seed: Option<u64>,
 
     // threshold options
     /// Do not perform any filtering, include all base modification calls in
     /// the summary. See filtering.md for details on filtering.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(group = "thresholds", long, default_value_t = false)]
     no_filtering: bool,
     /// Filter out modified base calls where the probability of the predicted
     /// variant is below this confidence percentile. For example, 0.1 will
     /// filter out the 10% lowest confidence base modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(group = "thresholds", short = 'p', long, default_value_t = 0.1)]
     filter_percentile: f32,
     /// Specify the filter threshold globally or per-base. Global filter
@@ -912,6 +962,7 @@ pub struct ModSummarize {
     /// default for all other bases with: --filter-threshold A:0.70
     /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
     /// adenine and 0.9 for all other base modification calls.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
         long,
         group = "thresholds",
@@ -925,6 +976,7 @@ pub struct ModSummarize {
     /// as usual and used for canonical cytosine and other modifications
     /// unless the `--filter-threshold` option is also passed.
     /// See the online documentation for more details.
+    #[clap(help_heading = "Filtering Options")]
     #[arg(
     long,
     action = clap::ArgAction::Append
@@ -935,6 +987,7 @@ pub struct ModSummarize {
     /// if collapsing 'h', with 'm' and canonical options, half of the
     /// probability of 'h' will be added to both 'm' and 'C'. A full
     /// description of the methods can be found in collapse.md.
+    #[clap(help_heading = "Modified Base Options")]
     #[arg(long, group = "combine_args", hide_short_help = true)]
     ignore: Option<String>,
     /// Discard base modification calls that are this many bases from the start
@@ -942,6 +995,7 @@ pub struct ModSummarize {
     /// to asymmetrically filter out base modification calls from the start
     /// and end of the reads. For example, 4,8 will filter out base
     /// modification calls in the first 4 and last 8 bases of the read.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     edge_filter: Option<String>,
     /// Invert the edge filter, instead of filtering out base modification
@@ -950,25 +1004,30 @@ pub struct ModSummarize {
     /// out) base modification calls in the first 4 and last 8 bases of the
     /// read, using this flag will keep only base modification calls in the
     /// first 4 and last 8 bases.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, requires = "edge_filter", default_value_t = false)]
     invert_edge_filter: bool,
     /// Only summarize base modification probabilities that are aligned
     /// to the positions in this BED file. (alias: include-positions)
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, alias = "include-positions")]
     include_bed: Option<PathBuf>,
     /// Only use base modification probabilities that are aligned (i.e. ignore
     /// soft-clipped, and inserted bases).
+    #[clap(help_heading = "Selection Options")]
     #[arg(long, default_value_t = false)]
     only_mapped: bool,
 
     /// Process only the specified region of the BAM when collecting
     /// probabilities. Format should be <chrom_name>:<start>-<end> or
     /// <chrom_name>.
+    #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     region: Option<String>,
     /// When using regions, interval chunk size in base pairs to process
     /// concurrently. Smaller interval chunk sizes will use less memory but
     /// incur more overhead.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short = 'i', long, default_value_t = 1_000_000)]
     interval_size: u32,
 }
@@ -1155,6 +1214,7 @@ pub struct Update {
     #[arg(short, long, value_enum)]
     mode: Option<ModMode>,
     /// Number of threads to use.
+    #[clap(help_heading = "Compute Options")]
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
     /// Don't add implicit canonical calls. This flag is important when
@@ -1167,9 +1227,11 @@ pub struct Update {
     #[arg(long, default_value_t = false)]
     no_implicit_probs: bool,
     /// Output debug logs to file at this path.
+    #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
     /// Output SAM format instead of BAM.
+    #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]
     output_sam: bool,
 }

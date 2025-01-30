@@ -8,6 +8,10 @@ fn test_modbam_helps() {
         .expect("failed to run modkit modbam help");
     let _ = run_modkit(&["modbam", "check-tags", "--help"])
         .expect("failed to run modkit modbam check-tags help");
+    let _ = run_modkit(&["mb", "--help"])
+        .expect("failed to run modkit modbam help");
+    let _ = run_modkit(&["mb", "check-tags", "--help"])
+        .expect("failed to run modkit modbam check-tags help");
 }
 
 #[test]
