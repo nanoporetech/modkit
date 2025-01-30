@@ -11,6 +11,19 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+#[test]
+fn test_extract_help() {
+    run_modkit(&["extract", "--help"])
+        .context("modkit extract --help failed")
+        .unwrap();
+    run_modkit(&["extract", "calls", "--help"])
+        .context("modkit extract calls --help failed")
+        .unwrap();
+    run_modkit(&["extract", "full", "--help"])
+        .context("modkit extract full --help failed")
+        .unwrap();
+}
+
 fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {
     let reader = BufReader::new(File::open(fp).unwrap());
     reader
@@ -37,14 +50,6 @@ fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {
             }
             acc
         })
-}
-
-#[test]
-fn test_extract_helps() {
-    let _ = run_modkit(&["extract", "full", "--help"])
-        .expect("failed to run modkit extract full help");
-    let _ = run_modkit(&["extract", "calls", "--help"])
-        .expect("failed to run modkit extract calls help");
 }
 
 #[test]
@@ -84,19 +89,6 @@ fn check_mod_profiles_same(
         }
         Err(anyhow!("they were different"))
     }
-}
-
-#[test]
-fn test_extract_help() {
-    run_modkit(&["extract", "--help"])
-        .context("modkit extract --help failed")
-        .unwrap();
-    run_modkit(&["extract", "calls", "--help"])
-        .context("modkit extract calls --help failed")
-        .unwrap();
-    run_modkit(&["extract", "full", "--help"])
-        .context("modkit extract full --help failed")
-        .unwrap();
 }
 
 #[test]

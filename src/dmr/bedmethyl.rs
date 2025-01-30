@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 
 use anyhow::{anyhow, bail, Context};
 use derive_new::new;
@@ -17,6 +18,7 @@ use crate::parsing_utils::{
     consume_string_from_list,
 };
 use crate::position_filter::Iv;
+use crate::tabix::ParseBedLine;
 use crate::util::{Strand, StrandRule};
 
 #[derive(new, Debug, PartialEq, Eq)]
@@ -98,6 +100,19 @@ impl BedMethylLine {
         self.interval.stop
     }
 
+    pub fn same_position_and_strand_as(&self, other: &Self) -> bool {
+        self.chrom == other.chrom
+            && self.start() == other.start()
+            && self.stop() == other.stop()
+            && self.strand == other.strand
+    }
+
+    pub fn same_position_as(&self, other: &Self) -> bool {
+        self.chrom == other.chrom
+            && self.start() == other.start()
+            && self.stop() == other.stop()
+    }
+
     pub fn check_base(
         &self,
         dna_base: DnaBase,
@@ -137,6 +152,12 @@ impl BedMethylLine {
 
     pub(crate) fn frac_modified(&self) -> f32 {
         self.count_methylated as f32 / self.valid_coverage as f32
+    }
+}
+
+impl Display for BedMethylLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_line())
     }
 }
 

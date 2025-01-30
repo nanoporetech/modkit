@@ -18,7 +18,7 @@ use crate::logging::init_logging;
 use crate::monoid::Moniod;
 use crate::tabix::HtsTabixHandler;
 use crate::util::{
-    get_master_progress_bar, get_ticker, load_sequence_lengths_file,
+    get_master_progress_bar, get_ticker, read_sequence_lengths_file,
     GenomeRegion, StrandRule,
 };
 
@@ -237,7 +237,7 @@ impl EntryLocalize {
 
         info!("loading sequence lengths from {:?}", &self.genome_sizes);
 
-        let sequence_lengths = load_sequence_lengths_file(&self.genome_sizes)?
+        let sequence_lengths = read_sequence_lengths_file(&self.genome_sizes)?
             .into_iter()
             .collect::<FxHashMap<String, u64>>();
         let tabix_index = HtsTabixHandler::from_path(&self.in_bedmethyl)

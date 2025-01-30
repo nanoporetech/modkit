@@ -326,9 +326,8 @@ mod adjust_tests {
     use rust_htslib::bam::{self, Read};
 
     use crate::{
-        find_motifs::motif_bed::{OverlappingRegex, RegexMotif},
+        find_motifs::motif_bed::RegexMotif,
         read_ids_to_base_mod_probs::ReadBaseModProfile,
-        util::get_query_name_string,
     };
 
     use super::{adjust_mod_probs, OverlappingRegexOffset, SequenceMotifs};
