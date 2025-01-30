@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.4.3]
+### Adds
+- [bedmethyl] Extract bigWig tracks from bedMethyl files
+- [modbam] `check-tags` command to validate MM/ML tags
+- Allow "generic" MM tags
+- Add error-tabulation table to most commands
+### Fixes
+- [sample-probs] Make colors the same in the output charts (fixes #345).
+- [bedmethyl, merge] Perform an outer join as stated in the documenttion (fixes #334).
+- [pileup] BAM-header ordering of contigs when using `--include-bed`
+
+
+
 ## [v0.4.2]
 ### Adds
 - [entropy] Entropy can now be calculated with multiple motifs and multiple modified primary bases.
