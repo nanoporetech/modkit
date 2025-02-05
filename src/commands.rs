@@ -1368,6 +1368,8 @@ impl Update {
     }
 }
 
+// todo this command is missing argument groups! It should/could also have
+// --ignore
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
 pub struct CallMods {
