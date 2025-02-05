@@ -556,6 +556,7 @@ impl BaseModProbs {
                 Self { probs, inferred_unmodified: inferred }
             }
             CollapseMethod::ReDistribute(mod_to_collapse) => {
+                // todo this is sloppy
                 let marginal_prob = self
                     .iter_probs()
                     .filter_map(|(mod_code, prob)| {

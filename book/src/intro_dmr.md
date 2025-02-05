@@ -45,7 +45,6 @@ tabix -p bed ${tumor_pileup}
 
 ## 1. Perform differential methylation scoring of genomic regions for a pair of samples.
 Once you have the two samples to be compared in the appropriate format, the final piece necessary is a BED file of the regions to be compared.
-Currently, the `modkit dmr` functionality does not "segment" or otherwise discover regions, however this [limitation](./limitations.md) will be removed in a future release.
 To continue with our example we can get CpG Islands from the [UCSC table browser](http://genome.ucsc.edu/cgi-bin/hgTables).
 The data may not always be appropriate input for `modkit`.
 For example, the CpG Islands track has extra columns and a header line:
@@ -251,7 +250,7 @@ these columns will not be present.
 ## Segmenting on differential methylation
 
 When running `modkit dmr` without `--regions` (i.e. [single-site analysis](#3-detecting-differential-modification-at-single-base-positions)) you can generate regions of differential methylation on-the-fly using the segmenting [hidden Markov model](./dmr_scoring_details.html#dmr-segmentation-hidden-markov-model) (HMM).
-To run segmenting on the fly, add the `--segments $segments_bed_fp` option to the command such as:
+To run segmenting on the fly, add the `--segment $segments_bed_fp` option to the command such as:
 
 
 ```bash
@@ -262,7 +261,7 @@ modkit dmr pair \
   -a ${hp1_pileup}.gz \
   -b ${hp2_pileup}.gz \
   -o ${dmr_result} \
-  --segments ${dmr_segments} \ # indicates to run segmentation
+  --segment ${dmr_segments} \ # indicates to run segmentation
   --ref ${ref} \
   --base C \
   --threads ${threads} \

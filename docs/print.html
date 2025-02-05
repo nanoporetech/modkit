@@ -1034,7 +1034,6 @@ tabix -p bed ${tumor_pileup}
 </code></pre>
 <h2 id="1-perform-differential-methylation-scoring-of-genomic-regions-for-a-pair-of-samples"><a class="header" href="#1-perform-differential-methylation-scoring-of-genomic-regions-for-a-pair-of-samples">1. Perform differential methylation scoring of genomic regions for a pair of samples.</a></h2>
 <p>Once you have the two samples to be compared in the appropriate format, the final piece necessary is a BED file of the regions to be compared.
-Currently, the <code>modkit dmr</code> functionality does not "segment" or otherwise discover regions, however this <a href="./limitations.html">limitation</a> will be removed in a future release.
 To continue with our example we can get CpG Islands from the <a href="http://genome.ucsc.edu/cgi-bin/hgTables">UCSC table browser</a>.
 The data may not always be appropriate input for <code>modkit</code>.
 For example, the CpG Islands track has extra columns and a header line:</p>
@@ -1198,7 +1197,7 @@ If you have a different number of samples for each condition, such as:</p>
 <p>these columns will not be present.</p>
 <h2 id="segmenting-on-differential-methylation"><a class="header" href="#segmenting-on-differential-methylation">Segmenting on differential methylation</a></h2>
 <p>When running <code>modkit dmr</code> without <code>--regions</code> (i.e. <a href="intro_dmr.html#3-detecting-differential-modification-at-single-base-positions">single-site analysis</a>) you can generate regions of differential methylation on-the-fly using the segmenting <a href="./dmr_scoring_details.html#dmr-segmentation-hidden-markov-model">hidden Markov model</a> (HMM).
-To run segmenting on the fly, add the <code>--segments $segments_bed_fp</code> option to the command such as:</p>
+To run segmenting on the fly, add the <code>--segment $segments_bed_fp</code> option to the command such as:</p>
 <pre><code class="language-bash">dmr_result=single_base_haplotype_dmr.bed
 dmr_segments=single_base_segements.bed
 
@@ -1206,7 +1205,7 @@ modkit dmr pair \
   -a ${hp1_pileup}.gz \
   -b ${hp2_pileup}.gz \
   -o ${dmr_result} \
-  --segments ${dmr_segments} \ # indicates to run segmentation
+  --segment ${dmr_segments} \ # indicates to run segmentation
   --ref ${ref} \
   --base C \
   --threads ${threads} \
