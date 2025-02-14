@@ -27,7 +27,8 @@ use crate::reads_sampler::record_sampler::{Indicator, RecordSampler};
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
     self, get_aligned_pairs_forward, get_master_progress_bar,
-    get_query_name_string, get_reference_mod_strand, get_ticker, Kmer, Strand,
+    get_query_name_string, get_reference_mod_strand, get_ticker,
+    record_is_primary, Kmer, Strand,
 };
 
 /// Read IDs mapped to their base modification probabilities, organized
@@ -227,7 +228,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         edge_filter: Option<&EdgeFilter>,
         position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
-        _allow_non_primary: bool,
+        allow_non_primary: bool,
         _cut: Option<u32>,
         _kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
@@ -236,10 +237,18 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         } else {
             None
         };
-        let mod_base_info_iter =
-            records.with_mod_base_info().filter(|(record, _)| {
+        let mod_base_info_iter = records
+            .with_mod_base_info()
+            .filter(|(record, _)| {
                 if only_mapped || edge_filter.is_some() {
                     !record.is_unmapped()
+                } else {
+                    true
+                }
+            })
+            .filter(|(record, _)| {
+                if !allow_non_primary {
+                    record_is_primary(record)
                 } else {
                     true
                 }
