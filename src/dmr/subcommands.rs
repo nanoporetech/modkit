@@ -188,6 +188,10 @@ pub struct PairwiseDmr {
     #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
+    /// Number of threads to use when for decompression.
+    #[clap(help_heading = "Compute Options")]
+    #[arg(long, default_value_t = 4)]
+    io_threads: usize,
     /// Control the  batch size. The batch size is the number of regions to
     /// load at a time. Each region will be processed concurrently. Loading
     /// more regions at a time will decrease IO to load data, but will use
@@ -417,6 +421,7 @@ impl PairwiseDmr {
             handlers,
             code_lookup,
             self.min_valid_coverage,
+            self.io_threads,
         );
 
         let writer: Box<dyn Write> = {
@@ -603,6 +608,10 @@ pub struct MultiSampleDmr {
     #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
+    /// Number of threads to use when for decompression.
+    #[clap(help_heading = "Compute Options")]
+    #[arg(long, default_value_t = 4)]
+    io_threads: usize,
     /// Respect soft masking in the reference FASTA.
     #[clap(help_heading = "Sample Options")]
     #[arg(long, short = 'k', default_value_t = false)]
@@ -726,6 +735,7 @@ impl MultiSampleDmr {
             handlers,
             code_lookup,
             self.min_valid_coverage,
+            self.io_threads,
         );
 
         let genome_positions = GenomePositions::new_from_sequences(
