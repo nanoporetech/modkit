@@ -391,6 +391,8 @@ impl RecordProcessor for ModTagViews {
                             }
                             Err(e) => {
                                 agg.add_error(e);
+                                agg.num_records =
+                                    agg.num_records.saturating_add(1);
                             }
                         }
                         record_sampler.used(tok);
