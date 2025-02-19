@@ -24,7 +24,6 @@ use prettytable::{row, Table};
 use random_color::RandomColor;
 use rustc_hash::FxHashMap;
 
-use crate::dmr::bedmethyl::BedMethylLine;
 use crate::mod_base_code::{
     BaseState, DnaBase, ModCodeRepr, ProbHistogram, DNA_BASE_COLORS, MOD_COLORS,
 };
@@ -153,28 +152,6 @@ impl<T: Write + Sized> BedMethylWriter<T> {
             rows_written += 1;
         }
 
-        Ok(rows_written)
-    }
-}
-
-impl<T: Write> PileupWriter<Vec<BedMethylLine>> for BedMethylWriter<T> {
-    fn write(
-        &mut self,
-        item: Vec<BedMethylLine>,
-        motif_labels: &[String],
-    ) -> AnyhowResult<u64> {
-        let mut rows_written = 0;
-        for line in item {
-            rows_written += BedMethylWriter::write_feature_counts(
-                line.start() as u32,
-                &line.chrom.clone(),
-                &vec![line.into()], /* convert the methylline into
-                                     * pileupfeatures */
-                &mut self.buf_writer,
-                self.tabs_and_spaces,
-                motif_labels,
-            )?;
-        }
         Ok(rows_written)
     }
 }
