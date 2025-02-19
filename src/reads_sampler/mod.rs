@@ -9,7 +9,9 @@ use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
 use rustc_hash::FxHashMap;
 
-use crate::interval_chunks::{ChromCoordinates, ReferenceIntervalsFeeder};
+use crate::interval_chunks::{
+    ChromCoordinates, ReferenceIntervalsFeeder, TotalLength,
+};
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::monoid::Moniod;
 use crate::position_filter::StrandedPositionFilter;
@@ -203,8 +205,8 @@ where
         master_progress
             .set_draw_target(indicatif::ProgressDrawTarget::hidden());
     }
-    let tid_progress =
-        master_progress.add(get_master_progress_bar(feeder.total_length()));
+    let tid_progress = master_progress
+        .add(get_master_progress_bar(feeder.total_length() as usize));
     tid_progress.set_message("total bp");
 
     let sampled_items = master_progress.add(get_ticker());

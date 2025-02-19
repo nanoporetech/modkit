@@ -1,16 +1,17 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+use anyhow::{anyhow, bail};
+use derive_new::new;
+use itertools::Itertools;
+use log::debug;
+use rustc_hash::FxHashMap;
+
 use crate::fasta::MotifLocationsLookup;
 use crate::find_motifs::motif_bed::{
     MotifInfo, MotifLocations, MultipleMotifLocations,
 };
 use crate::position_filter::{GenomeIntervals, Iv, StrandedPositionFilter};
 use crate::util::{ReferenceRecord, StrandRule};
-use anyhow::{anyhow, bail};
-use derive_new::new;
-use itertools::Itertools;
-use log::debug;
-use rustc_hash::FxHashMap;
 
 pub fn slice_dna_sequence(str_seq: &str, start: usize, end: usize) -> String {
     str_seq
@@ -475,6 +476,24 @@ impl MultiChromCoordinates {
     }
 }
 
+pub(crate) trait TotalLength {
+    fn total_length(&self) -> u64;
+}
+
+impl TotalLength for Vec<MultiChromCoordinates> {
+    fn total_length(&self) -> u64 {
+        self.iter().map(|x| x.total_length()).sum::<u64>()
+    }
+}
+
+impl TotalLength for ReferenceIntervalsFeeder {
+    fn total_length(&self) -> u64 {
+        self.contigs.iter().fold(self.curr_contig.length as u64, |agg, next| {
+            agg.saturating_add(next.length as u64)
+        })
+    }
+}
+
 pub struct ReferenceIntervalsFeeder {
     contigs: VecDeque<ReferenceRecord>,
     batch_size: usize,
@@ -529,14 +548,6 @@ impl ReferenceIntervalsFeeder {
             curr_position,
             done: false,
         })
-    }
-
-    pub fn total_length(&self) -> usize {
-        self.contigs
-            .iter()
-            .fold(self.curr_contig.length as usize, |agg, next| {
-                agg.saturating_add(next.length as usize)
-            })
     }
 
     fn update_current(&mut self) {

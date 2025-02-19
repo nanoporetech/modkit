@@ -16,7 +16,7 @@ use crate::command_utils::{
 };
 use crate::fasta::MotifLocationsLookup;
 use crate::find_motifs::motif_bed::RegexMotif;
-use crate::interval_chunks::ReferenceIntervalsFeeder;
+use crate::interval_chunks::{ReferenceIntervalsFeeder, TotalLength};
 use crate::logging::init_logging;
 use crate::mod_bam::CollapseMethod;
 use crate::mod_base_code::{ModCodeRepr, HYDROXY_METHYL_CYTOSINE};
@@ -721,9 +721,7 @@ impl ModBamPileup {
                         }
                     })
                     .filter_map(|r| r.ok()) {
-                    let genome_length_in_batch = multi_chrom_coords.iter()
-                        .map(|x| x.total_length())
-                        .sum::<u64>();
+                    let genome_length_in_batch = multi_chrom_coords.total_length();
                     let n_intervals = multi_chrom_coords.len();
                     let interval_progress = master_progress
                         .add(get_subroutine_progress_bar(n_intervals));
@@ -1398,8 +1396,8 @@ impl DuplexModBamPileup {
             master_progress
                 .set_draw_target(indicatif::ProgressDrawTarget::hidden());
         }
-        let tid_progress =
-            master_progress.add(get_master_progress_bar(feeder.total_length()));
+        let tid_progress = master_progress
+            .add(get_master_progress_bar(feeder.total_length() as usize));
         tid_progress.set_message("genome positions");
         let write_progress = master_progress.add(get_ticker());
         write_progress.set_message("rows written");

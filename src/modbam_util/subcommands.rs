@@ -9,7 +9,9 @@ use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 
 use crate::command_utils::{get_serial_reader, using_stream};
-use crate::interval_chunks::{ReferenceIntervalsFeeder, WithPrevEnd};
+use crate::interval_chunks::{
+    ReferenceIntervalsFeeder, TotalLength, WithPrevEnd,
+};
 use crate::logging::init_logging;
 use crate::modbam_util::check_tags::ModTagViews;
 use crate::monoid::Moniod;
@@ -243,7 +245,7 @@ impl EntryCheckTags {
         if self.suppress_progress {
             mpb.set_draw_target(ProgressDrawTarget::hidden());
         }
-        let prog_length = feeder.total_length();
+        let prog_length = feeder.total_length() as usize;
         let master_progress = mpb.add(get_master_progress_bar(prog_length));
         master_progress.set_message("genome positions");
 

@@ -1,6 +1,8 @@
 use crate::extract::args::InputArgs;
 use crate::find_motifs::motif_bed::{find_motif_hits, RegexMotif};
-use crate::interval_chunks::{ReferenceIntervalsFeeder, WithPrevEnd};
+use crate::interval_chunks::{
+    ReferenceIntervalsFeeder, TotalLength, WithPrevEnd,
+};
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
 use crate::monoid::Moniod;
 use crate::position_filter::{GenomeIntervals, Iv, StrandedPositionFilter};
@@ -351,7 +353,7 @@ pub(super) fn run_extract_reads(
         // should make this a method on this struct?
         let bam_fp = Path::new(&in_bam).to_path_buf();
 
-        let prog_length = feeder.total_length();
+        let prog_length = feeder.total_length() as usize;
         let master_progress =
             multi_prog.add(get_master_progress_bar(prog_length));
         master_progress.set_message("genome positions");

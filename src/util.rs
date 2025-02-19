@@ -95,16 +95,28 @@ fn get_gauge_style() -> ProgressStyle {
         .progress_chars("||-")
 }
 
-pub(crate) fn get_master_progress_bar(n: usize) -> ProgressBar {
-    ProgressBar::new(n as u64).with_style(get_master_progress_bar_style())
+pub(crate) fn get_master_progress_bar<
+    T: num_traits::Num + num_traits::cast::AsPrimitive<u64>,
+>(
+    n: T,
+) -> ProgressBar {
+    ProgressBar::new(n.as_()).with_style(get_master_progress_bar_style())
 }
 
-pub(crate) fn get_subroutine_progress_bar(n: usize) -> ProgressBar {
-    ProgressBar::new(n as u64).with_style(get_subroutine_progress_bar_style())
+pub(crate) fn get_subroutine_progress_bar<
+    T: num_traits::Num + num_traits::cast::AsPrimitive<u64>,
+>(
+    n: T,
+) -> ProgressBar {
+    ProgressBar::new(n.as_()).with_style(get_subroutine_progress_bar_style())
 }
 
-pub(crate) fn get_guage(n_max: usize) -> ProgressBar {
-    ProgressBar::new(n_max as u64).with_style(get_gauge_style())
+pub(crate) fn get_guage<
+    T: num_traits::Num + num_traits::cast::AsPrimitive<u64>,
+>(
+    n_max: T,
+) -> ProgressBar {
+    ProgressBar::new(n_max.as_()).with_style(get_gauge_style())
 }
 
 pub(crate) fn get_aligned_pairs_forward(

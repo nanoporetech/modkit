@@ -1,34 +1,33 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::bail;
+use anyhow::{bail, Context};
 use clap::{Args, Subcommand};
-use indicatif::{MultiProgress, ProgressDrawTarget, ProgressIterator};
+use indicatif::{MultiProgress, ProgressDrawTarget};
 use itertools::Itertools;
 use log::{debug, error, info};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use bigtools::{
-    beddata::BedParserStreamingIterator, BigWigWrite, InputSortType,
-};
-
 use crate::bedmethyl_util::BedMethylStream;
 use crate::command_utils::calculate_chunk_size;
 use crate::dmr::bedmethyl::BedMethylLine;
-use crate::interval_chunks::{ChromCoordinates, ReferenceIntervalsFeeder};
+use crate::interval_chunks::{
+    ChromCoordinates, ReferenceIntervalsFeeder, TotalLength,
+};
 use crate::logging::init_logging;
 use crate::mod_base_code::ModCodeRepr;
-use crate::tabix::HtsTabixHandler;
+use crate::tabix::{HtsTabixHandler, ParseBedLine};
 use crate::util::{
-    create_out_directory, get_subroutine_progress_bar, get_ticker,
+    create_out_directory, get_guage, get_subroutine_progress_bar, get_ticker,
     read_sequence_lengths_file, ReferenceRecord, StrandRule,
 };
-use crate::writers::BedMethylWriter;
-use crate::writers::PileupWriter;
+use bigtools::{
+    beddata::BedParserStreamingIterator, BigWigWrite, InputSortType,
+};
 
 #[derive(Subcommand)]
 pub enum EntryBedMethyl {
@@ -121,6 +120,11 @@ pub struct EntryMergeBedMethyl {
     #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     threads: usize,
+    /// Number of batches (of size chunk size) allowed to be in a pre-written
+    /// state at once. Increasing this number will increase memory usage.
+    #[clap(help_heading = "Compute Options")]
+    #[arg(long, default_value_t = 30)]
+    queue_size: usize,
     /// Number of tabix/bgzf threads to use.
     #[clap(help_heading = "Compute Options")]
     #[arg(long, default_value_t = 2)]
@@ -198,34 +202,25 @@ impl EntryMergeBedMethyl {
             .num_threads(self.threads)
             .build()?;
 
-        // setup the writer here so we fail before doing any work (if there are
+        // set up the writer here so we fail before doing any work (if there are
         // problems).
         let out_fp_str = self.out_bed.clone();
-        let mut writer: Box<dyn PileupWriter<Vec<BedMethylLine>>> =
-            match out_fp_str.as_str() {
-                "stdout" | "-" => {
-                    let writer = BufWriter::new(std::io::stdout());
-                    Box::new(BedMethylWriter::new(
-                        writer,
-                        self.mixed_delimiters,
-                        self.with_header,
-                    )?)
-                }
-                _ => {
-                    create_out_directory(&out_fp_str)?;
-                    let fh = if self.force {
-                        File::create(out_fp_str)?
-                    } else {
-                        File::create_new(out_fp_str)?
-                    };
-                    let writer = BufWriter::new(fh);
-                    Box::new(BedMethylWriter::new(
-                        writer,
-                        self.mixed_delimiters,
-                        self.with_header,
-                    )?)
-                }
-            };
+        let mut writer: Box<BufWriter<dyn Write>> = match out_fp_str.as_str() {
+            "stdout" | "-" => {
+                let writer = BufWriter::new(std::io::stdout());
+                Box::new(writer)
+            }
+            _ => {
+                create_out_directory(&out_fp_str)?;
+                let fh = if self.force {
+                    File::create(out_fp_str)?
+                } else {
+                    File::create_new(out_fp_str)?
+                };
+                let writer = BufWriter::new(fh);
+                Box::new(writer)
+            }
+        };
 
         let readers = self
             .in_bedmethyl
@@ -268,6 +263,12 @@ impl EntryMergeBedMethyl {
                         ReferenceRecord::new(tid as u32, 0, length as u32, name)
                     })
                     .collect::<Vec<ReferenceRecord>>()
+            })
+            .with_context(|| {
+                format!(
+                    "failed to read genome sizes at {:?}",
+                    &self.genome_sizes
+                )
             })?;
         let tid_to_name = reference_records
             .iter()
@@ -280,7 +281,6 @@ impl EntryMergeBedMethyl {
             self.threads,
         );
 
-        let n_contigs = reference_records.len();
         let feeder = ReferenceIntervalsFeeder::new(
             reference_records,
             chunk_size,
@@ -290,20 +290,24 @@ impl EntryMergeBedMethyl {
             None,
         )?;
 
-        let mpb = indicatif::MultiProgress::new();
-        let contig_progress = mpb.add(get_subroutine_progress_bar(n_contigs));
-        contig_progress.set_message("contigs processed");
+        let mpb = MultiProgress::new();
+        let contig_progress =
+            mpb.add(get_subroutine_progress_bar(feeder.total_length()));
+        contig_progress.set_message("genome positions");
         let rows_written = mpb.add(get_ticker());
-        rows_written.set_message("merging contigs");
+        rows_written.set_message("rows written");
         let errored_batches = mpb.add(get_ticker());
         errored_batches.set_message("batch errors");
 
-        let (snd, rcv) = crossbeam::channel::bounded(1000);
+        let (snd, rcv) = crossbeam::channel::bounded(self.queue_size);
+        let gauge = mpb.add(get_guage(self.queue_size));
+        gauge.set_message("enqueued batches");
+        gauge.set_position(snd.len() as u64);
+
         let io_threads = self.io_threads;
-        pool.install(move || {
+        pool.spawn(move || {
             feeder
                 .into_iter()
-                .progress_with(contig_progress)
                 .filter_map(|r| match r {
                     Ok(mcc) => Some(mcc),
                     Err(e) => {
@@ -312,7 +316,9 @@ impl EntryMergeBedMethyl {
                     }
                 })
                 .map(|m_cc| {
-                    m_cc.into_par_iter()
+                    let batch_len = m_cc.total_length();
+                    let results = m_cc
+                        .into_par_iter()
                         .map(|batch| {
                             batch.0.into_par_iter().map(|chrom_coordinates| {
                                 merge_data(
@@ -324,10 +330,14 @@ impl EntryMergeBedMethyl {
                             })
                         })
                         .flatten()
-                        .collect::<Vec<anyhow::Result<BedMethylChunk>>>()
+                        .collect::<Vec<anyhow::Result<BedMethylChunk>>>();
+                    contig_progress.inc(batch_len);
+                    results
                 })
                 .for_each(|batch| match snd.send(batch) {
-                    Ok(_) => {}
+                    Ok(_) => {
+                        gauge.set_position(snd.len() as u64);
+                    }
                     Err(e) => {
                         error!("failed to send on channel, {e}");
                     }
@@ -338,8 +348,16 @@ impl EntryMergeBedMethyl {
             for result in batch_result {
                 match result {
                     Ok(lines) => {
-                        rows_written.inc(lines.len() as u64);
-                        writer.write(lines, &[])?;
+                        let rows = pool.install(move || {
+                            lines
+                                .into_par_iter()
+                                .map(|bml| bml.to_line())
+                                .collect::<Vec<String>>()
+                        });
+                        for row in rows {
+                            writer.write(row.as_bytes())?;
+                            rows_written.inc(1);
+                        }
                     }
                     Err(e) => {
                         debug!("{e}");
@@ -359,7 +377,7 @@ pub struct EntryToBigWig {
     /// Input bedmethyl, uncompressed, "-" or "stdin" indicates an input
     /// stream.
     in_bedmethyl: String,
-    /// Output bigWig to make.
+    /// Output bigWig filename.
     out_fp: PathBuf,
     /// A chromosome sizes file. Each line should be have a chromosome and its
     /// size in bases, separated by whitespace. A fasta index (.fai) works as
