@@ -3837,6 +3837,11 @@ Compute Options:
           
           [default: 4]
 
+      --io-threads &lt;IO_THREADS&gt;
+          Number of threads to use when for decompression
+          
+          [default: 4]
+
       --batch-size &lt;BATCH_SIZE&gt;
           Control the  batch size. The batch size is the number of regions to
           load at a time. Each region will be processed concurrently. Loading
@@ -3943,7 +3948,10 @@ Logging Options:
           quiet, warn, fail]
 
 Compute Options:
-  -t, --threads &lt;THREADS&gt;  Number of threads to use [default: 4]
+  -t, --threads &lt;THREADS&gt;
+          Number of threads to use [default: 4]
+      --io-threads &lt;IO_THREADS&gt;
+          Number of threads to use when for decompression [default: 4]
 
 Sampe Options:
       --min-valid-coverage &lt;MIN_VALID_COVERAGE&gt;
@@ -4004,6 +4012,12 @@ Compute Options:
           
           [default: 4]
 
+      --queue-size &lt;QUEUE_SIZE&gt;
+          Number of batches (of size chunk size) allowed to be in a pre-written
+          state at once. Increasing this number will increase memory usage
+          
+          [default: 30]
+
       --io-threads &lt;IO_THREADS&gt;
           Number of tabix/bgzf threads to use
           
@@ -4022,7 +4036,7 @@ Usage: modkit bedmethyl tobigwig [OPTIONS] --sizes &lt;CHROMSIZES&gt; --mod-code
 Arguments:
   &lt;IN_BEDMETHYL&gt;  Input bedmethyl, uncompressed, "-" or "stdin" indicates an
                   input stream
-  &lt;OUT_FP&gt;        Output bigWig to make
+  &lt;OUT_FP&gt;        Output bigWig filename
 
 Options:
   -g, --sizes &lt;CHROMSIZES&gt;     A chromosome sizes file. Each line should be have
@@ -4075,6 +4089,9 @@ Arguments:
           specify a stream from standard input
 
 Options:
+      --permissive
+          Don't exit 1 when invalid records are found in the input
+
   -h, --help
           Print help (see a summary with '-h')
 
