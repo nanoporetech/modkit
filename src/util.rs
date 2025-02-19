@@ -396,6 +396,12 @@ impl Display for StrandRule {
     }
 }
 
+#[inline]
+pub fn record_is_primary(record: &bam::Record) -> bool {
+    !record_is_not_primary(record)
+}
+
+#[inline]
 pub fn record_is_not_primary(record: &bam::Record) -> bool {
     record.is_supplementary() || record.is_secondary() || record.is_duplicate()
 }
