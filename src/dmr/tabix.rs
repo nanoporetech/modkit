@@ -31,6 +31,7 @@ pub(super) struct MultiSampleIndex {
     index_handlers: Vec<BedMethylTbxIndex>,
     pub code_lookup: FxHashMap<ModCodeRepr, DnaBase>,
     min_valid_coverage: u64,
+    io_threads: usize,
 }
 
 impl MultiSampleIndex {
@@ -38,8 +39,14 @@ impl MultiSampleIndex {
         handlers: Vec<BedMethylTbxIndex>,
         code_lookup: FxHashMap<ModCodeRepr, DnaBase>,
         min_valid_coverage: u64,
+        io_threads: usize,
     ) -> Self {
-        Self { index_handlers: handlers, min_valid_coverage, code_lookup }
+        Self {
+            index_handlers: handlers,
+            min_valid_coverage,
+            code_lookup,
+            io_threads,
+        }
     }
 
     #[inline]
@@ -47,8 +54,7 @@ impl MultiSampleIndex {
         &self,
         idxs: &FxHashSet<usize>,
         chunks: &FxHashMap<String, Range<u64>>,
-    ) -> anyhow::Result<FxHashMap<usize, FxHashMap<String, Vec<BedMethylLine>>>>
-    {
+    ) -> anyhow::Result<SampleToChromBMLines> {
         // take all the mappings of sample_id to chunks
         let groups = idxs
             .par_iter() // yah
@@ -76,6 +82,7 @@ impl MultiSampleIndex {
                                         range,
                                         self.min_valid_coverage,
                                         &self.code_lookup,
+                                        self.io_threads
                                     );
                                 bm_lines.map(|lines| (chrom.to_owned(), lines))
                             })
@@ -91,7 +98,7 @@ impl MultiSampleIndex {
         Ok(groups)
     }
 
-    // remember this method _only_ reads the lines, it does not perform any
+    // remember: this method _only_ reads the lines, it does not perform any
     // filtering
     fn read_bedmethyl_lines<T: Default>(
         &self,
@@ -111,7 +118,7 @@ impl MultiSampleIndex {
     ) -> BedMethylLinesResult<ChromToSampleBMLines> {
         let (bedmethyl_lines_a, bedmethyl_lines_b) =
             self.read_bedmethyl_lines(dmr_batch)?;
-        // todo I think this could be replaced my moniod
+        // todo I think this could be replaced by moniod
         let traverse_records =
             |sample_lines: SampleToChromBMLines| -> ChromToSampleBMLines {
                 sample_lines.into_iter().fold(
@@ -201,8 +208,8 @@ impl SingleSiteSampleIndex {
         let mut agg = FxHashMap::default();
 
         // samples should be length ~1-5
-        for (_sample_id, filtered_chrom_to_lines) in sample {
-            let chrom_to_counts = filtered_chrom_to_lines
+        for chrom_to_filtered_bm_records in sample.into_values() {
+            let chrom_to_counts = chrom_to_filtered_bm_records
                 .into_iter()
                 .map(|(chrom, lines)| {
                     let grouped_by_position = lines
