@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.4.4-rc1]
+### Fixes
+- [bedmethyl, merge] Merge and write concurrently, improves memory usage and runtime massively.
+- [dmr] Don't fail an entire section (i.e. batch) when one sample does not have a particular contig.
+- [modbam, check-tags] Fix counter so that records that fail reading are counted.
+- [pileup, sampler] Don't use non-primary alignments when calculating pass thresholds.
+
 ## [v0.4.3]
 ### Adds
 - [bedmethyl] Extract bigWig tracks from bedMethyl files
