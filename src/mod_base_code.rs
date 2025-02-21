@@ -95,6 +95,7 @@ lazy_static! {
             METHYL_CYTOSINE => "#FF0000".to_string(),
             HYDROXY_METHYL_CYTOSINE => "#FF00FF".to_string(),
             SIX_METHYL_ADENINE => "#0084A9".to_string(),
+            FOUR_METHYL_CYTOSINE => "#FFA100".to_string()
     };
     pub static ref DNA_BASE_COLORS: HashMap<DnaBase, String> = hash_map! {
             DnaBase::C => "#0000FF".to_string(),
