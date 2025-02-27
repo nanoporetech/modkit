@@ -342,6 +342,7 @@ mod methylation_entropy_tests {
 
     #[test]
     #[should_panic]
+    #[cfg(debug_assertions)]
     fn test_alphabet_info() {
         // test that assert fires when columns are all *
         let sequences = vec![
