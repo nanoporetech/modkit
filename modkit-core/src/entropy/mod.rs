@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader};
 use std::ops::Range;
 use std::path::PathBuf;
@@ -14,7 +15,7 @@ use nom::IResult;
 use rayon::prelude::*;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{self, FetchDefinition, Read};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::entropy::methylation_entropy::calc_me_entropy;
 use crate::errs::{MkError, MkResult};
@@ -25,6 +26,7 @@ use crate::read_ids_to_base_mod_probs::{PositionModCalls, ReadBaseModProfile};
 use crate::reads_sampler::sampling_schedule::ReferenceSequencesLookup;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::percentile_linear_interp;
+use crate::util::TAB;
 use crate::util::{record_is_not_primary, ReferenceRecord, Strand};
 
 mod methylation_entropy;
@@ -32,12 +34,99 @@ pub mod subcommand;
 mod writers;
 
 type BaseAndPosition = (DnaBase, u64);
+#[derive(Debug, Eq, Copy, Clone)]
+pub(super) struct MethylationCounts {
+    base: DnaBase,
+    position: u64,
+    n_methylated: u32,
+    total_calls: u32,
+}
+
+impl MethylationCounts {
+    fn new_from_base_and_position(base_and_position: &BaseAndPosition) -> Self {
+        let (base, position) = base_and_position;
+        Self {
+            base: *base,
+            position: *position,
+            n_methylated: 0u32,
+            total_calls: 0u32,
+        }
+    }
+
+    fn get_base_and_position(&self) -> BaseAndPosition {
+        (self.base, self.position)
+    }
+
+    fn add_base_mod_call(&mut self, base_mod_call: &BaseModCall) {
+        match base_mod_call {
+            BaseModCall::Canonical(_) => {
+                self.total_calls = self.total_calls.saturating_add(1u32);
+            }
+            BaseModCall::Modified(_, _) => {
+                self.n_methylated = self.n_methylated.saturating_add(1u32);
+                self.total_calls = self.total_calls.saturating_add(1u32);
+            }
+            BaseModCall::Filtered => {}
+        }
+    }
+
+    fn frac_methylated(&self) -> f32 {
+        if self.total_calls == 0u32 {
+            f32::NAN
+        } else {
+            self.n_methylated as f32 / self.total_calls as f32
+        }
+    }
+}
+
+impl PartialEq for MethylationCounts {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base && self.position == other.position
+    }
+}
+
+impl Hash for MethylationCounts {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.base.hash(state);
+        self.position.hash(state);
+    }
+}
+
+#[inline]
+pub(super) fn methylation_count_stats(
+    methylation_counts: &FxHashSet<MethylationCounts>,
+) -> (f32, f32) {
+    let n = methylation_counts.len() as f32;
+    let (mml, fracs) = {
+        let (numer, denom, fracs) = methylation_counts.iter().fold(
+            (0u32, 0u32, Vec::new()),
+            |(numer, denom, mut fracs), next| {
+                let f = next.frac_methylated();
+                if !f.is_nan() {
+                    fracs.push(f);
+                }
+                (
+                    numer.saturating_add(next.n_methylated),
+                    denom.saturating_add(next.total_calls),
+                    fracs,
+                )
+            },
+        );
+        (numer as f32 / denom as f32, fracs)
+    };
+    let std_ml = {
+        let numer = fracs.iter().map(|&f| (f - mml).powi(2)).sum::<f32>();
+        let var = numer / n;
+        var.sqrt()
+    };
+    (mml, std_ml)
+}
 
 #[derive(Debug)]
 pub(super) enum GenomeWindow {
     CombineStrands {
         interval: Range<u64>,
-        neg_to_pos_positions: FxHashMap<BaseAndPosition, BaseAndPosition>,
+        neg_to_pos_positions: FxHashMap<MethylationCounts, MethylationCounts>,
         read_patterns: Vec<Vec<BaseModCall>>,
         position_valid_coverages: Vec<u32>,
     },
@@ -46,8 +135,8 @@ pub(super) enum GenomeWindow {
         // have  an optional for all of it
         pos_interval: Option<Range<u64>>,
         neg_interval: Option<Range<u64>>,
-        pos_positions: Option<Vec<BaseAndPosition>>,
-        neg_positions: Option<Vec<BaseAndPosition>>,
+        pos_positions: Option<Vec<MethylationCounts>>,
+        neg_positions: Option<Vec<MethylationCounts>>,
         pos_read_patterns: Vec<Vec<BaseModCall>>,
         neg_read_patterns: Vec<Vec<BaseModCall>>,
         pos_position_valid_coverages: Vec<u32>,
@@ -62,6 +151,14 @@ impl GenomeWindow {
         neg_to_pos_positions: FxHashMap<BaseAndPosition, BaseAndPosition>,
     ) -> Self {
         let position_valid_coverages = vec![0u32; num_positions];
+        let neg_to_pos_positions = neg_to_pos_positions
+            .into_iter()
+            .map(|(neg, pos)| {
+                let neg = MethylationCounts::new_from_base_and_position(&neg);
+                let pos = MethylationCounts::new_from_base_and_position(&pos);
+                (neg, pos)
+            })
+            .collect();
         Self::CombineStrands {
             interval,
             neg_to_pos_positions,
@@ -118,8 +215,16 @@ impl GenomeWindow {
         Self::Stranded {
             pos_interval,
             neg_interval,
-            pos_positions,
-            neg_positions,
+            pos_positions: pos_positions.map(|xs| {
+                xs.into_iter()
+                    .map(|x| MethylationCounts::new_from_base_and_position(&x))
+                    .collect()
+            }),
+            neg_positions: neg_positions.map(|xs| {
+                xs.into_iter()
+                    .map(|x| MethylationCounts::new_from_base_and_position(&x))
+                    .collect()
+            }),
             pos_read_patterns: Vec::new(),
             neg_read_patterns: Vec::new(),
             pos_position_valid_coverages,
@@ -253,63 +358,58 @@ impl GenomeWindow {
             return;
         }
 
-        let pattern: Vec<BaseModCall> = match strand {
-            Strand::Positive => match &self {
-                Self::Stranded { pos_positions: Some(positions), .. } => {
-                    positions
-                        .iter()
-                        .map(|p| {
-                            ref_pos_to_basemod_call
-                                .get(p)
-                                .copied()
-                                .unwrap_or(BaseModCall::Filtered)
-                        })
-                        .collect()
-                }
-                Self::CombineStrands { neg_to_pos_positions, .. } => {
-                    neg_to_pos_positions
-                        .values()
-                        .map(|p| {
-                            let call = ref_pos_to_basemod_call
-                                .get(p)
-                                .copied()
-                                .unwrap_or(BaseModCall::Filtered);
-                            (p, call)
-                        })
+        let get_add_call =
+            |mc: &mut MethylationCounts| -> (BaseAndPosition, BaseModCall) {
+                let bp = mc.get_base_and_position();
+                let call = ref_pos_to_basemod_call
+                    .get(&bp)
+                    .copied()
+                    .unwrap_or(BaseModCall::Filtered);
+                mc.add_base_mod_call(&call);
+                (bp, call)
+            };
+
+        let pattern: Vec<BaseModCall> = match self {
+            GenomeWindow::CombineStrands { neg_to_pos_positions, .. } => {
+                match strand {
+                    Strand::Positive => neg_to_pos_positions
+                        .values_mut()
+                        .map(|mc| get_add_call(mc))
                         .sorted_by(|((_, a), _), ((_, b), _)| a.cmp(b))
                         .map(|(_, call)| call)
-                        .collect()
-                }
-                _ => return,
-            },
-            Strand::Negative => match &self {
-                Self::Stranded { neg_positions: Some(positions), .. } => {
-                    positions
-                        .iter()
-                        .map(|p| {
-                            ref_pos_to_basemod_call
-                                .get(p)
-                                .copied()
-                                .unwrap_or(BaseModCall::Filtered)
-                        })
-                        .collect()
-                }
-                Self::CombineStrands { neg_to_pos_positions, .. } => {
-                    neg_to_pos_positions
-                        .iter()
+                        .collect(),
+                    Strand::Negative => neg_to_pos_positions
+                        .iter_mut()
                         .map(|(neg_position, positive_position)| {
                             let call = ref_pos_to_basemod_call
-                                .get(neg_position)
+                                .get(&neg_position.get_base_and_position())
                                 .copied()
                                 .unwrap_or(BaseModCall::Filtered);
-                            (positive_position, call)
+                            positive_position.add_base_mod_call(&call);
+                            (positive_position.get_base_and_position(), call)
                         })
                         .sorted_by(|((_, a), _), ((_, b), _)| a.cmp(b))
                         .map(|(_, call)| call)
-                        .collect()
+                        .collect(),
                 }
-                _ => return,
-            },
+            }
+            GenomeWindow::Stranded { pos_positions, neg_positions, .. } => {
+                let positions = match strand {
+                    Strand::Positive => pos_positions,
+                    Strand::Negative => neg_positions,
+                };
+                if let Some(positions) = positions.as_mut() {
+                    positions
+                        .iter_mut()
+                        .map(|p| {
+                            let (_, call) = get_add_call(p);
+                            call
+                        })
+                        .collect()
+                } else {
+                    return;
+                }
+            }
         };
 
         if pattern.iter().filter(|&bmc| bmc == &BaseModCall::Filtered).count()
@@ -439,49 +539,81 @@ impl GenomeWindow {
         let window_size = self.size();
         let constant = 1f32 / window_size as f32; // todo make this configurable
 
+        #[derive(new)]
+        struct PatternsAndCounts {
+            patterns: Vec<String>,
+            methylation_counts: FxHashSet<MethylationCounts>,
+        }
+
         let mod_code_lookup = self.get_mod_code_lookup();
-        let positive_encoded_patterns = match &self {
-            Self::CombineStrands {
-                read_patterns,
-                position_valid_coverages,
-                ..
-            } => Some(self.encode_patterns(
-                chrom_id,
-                Strand::Positive,
-                read_patterns,
-                &mod_code_lookup,
-                position_valid_coverages,
-                min_valid_coverage,
-            )),
-            Self::Stranded {
-                pos_interval: Some(_),
-                pos_read_patterns,
-                pos_position_valid_coverages,
-                ..
-            } => Some(self.encode_patterns(
-                chrom_id,
-                Strand::Positive,
-                pos_read_patterns,
-                &mod_code_lookup,
-                &pos_position_valid_coverages,
-                min_valid_coverage,
-            )),
-            _ => None,
-        };
-        let negative_patterns = match &self {
+        let positive_encoded_patterns: Option<MkResult<PatternsAndCounts>> =
+            match &self {
+                Self::CombineStrands {
+                    read_patterns,
+                    position_valid_coverages,
+                    neg_to_pos_positions,
+                    ..
+                } => {
+                    let patterns = self.encode_patterns(
+                        chrom_id,
+                        Strand::Positive,
+                        read_patterns,
+                        &mod_code_lookup,
+                        position_valid_coverages,
+                        min_valid_coverage,
+                    );
+                    let counts = neg_to_pos_positions
+                        .values()
+                        .copied()
+                        .collect::<FxHashSet<MethylationCounts>>();
+                    Some(patterns.map(|ps| PatternsAndCounts::new(ps, counts)))
+                }
+                Self::Stranded {
+                    pos_interval: Some(_),
+                    pos_read_patterns,
+                    pos_positions: Some(pos_positions),
+                    pos_position_valid_coverages,
+                    ..
+                } => {
+                    let patterns = self.encode_patterns(
+                        chrom_id,
+                        Strand::Positive,
+                        pos_read_patterns,
+                        &mod_code_lookup,
+                        &pos_position_valid_coverages,
+                        min_valid_coverage,
+                    );
+                    let counts = pos_positions
+                        .iter()
+                        .copied()
+                        .collect::<FxHashSet<MethylationCounts>>();
+                    Some(patterns.map(|ps| PatternsAndCounts::new(ps, counts)))
+                }
+                _ => None,
+            };
+        let negative_patterns: Option<MkResult<PatternsAndCounts>> = match &self
+        {
             Self::Stranded {
                 neg_interval: Some(_),
+                neg_positions: Some(neg_positions),
                 neg_read_patterns,
                 neg_position_valid_coverages,
                 ..
-            } => Some(self.encode_patterns(
-                chrom_id,
-                Strand::Negative,
-                neg_read_patterns,
-                &mod_code_lookup,
-                neg_position_valid_coverages,
-                min_valid_coverage,
-            )),
+            } => {
+                let patterns = self.encode_patterns(
+                    chrom_id,
+                    Strand::Negative,
+                    neg_read_patterns,
+                    &mod_code_lookup,
+                    neg_position_valid_coverages,
+                    min_valid_coverage,
+                );
+                let counts = neg_positions
+                    .iter()
+                    .copied()
+                    .collect::<FxHashSet<MethylationCounts>>();
+                Some(patterns.map(|ps| PatternsAndCounts::new(ps, counts)))
+            }
             _ => None,
         };
         // left for debugging
@@ -507,12 +639,14 @@ impl GenomeWindow {
         {
             if let Some(Ok(patterns)) = positive_encoded_patterns.as_ref() {
                 debug_assert!(
-                    patterns.iter().all(|x| x.len() == window_size),
-                    "patterns are the wrong size {positive_encoded_patterns:?}"
+                    patterns.patterns.iter().all(|x| x.len() == window_size),
+                    "patterns are the wrong size {:?}",
+                    &patterns.patterns
                 );
             }
             if let Some(Ok(neg_patterns)) = negative_patterns.as_ref() {
                 debug_assert!(neg_patterns
+                    .patterns
                     .iter()
                     .all(|x| x.len() == window_size));
             }
@@ -521,22 +655,35 @@ impl GenomeWindow {
         let pos_me_entropy = positive_encoded_patterns.map(|maybe_patterns| {
             maybe_patterns.map(|patterns| {
                 let me_entropy =
-                    calc_me_entropy(&patterns, window_size, constant);
-                let num_reads = patterns.len();
+                    calc_me_entropy(&patterns.patterns, window_size, constant);
+                let num_reads = patterns.patterns.len();
                 let interval = self.start(&Strand::Positive).unwrap()
                     ..self.end(&Strand::Positive).unwrap().saturating_add(1);
-                MethylationEntropy::new(me_entropy, num_reads, interval)
+                MethylationEntropy::new(
+                    me_entropy,
+                    num_reads,
+                    interval,
+                    patterns.methylation_counts,
+                )
             })
         });
 
         let neg_me_entropy = negative_patterns.map(|maybe_patterns| {
-            maybe_patterns.map(|patterns| {
-                let me_entropy =
-                    calc_me_entropy(&patterns, window_size, constant);
-                let num_reads = patterns.len();
+            maybe_patterns.map(|patterns_and_counts| {
+                let me_entropy = calc_me_entropy(
+                    &patterns_and_counts.patterns,
+                    window_size,
+                    constant,
+                );
+                let num_reads = patterns_and_counts.patterns.len();
                 let interval = self.start(&Strand::Negative).unwrap()
                     ..self.end(&Strand::Negative).unwrap().saturating_add(1);
-                MethylationEntropy::new(me_entropy, num_reads, interval)
+                MethylationEntropy::new(
+                    me_entropy,
+                    num_reads,
+                    interval,
+                    patterns_and_counts.methylation_counts,
+                )
             })
         });
 
@@ -621,12 +768,17 @@ impl GenomeWindows {
             let mut neg_entropies = Vec::with_capacity(window_entropies.len());
             let mut neg_num_reads = Vec::with_capacity(window_entropies.len());
             let mut neg_num_fails = 0usize;
+            let mut pos_methylation_count_positions = FxHashSet::default();
+            let mut neg_methylation_count_positions = FxHashSet::default();
 
             for window_entropy in window_entropies.iter() {
                 match window_entropy.pos_me_entropy.as_ref() {
                     Some(Ok(me_entropy)) => {
                         pos_entropies.push(me_entropy.me_entropy);
                         pos_num_reads.push(me_entropy.num_reads);
+                        for &mc in me_entropy.methylation_counts.iter() {
+                            let _ = pos_methylation_count_positions.insert(mc);
+                        }
                     }
                     Some(Err(_e)) => {
                         pos_num_fails += 1;
@@ -637,6 +789,9 @@ impl GenomeWindows {
                     Some(Ok(me_entropy)) => {
                         neg_entropies.push(me_entropy.me_entropy);
                         neg_num_reads.push(me_entropy.num_reads);
+                        for &mc in me_entropy.methylation_counts.iter() {
+                            let _ = neg_methylation_count_positions.insert(mc);
+                        }
                     }
                     Some(Err(_e)) => {
                         neg_num_fails += 1;
@@ -651,6 +806,7 @@ impl GenomeWindows {
             let pos_entropy_stats = DescriptiveStats::new(
                 &pos_entropies,
                 &pos_num_reads,
+                &pos_methylation_count_positions,
                 pos_num_fails,
                 chrom_id,
                 &interval,
@@ -671,6 +827,7 @@ impl GenomeWindows {
                 Some(DescriptiveStats::new(
                     &neg_entropies,
                     &neg_num_reads,
+                    &neg_methylation_count_positions,
                     neg_num_fails,
                     chrom_id,
                     &interval,
@@ -1335,6 +1492,23 @@ pub(super) struct MethylationEntropy {
     me_entropy: f32,
     num_reads: usize,
     interval: Range<u64>,
+    methylation_counts: FxHashSet<MethylationCounts>,
+}
+
+impl MethylationEntropy {
+    pub(super) fn to_row(&self, name: &str, strand: Strand) -> String {
+        let (mml, std) = methylation_count_stats(&self.methylation_counts);
+        format!(
+            "{name}{TAB}{}{TAB}{}{TAB}{}{TAB}{}{TAB}{}{TAB}{}{TAB}{}\n",
+            self.interval.start,
+            self.interval.end,
+            self.me_entropy,
+            strand.to_char(),
+            self.num_reads,
+            mml,
+            std
+        )
+    }
 }
 
 // todo make this an enum, one for regions
@@ -1353,6 +1527,8 @@ struct DescriptiveStats {
     mean_num_reads: f32,
     max_num_reads: usize,
     min_num_reads: usize,
+    mean_methylation_level: f32,
+    std_methylation_level: f32,
     failed_count: usize,
     successful_count: usize,
 }
@@ -1365,6 +1541,7 @@ impl DescriptiveStats {
     fn new(
         measurements: &[f32],
         n_reads: &[usize],
+        methylation_counts: &FxHashSet<MethylationCounts>,
         n_fails: usize,
         chrom_id: u32,
         interval: &Range<u64>,
@@ -1410,6 +1587,7 @@ impl DescriptiveStats {
             };
 
             let success_count = measurements.len();
+            let (mml, std_ml) = methylation_count_stats(&methylation_counts);
 
             Ok(Self {
                 mean_entropy,
@@ -1419,6 +1597,8 @@ impl DescriptiveStats {
                 mean_num_reads,
                 max_num_reads,
                 min_num_reads,
+                mean_methylation_level: mml,
+                std_methylation_level: std_ml,
                 successful_count: success_count,
                 failed_count: n_fails,
             })
@@ -1450,6 +1630,8 @@ impl DescriptiveStats {
             {}{TAB}\
             {}{TAB}\
             {}{TAB}\
+            {}{TAB}\
+            {}{TAB}\
             {}\n",
             self.mean_entropy,
             strand.to_char(),
@@ -1460,7 +1642,9 @@ impl DescriptiveStats {
             self.min_num_reads,
             self.max_num_reads,
             self.successful_count,
-            self.failed_count
+            self.failed_count,
+            self.mean_methylation_level,
+            self.std_methylation_level
         )
     }
 }
@@ -1475,8 +1659,8 @@ pub(super) struct RegionEntropy {
     window_entropies: Vec<WindowEntropy>,
 }
 
-#[derive(new)]
-struct Message {
+#[derive(new, Debug)]
+struct RefPosBaseModCalls {
     mod_calls: FxHashMap<BaseAndPosition, BaseModCall>,
     reference_start: i64,
     reference_end: i64,
@@ -1489,11 +1673,12 @@ fn process_bam_fp(
     fetch_definition: FetchDefinition,
     caller: Arc<MultipleThresholdModCaller>,
     io_threads: usize,
-) -> anyhow::Result<Vec<Message>> {
+) -> anyhow::Result<Vec<RefPosBaseModCalls>> {
     let mut reader = bam::IndexedReader::from_path(bam_fp)?;
     reader.set_threads(io_threads)?;
     reader.fetch(fetch_definition)?;
 
+    // todo this method should pass on the MkErrors
     let record_iter = reader
         .records()
         .filter_map(|r| r.ok())
@@ -1559,7 +1744,7 @@ fn process_bam_fp(
                             ((p.canonical_base, ref_pos as u64), mod_base_call)
                         })
                         .collect::<FxHashMap<BaseAndPosition, BaseModCall>>();
-                    let msg = Message::new(
+                    let msg = RefPosBaseModCalls::new(
                         mod_calls,
                         record.reference_start(),
                         record.reference_end(),
@@ -1599,7 +1784,7 @@ pub(super) fn process_entropy_window(
                 io_threads,
             )
         })
-        .collect::<Vec<anyhow::Result<Vec<Message>>>>();
+        .collect::<Vec<anyhow::Result<Vec<RefPosBaseModCalls>>>>();
 
     for message_result in results {
         match message_result {
@@ -1607,6 +1792,11 @@ pub(super) fn process_entropy_window(
                 for message in messages {
                     entropy_windows.entropy_windows.par_iter_mut().for_each(
                         |window| {
+                            if window.leftmost() == 90
+                                && window.rightmost() == 125
+                            {
+                                debug!("{message:?}");
+                            }
                             window.add_read_to_patterns(
                                 &message.mod_calls,
                                 message.reference_start,
@@ -1671,7 +1861,8 @@ impl BedRegion {
 
 #[cfg(test)]
 mod entropy_mod_tests {
-    use crate::entropy::BedRegion;
+    use crate::entropy::{BedRegion, MethylationCounts};
+    use crate::mod_base_code::DnaBase;
 
     #[test]
     fn test_bed_region_parsing() {
@@ -1691,5 +1882,22 @@ mod entropy_mod_tests {
         assert_eq!(&bed_region.chrom, "chr20");
         assert_eq!(bed_region.interval, 279148usize..279507);
         assert_eq!(&bed_region.name, "CpG: 39");
+    }
+
+    #[test]
+    fn test_methylation_counts() {
+        let a = MethylationCounts {
+            base: DnaBase::C,
+            position: 1,
+            n_methylated: 10,
+            total_calls: 10,
+        };
+        let b = MethylationCounts {
+            base: DnaBase::C,
+            position: 1,
+            n_methylated: 0,
+            total_calls: 0,
+        };
+        assert_eq!(a, b);
     }
 }

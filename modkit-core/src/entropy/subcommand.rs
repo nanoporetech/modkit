@@ -335,8 +335,12 @@ impl MethylationEntropy {
             }
         })?;
 
-        let threshold_caller =
-            self.get_threshold_caller(&pool).map(|c| Arc::new(c))?;
+        let threshold_caller = if self.no_filtering {
+            multi_pb.suspend(|| info!("not performing filtering"));
+            Arc::new(MultipleThresholdModCaller::new_passthrough())
+        } else {
+            self.get_threshold_caller(&pool).map(|c| Arc::new(c))?
+        };
 
         let (snd, rcv) = crossbeam::channel::bounded(10_000);
 

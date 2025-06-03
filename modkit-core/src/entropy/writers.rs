@@ -32,14 +32,7 @@ fn write_entropy_windows<T: Write>(
                 if (drop_zeros && !(pos_entropy.me_entropy == 0f32))
                     || !drop_zeros
                 {
-                    let row = format!(
-                        "{name}\t{}\t{}\t{}\t{}\t{}\n",
-                        pos_entropy.interval.start,
-                        pos_entropy.interval.end,
-                        pos_entropy.me_entropy,
-                        Strand::Positive.to_char(),
-                        pos_entropy.num_reads
-                    );
+                    let row = pos_entropy.to_row(name, Strand::Positive);
                     writer.write(&row.as_bytes())?;
                     write_counter.inc(1);
                 }
@@ -102,14 +95,7 @@ fn write_entropy_windows<T: Write>(
                 if (drop_zeros && !(neg_entropy.me_entropy == 0f32))
                     || !drop_zeros
                 {
-                    let row = format!(
-                        "{name}\t{}\t{}\t{}\t{}\t{}\n",
-                        neg_entropy.interval.start,
-                        neg_entropy.interval.end,
-                        neg_entropy.me_entropy,
-                        Strand::Negative.to_char(),
-                        neg_entropy.num_reads
-                    );
+                    let row = neg_entropy.to_row(name, Strand::Negative);
                     writer.write(&row.as_bytes())?;
                     write_counter.inc(1);
                 }
@@ -139,8 +125,9 @@ pub(super) trait EntropyWriter {
     ) -> anyhow::Result<()>;
 }
 
+#[rustfmt::skip]
 const WINDOWS_HEADER: &'static str = "\
-        #chrom\tstart\tend\tentropy\tstrand\tnum_reads\n";
+        #chrom\tstart\tend\tentropy\tstrand\tnum_reads\tmean_methylation_level\tstd_methylation_level\n";
 
 pub(super) struct WindowsWriter<T: Write> {
     output: BufWriter<T>,
@@ -226,7 +213,9 @@ impl RegionsWriter {
                 min_num_reads{TAB}\
                 max_num_reads{TAB}\
                 successful_window_count{TAB}\
-                failed_window_count\n"
+                failed_window_count{TAB}\
+                mean_methylation_level{TAB}\
+                std_methylation_level\n"
                 )
                 .as_bytes(),
             )?;
