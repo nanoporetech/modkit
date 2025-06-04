@@ -48,6 +48,10 @@ pub struct MethylationEntropy {
     /// Number of modified positions to consider at a time
     #[arg(short = 'n', long, default_value_t = 4)]
     num_positions: usize,
+    /// Make windows fixed genomic sizes (window-size) regardless of number of
+    /// CpGs in the window
+    #[arg(long, requires = "cpg", conflicts_with_all = ["num_positions", "motif"], default_value_t = false)]
+    fixed_sizes: bool,
     /// Maximum length interval that "num_positions" modified bases can occur
     /// in. The maximum window size decides how dense the positions are
     /// packed. For example, consider that the num_positions is equal to 4, the
@@ -187,12 +191,19 @@ pub struct MethylationEntropy {
 impl MethylationEntropy {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        if self.num_positions == 0 {
+        if self.num_positions == 0usize {
             bail!("num-positions must be at least 1")
         }
-        if self.min_valid_coverage < 1 {
+        if self.min_valid_coverage == 0u32 {
             bail!("min-valid-coverage must be at least 1")
         }
+        if self.fixed_sizes {
+            info!(
+                "using fixed genomic sized windows of {}bp",
+                self.window_size
+            );
+        }
+
         for bam_fp in self.in_bams.iter() {
             IdxStats::check_any_mapped_reads(&bam_fp, None, None)
                 .with_context(|| {
@@ -322,6 +333,7 @@ impl MethylationEntropy {
                     self.num_positions,
                     window_size,
                     batch_size,
+                    self.fixed_sizes,
                 )
             } else {
                 SlidingWindows::new(
@@ -331,6 +343,7 @@ impl MethylationEntropy {
                     self.num_positions,
                     window_size,
                     batch_size,
+                    self.fixed_sizes,
                 )
             }
         })?;

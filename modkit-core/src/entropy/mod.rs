@@ -917,6 +917,7 @@ struct SlidingWindows {
     curr_seq: Vec<char>,
     curr_region_name: Option<String>,
     combine_strands: bool,
+    fixed_sizes: bool,
     /// the longest motif length, so we find motifs that are in the window, but
     /// reach outside the window
     motif_search_adj: usize,
@@ -932,6 +933,7 @@ impl SlidingWindows {
         num_positions: usize,
         window_size: usize,
         batch_size: usize,
+        fixed_sizes: bool,
     ) -> anyhow::Result<Self> {
         let regions_iter =
             BufReader::new(File::open(regions_bed_fp).with_context(|| {
@@ -1062,6 +1064,7 @@ impl SlidingWindows {
             curr_seq,
             curr_region_name: Some(curr_region_name),
             combine_strands,
+            fixed_sizes,
             motif_search_adj,
             done: false,
         })
@@ -1074,6 +1077,7 @@ impl SlidingWindows {
         num_positions: usize,
         window_size: usize,
         batch_size: usize,
+        fixed_sizes: bool,
     ) -> anyhow::Result<Self> {
         let mut work_queue =
             reference_sequence_lookup.into_reference_sequences();
@@ -1118,6 +1122,7 @@ impl SlidingWindows {
             curr_seq,
             curr_region_name: None,
             combine_strands,
+            fixed_sizes,
             motif_search_adj,
             done: false,
         })
@@ -1150,6 +1155,7 @@ impl SlidingWindows {
         if self.combine_strands {
             let neg_to_pos = pos_hits
                 .into_iter()
+                // todo shouldn't be necessary?
                 .filter(|x| x.strand == Strand::Positive)
                 .take(self.num_positions)
                 .filter_map(|motif_hit| {
@@ -1163,7 +1169,11 @@ impl SlidingWindows {
                     })
                 })
                 .collect::<FxHashMap<BaseAndPosition, BaseAndPosition>>();
-            if neg_to_pos.len() < self.num_positions {
+            if neg_to_pos.is_empty() {
+                None
+            } else if (neg_to_pos.len() < self.num_positions)
+                && !self.fixed_sizes
+            {
                 None
             } else {
                 let (start, end) = match neg_to_pos
@@ -1179,14 +1189,18 @@ impl SlidingWindows {
                 let interval = start..end;
                 Some(GenomeWindow::new_combine_strands(
                     interval,
-                    self.num_positions,
+                    neg_to_pos.len(),
                     neg_to_pos,
                 ))
             }
         } else {
-            if pos_hits.len() >= self.num_positions
-                || neg_hits.len() >= self.num_positions
-            {
+            let enough_positive_positions =
+                pos_hits.len() >= self.num_positions;
+            let enough_negative_positions =
+                neg_hits.len() >= self.num_positions;
+            let enough_positions =
+                enough_positive_positions || enough_negative_positions;
+            if enough_positions {
                 let pos_positions = self.take_hits_if_enough(pos_hits);
                 let neg_positions = self.take_hits_if_enough(neg_hits);
                 match (pos_positions, neg_positions) {
@@ -1559,6 +1573,7 @@ impl MethylationEntropy {
             {}{TAB}\
             {}{TAB}\
             {}{TAB}\
+            {}{TAB}\
             {}\n",
             self.interval.start,
             self.interval.end,
@@ -1570,6 +1585,7 @@ impl MethylationEntropy {
             meth_count_stats.n_meth,
             meth_count_stats.total_calls,
             self.num_states,
+            self.methylation_counts.len(),
         )
     }
 }
