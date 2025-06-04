@@ -586,6 +586,7 @@ impl GenomeWindow {
         }
 
         let mod_code_lookup = self.get_mod_code_lookup();
+        let num_states = mod_code_lookup.len().saturating_add(1); // add one for unmodified
         let positive_encoded_patterns: Option<MkResult<PatternsAndCounts>> =
             match &self {
                 Self::CombineStrands {
@@ -694,8 +695,12 @@ impl GenomeWindow {
 
         let pos_me_entropy = positive_encoded_patterns.map(|maybe_patterns| {
             maybe_patterns.map(|patterns| {
-                let me_entropy =
-                    calc_me_entropy(&patterns.patterns, window_size, constant);
+                let me_entropy = calc_me_entropy(
+                    &patterns.patterns,
+                    window_size,
+                    constant,
+                    num_states,
+                );
                 let num_reads = patterns.patterns.len();
                 let interval = self.start(&Strand::Positive).unwrap()
                     ..self.end(&Strand::Positive).unwrap().saturating_add(1);
@@ -704,6 +709,7 @@ impl GenomeWindow {
                     num_reads,
                     interval,
                     patterns.methylation_counts,
+                    num_states,
                 )
             })
         });
@@ -714,6 +720,7 @@ impl GenomeWindow {
                     &patterns_and_counts.patterns,
                     window_size,
                     constant,
+                    num_states,
                 );
                 let num_reads = patterns_and_counts.patterns.len();
                 let interval = self.start(&Strand::Negative).unwrap()
@@ -723,6 +730,7 @@ impl GenomeWindow {
                     num_reads,
                     interval,
                     patterns_and_counts.methylation_counts,
+                    num_states,
                 )
             })
         });
@@ -1533,6 +1541,7 @@ pub(super) struct MethylationEntropy {
     num_reads: usize,
     interval: Range<u64>,
     methylation_counts: FxHashSet<MethylationCounts>,
+    num_states: usize,
 }
 
 impl MethylationEntropy {
@@ -1541,6 +1550,7 @@ impl MethylationEntropy {
             methylation_count_stats(&self.methylation_counts);
         format!(
             "{name}{TAB}\
+            {}{TAB}\
             {}{TAB}\
             {}{TAB}\
             {}{TAB}\
@@ -1559,6 +1569,7 @@ impl MethylationEntropy {
             meth_count_stats.std_ml,
             meth_count_stats.n_meth,
             meth_count_stats.total_calls,
+            self.num_states,
         )
     }
 }

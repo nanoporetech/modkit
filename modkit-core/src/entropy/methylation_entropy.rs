@@ -139,7 +139,12 @@ fn all_patterns_dp(
     all_combs.into_iter().sorted().collect::<Vec<String>>()
 }
 
-fn calc_entropy(sequences: &[String], window_size: usize) -> f32 {
+fn calc_entropy(
+    sequences: &[String],
+    window_size: usize,
+    num_states: usize,
+) -> f32 {
+    let base = num_states as f32;
     let mut alphabet_info =
         AlphabetInfo::from_sequences(sequences, window_size);
     let patterns = all_patterns_dp(sequences, window_size, &mut alphabet_info);
@@ -183,7 +188,7 @@ fn calc_entropy(sequences: &[String], window_size: usize) -> f32 {
         .values()
         .map(|&x| {
             let p = x / total;
-            p * (p.log2())
+            p * (p.log(base))
         })
         .sum::<f32>()
         * -1f32
@@ -193,8 +198,9 @@ pub(super) fn calc_me_entropy(
     sequences: &[String],
     window_size: usize,
     constant: f32,
+    num_states: usize,
 ) -> f32 {
-    let shannons = calc_entropy(sequences, window_size);
+    let shannons = calc_entropy(sequences, window_size, num_states);
     let me_entropy = constant * shannons;
     if me_entropy == -0f32 {
         0f32
@@ -218,21 +224,21 @@ mod methylation_entropy_tests {
             "0000".to_string(),
             "0000".to_string(),
         ];
-        assert_eq!(calc_me_entropy(&sequences, 4, 0.25), 0.0);
+        assert_eq!(calc_me_entropy(&sequences, 4, 0.25, 2), 0.0);
         let sequences = vec![
             "1111".to_string(),
             "1111".to_string(),
             "1111".to_string(),
             "1111".to_string(),
         ];
-        assert_eq!(calc_me_entropy(&sequences, 4, 0.25), 0.0);
+        assert_eq!(calc_me_entropy(&sequences, 4, 0.25, 2), 0.0);
         let sequences = vec![
             "0010".to_string(),
             "0010".to_string(),
             "0010".to_string(),
             "0010".to_string(),
         ];
-        assert_eq!(calc_me_entropy(&sequences, 4, 0.25), 0.0);
+        assert_eq!(calc_me_entropy(&sequences, 4, 0.25, 2), 0.0);
         let sequences = vec![
             "1111".to_string(),
             "1111".to_string(),
@@ -243,7 +249,7 @@ mod methylation_entropy_tests {
             "0000".to_string(),
             "0000".to_string(),
         ];
-        assert_eq!(calc_me_entropy(&sequences, 4, 0.25), 0.25);
+        assert_eq!(calc_me_entropy(&sequences, 4, 0.25, 2), 0.25);
         let sequences = vec![
             "1111".to_string(),
             "1111".to_string(),
@@ -254,7 +260,7 @@ mod methylation_entropy_tests {
             "0000".to_string(),
             "0000".to_string(),
         ];
-        assert_eq!(calc_me_entropy(&sequences, 4, 0.25), 0.50);
+        assert_eq!(calc_me_entropy(&sequences, 4, 0.25, 2), 0.50);
         let sequences = vec![
             "0000".to_string(),
             "1111".to_string(),
@@ -265,7 +271,7 @@ mod methylation_entropy_tests {
             "0000".to_string(),
             "1111".to_string(),
         ];
-        assert_eq!(calc_me_entropy(&sequences, 4, 0.25), 0.47640976);
+        assert_eq!(calc_me_entropy(&sequences, 4, 0.25, 2), 0.47640976);
     }
 
     #[test]
@@ -286,7 +292,7 @@ mod methylation_entropy_tests {
                 "1111".to_string(),
             ]
         );
-        let entropy = calc_entropy(&sequences, 4);
+        let entropy = calc_entropy(&sequences, 4, 2);
         assert_eq!(entropy, 1.75);
 
         let sequences = vec!["1*11", "1111", "1011", "1111"]
@@ -297,7 +303,7 @@ mod methylation_entropy_tests {
         let alphabet_info = AlphabetInfo::from_sequences(&sequences, 4);
         let patterns = all_patterns_dp(&sequences, 4, &alphabet_info);
         assert_eq!(patterns, vec!["1011".to_string(), "1111".to_string(),]);
-        let entropy = calc_entropy(&sequences, 4);
+        let entropy = calc_entropy(&sequences, 4, 2);
         assert_eq!(entropy, 0.95443404);
 
         let sequences = vec!["1*01", "1101", "1011", "1111"]
@@ -316,7 +322,7 @@ mod methylation_entropy_tests {
                 "1111".to_string(),
             ]
         );
-        let entropy = calc_entropy(&sequences, 4);
+        let entropy = calc_entropy(&sequences, 4, 2);
         assert_approx_eq!(entropy, 1.9, 0.01);
 
         let sequences = vec!["*010", "1010", "0010"]
@@ -327,7 +333,7 @@ mod methylation_entropy_tests {
         let alphabet_info = AlphabetInfo::from_sequences(&sequences, 4);
         let patterns = all_patterns_dp(&sequences, 4, &alphabet_info);
         assert_eq!(patterns, vec!["0010".to_string(), "1010".to_string(),]);
-        let entropy = calc_entropy(&sequences, 4);
+        let entropy = calc_entropy(&sequences, 4, 2);
         assert_eq!(entropy, 1.0f32);
 
         let sequences = vec!["1010", "1010", "1010", "1010"]
@@ -336,7 +342,7 @@ mod methylation_entropy_tests {
             .collect::<Vec<String>>();
 
         let _alphabet_info = AlphabetInfo::from_sequences(&sequences, 4);
-        let entropy = calc_entropy(&sequences, 4);
+        let entropy = calc_entropy(&sequences, 4, 2);
         assert_eq!(entropy, 0f32);
     }
 

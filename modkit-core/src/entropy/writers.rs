@@ -127,7 +127,7 @@ pub(super) trait EntropyWriter {
 
 #[rustfmt::skip]
 const WINDOWS_HEADER: &'static str = "\
-        #chrom\tstart\tend\tentropy\tstrand\tnum_reads\tmean_methylation_level\tstd_methylation_level\tcount_methylated\ttotal_calls\n";
+        #chrom\tstart\tend\tentropy\tstrand\tnum_reads\tmean_methylation_level\tstd_methylation_level\tcount_methylated\ttotal_calls\tnumber_of_states\n";
 
 pub(super) struct WindowsWriter<T: Write> {
     output: BufWriter<T>,
