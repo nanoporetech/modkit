@@ -92,12 +92,20 @@ impl Hash for MethylationCounts {
     }
 }
 
+#[derive(new)]
+pub(super) struct MethylationCountStats {
+    pub(super) mml: f32,
+    pub(super) std_ml: f32,
+    pub(super) n_meth: u32,
+    pub(super) total_calls: u32,
+}
+
 #[inline]
 pub(super) fn methylation_count_stats(
     methylation_counts: &FxHashSet<MethylationCounts>,
-) -> (f32, f32) {
+) -> MethylationCountStats {
     let n = methylation_counts.len() as f32;
-    let (mml, fracs) = {
+    let (mml, n_meth, total_calls, fracs) = {
         let (numer, denom, fracs) = methylation_counts.iter().fold(
             (0u32, 0u32, Vec::new()),
             |(numer, denom, mut fracs), next| {
@@ -112,14 +120,14 @@ pub(super) fn methylation_count_stats(
                 )
             },
         );
-        (numer as f32 / denom as f32, fracs)
+        (numer as f32 / denom as f32, numer, denom, fracs)
     };
     let std_ml = {
         let numer = fracs.iter().map(|&f| (f - mml).powi(2)).sum::<f32>();
         let var = numer / n;
         var.sqrt()
     };
-    (mml, std_ml)
+    MethylationCountStats::new(mml, std_ml, n_meth, total_calls)
 }
 
 #[derive(Debug)]
@@ -133,6 +141,7 @@ pub(super) enum GenomeWindow {
     Stranded {
         // todo instead of having pos/neg for everything, make one struct and
         // have  an optional for all of it
+        // todo could also make these BTreeSets..
         pos_interval: Option<Range<u64>>,
         neg_interval: Option<Range<u64>>,
         pos_positions: Option<Vec<MethylationCounts>>,
@@ -265,6 +274,37 @@ impl GenomeWindow {
         };
     }
 
+    fn add_calls_to_accumulators(
+        &mut self,
+        positions_to_calls: FxHashMap<BaseAndPosition, BaseModCall>,
+        strand: Strand,
+    ) {
+        match self {
+            GenomeWindow::CombineStrands { neg_to_pos_positions, .. } => {
+                neg_to_pos_positions.values_mut().for_each(|mc| {
+                    let bp = mc.get_base_and_position();
+                    if let Some(call) = positions_to_calls.get(&bp) {
+                        mc.add_base_mod_call(call);
+                    }
+                });
+            }
+            GenomeWindow::Stranded { pos_positions, neg_positions, .. } => {
+                let positions = match strand {
+                    Strand::Positive => pos_positions,
+                    Strand::Negative => neg_positions,
+                };
+                if let Some(positions) = positions.as_mut() {
+                    positions.iter_mut().for_each(|mc| {
+                        let bp = mc.get_base_and_position();
+                        if let Some(call) = positions_to_calls.get(&bp) {
+                            mc.add_base_mod_call(call);
+                        }
+                    })
+                }
+            }
+        }
+    }
+
     fn add_pattern(&mut self, strand: &Strand, pattern: Vec<BaseModCall>) {
         match self {
             Self::Stranded { pos_read_patterns, neg_read_patterns, .. } => {
@@ -358,38 +398,34 @@ impl GenomeWindow {
             return;
         }
 
-        let get_add_call =
-            |mc: &mut MethylationCounts| -> (BaseAndPosition, BaseModCall) {
+        let get_call =
+            |mc: &MethylationCounts| -> (BaseAndPosition, BaseModCall) {
                 let bp = mc.get_base_and_position();
                 let call = ref_pos_to_basemod_call
                     .get(&bp)
                     .copied()
                     .unwrap_or(BaseModCall::Filtered);
-                mc.add_base_mod_call(&call);
                 (bp, call)
             };
 
-        let pattern: Vec<BaseModCall> = match self {
+        let pos_and_calls: Vec<(BaseAndPosition, BaseModCall)> = match &self {
             GenomeWindow::CombineStrands { neg_to_pos_positions, .. } => {
                 match strand {
                     Strand::Positive => neg_to_pos_positions
-                        .values_mut()
-                        .map(|mc| get_add_call(mc))
+                        .values()
+                        .map(|mc| get_call(mc))
                         .sorted_by(|((_, a), _), ((_, b), _)| a.cmp(b))
-                        .map(|(_, call)| call)
                         .collect(),
                     Strand::Negative => neg_to_pos_positions
-                        .iter_mut()
+                        .iter()
                         .map(|(neg_position, positive_position)| {
                             let call = ref_pos_to_basemod_call
                                 .get(&neg_position.get_base_and_position())
                                 .copied()
                                 .unwrap_or(BaseModCall::Filtered);
-                            positive_position.add_base_mod_call(&call);
                             (positive_position.get_base_and_position(), call)
                         })
                         .sorted_by(|((_, a), _), ((_, b), _)| a.cmp(b))
-                        .map(|(_, call)| call)
                         .collect(),
                 }
             }
@@ -398,33 +434,37 @@ impl GenomeWindow {
                     Strand::Positive => pos_positions,
                     Strand::Negative => neg_positions,
                 };
-                if let Some(positions) = positions.as_mut() {
-                    positions
-                        .iter_mut()
-                        .map(|p| {
-                            let (_, call) = get_add_call(p);
-                            call
-                        })
-                        .collect()
+                if let Some(positions) = positions.as_ref() {
+                    positions.iter().map(|p| get_call(p)).collect()
                 } else {
                     return;
                 }
             }
         };
 
-        if pattern.iter().filter(|&bmc| bmc == &BaseModCall::Filtered).count()
-            > max_filtered_positions
-        {
-            // skip when too many filtered positions
-            return;
-        }
-
-        for (i, call) in pattern.iter().enumerate() {
+        let mut pattern =
+            Vec::<BaseModCall>::with_capacity(pos_and_calls.len());
+        let mut positions_to_calls =
+            FxHashMap::<BaseAndPosition, BaseModCall>::default();
+        let mut n_filt = 0usize;
+        for (i, (bp, call)) in pos_and_calls.into_iter().enumerate() {
+            positions_to_calls.insert(bp, call);
+            pattern.push(call);
             match call {
-                BaseModCall::Filtered => {}
-                _ => self.inc_coverage(i, &strand),
+                BaseModCall::Filtered => {
+                    n_filt = n_filt.saturating_add(1);
+                    if n_filt > max_filtered_positions {
+                        return;
+                    }
+                }
+                _ => {
+                    // positions_to_calls.insert(bp, call);
+                    // pattern.push(call);
+                    self.inc_coverage(i, &strand);
+                }
             }
         }
+        self.add_calls_to_accumulators(positions_to_calls, strand);
         self.add_pattern(&strand, pattern);
     }
 
@@ -1497,16 +1537,28 @@ pub(super) struct MethylationEntropy {
 
 impl MethylationEntropy {
     pub(super) fn to_row(&self, name: &str, strand: Strand) -> String {
-        let (mml, std) = methylation_count_stats(&self.methylation_counts);
+        let meth_count_stats =
+            methylation_count_stats(&self.methylation_counts);
         format!(
-            "{name}{TAB}{}{TAB}{}{TAB}{}{TAB}{}{TAB}{}{TAB}{}{TAB}{}\n",
+            "{name}{TAB}\
+            {}{TAB}\
+            {}{TAB}\
+            {}{TAB}\
+            {}{TAB}\
+            {}{TAB}\
+            {}{TAB}\
+            {}{TAB}\
+            {}{TAB}\
+            {}\n",
             self.interval.start,
             self.interval.end,
             self.me_entropy,
             strand.to_char(),
             self.num_reads,
-            mml,
-            std
+            meth_count_stats.mml,
+            meth_count_stats.std_ml,
+            meth_count_stats.n_meth,
+            meth_count_stats.total_calls,
         )
     }
 }
@@ -1529,6 +1581,8 @@ struct DescriptiveStats {
     min_num_reads: usize,
     mean_methylation_level: f32,
     std_methylation_level: f32,
+    n_meth: u32,
+    total_calls: u32,
     failed_count: usize,
     successful_count: usize,
 }
@@ -1587,7 +1641,7 @@ impl DescriptiveStats {
             };
 
             let success_count = measurements.len();
-            let (mml, std_ml) = methylation_count_stats(&methylation_counts);
+            let meth_count_stats = methylation_count_stats(&methylation_counts);
 
             Ok(Self {
                 mean_entropy,
@@ -1597,8 +1651,10 @@ impl DescriptiveStats {
                 mean_num_reads,
                 max_num_reads,
                 min_num_reads,
-                mean_methylation_level: mml,
-                std_methylation_level: std_ml,
+                mean_methylation_level: meth_count_stats.mml,
+                std_methylation_level: meth_count_stats.std_ml,
+                n_meth: meth_count_stats.n_meth,
+                total_calls: meth_count_stats.total_calls,
                 successful_count: success_count,
                 failed_count: n_fails,
             })
@@ -1632,6 +1688,8 @@ impl DescriptiveStats {
             {}{TAB}\
             {}{TAB}\
             {}{TAB}\
+            {}{TAB}\
+            {}{TAB}\
             {}\n",
             self.mean_entropy,
             strand.to_char(),
@@ -1644,7 +1702,9 @@ impl DescriptiveStats {
             self.successful_count,
             self.failed_count,
             self.mean_methylation_level,
-            self.std_methylation_level
+            self.std_methylation_level,
+            self.n_meth,
+            self.total_calls,
         )
     }
 }

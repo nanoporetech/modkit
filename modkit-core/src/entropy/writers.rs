@@ -127,7 +127,7 @@ pub(super) trait EntropyWriter {
 
 #[rustfmt::skip]
 const WINDOWS_HEADER: &'static str = "\
-        #chrom\tstart\tend\tentropy\tstrand\tnum_reads\tmean_methylation_level\tstd_methylation_level\n";
+        #chrom\tstart\tend\tentropy\tstrand\tnum_reads\tmean_methylation_level\tstd_methylation_level\tcount_methylated\ttotal_calls\n";
 
 pub(super) struct WindowsWriter<T: Write> {
     output: BufWriter<T>,
@@ -200,7 +200,7 @@ impl RegionsWriter {
             regions_bed_out.write(
                 &format!(
                     "\
-                chrom{TAB}\
+                #chrom{TAB}\
                 start{TAB}\
                 end{TAB}\
                 region_name{TAB}\
@@ -215,7 +215,9 @@ impl RegionsWriter {
                 successful_window_count{TAB}\
                 failed_window_count{TAB}\
                 mean_methylation_level{TAB}\
-                std_methylation_level\n"
+                std_methylation_level{TAB}\
+                count_methylated{TAB}\
+                total_calls\n"
                 )
                 .as_bytes(),
             )?;
