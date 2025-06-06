@@ -4,11 +4,11 @@ use std::hash::Hash;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use bio::io::fasta::Reader as FastaReader;
 use indicatif::{MultiProgress, ProgressIterator};
 use log::debug;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::fasta::HtsLibFastaRecords;
 use crate::mod_base_code::DnaBase;
 use crate::util::{get_ticker, Strand, StrandRule};
 
@@ -42,7 +42,8 @@ impl GenomePositions {
         all_contigs: &HashSet<String>,
         multi_progress: &MultiProgress,
     ) -> anyhow::Result<Self> {
-        let fasta_reader = FastaReader::from_file(&fasta_fp)?;
+        // let fasta_reader = FastaReader::from_file(&fasta_fp)?;
+        let fasta_reader = HtsLibFastaRecords::from_file(fasta_fp)?;
         let reader_pb = multi_progress.add(get_ticker());
         reader_pb.set_message("sequences read");
         let pos_bases =
@@ -53,7 +54,7 @@ impl GenomePositions {
             .collect::<FxHashSet<char>>();
 
         let contigs = fasta_reader
-            .records()
+            .into_iter()
             .progress_with(reader_pb)
             .inspect(|r| {
                 if let Err(e) = r {
@@ -61,21 +62,20 @@ impl GenomePositions {
                 }
             })
             .filter_map(|res| res.ok())
-            .filter(|record| all_contigs.contains(record.id()))
-            .map(|record| {
-                let contig_name = record.id().to_string();
-                let seq = record
-                    .seq()
-                    .iter()
-                    .map(|b| {
-                        let base = char::from(*b);
-                        if mask {
-                            base
-                        } else {
-                            base.to_ascii_uppercase()
-                        }
-                    })
-                    .collect::<Vec<char>>();
+            .filter(|(record_id, _record)| all_contigs.contains(record_id))
+            .map(|(contig_name, record)| {
+                // let contig_name = record.id().to_string();
+                let seq =
+                    record
+                        .chars()
+                        .map(|base| {
+                            if mask {
+                                base
+                            } else {
+                                base.to_ascii_uppercase()
+                            }
+                        })
+                        .collect::<Vec<char>>();
 
                 (contig_name, seq)
             })

@@ -2,20 +2,112 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context};
-use bio::io::fasta::IndexedReader as FastaReader;
 use log::debug;
 use rayon::prelude::*;
+use rust_htslib::faidx;
 use rust_lapper::{Interval, Lapper};
 use rustc_hash::FxHashMap;
 
+use crate::errs::{MkError, MkResult};
 use crate::motifs::motif_bed::{
     find_motif_hits, MotifLocations, MultipleMotifLocations, RegexMotif,
 };
 use crate::position_filter::StrandedPositionFilter;
 use crate::util::StrandRule;
 
+struct HtsFastaHandle {
+    fasta_fp: PathBuf,
+    contigs: FxHashMap<String, u64>,
+}
+
+impl HtsFastaHandle {
+    fn from_file(fp: &PathBuf) -> anyhow::Result<Self> {
+        // todo check/warn if index is not present
+        let tmp_reader = faidx::Reader::from_path(fp)?;
+        let contigs = (0..tmp_reader.n_seqs()).try_fold(
+            FxHashMap::default(),
+            |mut contigs, i| {
+                let seq_name = tmp_reader
+                    .seq_name(i as i32)
+                    .context("failed to get name of {i}th sequence")?;
+                let length = tmp_reader.fetch_seq_len(&seq_name);
+                if let Some(_) = contigs.insert(seq_name.clone(), length) {
+                    bail!("{seq_name} is in FASTA more than once")
+                } else {
+                    Ok(contigs)
+                }
+            },
+        )?;
+
+        Ok(Self { fasta_fp: fp.to_owned(), contigs })
+    }
+
+    fn get_sequence(
+        &self,
+        contig: &str,
+        start: u64,
+        end: u64,
+    ) -> MkResult<String> {
+        if let Some(length) = self.contigs.get(contig) {
+            if end > *length {
+                Err(MkError::InvalidReferenceCoordinates)
+            } else {
+                let tmp_reader = faidx::Reader::from_path(&self.fasta_fp)
+                    .map_err(|e| MkError::HtsLibError(e))?;
+                let seq = tmp_reader
+                    .fetch_seq_string(contig, start as usize, end as usize)
+                    .map_err(|e| MkError::HtsLibError(e))?;
+                Ok(seq)
+            }
+        } else {
+            Err(MkError::ContigMissing(contig.to_string()))
+        }
+    }
+}
+
+pub struct HtsLibFastaRecords {
+    curr_record_idx: i32,
+    total_records: u64,
+    reader: faidx::Reader,
+}
+
+impl Iterator for HtsLibFastaRecords {
+    type Item = MkResult<(String, String)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_pair().transpose()
+    }
+}
+
+impl HtsLibFastaRecords {
+    pub fn from_file(file: &PathBuf) -> MkResult<Self> {
+        let reader = faidx::Reader::from_path(file)
+            .map_err(|e| MkError::HtsLibError(e))?;
+        let total_records = reader.n_seqs();
+        let curr_record_idx = 0;
+        Ok(Self { curr_record_idx, total_records, reader })
+    }
+
+    fn next_pair(&mut self) -> MkResult<Option<(String, String)>> {
+        if self.curr_record_idx as u64 >= self.total_records {
+            return Ok(None);
+        }
+        let contig_name = self
+            .reader
+            .seq_name(self.curr_record_idx)
+            .map_err(|e| MkError::HtsLibError(e))?;
+        let length = self.reader.fetch_seq_len(&contig_name);
+        let seq = self
+            .reader
+            .fetch_seq_string(&contig_name, 0usize, length as usize)
+            .map_err(|e| MkError::HtsLibError(e))?;
+        self.curr_record_idx = self.curr_record_idx.saturating_add(1);
+        Ok(Some((contig_name, seq)))
+    }
+}
+
 pub struct MotifLocationsLookup {
-    reader: FastaReader<std::fs::File>,
+    reader: HtsFastaHandle,
     mask: bool,
     motifs: Vec<RegexMotif>,
     longest_motif_length: u64,
@@ -31,7 +123,7 @@ impl MotifLocationsLookup {
         if motifs.is_empty() {
             bail!("motifs is empty, are you sure you want to make a lookup?");
         }
-        let reader = FastaReader::from_file(fasta_fp)?;
+        let reader = HtsFastaHandle::from_file(fasta_fp)?;
         let longest_motif_length =
             motifs.iter().map(|m| m.length() as u64).max().unwrap();
 
@@ -103,16 +195,18 @@ impl MotifLocationsLookup {
         let mut too_close =
             end_w_buffer.saturating_sub(self.longest_motif_length);
         'fetch_loop: loop {
-            self.reader.fetch(contig, range.start, end_w_buffer)?;
-            let l = end_w_buffer
-                .checked_sub(range.start)
-                .expect("end should be >= start") as usize;
-            let mut buff = Vec::<u8>::with_capacity(l);
-            self.reader.read(&mut buff)?;
-            buff.shrink_to_fit();
-            debug_assert_eq!(buff.len(), l);
-            let seq = String::from_utf8(buff)
-                .context("got illegal characters in sequence")?;
+            let seq =
+                self.reader.get_sequence(contig, range.start, end_w_buffer)?;
+            // self.reader.fetch(contig, range.start, end_w_buffer)?;
+            // let l = end_w_buffer
+            //     .checked_sub(range.start)
+            //     .expect("end should be >= start") as usize;
+            // let mut buff = Vec::<u8>::with_capacity(l);
+            // self.reader.read(&mut buff)?;
+            // buff.shrink_to_fit();
+            // debug_assert_eq!(buff.len(), l);
+            // let seq = String::from_utf8(buff)
+            //     .context("got illegal characters in sequence")?;
             let seq = if self.mask { seq } else { seq.to_ascii_uppercase() };
             let motif_locations = self.get_motifs_on_seq(
                 &seq,
@@ -205,17 +299,19 @@ impl MotifLocationsLookup {
                 stranded_position_filter,
             )
         } else {
-            self.reader.fetch(contig, range.start, range.end)?;
-            let l = range
-                .end
-                .checked_sub(range.start)
-                .expect("end should be >= start") as usize;
-            let mut buff = Vec::<u8>::with_capacity(l);
-            self.reader.read(&mut buff)?;
-            buff.shrink_to_fit();
-            debug_assert_eq!(buff.len(), l);
-            let seq = String::from_utf8(buff)
-                .context("got illegal characters in sequence")?;
+            let seq =
+                self.reader.get_sequence(contig, range.start, range.end)?;
+            // self.reader.fetch(contig, range.start, range.end)?;
+            // let l = range
+            //     .end
+            //     .checked_sub(range.start)
+            //     .expect("end should be >= start") as usize;
+            // let mut buff = Vec::<u8>::with_capacity(l);
+            // self.reader.read(&mut buff)?;
+            // buff.shrink_to_fit();
+            // debug_assert_eq!(buff.len(), l);
+            // let seq = String::from_utf8(buff)
+            //     .context("got illegal characters in sequence")?;
             let seq = if self.mask { seq } else { seq.to_ascii_uppercase() };
             let multiple_motif_locations = self.get_motifs_on_seq(
                 &seq,
