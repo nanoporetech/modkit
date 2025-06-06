@@ -2,14 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
-use crate::monoid::Moniod;
-use crate::position_filter::StrandedPositionFilter;
-use crate::util::{
-    get_master_progress_bar, get_spinner, get_ticker, ReferenceRecord, Strand,
-    StrandRule,
-};
 use anyhow::{anyhow, bail, Context, Result as AnyhowResult};
-use bio::io::fasta::Reader as FastaReader;
 use derive_new::new;
 use indicatif::{MultiProgress, ProgressIterator};
 use itertools::Itertools;
@@ -17,6 +10,14 @@ use log::{debug, info};
 use rayon::prelude::*;
 use regex::{Match, Regex};
 use rustc_hash::FxHashMap;
+
+use crate::fasta::HtsLibFastaRecords;
+use crate::monoid::Moniod;
+use crate::position_filter::StrandedPositionFilter;
+use crate::util::{
+    get_master_progress_bar, get_spinner, get_ticker, ReferenceRecord, Strand,
+    StrandRule,
+};
 
 fn iupac_to_regex(pattern: &str) -> anyhow::Result<String> {
     let mut regex = String::new();
@@ -378,7 +379,7 @@ pub fn motif_bed(
         RegexMotif::new(re, rc_re, motif_info, motif_raw.to_owned());
 
     let reader =
-        FastaReader::from_file(path).context("failed to open FASTA")?;
+        HtsLibFastaRecords::from_file(path).context("failed to open FASTA")?;
 
     // prog bar stuff
     let master_pb = MultiProgress::new();
@@ -392,7 +393,7 @@ pub fn motif_bed(
     // end prog bar stuff
 
     reader
-        .records()
+        .into_iter()
         .progress_with(records_progress)
         .filter_map(|r| match r {
             Ok(r) => Some(r),
@@ -401,23 +402,9 @@ pub fn motif_bed(
                 None
             }
         })
-        .filter_map(|record| {
-            let seq = String::from_utf8(record.seq().to_vec());
-            match seq {
-                Ok(s) => Some((s, record)),
-                Err(e) => {
-                    let header = record.id();
-                    debug!(
-                        "sequence for {header} failed UTF-8 conversion, {}",
-                        e.to_string()
-                    );
-                    None
-                }
-            }
-        })
-        .for_each(|(seq, record)| {
+        .for_each(|(read_id, seq)| {
             let seq = if mask { seq } else { seq.to_ascii_uppercase() };
-            let n_hits = process_record(record.id(), &seq, &regex_motif);
+            let n_hits = process_record(&read_id, &seq, &regex_motif);
             motifs_progress.inc(n_hits as u64);
         });
 
@@ -513,23 +500,25 @@ pub fn get_masked_sequences(
     mask: bool,
     master_progress_bar: &MultiProgress,
 ) -> anyhow::Result<Vec<(String, u32)>> {
-    let reader = FastaReader::from_file(fasta_fp)?;
+    let reader = HtsLibFastaRecords::from_file(fasta_fp)?;
 
     let records_progress = master_progress_bar.add(get_ticker());
     records_progress.set_message("Reading reference sequences");
 
     Ok(reader
-        .records()
+        .into_iter()
         .progress_with(records_progress)
         .filter_map(|res| res.ok())
-        .filter_map(|record| {
-            name_to_tid.get(record.id()).map(|tid| (record, *tid))
+        .map(|(read_id, read_sequence)| {
+            let seq = if mask {
+                read_sequence
+            } else {
+                read_sequence.to_ascii_uppercase()
+            };
+            (read_id, seq)
         })
-        .filter_map(|(record, tid)| {
-            String::from_utf8(record.seq().to_vec())
-                .map(|s| if mask { s } else { s.to_ascii_uppercase() })
-                .ok()
-                .map(|s| (s, tid))
+        .filter_map(|(read_id, record)| {
+            name_to_tid.get(read_id.as_str()).map(|tid| (record, *tid))
         })
         .collect::<Vec<(String, u32)>>())
 }

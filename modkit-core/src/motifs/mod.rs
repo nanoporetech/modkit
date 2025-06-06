@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use anyhow::{anyhow, bail, Context};
-use bio::io::fasta::Reader as FastaReader;
 use bitvec::prelude::*;
 use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
@@ -23,6 +22,7 @@ use tracing::debug;
 
 use crate::dmr::bedmethyl::BedMethylLine;
 use crate::errs::MkError;
+use crate::fasta::HtsLibFastaRecords;
 use crate::mod_base_code::{DnaBase, ModCodeRepr, MOD_CODE_TO_DNA_BASE};
 use crate::motifs::args::KnownMotifsArgs;
 use crate::motifs::iupac::nt_bytes::BASES;
@@ -1065,19 +1065,17 @@ fn load_references_from_fasta(
     info!("loading references from {:?}", reference_fasta);
     let pb = mpb.add(get_ticker());
     pb.set_message("sequences read");
-    let reader = FastaReader::from_file(&reference_fasta)?;
+    let reader = HtsLibFastaRecords::from_file(&reference_fasta)?;
 
-    let (contigs, n_fails) = reader.records().fold(
+    let (contigs, n_fails) = reader.into_iter().fold(
         (HashMap::new(), 0usize),
         |(mut agg, fails), record| match record {
-            Ok(r) => {
-                let record_name = r.id().to_string();
-                let seq = r
-                    .seq()
-                    .iter()
-                    .map(|&nt| nt.to_ascii_uppercase())
+            Ok((read_id, record_seq)) => {
+                let seq = record_seq
+                    .chars()
+                    .map(|nt| nt.to_ascii_uppercase() as u8)
                     .collect::<Vec<u8>>();
-                agg.insert(record_name, seq);
+                agg.insert(read_id, seq);
                 pb.inc(1);
                 (agg, fails)
             }

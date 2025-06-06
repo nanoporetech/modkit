@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::bail;
-use bio::io::fasta::Reader as FastaReader;
 use clap::{Args, Subcommand};
 use crossbeam_channel::bounded;
 use indicatif::{MultiProgress, ProgressIterator};
@@ -19,6 +18,7 @@ use crate::command_utils::{
 use crate::extract::args::InputArgs;
 use crate::extract::util::ReferencePositionFilter;
 use crate::extract::writer::{OutwriterWithMemory, TsvWriterWithContigNames};
+use crate::fasta::HtsLibFastaRecords;
 use crate::interval_chunks::ReferenceIntervalsFeeder;
 use crate::mod_bam::CollapseMethod;
 use crate::mod_base_code::ModCodeRepr;
@@ -158,16 +158,18 @@ impl EntryExtractFull {
 
         let chrom_to_seq = match self.reference.as_ref() {
             Some(fp) => {
-                let reader = FastaReader::from_file(fp)?;
+                let reader = HtsLibFastaRecords::from_file(fp)?;
                 let pb = multi_prog.add(get_ticker());
                 pb.set_message("parsing FASTA records");
                 reader
-                    .records()
+                    .into_iter()
                     .progress_with(pb)
                     .filter_map(|r| r.ok())
-                    .filter(|record| name_to_tid.get(record.id()).is_some())
-                    .map(|record| {
-                        (record.id().to_owned(), record.seq().to_vec())
+                    .filter(|(record_id, _record)| {
+                        name_to_tid.get(record_id.as_str()).is_some()
+                    })
+                    .map(|(record_id, record)| {
+                        (record_id, record.as_bytes().to_vec())
                     })
                     .collect::<HashMap<String, Vec<u8>>>()
             }
@@ -532,16 +534,18 @@ impl EntryExtractCalls {
 
         let chrom_to_seq = match self.reference.as_ref() {
             Some(fp) => {
-                let reader = FastaReader::from_file(fp)?;
+                let reader = HtsLibFastaRecords::from_file(fp)?;
                 let pb = multi_prog.add(get_ticker());
                 pb.set_message("parsing FASTA records");
                 reader
-                    .records()
+                    .into_iter()
                     .progress_with(pb)
                     .filter_map(|r| r.ok())
-                    .filter(|record| name_to_tid.get(record.id()).is_some())
-                    .map(|record| {
-                        (record.id().to_owned(), record.seq().to_vec())
+                    .filter(|(read_id, _record)| {
+                        name_to_tid.get(read_id.as_str()).is_some()
+                    })
+                    .map(|(record_id, record)| {
+                        (record_id, record.as_bytes().to_vec())
                     })
                     .collect::<HashMap<String, Vec<u8>>>()
             }
