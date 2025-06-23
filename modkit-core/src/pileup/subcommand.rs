@@ -199,6 +199,14 @@ pub struct ModBamPileup {
     #[clap(help_heading = "Filtering Options")]
     #[arg(long, default_value_t = 1_000_000, hide_short_help = true)]
     sampling_interval_size: u32,
+    /// Enable per-position threshold estimation
+    #[clap(help_heading = "Filtering Options")]
+    #[arg(long, default_value_t = false)]
+    position_thresholds: bool,
+    /// Only use per-position threshold if valid coverage is >= this number.
+    #[clap(help_heading = "Filtering Options")]
+    #[arg(long, default_value_t = 10, requires = "position_thresholds")]
+    position_threshold_min_coverage: usize,
     /// BED file that will restrict threshold estimation and pileup results to
     /// positions overlapping intervals in the file. (alias: include-positions)
     #[clap(help_heading = "Selection Options")]
@@ -571,6 +579,7 @@ impl ModBamPileup {
                             writer,
                             self.mixed_delimiters,
                             self.with_header,
+                            self.position_thresholds,
                         )?)
                     }
                     _ => {
@@ -582,6 +591,7 @@ impl ModBamPileup {
                             writer,
                             self.mixed_delimiters,
                             self.with_header,
+                            self.position_thresholds,
                         )?)
                     }
                 },
@@ -712,7 +722,14 @@ impl ModBamPileup {
 
         let force_allow = self.force_allow_implicit;
         let max_depth = self.max_depth;
-        let threshold_options = ThresholdingOptions::Global;
+        let threshold_options = if self.position_thresholds {
+            ThresholdingOptions::PerPosition {
+                percentile: self.filter_percentile,
+                min_coverage_per_position: self.position_threshold_min_coverage,
+            }
+        } else {
+            ThresholdingOptions::Global
+        };
 
         std::thread::spawn(move || {
             pool.install(|| {
@@ -1286,12 +1303,14 @@ impl DuplexModBamPileup {
                     writer,
                     self.mixed_delimiters,
                     false,
+                    false,
                 )?)
             } else {
                 let writer = BufWriter::new(std::io::stdout());
                 Box::new(BedMethylWriter::new(
                     writer,
                     self.mixed_delimiters,
+                    false,
                     false,
                 )?)
             };

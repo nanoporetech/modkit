@@ -224,7 +224,7 @@ impl EntryMergeBedMethyl {
             }
         };
         if self.with_header {
-            writer.write(bedmethyl_header().as_bytes())?;
+            writer.write(bedmethyl_header(false).as_bytes())?;
         }
 
         let readers = self

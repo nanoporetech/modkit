@@ -1,17 +1,8 @@
-use crate::dmr::bedmethyl::BedMethylLine;
-use crate::errs::MkError;
-use crate::interval_chunks::{FocusPositions, MultiChromCoordinates};
-use crate::mod_bam::{BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter};
-use crate::mod_base_code::{DnaBase, ModCodeRepr};
-use crate::monoid::Moniod;
-use crate::motifs::motif_bed::MotifInfo;
-use crate::read_cache::ReadCache;
-use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::thresholds::percentile_linear_interp;
-use crate::util::{
-    get_query_name_string, get_stringable_aux, record_is_not_primary, SamTag,
-    Strand, StrandRule,
-};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::{Display, Formatter};
+use std::path::Path;
+
 use derive_new::new;
 use indexmap::IndexSet;
 use itertools::Itertools;
@@ -21,9 +12,20 @@ use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 use sortedlist_rs::SortedList;
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
+
+use crate::dmr::bedmethyl::BedMethylLine;
+use crate::errs::MkError;
+use crate::interval_chunks::{FocusPositions, MultiChromCoordinates};
+use crate::mod_bam::{BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::motifs::motif_bed::MotifInfo;
+use crate::read_cache::ReadCache;
+use crate::threshold_mod_caller::MultipleThresholdModCaller;
+use crate::thresholds::percentile_linear_interp;
+use crate::util::{
+    get_query_name_string, get_stringable_aux, record_is_not_primary, SamTag,
+    Strand, StrandRule,
+};
 
 pub(crate) mod duplex;
 pub mod subcommand;
@@ -72,8 +74,23 @@ impl Feature {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum PositionThreshold {
+    Single(f32),
+    CombineStrands { pos: f32, neg: f32 },
+}
+
+impl Display for PositionThreshold {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PositionThreshold::Single(v) => write!(f, "{v}"),
+            PositionThreshold::CombineStrands { .. } => todo!(),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, new)]
-pub struct PileupFeatureCounts {
+pub(crate) struct PileupFeatureCounts {
     pub raw_strand: char,
     pub filtered_coverage: u32,
     pub raw_mod_code: ModCodeRepr,
@@ -86,6 +103,7 @@ pub struct PileupFeatureCounts {
     pub n_diff: u32,
     pub n_nocall: u32,
     pub motif_idx: Option<usize>,
+    pub position_threshold: Option<PositionThreshold>,
 }
 
 impl PileupFeatureCounts {
@@ -107,6 +125,7 @@ impl PileupFeatureCounts {
             n_filtered: 0,
             n_diff: 0,
             n_nocall: 0,
+            position_threshold: None,
         }
     }
 
@@ -154,6 +173,7 @@ impl PileupFeatureCounts {
             n_diff,
             n_nocall,
             motif_idx,
+            None,
         )
     }
 
@@ -180,6 +200,7 @@ impl From<BedMethylLine> for PileupFeatureCounts {
             item.count_fail.try_into().unwrap_or(0),
             item.count_diff.try_into().unwrap_or(0),
             item.count_nocall.try_into().unwrap_or(0),
+            None,
             None,
         )
     }
@@ -438,7 +459,7 @@ impl<'a> FeatureVector<'a> {
                             caller.per_base_thresholds.get(primary_base)
                         })
                         .copied()
-                        .unwrap_or(-1f32),
+                        .map(|x| PositionThreshold::Single(x)),
                 )
             },
         );
@@ -448,16 +469,6 @@ impl<'a> FeatureVector<'a> {
             let n_canonical = position_mod_calls.num_canonical;
             let n_filtered = position_mod_calls.num_filtered;
             let mod_code_counts = &position_mod_calls.mod_calls;
-            // let (n_canonical, mod_calls) = base_states.iter().fold(
-            //     (0, FxHashMap::default()),
-            //     |(n_can, mut mod_codes), (base_state, count)| match base_state {
-            //         BaseState::Canonical(_) => (n_can + *count, mod_codes),
-            //         BaseState::Modified(repr) => {
-            //             *mod_codes.entry(*repr).or_insert(0) += *count;
-            //             (n_can, mod_codes)
-            //         }
-            //     },
-            // );
 
             // todo do this arithmatic at object construction
             let n_other_modcall = base_to_mod_calls
@@ -512,6 +523,7 @@ impl<'a> FeatureVector<'a> {
                                     n_diff,
                                     n_nocall,
                                     motif_idx: Some(idx),
+                                    position_threshold,
                                 });
                             }
                         } else {
@@ -528,6 +540,7 @@ impl<'a> FeatureVector<'a> {
                                 n_diff,
                                 n_nocall,
                                 motif_idx: None,
+                                position_threshold,
                             });
                         }
                     }
@@ -554,6 +567,7 @@ impl<'a> FeatureVector<'a> {
                                 n_diff,
                                 n_nocall,
                                 motif_idx: Some(idx),
+                                position_threshold,
                             })
                         }
                     } else {
@@ -572,6 +586,7 @@ impl<'a> FeatureVector<'a> {
                             n_diff,
                             n_nocall,
                             motif_idx: None,
+                            position_threshold,
                         })
                     }
                 }
@@ -705,6 +720,7 @@ fn combine_strand_features(
                 let mut combined = grouped_by_mod_code
                     .into_iter()
                     .map(|(mod_code, feature_counts)| {
+                        assert_eq!(feature_counts.len(), 2);
                         feature_counts.into_iter().fold(
                             // use unknown/ambiguous strand because we're
                             // combining
@@ -830,7 +846,7 @@ impl ModBasePileup {
 
     // this might be slowing us down, use a BTreeMap instead
     #[inline]
-    pub fn iter_counts_sorted(
+    pub(crate) fn iter_counts_sorted(
         &self,
     ) -> impl Iterator<
         Item = (&u32, &FxHashMap<PartitionKey, Vec<PileupFeatureCounts>>),
@@ -1208,6 +1224,9 @@ fn process_region<T: AsRef<Path>>(
 mod mod_pileup_tests {
     use std::collections::HashSet;
 
+    use rust_htslib::bam::{self, Read};
+    use rustc_hash::FxHashMap;
+
     use crate::mod_bam::BaseModProbs;
     use crate::mod_base_code::{HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE};
     use crate::pileup::{
@@ -1216,8 +1235,6 @@ mod mod_pileup_tests {
     };
     use crate::threshold_mod_caller::MultipleThresholdModCaller;
     use crate::util::{SamTag, Strand};
-    use rust_htslib::bam::{self, Read};
-    use rustc_hash::FxHashMap;
 
     fn canonical_probs_fact() -> BaseModProbs {
         let mut base_mod_probs =

@@ -45,8 +45,8 @@ pub struct BedMethylWriter<T: Write> {
     tabs_and_spaces: bool,
 }
 
-pub fn bedmethyl_header() -> String {
-    let fields = [
+pub fn bedmethyl_header(with_position_thresholds: bool) -> String {
+    let mut fields = vec![
         "chrom",
         "chromStart",
         "chromEnd",
@@ -66,22 +66,23 @@ pub fn bedmethyl_header() -> String {
         "count_diff",
         "count_nocall",
     ];
+    if with_position_thresholds {
+        fields.push("pos_pass_threshold");
+    }
     let fields = fields.join("\t");
     format!("#{fields}\n")
 }
 
 impl<T: Write + Sized> BedMethylWriter<T> {
-    fn header() -> String {
-        bedmethyl_header()
-    }
-
     pub fn new(
         mut buf_writer: BufWriter<T>,
         tabs_and_spaces: bool,
         with_header: bool,
+        with_position_threshold: bool,
     ) -> anyhow::Result<Self> {
         if with_header {
-            buf_writer.write(Self::header().as_bytes())?;
+            buf_writer
+                .write(bedmethyl_header(with_position_threshold).as_bytes())?;
         }
 
         Ok(Self { buf_writer, tabs_and_spaces })
@@ -112,44 +113,88 @@ impl<T: Write + Sized> BedMethylWriter<T> {
                     })
                     .unwrap_or(format!("{}", feature_count.raw_mod_code))
             };
-            let row = format!(
-                "{}{tab}\
-                 {}{tab}\
-                 {}{tab}\
-                 {}{tab}\
-                 {}{tab}\
-                 {}{tab}\
-                 {}{tab}\
-                 {}{tab}\
-                 {}{tab}\
-                 {}{space}\
-                 {}{space}\
-                 {}{space}\
-                 {}{space}\
-                 {}{space}\
-                 {}{space}\
-                 {}{space}\
-                 {}{space}\
-                 {}\n",
-                chrom_name,
-                pos,
-                pos + 1,
-                name,
-                feature_count.filtered_coverage,
-                feature_count.raw_strand,
-                pos,
-                pos + 1,
-                "255,0,0",
-                feature_count.filtered_coverage,
-                format!("{:.2}", feature_count.fraction_modified * 100f32),
-                feature_count.n_modified,
-                feature_count.n_canonical,
-                feature_count.n_other_modified,
-                feature_count.n_delete,
-                feature_count.n_filtered,
-                feature_count.n_diff,
-                feature_count.n_nocall,
-            );
+            let row = if let Some(pos_t) = feature_count.position_threshold {
+                format!(
+                    "{}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}\n",
+                    chrom_name,
+                    pos,
+                    pos + 1,
+                    name,
+                    feature_count.filtered_coverage,
+                    feature_count.raw_strand,
+                    pos,
+                    pos + 1,
+                    "255,0,0",
+                    feature_count.filtered_coverage,
+                    format!("{:.2}", feature_count.fraction_modified * 100f32),
+                    feature_count.n_modified,
+                    feature_count.n_canonical,
+                    feature_count.n_other_modified,
+                    feature_count.n_delete,
+                    feature_count.n_filtered,
+                    feature_count.n_diff,
+                    feature_count.n_nocall,
+                    pos_t,
+                )
+            } else {
+                format!(
+                    "{}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{tab}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}{space}\
+                     {}\n",
+                        chrom_name,
+                        pos,
+                        pos + 1,
+                        name,
+                        feature_count.filtered_coverage,
+                        feature_count.raw_strand,
+                        pos,
+                        pos + 1,
+                        "255,0,0",
+                        feature_count.filtered_coverage,
+                        format!("{:.2}", feature_count.fraction_modified * 100f32),
+                        feature_count.n_modified,
+                        feature_count.n_canonical,
+                        feature_count.n_other_modified,
+                        feature_count.n_delete,
+                        feature_count.n_filtered,
+                        feature_count.n_diff,
+                        feature_count.n_nocall,
+                    )
+            };
+
             writer
                 .write(row.as_bytes())
                 .with_context(|| "failed to write row")?;
