@@ -410,6 +410,14 @@ impl BaseModCall {
             _ => false,
         }
     }
+
+    pub fn prob(&self) -> f32 {
+        match self {
+            BaseModCall::Canonical(p) => *p,
+            BaseModCall::Modified(p, _) => *p,
+            BaseModCall::Filtered => f32::NAN,
+        }
+    }
 }
 
 #[derive(new, Debug, PartialEq, Clone)]
@@ -655,6 +663,20 @@ impl BaseModProbs {
         }
     }
 }
+
+impl PartialOrd for BaseModProbs {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.argmax_base_mod_call().partial_cmp(&other.argmax_base_mod_call())
+    }
+}
+
+impl Ord for BaseModProbs {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(&other).unwrap()
+    }
+}
+
+impl Eq for BaseModProbs {}
 
 pub struct DeltaListConverter {
     pub cumulative_counts: Vec<u32>,

@@ -6,7 +6,8 @@ use std::collections::HashMap;
 
 #[derive(new)]
 pub struct MultipleThresholdModCaller {
-    per_base_thresholds: HashMap<DnaBase, f32>,
+    // todo change all to Fx..
+    pub(crate) per_base_thresholds: HashMap<DnaBase, f32>,
     // todo maybe allow this per primary base?
     per_mod_thresholds: HashMap<ModCodeRepr, f32>,
     default_threshold: f32,

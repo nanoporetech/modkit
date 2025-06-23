@@ -24,6 +24,7 @@ use crate::motifs::motif_bed::RegexMotif;
 use crate::pileup::duplex::{process_region_duplex_batch, DuplexModBasePileup};
 use crate::pileup::{
     process_region_batch, ModBasePileup, PileupNumericOptions,
+    ThresholdingOptions,
 };
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::sampling_schedule::IdxStats;
@@ -711,6 +712,7 @@ impl ModBamPileup {
 
         let force_allow = self.force_allow_implicit;
         let max_depth = self.max_depth;
+        let threshold_options = ThresholdingOptions::Global;
 
         std::thread::spawn(move || {
             pool.install(|| {
@@ -741,6 +743,7 @@ impl ModBamPileup {
                                             multi_chrom_coords,
                                             &in_bam_fp,
                                             &threshold_caller,
+                                            &threshold_options,
                                             &pileup_options,
                                             force_allow,
                                             combine_strands,

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::errs::{MkError, MkResult};
-use crate::mod_bam::{CollapseMethod, EdgeFilter};
+use crate::mod_bam::{BaseModProbs, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
@@ -12,29 +12,158 @@ use crate::util::Region;
 use anyhow::{Context, Result as AnyhowResult};
 use log::{debug, info};
 use rayon::prelude::*;
+use sortedlist_rs::SortedList;
 
-pub(crate) fn percentile_linear_interp(xs: &[f32], q: f32) -> MkResult<f32> {
-    if xs.len() < 2 {
-        Err(MkError::PercentileNotEnoughDatapoints(xs.len()))
+pub(crate) trait Percenileable {
+    fn nelems(&self) -> usize;
+    fn get(&self, idx: usize) -> f32;
+    fn last_elem(&self) -> f32;
+}
+
+impl Percenileable for &[f32] {
+    fn nelems(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn get(&self, idx: usize) -> f32 {
+        self[idx]
+    }
+
+    #[inline]
+    fn last_elem(&self) -> f32 {
+        self[self.len() - 1]
+    }
+}
+
+impl Percenileable for [f32] {
+    fn nelems(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn get(&self, idx: usize) -> f32 {
+        self[idx]
+    }
+
+    #[inline]
+    fn last_elem(&self) -> f32 {
+        self[self.len() - 1]
+    }
+}
+
+impl Percenileable for Vec<f32> {
+    fn nelems(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn get(&self, idx: usize) -> f32 {
+        self[idx]
+    }
+
+    #[inline]
+    fn last_elem(&self) -> f32 {
+        self[self.len() - 1]
+    }
+}
+
+impl Percenileable for &mut [f32] {
+    fn nelems(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn get(&self, idx: usize) -> f32 {
+        self[idx]
+    }
+
+    #[inline]
+    fn last_elem(&self) -> f32 {
+        self[self.len() - 1]
+    }
+}
+
+impl Percenileable for &mut Vec<f32> {
+    fn nelems(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn get(&self, idx: usize) -> f32 {
+        self[idx]
+    }
+
+    #[inline]
+    fn last_elem(&self) -> f32 {
+        self[self.len() - 1]
+    }
+}
+
+impl Percenileable for &SortedList<BaseModProbs> {
+    fn nelems(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn get(&self, idx: usize) -> f32 {
+        self[idx].argmax_base_mod_call().prob()
+    }
+
+    #[inline]
+    fn last_elem(&self) -> f32 {
+        self.last().unwrap().argmax_base_mod_call().prob()
+    }
+}
+
+pub(crate) fn percentile_linear_interp<T: Percenileable + ?Sized>(
+    xs: &T,
+    q: f32,
+) -> MkResult<f32> {
+    if xs.nelems() < 2 {
+        Err(MkError::PercentileNotEnoughDatapoints(xs.nelems()))
     } else {
         if q > 1.0 {
             return Err(MkError::PercentileInvalidQuantile(q));
         }
         if q == 1.0f32 {
-            Ok(xs[xs.len() - 1])
+            Ok(xs.last_elem())
         } else {
             assert!(q < 1.0);
-            let l = (xs.len() - 1usize) as f32;
+            let l = (xs.nelems() - 1usize) as f32;
             let left = (l * q).floor();
             let right = (l * q).ceil() as usize;
             let g = (l * q).fract();
-            let y0 = xs[left as usize];
-            let y1 = xs[right];
+            let y0 = xs.get(left as usize);
+            let y1 = xs.get(right);
             let y = y0 * (1f32 - g) + y1 * g;
             Ok(y)
         }
     }
 }
+
+// pub(crate) fn percentile_linear_interp<T: Index<usize, Output=f32> +
+// ?Sized>(xs: &T, q: f32) -> MkResult<f32> {     if xs.len() < 2 {
+//         Err(MkError::PercentileNotEnoughDatapoints(xs.len()))
+//     } else {
+//         if q > 1.0 {
+//             return Err(MkError::PercentileInvalidQuantile(q));
+//         }
+//         if q == 1.0f32 {
+//             Ok(xs[xs.len() - 1])
+//         } else {
+//             assert!(q < 1.0);
+//             let l = (xs.len() - 1usize) as f32;
+//             let left = (l * q).floor();
+//             let right = (l * q).ceil() as usize;
+//             let g = (l * q).fract();
+//             let y0 = xs[left as usize];
+//             let y1 = xs[right];
+//             let y = y0 * (1f32 - g) + y1 * g;
+//             Ok(y)
+//         }
+//     }
+// }
 
 pub struct Percentiles {
     pub(crate) qs: Vec<(f32, f32)>,

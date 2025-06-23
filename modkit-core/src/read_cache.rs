@@ -7,8 +7,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::errs::{MkError, MkResult};
 use crate::mod_bam::{
-    BaseModCall, CollapseMethod, DuplexModCall, EdgeFilter, ModBaseInfo,
-    SeqPosBaseModProbs, SkipMode,
+    BaseModCall, BaseModProbs, CollapseMethod, DuplexModCall, EdgeFilter,
+    ModBaseInfo, SeqPosBaseModProbs, SkipMode,
 };
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::monoid::BorrowingMoniod;
@@ -18,15 +18,14 @@ use crate::util::{self, Strand};
 
 /// Mapping of _reference position_ to base mod calls as determined by the
 /// aligned pairs for the read
-type RefPosBaseModCalls = FxHashMap<u64, BaseModCall>;
+type RefPositionToBaseModProbs = FxHashMap<u64, BaseModProbs>;
 type PrimaryBaseToModCodes = FxHashMap<DnaBase, HashSet<ModCodeRepr>>;
 
 pub(crate) struct ReadCache<'a> {
     /// Mapping of read_id to reference position <> base mod calls for that
-    /// read organized by the canonical base (the 'char') todo: should use
-    /// DnaBase here
-    pos_reads: FxHashMap<String, FxHashMap<DnaBase, RefPosBaseModCalls>>,
-    neg_reads: FxHashMap<String, FxHashMap<DnaBase, RefPosBaseModCalls>>,
+    /// read organized by the canonical base (the 'char')
+    pos_reads: FxHashMap<String, FxHashMap<DnaBase, RefPositionToBaseModProbs>>,
+    neg_reads: FxHashMap<String, FxHashMap<DnaBase, RefPositionToBaseModProbs>>,
     /// these reads don't have mod tags or should be skipped for some other
     /// reason
     skip_set: HashSet<String>,
@@ -73,7 +72,6 @@ impl<'a> ReadCache<'a> {
         seq_pos_base_mod_probs: SeqPosBaseModProbs,
         mod_strand: Strand,
         canonical_base: DnaBase,
-        threshold_base: DnaBase,
     ) {
         // todo could be more clever about filtering these calls to be within
         // the region  we're working on..
@@ -88,13 +86,13 @@ impl<'a> ReadCache<'a> {
             .flat_map(|(q_pos, bmp)| {
                 if let Some(r_pos) = aligned_pairs.get(&q_pos) {
                     // filtering happens here.
-                    let call = self.caller.call(&threshold_base, &bmp);
-                    Some((*r_pos, call))
+                    // let call = self.caller.call(&threshold_base, &bmp);
+                    Some((*r_pos, bmp))
                 } else {
                     None
                 }
             })
-            .collect::<FxHashMap<u64, BaseModCall>>();
+            .collect::<RefPositionToBaseModProbs>();
         // todo could make this "bail" here if there aren't any positions..
 
         let read_table = match mod_strand {
@@ -199,7 +197,6 @@ impl<'a> ReadCache<'a> {
                 seq_base_mod_probs,
                 mod_strand,
                 dna_base,
-                threshold_base,
             );
             added_base_mod_probs = true
         }
@@ -212,12 +209,12 @@ impl<'a> ReadCache<'a> {
 
     #[inline]
     fn get_mod_call_from_mapping(
-        strand_calls: &FxHashMap<DnaBase, RefPosBaseModCalls>,
+        strand_calls: &FxHashMap<DnaBase, RefPositionToBaseModProbs>,
         canonical_base: DnaBase,
         position: u32,
-    ) -> Option<BaseModCall> {
+    ) -> Option<BaseModProbs> {
         strand_calls.get(&canonical_base).and_then(|ref_pos_mod_calls| {
-            ref_pos_mod_calls.get(&(position as u64)).map(|bmc| *bmc)
+            ref_pos_mod_calls.get(&(position as u64)).map(|bmc| bmc.clone())
         })
     }
 
@@ -233,8 +230,8 @@ impl<'a> ReadCache<'a> {
         &mut self,
         record: &bam::Record,
         position: u32,
-        canonical_base: DnaBase, // todo make this DnaBase
-    ) -> (Option<BaseModCall>, Option<BaseModCall>) {
+        canonical_base: DnaBase,
+    ) -> (Option<BaseModProbs>, Option<BaseModProbs>) {
         let read_id = String::from_utf8(record.qname().to_vec()).unwrap();
         if self.skip_set.contains(&read_id) {
             (None, None)
@@ -390,12 +387,18 @@ impl<'a> DuplexReadCache<'a> {
     ) -> Option<BaseModCall> {
         if record.is_reverse() {
             match self.read_cache.get_mod_call(&record, position, read_base) {
-                (_, Some(base_mod_call)) => Some(base_mod_call),
+                (_, Some(base_mod_call)) => Some(
+                    self.read_cache
+                        .caller
+                        .call(&read_base.complement(), &base_mod_call),
+                ),
                 _ => None,
             }
         } else {
             match self.read_cache.get_mod_call(&record, position, read_base) {
-                (Some(base_mod_call), _) => Some(base_mod_call),
+                (Some(base_mod_call), _) => Some(
+                    self.read_cache.caller.call(&read_base, &base_mod_call),
+                ),
                 _ => None,
             }
         }
@@ -409,12 +412,18 @@ impl<'a> DuplexReadCache<'a> {
     ) -> Option<BaseModCall> {
         if record.is_reverse() {
             match self.read_cache.get_mod_call(&record, position, read_base) {
-                (Some(base_mod_call), _) => Some(base_mod_call),
+                (Some(base_mod_call), _) => Some(
+                    self.read_cache
+                        .caller
+                        .call(&read_base.complement(), &base_mod_call),
+                ),
                 _ => None,
             }
         } else {
             match self.read_cache.get_mod_call(&record, position, read_base) {
-                (_, Some(base_mod_call)) => Some(base_mod_call),
+                (_, Some(base_mod_call)) => Some(
+                    self.read_cache.caller.call(&read_base, &base_mod_call),
+                ),
                 _ => None,
             }
         }
