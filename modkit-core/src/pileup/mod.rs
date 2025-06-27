@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt::{Display, Formatter};
 use std::path::Path;
 
 use derive_new::new;
@@ -75,15 +74,55 @@ impl Feature {
 }
 
 #[derive(Debug, Copy, Clone)]
+pub(crate) struct PositionStats {
+    pub(crate) min_prob: f32,
+    pub(crate) median_prob: f32,
+    pub(crate) max_prob: f32,
+}
+
+impl PositionStats {
+    fn new_empty() -> Self {
+        Self { min_prob: f32::NAN, median_prob: f32::NAN, max_prob: f32::NAN }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub(crate) enum PositionThreshold {
-    Single(f32),
+    Single { thresh: f32, stats: PositionStats },
     CombineStrands { pos: f32, neg: f32 },
 }
 
-impl Display for PositionThreshold {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl PositionThreshold {
+    pub(crate) fn print_position_threshold(&self) -> String {
         match self {
-            PositionThreshold::Single(v) => write!(f, "{v}"),
+            PositionThreshold::Single { thresh, .. } => thresh.to_string(),
+            PositionThreshold::CombineStrands { .. } => todo!(),
+        }
+    }
+
+    pub(crate) fn min_prob(&self) -> String {
+        match self {
+            PositionThreshold::Single { stats, .. } => {
+                stats.min_prob.to_string()
+            }
+            PositionThreshold::CombineStrands { .. } => todo!(),
+        }
+    }
+
+    pub(crate) fn median_prob(&self) -> String {
+        match self {
+            PositionThreshold::Single { stats, .. } => {
+                stats.median_prob.to_string()
+            }
+            PositionThreshold::CombineStrands { .. } => todo!(),
+        }
+    }
+
+    pub(crate) fn max_prob(&self) -> String {
+        match self {
+            PositionThreshold::Single { stats, .. } => {
+                stats.max_prob.to_string()
+            }
             PositionThreshold::CombineStrands { .. } => todo!(),
         }
     }
@@ -267,6 +306,61 @@ impl Tally {
         n_other_basecall + n_other_modcall
     }
 
+    fn get_position_stats(
+        &self,
+        thresholding_options: &ThresholdingOptions,
+    ) -> Option<FxHashMap<DnaBase, PositionStats>> {
+        match thresholding_options {
+            ThresholdingOptions::PerPosition { .. } => {
+                let per_base_stats = self
+                    .base_to_mod_probs
+                    .iter()
+                    .map(|(base, probs)| match probs.len() {
+                        0 => (*base, PositionStats::new_empty()),
+                        1..=2 => {
+                            let min_prob = probs
+                                .first()
+                                .map(|x| x.argmax_base_mod_call().prob())
+                                .unwrap();
+                            let max_prob = probs
+                                .last()
+                                .map(|x| x.argmax_base_mod_call().prob())
+                                .unwrap();
+                            let median_prob = (min_prob + max_prob) / 2f32;
+                            let stats = PositionStats {
+                                min_prob,
+                                median_prob,
+                                max_prob,
+                            };
+                            (*base, stats)
+                        }
+                        _ => {
+                            let min_prob = probs
+                                .first()
+                                .map(|x| x.argmax_base_mod_call().prob())
+                                .unwrap();
+                            let max_prob = probs
+                                .last()
+                                .map(|x| x.argmax_base_mod_call().prob())
+                                .unwrap();
+                            let median_prob =
+                                percentile_linear_interp(&probs, 0.5f32)
+                                    .unwrap();
+                            let stats = PositionStats {
+                                min_prob,
+                                median_prob,
+                                max_prob,
+                            };
+                            (*base, stats)
+                        }
+                    })
+                    .collect::<FxHashMap<DnaBase, PositionStats>>();
+                Some(per_base_stats)
+            }
+            ThresholdingOptions::Global => None,
+        }
+    }
+
     fn get_position_caller(
         &self,
         thresholding_options: &ThresholdingOptions,
@@ -441,6 +535,8 @@ impl<'a> FeatureVector<'a> {
     ) {
         let position_caller =
             tally.get_position_caller(self.thresholding_options);
+        let position_stats =
+            tally.get_position_stats(self.thresholding_options);
         let base_to_mod_calls = tally.get_mod_calls(
             self.caller,
             position_caller.as_ref(),
@@ -458,8 +554,19 @@ impl<'a> FeatureVector<'a> {
                         .and_then(|caller| {
                             caller.per_base_thresholds.get(primary_base)
                         })
-                        .copied()
-                        .map(|x| PositionThreshold::Single(x)),
+                        .and_then(|thresh| {
+                            position_stats
+                                .as_ref()
+                                .and_then(|x| {
+                                    x.get(primary_base)
+                                        .map(|stats| stats)
+                                        .copied()
+                                })
+                                .map(|stats| PositionThreshold::Single {
+                                    thresh: *thresh,
+                                    stats,
+                                })
+                        }),
                 )
             },
         );
