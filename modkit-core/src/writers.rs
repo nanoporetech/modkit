@@ -70,6 +70,8 @@ pub fn bedmethyl_header(with_position_thresholds: bool) -> String {
         fields.push("pos_pass_threshold");
         fields.push("min_prob");
         fields.push("median_prob");
+        fields.push("mean_prob");
+        fields.push("std_prob");
         fields.push("max_prob");
     }
     let fields = fields.join("\t");
@@ -139,6 +141,8 @@ impl<T: Write + Sized> BedMethylWriter<T> {
                      {}{space}\
                      {}{space}\
                      {}{space}\
+                     {}{space}\
+                     {}{space}\
                      {}\n",
                     chrom_name,
                     pos,
@@ -161,6 +165,8 @@ impl<T: Write + Sized> BedMethylWriter<T> {
                     pos_t.print_position_threshold(),
                     pos_t.min_prob(),
                     pos_t.median_prob(),
+                    pos_t.mean_prob(),
+                    pos_t.std_prob(),
                     pos_t.max_prob(),
                 )
             } else {

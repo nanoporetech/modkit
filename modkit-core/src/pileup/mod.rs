@@ -20,7 +20,7 @@ use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::motifs::motif_bed::MotifInfo;
 use crate::read_cache::ReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::thresholds::percentile_linear_interp;
+use crate::thresholds::{percentile_linear_interp, Percenileable};
 use crate::util::{
     get_query_name_string, get_stringable_aux, record_is_not_primary, SamTag,
     Strand, StrandRule,
@@ -77,12 +77,20 @@ impl Feature {
 pub(crate) struct PositionStats {
     pub(crate) min_prob: f32,
     pub(crate) median_prob: f32,
+    pub(crate) mean_prob: f32,
+    pub(crate) std_prob: f32,
     pub(crate) max_prob: f32,
 }
 
 impl PositionStats {
     fn new_empty() -> Self {
-        Self { min_prob: f32::NAN, median_prob: f32::NAN, max_prob: f32::NAN }
+        Self {
+            min_prob: f32::NAN,
+            median_prob: f32::NAN,
+            max_prob: f32::NAN,
+            mean_prob: f32::NAN,
+            std_prob: f32::NAN,
+        }
     }
 }
 
@@ -113,6 +121,24 @@ impl PositionThreshold {
         match self {
             PositionThreshold::Single { stats, .. } => {
                 stats.median_prob.to_string()
+            }
+            PositionThreshold::CombineStrands { .. } => todo!(),
+        }
+    }
+
+    pub(crate) fn mean_prob(&self) -> String {
+        match self {
+            PositionThreshold::Single { stats, .. } => {
+                stats.mean_prob.to_string()
+            }
+            PositionThreshold::CombineStrands { .. } => todo!(),
+        }
+    }
+
+    pub(crate) fn std_prob(&self) -> String {
+        match self {
+            PositionThreshold::Single { stats, .. } => {
+                stats.std_prob.to_string()
             }
             PositionThreshold::CombineStrands { .. } => todo!(),
         }
@@ -327,9 +353,21 @@ impl Tally {
                                 .map(|x| x.argmax_base_mod_call().prob())
                                 .unwrap();
                             let median_prob = (min_prob + max_prob) / 2f32;
+                            let mean_prob = (min_prob / max_prob) / 2f32;
+                            let std_prob = {
+                                let var = [min_prob, max_prob]
+                                    .map(|x| (x - mean_prob).powi(2))
+                                    .iter()
+                                    .sum::<f32>()
+                                    / 2f32;
+                                var.sqrt()
+                            };
+
                             let stats = PositionStats {
                                 min_prob,
                                 median_prob,
+                                mean_prob,
+                                std_prob,
                                 max_prob,
                             };
                             (*base, stats)
@@ -346,9 +384,13 @@ impl Tally {
                             let median_prob =
                                 percentile_linear_interp(&probs, 0.5f32)
                                     .unwrap();
+                            let mean_prob = probs.mean();
+                            let std_prob = probs.std(mean_prob);
                             let stats = PositionStats {
                                 min_prob,
                                 median_prob,
+                                mean_prob,
+                                std_prob,
                                 max_prob,
                             };
                             (*base, stats)

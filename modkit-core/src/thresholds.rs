@@ -14,10 +14,25 @@ use log::{debug, info};
 use rayon::prelude::*;
 use sortedlist_rs::SortedList;
 
+#[inline]
+fn calc_mean(xs: &[f32]) -> f32 {
+    assert!(!xs.is_empty());
+    let tot = xs.iter().sum::<f32>();
+    tot / (xs.len() as f32)
+}
+
+fn calc_std(xs: &[f32], mean: f32) -> f32 {
+    let var =
+        xs.iter().map(|x| (*x - mean).powi(2)).sum::<f32>() / (xs.len() as f32);
+    var.sqrt()
+}
+
 pub(crate) trait Percenileable {
     fn nelems(&self) -> usize;
     fn get(&self, idx: usize) -> f32;
     fn last_elem(&self) -> f32;
+    fn mean(&self) -> f32;
+    fn std(&self, mean: f32) -> f32;
 }
 
 impl Percenileable for &[f32] {
@@ -33,6 +48,14 @@ impl Percenileable for &[f32] {
     #[inline]
     fn last_elem(&self) -> f32 {
         self[self.len() - 1]
+    }
+
+    fn mean(&self) -> f32 {
+        calc_mean(&self)
+    }
+
+    fn std(&self, mean: f32) -> f32 {
+        calc_std(&self, mean)
     }
 }
 
@@ -50,6 +73,14 @@ impl Percenileable for [f32] {
     fn last_elem(&self) -> f32 {
         self[self.len() - 1]
     }
+
+    fn mean(&self) -> f32 {
+        calc_mean(&self)
+    }
+
+    fn std(&self, mean: f32) -> f32 {
+        calc_std(&self, mean)
+    }
 }
 
 impl Percenileable for Vec<f32> {
@@ -65,6 +96,14 @@ impl Percenileable for Vec<f32> {
     #[inline]
     fn last_elem(&self) -> f32 {
         self[self.len() - 1]
+    }
+
+    fn mean(&self) -> f32 {
+        calc_mean(&self)
+    }
+
+    fn std(&self, mean: f32) -> f32 {
+        calc_std(&self, mean)
     }
 }
 
@@ -82,6 +121,14 @@ impl Percenileable for &mut [f32] {
     fn last_elem(&self) -> f32 {
         self[self.len() - 1]
     }
+
+    fn mean(&self) -> f32 {
+        calc_mean(self)
+    }
+
+    fn std(&self, mean: f32) -> f32 {
+        calc_std(&self, mean)
+    }
 }
 
 impl Percenileable for &mut Vec<f32> {
@@ -98,6 +145,16 @@ impl Percenileable for &mut Vec<f32> {
     fn last_elem(&self) -> f32 {
         self[self.len() - 1]
     }
+
+    #[inline]
+    fn mean(&self) -> f32 {
+        calc_mean(&self)
+    }
+
+    #[inline]
+    fn std(&self, mean: f32) -> f32 {
+        calc_std(&self, mean)
+    }
 }
 
 impl Percenileable for &SortedList<BaseModProbs> {
@@ -113,6 +170,24 @@ impl Percenileable for &SortedList<BaseModProbs> {
     #[inline]
     fn last_elem(&self) -> f32 {
         self.last().unwrap().argmax_base_mod_call().prob()
+    }
+
+    #[inline]
+    fn mean(&self) -> f32 {
+        assert!(!self.is_empty());
+        let tot =
+            self.iter().map(|x| x.argmax_base_mod_call().prob()).sum::<f32>();
+        tot / (self.len() as f32)
+    }
+
+    #[inline]
+    fn std(&self, mean: f32) -> f32 {
+        let var = self
+            .iter()
+            .map(|x| (x.argmax_base_mod_call().prob() - mean).powi(2))
+            .sum::<f32>()
+            / (self.len() as f32);
+        var.sqrt()
     }
 }
 
