@@ -71,7 +71,9 @@ pub fn parse_thresholds(
     ))
 }
 
-pub fn get_threshold_from_options(
+pub(crate) type PerBasePseudoProbs = HashMap<DnaBase, Vec<f32>>;
+
+pub fn get_threshold_caller_with_pseudo_probs_from_options(
     in_bam: &PathBuf,
     threads: usize,
     interval_size: u32,
@@ -86,11 +88,15 @@ pub fn get_threshold_from_options(
     collapse_method: Option<&CollapseMethod>,
     position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
+    num_pseudos: Option<usize>,
     suppress_progress: bool,
-) -> anyhow::Result<MultipleThresholdModCaller> {
+) -> anyhow::Result<(MultipleThresholdModCaller, PerBasePseudoProbs)> {
     if no_filtering {
         info!("not performing filtering");
-        return Ok(MultipleThresholdModCaller::new_passthrough());
+        return Ok((
+            MultipleThresholdModCaller::new_passthrough(),
+            HashMap::new(),
+        ));
     }
     let (sample_frac, num_reads) = match sample_frac {
         Some(f) => {
@@ -117,20 +123,73 @@ pub fn get_threshold_from_options(
         position_filter,
         only_mapped,
         suppress_progress,
+        num_pseudos,
     )?;
 
     for (dna_base, threshold) in per_base_thresholds.iter() {
+        let threshold = threshold.threshold;
         debug!(
             "estimated pass threshold {threshold} for primary sequence base {}",
             dna_base.char()
         );
     }
 
-    Ok(MultipleThresholdModCaller::new(
-        per_base_thresholds,
-        per_mod_thresholds.unwrap_or(HashMap::new()),
-        0f32,
+    let (per_base_thresholds, per_base_pseudos) =
+        per_base_thresholds.into_iter().fold(
+            (HashMap::new(), HashMap::new()),
+            |(mut thresholds, mut pseudos), (base, info)| {
+                thresholds.insert(base, info.threshold);
+                pseudos.insert(base, info.pseudo_probs);
+                (thresholds, pseudos)
+            },
+        );
+
+    Ok((
+        MultipleThresholdModCaller::new(
+            per_base_thresholds,
+            per_mod_thresholds.unwrap_or(HashMap::new()),
+            0f32,
+        ),
+        per_base_pseudos,
     ))
+}
+
+pub fn get_threshold_caller_from_options(
+    in_bam: &PathBuf,
+    threads: usize,
+    interval_size: u32,
+    sample_frac: Option<f64>,
+    num_reads: usize,
+    no_filtering: bool,
+    filter_percentile: f32,
+    seed: Option<u64>,
+    region: Option<&Region>,
+    per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
+    edge_filter: Option<&EdgeFilter>,
+    collapse_method: Option<&CollapseMethod>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
+    only_mapped: bool,
+    suppress_progress: bool,
+) -> anyhow::Result<MultipleThresholdModCaller> {
+    get_threshold_caller_with_pseudo_probs_from_options(
+        in_bam,
+        threads,
+        interval_size,
+        sample_frac,
+        num_reads,
+        no_filtering,
+        filter_percentile,
+        seed,
+        region,
+        per_mod_thresholds,
+        edge_filter,
+        collapse_method,
+        position_filter,
+        only_mapped,
+        None,
+        suppress_progress,
+    )
+    .map(|(caller, _)| caller)
 }
 
 fn parse_raw_threshold(raw: &str) -> anyhow::Result<(DnaBase, f32)> {

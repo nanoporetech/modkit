@@ -11,7 +11,7 @@ use log::{debug, info, warn};
 use mod_kit::adjust::adjust_modbam;
 use mod_kit::bedmethyl_util::subcommands::EntryBedMethyl;
 use mod_kit::command_utils::{
-    get_bam_writer, get_serial_reader, get_threshold_from_options,
+    get_bam_writer, get_serial_reader, get_threshold_caller_from_options,
     parse_edge_filter_input, parse_forward_motifs, parse_per_mod_thresholds,
     parse_thresholds, using_stream,
 };
@@ -499,7 +499,7 @@ impl Adjust {
                     .build()
                     .with_context(|| "failed to make threadpool")?;
                 pool.install(|| {
-                    get_threshold_from_options(
+                    get_threshold_caller_from_options(
                         &Path::new(&self.in_bam).to_path_buf(),
                         self.threads,
                         self.sampling_interval_size,
@@ -1602,7 +1602,7 @@ impl CallMods {
                 .build()
                 .with_context(|| "failed to make threadpool")?;
             pool.install(|| {
-                get_threshold_from_options(
+                get_threshold_caller_from_options(
                     &Path::new(&self.in_bam).to_path_buf(),
                     self.threads,
                     self.sampling_interval_size,

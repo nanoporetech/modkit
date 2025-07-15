@@ -6,6 +6,7 @@ use derive_new::new;
 use indexmap::IndexSet;
 use itertools::Itertools;
 use log::{debug, error};
+use log_once::debug_once;
 use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::{FetchDefinition, Read};
@@ -30,7 +31,7 @@ pub(crate) mod duplex;
 pub mod subcommand;
 
 pub(crate) enum ThresholdingOptions {
-    PerPosition { percentile: f32, min_coverage_per_position: usize },
+    PerPosition { percentile: f32, pseudo_probs: HashMap<DnaBase, Vec<f32>> },
     Global,
 }
 
@@ -408,15 +409,20 @@ impl Tally {
         thresholding_options: &ThresholdingOptions,
     ) -> Option<MultipleThresholdModCaller> {
         match thresholding_options {
-            ThresholdingOptions::PerPosition {
-                percentile,
-                min_coverage_per_position,
-            } => {
+            ThresholdingOptions::PerPosition { percentile, pseudo_probs } => {
                 let per_base_thresholds = self
                     .base_to_mod_probs
                     .iter()
-                    .filter_map(|(dna_base, probs)| {
-                        if probs.len() >= *min_coverage_per_position {
+                    .map(|(primary_base, probs)| {
+                        let thresh = if let Some(pseudos) =
+                            pseudo_probs.get(primary_base)
+                        {
+                            let probs = probs
+                                .iter()
+                                .map(|x| x.argmax_base_mod_call().prob())
+                                .chain(pseudos.iter().copied())
+                                .sorted_by(|a, b| a.partial_cmp(b).unwrap())
+                                .collect::<Vec<f32>>();
                             let thresh = match percentile_linear_interp(
                                 &probs,
                                 *percentile,
@@ -427,11 +433,16 @@ impl Tally {
                                 ) => 0.0f32,
                                 _ => unreachable!(),
                             };
-
-                            Some((*dna_base, thresh))
+                            thresh
                         } else {
-                            None
-                        }
+                            debug_once!(
+                                "didn't find pseudo-probs for {primary_base}, \
+                                 not performing position-filtering for this \
+                                 primary base"
+                            );
+                            0.0f32
+                        };
+                        (*primary_base, thresh)
                     })
                     .collect::<HashMap<DnaBase, f32>>();
 
@@ -599,14 +610,10 @@ impl<'a> FeatureVector<'a> {
                         .and_then(|thresh| {
                             position_stats
                                 .as_ref()
-                                .and_then(|x| {
-                                    x.get(primary_base)
-                                        .map(|stats| stats)
-                                        .copied()
-                                })
+                                .and_then(|x| x.get(primary_base))
                                 .map(|stats| PositionThreshold::Single {
                                     thresh: *thresh,
-                                    stats,
+                                    stats: *stats,
                                 })
                         }),
                 )

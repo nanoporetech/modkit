@@ -13,8 +13,9 @@ use rust_htslib::bam::{self, Read};
 use modkit_logging::init_logging_smart;
 
 use crate::command_utils::{
-    get_serial_reader, get_threshold_from_options, parse_edge_filter_input,
-    parse_per_mod_thresholds, parse_thresholds, using_stream,
+    get_serial_reader, get_threshold_caller_from_options,
+    parse_edge_filter_input, parse_per_mod_thresholds, parse_thresholds,
+    using_stream,
 };
 use crate::extract::args::InputArgs;
 use crate::extract::util::ReferencePositionFilter;
@@ -599,7 +600,7 @@ impl EntryExtractCalls {
                     );
                 }
                 pool.install(|| {
-                    get_threshold_from_options(
+                    get_threshold_caller_from_options(
                         &in_bam,
                         self.input_args.threads,
                         self.sampling_interval_size,

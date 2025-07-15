@@ -6,6 +6,7 @@ use anyhow::{anyhow, bail, Context};
 use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{MultiProgress, ParallelProgressIterator};
+use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
@@ -13,8 +14,9 @@ use rust_htslib::bam::{self, Read};
 use modkit_logging::init_logging;
 
 use crate::command_utils::{
-    calculate_chunk_size, get_threshold_from_options, parse_edge_filter_input,
-    parse_per_mod_thresholds, parse_thresholds,
+    calculate_chunk_size, get_threshold_caller_from_options,
+    get_threshold_caller_with_pseudo_probs_from_options,
+    parse_edge_filter_input, parse_per_mod_thresholds, parse_thresholds,
 };
 use crate::fasta::MotifLocationsLookup;
 use crate::interval_chunks::{ReferenceIntervalsFeeder, TotalLength};
@@ -169,6 +171,7 @@ pub struct ModBamPileup {
     long,
     group = "thresholds",
     action = clap::ArgAction::Append,
+    conflicts_with = "position_thresholds",
     alias = "pass_threshold"
     )]
     filter_threshold: Option<Vec<String>>,
@@ -201,12 +204,12 @@ pub struct ModBamPileup {
     sampling_interval_size: u32,
     /// Enable per-position threshold estimation
     #[clap(help_heading = "Filtering Options")]
-    #[arg(long, default_value_t = false)]
+    #[arg(long, conflicts_with_all=["filter_threshold", "mod_thresholds", "combine_strands"], default_value_t = false)]
     position_thresholds: bool,
-    /// Only use per-position threshold if valid coverage is >= this number.
+    /// Add this many sampled probabilities to each per-position calculation.
     #[clap(help_heading = "Filtering Options")]
-    #[arg(long, default_value_t = 10, requires = "position_thresholds")]
-    position_threshold_min_coverage: usize,
+    #[arg(long, requires = "position_thresholds", default_value_t = 5)]
+    num_pseudo_probs: usize,
     /// BED file that will restrict threshold estimation and pileup results to
     /// positions overlapping intervals in the file. (alias: include-positions)
     #[clap(help_heading = "Selection Options")]
@@ -624,30 +627,49 @@ impl ModBamPileup {
         };
 
         // start the actual work here
-        let threshold_caller =
-            if let Some(raw_threshold) = &self.filter_threshold {
-                parse_thresholds(raw_threshold, per_mod_thresholds)?
+        let (threshold_caller, threshold_options) = if let Some(raw_threshold) =
+            &self.filter_threshold
+        {
+            (
+                parse_thresholds(raw_threshold, per_mod_thresholds)?,
+                ThresholdingOptions::Global,
+            )
+        } else {
+            let position_thresholds = self.position_thresholds;
+            let (caller, pseudo_probs) = pool.install(|| {
+                get_threshold_caller_with_pseudo_probs_from_options(
+                    &self.in_bam,
+                    self.threads,
+                    self.sampling_interval_size,
+                    self.sampling_frac,
+                    self.num_reads,
+                    self.no_filtering,
+                    self.filter_percentile,
+                    self.seed,
+                    sampling_region.as_ref().or(region.as_ref()),
+                    per_mod_thresholds,
+                    edge_filter.as_ref(),
+                    threshold_collapse_method.as_ref(),
+                    position_filter.as_ref(),
+                    !self.include_unmapped,
+                    Some(self.num_pseudo_probs),
+                    self.suppress_progress,
+                )
+            })?;
+            if position_thresholds {
+                for (base, probs) in pseudo_probs.iter() {
+                    let probs = probs.iter().join(",");
+                    info!("constant probabilities for {base}: {probs}");
+                }
+                let thresholding_options = ThresholdingOptions::PerPosition {
+                    percentile: self.filter_percentile,
+                    pseudo_probs,
+                };
+                (caller, thresholding_options)
             } else {
-                pool.install(|| {
-                    get_threshold_from_options(
-                        &self.in_bam,
-                        self.threads,
-                        self.sampling_interval_size,
-                        self.sampling_frac,
-                        self.num_reads,
-                        self.no_filtering,
-                        self.filter_percentile,
-                        self.seed,
-                        sampling_region.as_ref().or(region.as_ref()),
-                        per_mod_thresholds,
-                        edge_filter.as_ref(),
-                        threshold_collapse_method.as_ref(),
-                        position_filter.as_ref(),
-                        !self.include_unmapped,
-                        self.suppress_progress,
-                    )
-                })?
-            };
+                (caller, ThresholdingOptions::Global)
+            }
+        };
 
         if !self.no_filtering {
             for (base, threshold) in threshold_caller.iter_thresholds() {
@@ -722,14 +744,6 @@ impl ModBamPileup {
 
         let force_allow = self.force_allow_implicit;
         let max_depth = self.max_depth;
-        let threshold_options = if self.position_thresholds {
-            ThresholdingOptions::PerPosition {
-                percentile: self.filter_percentile,
-                min_coverage_per_position: self.position_threshold_min_coverage,
-            }
-        } else {
-            ThresholdingOptions::Global
-        };
 
         std::thread::spawn(move || {
             pool.install(|| {
@@ -1334,7 +1348,7 @@ impl DuplexModBamPileup {
                 parse_thresholds(raw_threshold, per_mod_thresholds)?
             } else {
                 pool.install(|| {
-                    get_threshold_from_options(
+                    get_threshold_caller_from_options(
                         &self.in_bam,
                         self.threads,
                         self.sampling_interval_size,

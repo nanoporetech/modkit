@@ -1,17 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 
-use bio::alphabets::dna::revcomp;
-use derive_new::new;
-use indicatif::ParallelProgressIterator;
-use itertools::Itertools;
-use log::debug;
-use rayon::prelude::*;
-use rust_htslib::bam::ext::BamRecordExtensions;
-use rust_htslib::bam::record::Cigar;
-use rust_htslib::bam::{self, Read, Records};
-use rustc_hash::{FxHashMap, FxHashSet};
-
 use crate::errs::{MkError, MkResult};
 use crate::mod_bam::{
     prob_to_qual, BaseModCall, BaseModProbs, CollapseMethod, EdgeFilter,
@@ -31,6 +20,16 @@ use crate::util::{
     get_query_name_string, get_reference_mod_strand, get_ticker,
     record_is_primary, Kmer, MutOpMax, Strand, MISSING_SYMBOL, TAB,
 };
+use bio::alphabets::dna::revcomp;
+use derive_new::new;
+use indicatif::ParallelProgressIterator;
+use itertools::Itertools;
+use log::debug;
+use rayon::prelude::*;
+use rust_htslib::bam::ext::BamRecordExtensions;
+use rust_htslib::bam::record::Cigar;
+use rust_htslib::bam::{self, Read, Records};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Read IDs mapped to their base modification probabilities, organized
 /// by the canonical base. This data structure contains essentially all
@@ -93,6 +92,9 @@ impl ReadIdsToBaseModProbs {
             .reduce(|| HashMap::zero(), |a, b| a.op(b))
     }
 
+    /// Returns a mapping of each primary sequence base to a vector of call
+    /// probabilities and a mapping of each canonical base to the minimum
+    /// explicit canonical probability observed
     #[inline]
     pub(crate) fn mle_probs_per_base(
         &self,
@@ -104,7 +106,7 @@ impl ReadIdsToBaseModProbs {
             .fold(
                 || (HashMap::new(), HashMap::new()),
                 |(mut calls_per_base, mut canonical_probs),
-                 (_, can_base_to_base_mod_probs)| {
+                 (_read_id, can_base_to_base_mod_probs)| {
                     for (dna_base, probs) in can_base_to_base_mod_probs {
                         let all_probs = calls_per_base
                             .entry(*dna_base)

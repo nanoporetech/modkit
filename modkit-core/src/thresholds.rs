@@ -10,9 +10,16 @@ use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::Region;
 use anyhow::{Context, Result as AnyhowResult};
+use derive_new::new;
 use log::{debug, info};
 use rayon::prelude::*;
 use sortedlist_rs::SortedList;
+
+#[derive(new)]
+pub(crate) struct BaseThresholdInfo {
+    pub(crate) threshold: f32,
+    pub(crate) pseudo_probs: Vec<f32>,
+}
 
 #[inline]
 fn calc_mean(xs: &[f32]) -> f32 {
@@ -335,7 +342,7 @@ pub fn calc_thresholds_per_base(
     ))
 }
 
-pub fn calc_threshold_from_bam(
+pub(crate) fn calc_threshold_from_bam(
     bam_fp: &PathBuf,
     threads: usize,
     interval_size: u32,
@@ -349,44 +356,68 @@ pub fn calc_threshold_from_bam(
     position_filter: Option<&StrandedPositionFilter<()>>,
     only_mapped: bool,
     suppress_progress: bool,
-) -> AnyhowResult<HashMap<DnaBase, f32>> {
-    let (mut can_base_probs, explicit_can_probs) = get_modbase_probs_from_bam(
-        bam_fp,
-        threads,
-        interval_size,
-        sample_frac,
-        num_reads,
-        seed,
-        region,
-        collapse_method,
-        edge_filter,
-        position_filter,
-        only_mapped,
-        suppress_progress,
-    )?;
+    num_pseudos: Option<usize>,
+) -> anyhow::Result<HashMap<DnaBase, BaseThresholdInfo>> {
+    let (mut can_base_probs, min_explicit_can_probs) =
+        get_modbase_probs_from_bam(
+            bam_fp,
+            threads,
+            interval_size,
+            sample_frac,
+            num_reads,
+            seed,
+            region,
+            collapse_method,
+            edge_filter,
+            position_filter,
+            only_mapped,
+            suppress_progress,
+        )?;
     can_base_probs
         .iter_mut()
         .map(|(dna_base, mod_base_probs)| {
-            mod_base_probs.par_sort_by(|x, y| x.partial_cmp(y).unwrap());
+            mod_base_probs.par_sort_by(|a, b| a.partial_cmp(b).unwrap());
+            #[cfg(debug_assertions)]
+            {
+                let is_sorted = mod_base_probs.is_sorted();
+                assert!(is_sorted);
+            }
             let threshold =
                 percentile_linear_interp(&mod_base_probs, filter_percentile)?;
-            let min_canonical_prob = explicit_can_probs
+            let min_canonical_prob = min_explicit_can_probs
                 .get(dna_base)
                 .copied()
-                .unwrap_or(0.9941406f32);
-            if threshold < min_canonical_prob {
-                Ok((*dna_base, threshold))
+                .unwrap_or(0.9941406f32); // highest bin
+            let threshold = if threshold < min_canonical_prob {
+                threshold
             } else {
                 debug!(
-                    "estimated threshold too high {threshold}, using \
-                     {min_canonical_prob}"
+                    "estimated threshold too high {threshold} for {dna_base}, \
+                     using {min_canonical_prob}"
                 );
-                Ok((*dna_base, min_canonical_prob))
-            }
+                min_canonical_prob
+            };
+            // these are safe because the percentile calc would fail if there
+            // were 1 element or fewer
+            let pseudo_probs = if let Some(num_pseudos) = num_pseudos {
+                ndarray::Array1::linspace(0.1, 0.9, num_pseudos)
+                    .to_vec()
+                    .into_iter()
+                    .map(|pct| {
+                        percentile_linear_interp(&mod_base_probs, pct).unwrap()
+                    })
+                    .collect::<Vec<f32>>()
+            } else {
+                Vec::new()
+            };
+            Ok((*dna_base, BaseThresholdInfo::new(threshold, pseudo_probs)))
         })
         .collect()
 }
 
+/// Returns a tuple where the first element is of each primary sequence base to
+/// a vector of call probabilities and the second item is a mapping of each
+/// canonical base to the minimum explicit canonical probability observed
 pub fn get_modbase_probs_from_bam(
     bam_fp: &PathBuf,
     threads: usize,
