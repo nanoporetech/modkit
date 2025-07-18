@@ -24,6 +24,7 @@ use crate::util::{
 };
 
 pub(crate) mod duplex;
+pub(crate) mod streaming;
 pub mod subcommand;
 
 #[derive(Debug, Copy, Clone)]
@@ -164,9 +165,8 @@ impl From<BedMethylLine> for PileupFeatureCounts {
     }
 }
 
-#[allow(non_snake_case)]
 #[derive(Debug, Default)]
-struct Tally {
+pub(super) struct Tally {
     n_delete: u32,
     n_filtered: u32,
     basecall_counts: FxHashMap<DnaBase, u32>,

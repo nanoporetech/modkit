@@ -1506,7 +1506,6 @@ impl ModBaseInfo {
     ) -> MkResult<Self> {
         let raw_ml = &raw_mod_tags.raw_ml;
 
-        // todo make these DnaBase keys..
         let mut pos_seq_base_mod_probs =
             HashMap::<DnaBase, SeqPosBaseModProbs>::new();
         let mut neg_seq_base_mod_probs =

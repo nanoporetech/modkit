@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::io::BufWriter;
+use std::fs::File;
+use std::io::{stdout, BufWriter, Write};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context};
@@ -22,11 +23,13 @@ use crate::mod_bam::CollapseMethod;
 use crate::mod_base_code::{ModCodeRepr, HYDROXY_METHYL_CYTOSINE};
 use crate::motifs::motif_bed::RegexMotif;
 use crate::pileup::duplex::{process_region_duplex_batch, DuplexModBasePileup};
+use crate::pileup::streaming::process_stream;
 use crate::pileup::{
     process_region_batch, ModBasePileup, PileupNumericOptions,
 };
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::sampling_schedule::IdxStats;
+use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
     create_out_directory, get_master_progress_bar, get_subroutine_progress_bar,
     get_targets, get_ticker, parse_partition_tags, reader_is_bam, Region,
@@ -1510,6 +1513,163 @@ impl DuplexModBamPileup {
             "Done, processed {rows_processed} rows. Processed \
              ~{n_processed_reads} reads and skipped {n_skipped_message}."
         );
+        Ok(())
+    }
+}
+
+#[derive(Args)]
+#[command(arg_required_else_help = true)]
+pub struct StreamModBamPileup {
+    // running args
+    /// Input BAM, should be sorted and have associated index available.
+    in_bam: String,
+    /// Output file (or directory with --bedgraph option) to write results
+    /// into. Specify "-" or "stdout" to direct output to stdout.
+    out_bed: String,
+    /// Specify a file for debug logs to be written to, otherwise ignore them.
+    /// Setting a file is recommended. (alias: log)
+    #[clap(help_heading = "Logging Options")]
+    #[arg(long, alias = "log")]
+    log_filepath: Option<PathBuf>,
+    /// Maximum number of records to use when calculating pileup. This argument
+    /// is passed to the pileup engine. If you have high depth data,
+    /// consider increasing this value substantially. Must be less than
+    /// 2147483647 or an error will be raised.
+    // #[clap(help_heading = "Selection Options")]
+    // #[arg(long, default_value_t = 8000, hide_short_help = true)]
+    // max_depth: u32,
+
+    // processing args
+    /// Number of threads to use while processing chunks concurrently.
+    #[clap(help_heading = "Compute Options")]
+    #[arg(short, long, default_value_t = 4)]
+    io_threads: usize,
+    /// Hide the progress bar.
+    #[clap(help_heading = "Logging Options")]
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    suppress_progress: bool,
+    /// Specify the filter threshold globally or per-base. Global filter
+    /// threshold can be specified with by a decimal number (e.g. 0.75).
+    /// Per-base thresholds can be specified by colon-separated values, for
+    /// example C:0.75 specifies a threshold value of 0.75 for cytosine
+    /// modification calls. Additional per-base thresholds can be specified
+    /// by repeating the option: for example --filter-threshold C:0.75
+    /// --filter-threshold A:0.70 or specify a single base option and a
+    /// default for all other bases with: --filter-threshold A:0.70
+    /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
+    /// adenine and 0.9 for all other base modification calls.
+    #[clap(help_heading = "Filtering Options")]
+    #[arg(
+        long,
+        group = "thresholds",
+        action = clap::ArgAction::Append,
+        alias = "pass_threshold"
+    )]
+    filter_threshold: Option<Vec<String>>,
+    /// Specify a passing threshold to use for a base modification, independent
+    /// of the threshold for the primary sequence base or the default. For
+    /// example, to set the pass threshold for 5hmC to 0.8 use
+    /// `--mod-threshold h:0.8`. The pass threshold will still be estimated
+    /// as usual and used for canonical cytosine and other modifications
+    /// unless the `--filter-threshold` option is also passed.
+    /// See the online documentation for more details.
+    #[clap(help_heading = "Filtering Options")]
+    #[arg(
+        long,
+        alias = "mod-threshold",
+        action = clap::ArgAction::Append
+    )]
+    mod_thresholds: Option<Vec<String>>,
+
+    /// Ignore a modified base class  _in_situ_ by redistributing base
+    /// modification probability equally across other options. For example,
+    /// if collapsing 'h', with 'm' and canonical options, half of the
+    /// probability of 'h' will be added to both 'm' and 'C'. A full
+    /// description of the methods can be found in collapse.md.
+    // #[clap(help_heading = "Modified Base Options")]
+    // #[arg(long, group = "combine_args", hide_short_help = true)]
+    // ignore: Option<String>,
+    /// Combine base modification calls, all counts of modified bases are
+    /// summed together. See collapse.md for details.
+    #[clap(help_heading = "Modified Base Options")]
+    #[arg(
+        long,
+        default_value_t = false,
+        group = "combine_args",
+        hide_short_help = true
+    )]
+    combine_mods: bool,
+    /// When performing motif analysis (such as CpG), sum the counts from the
+    /// positive and negative strands into the counts for the positive
+    /// strand position.
+    // #[clap(help_heading = "Modified Base Options")]
+    // #[arg(long, default_value_t = false)]
+    // combine_strands: bool,
+    /// Discard base modification calls that are this many bases from the start
+    /// or the end of the read. Two comma-separated values may be provided
+    /// to asymmetrically filter out base modification calls from the start
+    /// and end of the reads. For example, 4,8 will filter out base
+    /// modification calls in the first 4 and last 8 bases of the read.
+    // #[clap(help_heading = "Selection Options")]
+    // #[arg(long, hide_short_help = true)]
+    // edge_filter: Option<String>,
+
+    /// Output a header with the bedMethyl
+    // #[clap(help_heading = "Output Options")]
+    // #[arg(
+    //     long = "header",
+    //     alias = "with-header",
+    //     alias = "include_header",
+    //     default_value_t = false
+    // )]
+    // with_header: bool,
+    #[arg(short, long, default_value_t = false)]
+    force: bool,
+}
+
+impl StreamModBamPileup {
+    pub fn run(&self) -> anyhow::Result<()> {
+        let _ = init_logging(self.log_filepath.as_ref());
+        let reader = match self.in_bam.as_str() {
+            "stdin" | "-" => bam::Reader::from_stdin(),
+            p @ _ => bam::Reader::from_path(p),
+        }?;
+        let header = reader.header().to_owned();
+        let per_mod_thresholds = self
+            .mod_thresholds
+            .as_ref()
+            .map(|raw_per_mod_thresholds| {
+                parse_per_mod_thresholds(raw_per_mod_thresholds)
+            })
+            .transpose()?;
+
+        let caller = if let Some(raw_threshold) = self.filter_threshold.as_ref()
+        {
+            parse_thresholds(raw_threshold, per_mod_thresholds)
+        } else {
+            info!("not performing filtering");
+            Ok(MultipleThresholdModCaller::new_passthrough())
+        }?;
+
+        let pileup = process_stream(reader, &caller, self.combine_mods)?;
+        let records = pileup.make_records(&header);
+
+        let mut writer: Box<dyn Write> = match self.out_bed.as_str() {
+            "stdout" | "-" => Box::new(BufWriter::new(stdout())),
+            p @ _ => {
+                let fh = if self.force {
+                    File::create(p)?
+                } else {
+                    File::create_new(p)?
+                };
+                Box::new(BufWriter::new(fh))
+            }
+        };
+
+        for record in records {
+            writer.write(record.as_bytes())?;
+        }
+
         Ok(())
     }
 }

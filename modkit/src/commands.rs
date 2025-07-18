@@ -27,7 +27,9 @@ use mod_kit::mod_base_code::{DnaBase, ModCodeRepr};
 use mod_kit::modbam_util::subcommands::EntryModBam;
 use mod_kit::monoid::Moniod;
 use mod_kit::motifs::subcommand::{EntryFindMotifs, EntryMotifs};
-use mod_kit::pileup::subcommand::{DuplexModBamPileup, ModBamPileup};
+use mod_kit::pileup::subcommand::{
+    DuplexModBamPileup, ModBamPileup, StreamModBamPileup,
+};
 use mod_kit::position_filter::StrandedPositionFilter;
 use mod_kit::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use mod_kit::reads_sampler::{
@@ -62,6 +64,8 @@ pub enum Commands {
     /// command produces a bedMethyl formatted file. Schema and description
     /// of fields can be found in the README.
     Pileup(ModBamPileup),
+    /// Produce a bedMethyl file from an unsorted or streaming modBAM.
+    PileupStream(StreamModBamPileup),
     /// Performs various operations on BAM files containing base modification
     /// information, such as converting base modification codes and ignoring
     /// modification calls. Produces a BAM output file.
@@ -150,6 +154,7 @@ impl Commands {
         match self {
             Self::AdjustMods(x) => x.run(),
             Self::Pileup(x) => x.run(),
+            Self::PileupStream(x) => x.run(),
             Self::SampleProbs(x) => x.run(),
             Self::Summary(x) => x.run(),
             Self::UpdateTags(x) => x.run(),
