@@ -1,16 +1,16 @@
-use itertools::Itertools;
-use rust_htslib::bam::ext::BamRecordExtensions;
-use rust_htslib::bam::{self, Read};
-use rustc_hash::FxHashMap;
-use std::collections::BTreeMap;
-
 use crate::mod_bam::{BaseModCall, ModBaseInfo, WithModBaseInfos};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::pileup::PileupFeatureCounts;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{Strand, TAB};
+use crossbeam_channel::Sender;
+use itertools::Itertools;
 use rayon::prelude::*;
+use rust_htslib::bam::ext::BamRecordExtensions;
+use rust_htslib::bam::{self, Read};
+use rustc_hash::FxHashMap;
 use safe_record::SafeRecord;
+use std::collections::BTreeMap;
 
 type ChromId = u32;
 type RefPosition = u32;
@@ -38,14 +38,14 @@ pub(super) struct ModPileup {
 }
 
 impl ModPileup {
-    pub(super) fn make_records(&self, header: &bam::HeaderView) -> Vec<String> {
-        let mut records = Vec::new();
+    pub(super) fn make_records(
+        &self,
+        chrom_id_to_name: FxHashMap<ChromId, String>,
+        record_chan: Sender<String>,
+    ) {
+        // let mut records = Vec::new();
         for (chrom_id, pos_counts) in self.counts.iter() {
-            let chrom = header
-                .tid2name(*chrom_id)
-                .iter()
-                .map(|x| *x as char)
-                .collect::<String>();
+            let chrom = chrom_id_to_name.get(chrom_id).unwrap();
             for ((pos, _strand), pileup_feature_counts) in pos_counts.iter() {
                 for counts in pileup_feature_counts {
                     let row = format!(
@@ -86,11 +86,10 @@ impl ModPileup {
                             counts.n_diff,
                             counts.n_nocall,
                     );
-                    records.push(row);
+                    record_chan.send(row).unwrap()
                 }
             }
         }
-        records
     }
 }
 

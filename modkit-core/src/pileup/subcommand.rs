@@ -8,10 +8,10 @@ use clap::{Args, ValueEnum};
 use crossbeam_channel::bounded;
 use indicatif::{MultiProgress, ParallelProgressIterator};
 use log::{debug, error, info, warn};
+use modkit_logging::init_logging;
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
-
-use modkit_logging::init_logging;
+use rustc_hash::FxHashMap;
 
 use crate::command_utils::{
     calculate_chunk_size, get_threshold_from_options, parse_edge_filter_input,
@@ -35,7 +35,8 @@ use crate::util::{
     get_targets, get_ticker, parse_partition_tags, reader_is_bam, Region,
 };
 use crate::writers::{
-    BedGraphWriter, BedMethylWriter, PartitioningBedMethylWriter, PileupWriter,
+    bedmethyl_header, BedGraphWriter, BedMethylWriter,
+    PartitioningBedMethylWriter, PileupWriter,
 };
 
 #[derive(Args)]
@@ -1619,14 +1620,14 @@ pub struct StreamModBamPileup {
     // edge_filter: Option<String>,
 
     /// Output a header with the bedMethyl
-    // #[clap(help_heading = "Output Options")]
-    // #[arg(
-    //     long = "header",
-    //     alias = "with-header",
-    //     alias = "include_header",
-    //     default_value_t = false
-    // )]
-    // with_header: bool,
+    #[clap(help_heading = "Output Options")]
+    #[arg(
+        long = "header",
+        alias = "with-header",
+        alias = "include_header",
+        default_value_t = false
+    )]
+    with_header: bool,
     #[arg(short, long, default_value_t = false)]
     force: bool,
 }
@@ -1641,8 +1642,37 @@ impl StreamModBamPileup {
             "stdin" | "-" => bam::Reader::from_stdin(),
             p @ _ => bam::Reader::from_path(p),
         }?;
-        let header = reader.header().to_owned();
+        let chrom_id_to_name = reader
+            .header()
+            .target_names()
+            .iter()
+            .enumerate()
+            .map(|(chrom_id, raw_name)| {
+                let chrom_id = chrom_id as u32;
+                let name =
+                    raw_name.iter().map(|b| *b as char).collect::<String>();
+                (chrom_id, name)
+            })
+            .collect::<FxHashMap<u32, String>>();
+
         let _ = reader.set_threads(self.io_threads)?;
+        let mut writer: Box<dyn Write> = match self.out_bed.as_str() {
+            "stdout" | "-" => Box::new(BufWriter::new(stdout())),
+            p @ _ => {
+                let fh = if self.force {
+                    File::create(p)?
+                } else {
+                    File::create_new(p)?
+                };
+                Box::new(BufWriter::new(fh))
+            }
+        };
+
+        if self.with_header {
+            let header = bedmethyl_header();
+            writer.write(header.as_bytes())?;
+        }
+
         let per_mod_thresholds = self
             .mod_thresholds
             .as_ref()
@@ -1660,23 +1690,16 @@ impl StreamModBamPileup {
         }?;
 
         let pileup = process_stream(reader, caller, self.combine_mods)?;
-        let records = pileup.make_records(&header);
+        let (snd_rows, rcv_rows) = crossbeam::channel::unbounded();
+        let write_handle = std::thread::spawn(move || {
+            pileup.make_records(chrom_id_to_name, snd_rows);
+        });
 
-        let mut writer: Box<dyn Write> = match self.out_bed.as_str() {
-            "stdout" | "-" => Box::new(BufWriter::new(stdout())),
-            p @ _ => {
-                let fh = if self.force {
-                    File::create(p)?
-                } else {
-                    File::create_new(p)?
-                };
-                Box::new(BufWriter::new(fh))
-            }
-        };
-
-        for record in records {
+        for record in rcv_rows.iter() {
             writer.write(record.as_bytes())?;
         }
+
+        write_handle.join().expect("should join write handle");
 
         Ok(())
     }
