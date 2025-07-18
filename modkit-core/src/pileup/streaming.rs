@@ -9,6 +9,8 @@ use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::pileup::PileupFeatureCounts;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{Strand, TAB};
+use rayon::prelude::*;
+use safe_record::SafeRecord;
 
 type ChromId = u32;
 type RefPosition = u32;
@@ -130,12 +132,11 @@ impl Tallies {
 
     fn finalize(self, combine_mods: bool) -> ModPileup {
         let counts = self.inner
-            .into_iter()
-            // for every chrom
+            .into_par_iter()
             .map(|(chrom_id, tallies)| {
                 let counts = tallies
                     // for every strand/position
-                    .into_iter()
+                    .into_par_iter()
                     .map(|((ref_pos, strand), tally)| {
                         let counts = tally.into_counts(combine_mods, strand);
                         ((ref_pos, strand), counts)
@@ -393,37 +394,51 @@ fn read_info_to_features(
 
 pub(super) fn process_stream(
     mut reader: bam::Reader,
-    caller: &MultipleThresholdModCaller,
+    caller: MultipleThresholdModCaller,
     combine_mods: bool,
 ) -> anyhow::Result<ModPileup> {
-    let modbase_infos = reader.records().with_mod_base_info().filter_map(
-        |(record, modbase_info)| {
-            if record.tid() < 0i32 {
-                None
-            } else {
-                Some((record, modbase_info))
-            }
-        },
-    );
-
-    let features = modbase_infos.map(|(record, modbase_info)| {
-        let features = read_info_to_features(&modbase_info, caller, &record);
-        let chrom_id = record.tid() as u32;
-        let strand = if record.is_reverse() {
-            Strand::Negative
-        } else {
-            Strand::Positive
-        };
-        ((chrom_id, strand), features)
+    let (snd_info, rcv_info) = crossbeam_channel::unbounded();
+    let (snd_feats, rcv_feats) = crossbeam_channel::unbounded();
+    let info_handle = std::thread::spawn(move || {
+        reader
+            .records()
+            .with_mod_base_info()
+            .filter_map(|(record, modbase_info)| {
+                if record.tid() < 0i32 {
+                    None
+                } else {
+                    let srecord = SafeRecord::from(record);
+                    Some((srecord, modbase_info))
+                }
+            })
+            .for_each(|x| snd_info.send(x).unwrap())
     });
 
-    let tallies = features.fold(
+    let features_handle = std::thread::spawn(move || {
+        rcv_info.iter().par_bridge().for_each(|(srecord, modbase_info)| {
+            let record: bam::Record = srecord.into();
+            let features =
+                read_info_to_features(&modbase_info, &caller, &record);
+            let chrom_id = record.tid() as u32;
+            let strand = if record.is_reverse() {
+                Strand::Negative
+            } else {
+                Strand::Positive
+            };
+            snd_feats.send(((chrom_id, strand), features)).unwrap()
+        })
+    });
+
+    let tallies = rcv_feats.iter().fold(
         Tallies::default(),
         |mut tallies, ((chrom_id, strand), features)| {
             tallies.add_features(chrom_id, strand, features);
             tallies
         },
     );
+
+    info_handle.join().expect("should join infos");
+    features_handle.join().expect("should join features");
 
     let pileup = tallies.finalize(combine_mods);
     Ok(pileup)

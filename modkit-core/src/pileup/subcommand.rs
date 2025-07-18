@@ -1540,10 +1540,14 @@ pub struct StreamModBamPileup {
     // max_depth: u32,
 
     // processing args
-    /// Number of threads to use while processing chunks concurrently.
+    /// Number of threads to use for reading input ModBAM.
     #[clap(help_heading = "Compute Options")]
     #[arg(short, long, default_value_t = 4)]
     io_threads: usize,
+    /// Number of threads to use for processing
+    #[clap(help_heading = "Compute Options")]
+    #[arg(short, long, default_value_t = 4)]
+    threads: usize,
     /// Hide the progress bar.
     #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false, hide_short_help = true)]
@@ -1630,11 +1634,15 @@ pub struct StreamModBamPileup {
 impl StreamModBamPileup {
     pub fn run(&self) -> anyhow::Result<()> {
         let _ = init_logging(self.log_filepath.as_ref());
-        let reader = match self.in_bam.as_str() {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.threads)
+            .build_global()?;
+        let mut reader = match self.in_bam.as_str() {
             "stdin" | "-" => bam::Reader::from_stdin(),
             p @ _ => bam::Reader::from_path(p),
         }?;
         let header = reader.header().to_owned();
+        let _ = reader.set_threads(self.io_threads)?;
         let per_mod_thresholds = self
             .mod_thresholds
             .as_ref()
@@ -1651,7 +1659,7 @@ impl StreamModBamPileup {
             Ok(MultipleThresholdModCaller::new_passthrough())
         }?;
 
-        let pileup = process_stream(reader, &caller, self.combine_mods)?;
+        let pileup = process_stream(reader, caller, self.combine_mods)?;
         let records = pileup.make_records(&header);
 
         let mut writer: Box<dyn Write> = match self.out_bed.as_str() {

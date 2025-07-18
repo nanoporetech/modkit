@@ -53,6 +53,7 @@ thiserror = "2.0.11"
 tokio = "1.42.0"
 tracing = "0.1.41"
 modkit-logging = { path = "../modkit-logging" }
+safe-record = { path = "../safe-record" }
 
 [dev-dependencies]
 assert_approx_eq = "1.1.0"
