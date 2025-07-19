@@ -658,7 +658,11 @@ impl ModBamPileup {
             })?;
             if position_thresholds {
                 for (base, probs) in pseudo_probs.iter() {
-                    let probs = probs.iter().join(",");
+                    let probs = if probs.is_empty() {
+                        "Empty".to_string()
+                    } else {
+                        probs.iter().join(",")
+                    };
                     info!("constant probabilities for {base}: {probs}");
                 }
                 let thresholding_options = ThresholdingOptions::PerPosition {

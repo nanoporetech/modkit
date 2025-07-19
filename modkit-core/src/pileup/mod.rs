@@ -344,7 +344,22 @@ impl Tally {
                     .iter()
                     .map(|(base, probs)| match probs.len() {
                         0 => (*base, PositionStats::new_empty()),
-                        1..=2 => {
+                        1 => {
+                            let p = probs
+                                .first()
+                                .map(|x| x.argmax_base_mod_call().prob())
+                                .unwrap();
+
+                            let stats = PositionStats {
+                                min_prob: p,
+                                median_prob: p,
+                                mean_prob: p,
+                                std_prob: 0f32,
+                                max_prob: p,
+                            };
+                            (*base, stats)
+                        }
+                        2 => {
                             let min_prob = probs
                                 .first()
                                 .map(|x| x.argmax_base_mod_call().prob())
@@ -354,7 +369,7 @@ impl Tally {
                                 .map(|x| x.argmax_base_mod_call().prob())
                                 .unwrap();
                             let median_prob = (min_prob + max_prob) / 2f32;
-                            let mean_prob = (min_prob / max_prob) / 2f32;
+                            let mean_prob = (min_prob + max_prob) / 2f32;
                             let std_prob = {
                                 let var = [min_prob, max_prob]
                                     .map(|x| (x - mean_prob).powi(2))
