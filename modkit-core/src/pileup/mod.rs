@@ -23,6 +23,7 @@ use crate::util::{
     Strand, StrandRule,
 };
 
+pub(crate) mod bedrmod;
 pub(crate) mod duplex;
 pub mod subcommand;
 

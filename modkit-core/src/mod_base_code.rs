@@ -18,6 +18,15 @@ pub trait ParseChar {
     fn char(&self) -> char;
 }
 
+pub const RNA_TWO_OME_ADENINE_NAME: &'static str = "2OmeA";
+pub const RNA_TWO_OME_CYTOSINE_NAME: &'static str = "2OmeC";
+pub const RNA_TWO_OME_GUANINE_NAME: &'static str = "2OmeG";
+pub const RNA_TWO_OME_URACIL_NAME: &'static str = "2OmeU";
+pub const RNA_INOSINE_NAME: &'static str = "inosine";
+pub const RNA_METHYL_CYTOSINE_NAME: &'static str = "m5C";
+pub const RNA_SIX_METHYL_ADENINE_NAME: &'static str = "m6A";
+pub const RNA_PSEUDOURIDINE_NAME: &'static str = "pseU";
+
 // Cytosine mods
 pub const METHYL_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('m');
 pub const HYDROXY_METHYL_CYTOSINE: ModCodeRepr = ModCodeRepr::Code('h');
@@ -72,6 +81,22 @@ pub const SUPPORTED_CODES: [ModCodeRepr; 21] = [
     ANY_GUANINE,
     DEOXY_URACIL,
 ];
+
+lazy_static! {
+    pub static ref RNA_LONG_NAME_TO_CODE: FxHashMap<&'static str, ModCodeRepr> = {
+        let hm = hash_map! {
+            RNA_TWO_OME_ADENINE_NAME => TWO_OME_ADENINE,
+            RNA_TWO_OME_CYTOSINE_NAME => TWO_OME_CYTOSINE,
+            RNA_TWO_OME_GUANINE_NAME => TWO_OME_GUANINE,
+            RNA_TWO_OME_URACIL_NAME => TWO_OME_URACIL,
+            RNA_INOSINE_NAME => INOSINE,
+            RNA_METHYL_CYTOSINE_NAME => METHYL_CYTOSINE,
+            RNA_SIX_METHYL_ADENINE_NAME => SIX_METHYL_ADENINE,
+            RNA_PSEUDOURIDINE_NAME => PSEUDOURIDINE,
+        };
+        hm.into_iter().collect()
+    };
+}
 
 lazy_static! {
     pub static ref MOD_CODE_TO_DNA_BASE: FxHashMap<ModCodeRepr, DnaBase> = {

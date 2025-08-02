@@ -21,6 +21,7 @@ use crate::interval_chunks::{ReferenceIntervalsFeeder, TotalLength};
 use crate::mod_bam::CollapseMethod;
 use crate::mod_base_code::{ModCodeRepr, HYDROXY_METHYL_CYTOSINE};
 use crate::motifs::motif_bed::RegexMotif;
+use crate::pileup::bedrmod::BedRModArgs;
 use crate::pileup::duplex::{process_region_duplex_batch, DuplexModBasePileup};
 use crate::pileup::{
     process_region_batch, ModBasePileup, PileupNumericOptions,
@@ -377,6 +378,8 @@ pub struct ModBamPileup {
     #[clap(help_heading = "Output Options")]
     #[arg(long)]
     partition_tag: Option<Vec<String>>,
+    #[clap(flatten)]
+    bedrmodargs: BedRModArgs,
 }
 
 impl ModBamPileup {
@@ -570,6 +573,8 @@ impl ModBamPileup {
                             writer,
                             self.mixed_delimiters,
                             self.with_header,
+                            &self.bedrmodargs,
+                            &header,
                         )?)
                     }
                     _ => {
@@ -581,6 +586,8 @@ impl ModBamPileup {
                             writer,
                             self.mixed_delimiters,
                             self.with_header,
+                            &self.bedrmodargs,
+                            &header,
                         )?)
                     }
                 },
@@ -1279,14 +1286,14 @@ impl DuplexModBamPileup {
                 let fh = std::fs::File::create(out_fp)
                     .context("failed to make output file")?;
                 let writer = BufWriter::new(fh);
-                Box::new(BedMethylWriter::new(
+                Box::new(BedMethylWriter::new_basic(
                     writer,
                     self.mixed_delimiters,
                     false,
                 )?)
             } else {
                 let writer = BufWriter::new(std::io::stdout());
-                Box::new(BedMethylWriter::new(
+                Box::new(BedMethylWriter::new_basic(
                     writer,
                     self.mixed_delimiters,
                     false,

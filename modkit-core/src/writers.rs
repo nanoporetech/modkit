@@ -22,11 +22,13 @@ use log::{debug, info, warn};
 use prettytable::format::FormatBuilder;
 use prettytable::{row, Table};
 use random_color::RandomColor;
+use rust_htslib::bam::HeaderView;
 use rustc_hash::FxHashMap;
 
 use crate::mod_base_code::{
     BaseState, DnaBase, ModCodeRepr, ProbHistogram, DNA_BASE_COLORS, MOD_COLORS,
 };
+use crate::pileup::bedrmod::BedRModArgs;
 use crate::pileup::duplex::DuplexModBasePileup;
 use crate::pileup::{ModBasePileup, PartitionKey, PileupFeatureCounts};
 use crate::summarize::ModSummary;
@@ -43,6 +45,7 @@ pub trait OutWriter<T> {
 pub struct BedMethylWriter<T: Write> {
     buf_writer: BufWriter<T>,
     tabs_and_spaces: bool,
+    bedrmod_spec: bool,
 }
 
 pub fn bedmethyl_header() -> String {
@@ -75,7 +78,7 @@ impl<T: Write + Sized> BedMethylWriter<T> {
         bedmethyl_header()
     }
 
-    pub fn new(
+    pub fn new_basic(
         mut buf_writer: BufWriter<T>,
         tabs_and_spaces: bool,
         with_header: bool,
@@ -84,7 +87,28 @@ impl<T: Write + Sized> BedMethylWriter<T> {
             buf_writer.write(Self::header().as_bytes())?;
         }
 
-        Ok(Self { buf_writer, tabs_and_spaces })
+        Ok(Self { buf_writer, tabs_and_spaces, bedrmod_spec: false })
+    }
+
+    pub(crate) fn new(
+        mut buf_writer: BufWriter<T>,
+        tabs_and_spaces: bool,
+        with_header: bool,
+        bed_rmod_args: &BedRModArgs,
+        header: &HeaderView,
+    ) -> anyhow::Result<Self> {
+        if with_header {
+            buf_writer.write(Self::header().as_bytes())?;
+        } else if bed_rmod_args.enabled() {
+            let bedrmod_header = bed_rmod_args.header(&header)?;
+            buf_writer.write(bedrmod_header.as_bytes())?;
+        }
+
+        Ok(Self {
+            buf_writer,
+            tabs_and_spaces,
+            bedrmod_spec: bed_rmod_args.enabled(),
+        })
     }
 
     #[inline]
@@ -94,6 +118,7 @@ impl<T: Write + Sized> BedMethylWriter<T> {
         feature_counts: &[PileupFeatureCounts],
         writer: &mut BufWriter<T>,
         tabs_and_spaces: bool,
+        bedrmod_spec: bool,
         motif_labels: &[String],
     ) -> AnyhowResult<u64> {
         let tab = '\t';
@@ -101,6 +126,16 @@ impl<T: Write + Sized> BedMethylWriter<T> {
         let mut rows_written = 0u64;
         let raw_code_only = motif_labels.len() < 2;
         for feature_count in feature_counts {
+            let (coverage, color) = if bedrmod_spec {
+                (
+                    feature_count
+                        .filtered_coverage
+                        .saturating_add(feature_count.n_filtered),
+                    "0,0,0",
+                )
+            } else {
+                (feature_count.filtered_coverage, "255,0,0")
+            };
             let name = if raw_code_only {
                 format!("{}", feature_count.raw_mod_code)
             } else {
@@ -139,8 +174,8 @@ impl<T: Write + Sized> BedMethylWriter<T> {
                 feature_count.raw_strand,
                 pos,
                 pos + 1,
-                "255,0,0",
-                feature_count.filtered_coverage,
+                color,
+                coverage,
                 format!("{:.2}", feature_count.fraction_modified * 100f32),
                 feature_count.n_modified,
                 feature_count.n_canonical,
@@ -176,6 +211,7 @@ impl<T: Write> PileupWriter<ModBasePileup> for BedMethylWriter<T> {
                         &feature_counts,
                         &mut self.buf_writer,
                         self.tabs_and_spaces,
+                        self.bedrmod_spec,
                         motif_labels,
                     )?;
                 }
@@ -1072,6 +1108,7 @@ impl PileupWriter<ModBasePileup> for PartitioningBedMethylWriter {
                     &pileup_feature_counts,
                     writer,
                     tabs_and_spaces,
+                    false,
                     motif_labels,
                 )?;
             }
