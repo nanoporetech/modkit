@@ -83,6 +83,22 @@ pub const SUPPORTED_CODES: [ModCodeRepr; 21] = [
 ];
 
 lazy_static! {
+    pub static ref RNA_ONT_NAMES_TO_MODOMICS_NAMES: FxHashMap<&'static str, &'static str> = {
+        let hm = hash_map! {
+            RNA_TWO_OME_ADENINE_NAME => "Am",
+            RNA_TWO_OME_CYTOSINE_NAME => "Cm",
+            RNA_TWO_OME_GUANINE_NAME => "Gm",
+            RNA_TWO_OME_URACIL_NAME => "Um",
+            RNA_INOSINE_NAME => "I",
+            RNA_METHYL_CYTOSINE_NAME => "m5C",
+            RNA_SIX_METHYL_ADENINE_NAME => "m6A",
+            RNA_PSEUDOURIDINE_NAME => "Y",
+        };
+        hm.into_iter().collect()
+    };
+}
+
+lazy_static! {
     pub static ref RNA_LONG_NAME_TO_CODE: FxHashMap<&'static str, ModCodeRepr> = {
         let hm = hash_map! {
             RNA_TWO_OME_ADENINE_NAME => TWO_OME_ADENINE,

@@ -5,15 +5,18 @@ use linear_map::LinearMap;
 use log::debug;
 use rust_htslib::bam;
 
-use crate::mod_base_code::{MOD_CODE_TO_DNA_BASE, RNA_LONG_NAME_TO_CODE};
-use crate::writers::bedmethyl_header;
+use crate::mod_base_code::{
+    MOD_CODE_TO_DNA_BASE, RNA_LONG_NAME_TO_CODE,
+    RNA_ONT_NAMES_TO_MODOMICS_NAMES,
+};
+use crate::writers::bedrmod_bedmethyl_header;
 
 #[derive(Args, Clone, Debug)]
 pub(crate) struct BedRModArgs {
     /// Output BedRModV2 header counts based on V2 Specification.
     /// Details can be found at https://github.com/dieterich-lab/euf-specs/blob/main/bedRModv2.pdf
     #[clap(help_heading = "Output Options")]
-    #[arg(long, conflicts_with_all = ["with_header", "partition_tag"], hide_short_help = true)]
+    #[arg(long, conflicts_with_all = ["with_header", "partition_tag", "preset", "combine_strands", "combine_mods"], hide_short_help = true)]
     bedrmod: bool,
     /// NCBI Taxonomic identifier, details at: https://doi.org/10.1093/database/baaa062
     #[clap(help_heading = "BedRMod Options")]
@@ -81,10 +84,12 @@ impl BedRModArgs {
         let modification_names_info = raw_base_mod_names
             .into_iter()
             .map(|name| {
+                let modomics_name =
+                    RNA_ONT_NAMES_TO_MODOMICS_NAMES.get(name.as_str()).unwrap();
                 let mod_code =
                     RNA_LONG_NAME_TO_CODE.get(name.as_str()).unwrap();
                 let dna_base = MOD_CODE_TO_DNA_BASE.get(mod_code).unwrap();
-                format!("{name}:{mod_code}:{dna_base}")
+                format!("{mod_code}:{modomics_name}:{dna_base}")
             })
             .join(",");
 
@@ -92,6 +97,7 @@ impl BedRModArgs {
             |k: &str, v: &str| -> String { format!("#{k}={v}") };
 
         let empty = "".to_string();
+        let command_line = std::env::args().collect::<Vec<String>>().join(" ");
         let header_lines = vec![
             make_header_line("fileformat", "bedRModv2"),
             make_header_line("organism", self.organism.as_str()),
@@ -104,6 +110,10 @@ impl BedRModArgs {
                 modification_names_info.as_str(),
             ),
             make_header_line("assembly", self.assembly.as_str()),
+            make_header_line(
+                "annotation_source",
+                self.annotation_source.as_str(),
+            ),
             make_header_line(
                 "annotation_version",
                 self.annotation_version.as_str(),
@@ -124,7 +134,7 @@ impl BedRModArgs {
                 "bioinformatics_workflow",
                 self.bioinformatics_workflow
                     .as_ref()
-                    .unwrap_or_else(|| &empty)
+                    .unwrap_or_else(|| &command_line)
                     .as_str(),
             ),
             make_header_line(
@@ -138,7 +148,7 @@ impl BedRModArgs {
                     .unwrap_or_else(|| &empty)
                     .as_str(),
             ),
-            bedmethyl_header(),
+            bedrmod_bedmethyl_header(),
         ];
         let header = header_lines.join("\n");
         Ok(header)

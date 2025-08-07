@@ -49,6 +49,14 @@ pub struct BedMethylWriter<T: Write> {
 }
 
 pub fn bedmethyl_header() -> String {
+    bedmethyl_header_op("valid_coverage")
+}
+
+pub fn bedrmod_bedmethyl_header() -> String {
+    bedmethyl_header_op("coverage")
+}
+
+fn bedmethyl_header_op(coverage_field: &'static str) -> String {
     let fields = [
         "chrom",
         "chromStart",
@@ -59,7 +67,7 @@ pub fn bedmethyl_header() -> String {
         "thickStart",
         "thickEnd",
         "color",
-        "valid_coverage",
+        coverage_field,
         "percent_modified",
         "count_modified",
         "count_canonical",
