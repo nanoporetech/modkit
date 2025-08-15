@@ -1,4 +1,4 @@
-use crate::mod_bam::{BaseModCall, ModBaseInfo, WithModBaseInfos};
+use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::pileup::PileupFeatureCounts;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
@@ -34,39 +34,37 @@ enum Call {
 }
 
 pub(super) struct ModPileup {
-    counts: ChromIdToPositionCounts,
+    chrom_id: ChromId,
+    counts: BTreeMap<PositionStrand, Vec<PileupFeatureCounts>>,
 }
 
 impl ModPileup {
-    pub(super) fn make_records(
-        &self,
-        chrom_id_to_name: FxHashMap<ChromId, String>,
-        record_chan: Sender<String>,
-    ) {
-        // let mut records = Vec::new();
-        for (chrom_id, pos_counts) in self.counts.iter() {
-            let chrom = chrom_id_to_name.get(chrom_id).unwrap();
-            for ((pos, _strand), pileup_feature_counts) in pos_counts.iter() {
-                for counts in pileup_feature_counts {
-                    let row = format!(
-                        "{}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}{TAB}\
-                         {}\n",
+    pub(super) fn iter_records(
+        self,
+        chrom_id_to_name: &FxHashMap<ChromId, String>,
+    ) -> impl Iterator<Item = String> + '_ {
+        let chrom = chrom_id_to_name.get(&self.chrom_id).unwrap();
+        self.counts.into_iter().flat_map(move |((pos, _strand), pfcs)| {
+            pfcs.into_iter().map(move |counts| {
+                let row = format!(
+                            "{}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}{TAB}\
+                             {}\n",
                             chrom,
                             pos,
                             pos + 1,
@@ -85,9 +83,59 @@ impl ModPileup {
                             counts.n_filtered,
                             counts.n_diff,
                             counts.n_nocall,
-                    );
-                    record_chan.send(row).unwrap()
-                }
+                        );
+                row
+            })
+        })
+    }
+
+    pub(super) fn make_records(
+        &self,
+        chrom_id_to_name: &FxHashMap<ChromId, String>,
+        record_chan: Sender<String>,
+    ) {
+        let chrom = chrom_id_to_name.get(&self.chrom_id).unwrap();
+        for ((pos, _strand), pileup_feature_counts) in self.counts.iter() {
+            for counts in pileup_feature_counts {
+                let row = format!(
+                    "{}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}{TAB}\
+                     {}\n",
+                        chrom,
+                        pos,
+                        pos + 1,
+                        counts.raw_mod_code.to_string(),
+                        counts.filtered_coverage,
+                        counts.raw_strand,
+                        pos,
+                        pos + 1,
+                        "255,0,0",
+                        counts.filtered_coverage,
+                        format!("{:.2}",counts.fraction_modified * 100f32),
+                        counts.n_modified,
+                        counts.n_canonical,
+                        counts.n_other_modified,
+                        counts.n_delete,
+                        counts.n_filtered,
+                        counts.n_diff,
+                        counts.n_nocall,
+                );
+                record_chan.send(row).unwrap()
             }
         }
     }
@@ -129,23 +177,23 @@ impl Tallies {
         });
     }
 
-    fn finalize(self, combine_mods: bool) -> ModPileup {
-        let counts = self.inner
-            .into_par_iter()
-            .map(|(chrom_id, tallies)| {
-                let counts = tallies
-                    // for every strand/position
-                    .into_par_iter()
-                    .map(|((ref_pos, strand), tally)| {
-                        let counts = tally.into_counts(combine_mods, strand);
-                        ((ref_pos, strand), counts)
-                    })
-                    .collect::<BTreeMap<PositionStrand, Vec<PileupFeatureCounts>>>();
-                (chrom_id, counts)
-            })
-            .collect::<BTreeMap<ChromId, BTreeMap<PositionStrand, Vec<PileupFeatureCounts>>>>();
-        ModPileup { counts }
-    }
+    // fn finalize(self, combine_mods: bool) -> ModPileup {
+    //     let counts = self.inner
+    //         .into_par_iter()
+    //         .map(|(chrom_id, tallies)| {
+    //             let counts = tallies
+    //                 // for every strand/position
+    //                 .into_par_iter()
+    //                 .map(|((ref_pos, strand), tally)| {
+    //                     let counts = tally.into_counts(combine_mods, strand);
+    //                     ((ref_pos, strand), counts)
+    //                 })
+    //                 .collect::<BTreeMap<PositionStrand,
+    // Vec<PileupFeatureCounts>>>();             (chrom_id, counts)
+    //         })
+    //         .collect::<BTreeMap<ChromId, BTreeMap<PositionStrand,
+    // Vec<PileupFeatureCounts>>>>();     ModPileup { counts }
+    // }
 }
 
 impl Tally2 {
@@ -391,31 +439,44 @@ fn read_info_to_features(
     features
 }
 
+#[inline]
 pub(super) fn process_stream(
     mut reader: bam::Reader,
     caller: MultipleThresholdModCaller,
     combine_mods: bool,
-) -> anyhow::Result<ModPileup> {
+    snd_pileups: Sender<ModPileup>,
+) {
+    let (snd_records, rcv_records) = crossbeam_channel::unbounded();
     let (snd_info, rcv_info) = crossbeam_channel::unbounded();
     let (snd_feats, rcv_feats) = crossbeam_channel::unbounded();
-    let info_handle = std::thread::spawn(move || {
+    let records_handle = std::thread::spawn(move || {
         reader
             .records()
-            .with_mod_base_info()
-            .filter_map(|(record, modbase_info)| {
-                if record.tid() < 0i32 {
-                    None
-                } else {
-                    let srecord = SafeRecord::from(record);
-                    Some((srecord, modbase_info))
-                }
+            .filter_ok(|record| record.tid() >= 0i32)
+            .filter_map(|res| match res {
+                Ok(record) => Some(SafeRecord::from(record)),
+                Err(_) => None,
             })
-            .for_each(|x| snd_info.send(x).unwrap())
+            .for_each(|x| {
+                snd_records.send(x).unwrap();
+            });
+    });
+
+    let info_handle = std::thread::spawn(move || {
+        rcv_records.iter().for_each(|sr| {
+            let record: bam::Record = sr.into();
+            let res = ModBaseInfo::new_from_record(&record);
+            match res {
+                Ok(modbase_info) => {
+                    snd_info.send((record, modbase_info)).unwrap()
+                }
+                Err(_) => {}
+            }
+        });
     });
 
     let features_handle = std::thread::spawn(move || {
-        rcv_info.iter().par_bridge().for_each(|(srecord, modbase_info)| {
-            let record: bam::Record = srecord.into();
+        rcv_info.iter().par_bridge().for_each(|(record, modbase_info)| {
             let features =
                 read_info_to_features(&modbase_info, &caller, &record);
             let chrom_id = record.tid() as u32;
@@ -428,17 +489,43 @@ pub(super) fn process_stream(
         })
     });
 
-    let tallies = rcv_feats.iter().fold(
-        Tallies::default(),
-        |mut tallies, ((chrom_id, strand), features)| {
-            tallies.add_features(chrom_id, strand, features);
-            tallies
-        },
-    );
+    let mut curr_chrom_id = Option::<ChromId>::None;
+    let mut chrom_features: FxHashMap<PositionStrand, Tally2> =
+        FxHashMap::default();
+    for ((chrom_id, strand), features) in rcv_feats {
+        // initial conditions
+        if curr_chrom_id.is_none() {
+            curr_chrom_id = Some(chrom_id);
+        }
+        let on_new_chrom = curr_chrom_id.map(|x| chrom_id > x).unwrap_or(false);
+        if on_new_chrom {
+            // emit
+            let finished_counts =
+                std::mem::replace(&mut chrom_features, FxHashMap::default());
+            let prev_chrom_id =
+                std::mem::replace(&mut curr_chrom_id, Some(chrom_id)).unwrap();
+            let counts = finished_counts
+                .into_iter()
+                .map(|((ref_pos, strand), tally)| {
+                    let pileup_feature_counts: Vec<PileupFeatureCounts> =
+                        tally.into_counts(combine_mods, strand);
+                    ((ref_pos, strand), pileup_feature_counts)
+                })
+                .collect::<BTreeMap<PositionStrand, Vec<PileupFeatureCounts>>>(
+                );
 
-    info_handle.join().expect("should join infos");
+            let pileup = ModPileup { chrom_id: prev_chrom_id, counts };
+            snd_pileups.send(pileup).unwrap();
+        }
+        features.into_iter().for_each(|(ref_pos, call_feature)| {
+            chrom_features
+                .entry((ref_pos, strand))
+                .or_insert_with(Tally2::default)
+                .add_call(call_feature);
+        });
+    }
+
     features_handle.join().expect("should join features");
-
-    let pileup = tallies.finalize(combine_mods);
-    Ok(pileup)
+    info_handle.join().expect("should join infos");
+    records_handle.join().expect("should join records");
 }

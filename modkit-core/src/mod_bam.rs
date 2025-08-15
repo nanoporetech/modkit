@@ -1568,6 +1568,7 @@ impl ModBaseInfo {
             .unique()
             .map(|b| FundamentalBase::parse_char(b.char()))
             .collect::<MkResult<Vec<FundamentalBase>>>()?;
+        // if extra_bases.is_empty()
         let extra_converters = extra_bases
             .into_par_iter()
             .map(|fb| DeltaListConverter::new(forward_seq, fb))

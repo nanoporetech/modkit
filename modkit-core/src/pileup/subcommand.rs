@@ -1689,17 +1689,27 @@ impl StreamModBamPileup {
             Ok(MultipleThresholdModCaller::new_passthrough())
         }?;
 
-        let pileup = process_stream(reader, caller, self.combine_mods)?;
+        let (snd_pileups, rcv_pileups) = crossbeam::channel::unbounded();
         let (snd_rows, rcv_rows) = crossbeam::channel::unbounded();
-        let write_handle = std::thread::spawn(move || {
-            pileup.make_records(chrom_id_to_name, snd_rows);
+        let combine_mods = self.combine_mods;
+        let pileup_handle = std::thread::spawn(move || {
+            process_stream(reader, caller, combine_mods, snd_pileups);
+        });
+
+        let rows_handle = std::thread::spawn(move || {
+            for pileup in rcv_pileups {
+                pileup
+                    .iter_records(&chrom_id_to_name)
+                    .for_each(|rec| snd_rows.send(rec).unwrap())
+            }
         });
 
         for record in rcv_rows.iter() {
             writer.write(record.as_bytes())?;
         }
 
-        write_handle.join().expect("should join write handle");
+        rows_handle.join().expect("should join rows");
+        pileup_handle.join().expect("should join pileups");
 
         Ok(())
     }
