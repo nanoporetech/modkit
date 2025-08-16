@@ -5,6 +5,7 @@ use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{Strand, TAB};
 use crossbeam_channel::Sender;
 use itertools::Itertools;
+use log::info;
 use rayon::prelude::*;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{self, Read};
@@ -35,7 +36,7 @@ enum Call {
 
 pub(super) struct ModPileup {
     chrom_id: ChromId,
-    counts: BTreeMap<PositionStrand, Vec<PileupFeatureCounts>>,
+    counts: Vec<(RefPosition, Vec<PileupFeatureCounts>)>,
 }
 
 impl ModPileup {
@@ -44,7 +45,7 @@ impl ModPileup {
         chrom_id_to_name: &FxHashMap<ChromId, String>,
     ) -> impl Iterator<Item = String> + '_ {
         let chrom = chrom_id_to_name.get(&self.chrom_id).unwrap();
-        self.counts.into_iter().flat_map(move |((pos, _strand), pfcs)| {
+        self.counts.into_iter().flat_map(move |(pos, pfcs)| {
             pfcs.into_iter().map(move |counts| {
                 let row = format!(
                             "{}{TAB}\
@@ -95,7 +96,7 @@ impl ModPileup {
         record_chan: Sender<String>,
     ) {
         let chrom = chrom_id_to_name.get(&self.chrom_id).unwrap();
-        for ((pos, _strand), pileup_feature_counts) in self.counts.iter() {
+        for (pos, pileup_feature_counts) in self.counts.iter() {
             for counts in pileup_feature_counts {
                 let row = format!(
                     "{}{TAB}\
@@ -150,9 +151,9 @@ enum ModifiedBase {
 #[derive(Debug, Default)]
 pub(super) struct Tally2 {
     n_delete: u32,
-    n_filtered: FxHashMap<DnaBase, u32>,
-    basecall_counts: FxHashMap<DnaBase, u32>,
-    modcall_counts: FxHashMap<DnaBase, FxHashMap<ModifiedBase, u32>>,
+    n_filtered: [u32; 4],
+    basecall_counts: [u32; 4],
+    modcall_counts: [FxHashMap<ModifiedBase, u32>; 4],
 }
 
 #[derive(Default)]
@@ -203,43 +204,31 @@ impl Tally2 {
                 self.n_delete = self.n_delete.saturating_add(1);
             }
             Call::Filtered(read_base) => {
-                self.n_filtered
-                    .entry(read_base)
-                    .and_modify(|x| *x = x.saturating_add(1))
-                    .or_insert(1);
+                self.n_filtered[read_base as usize] += 1;
             }
             Call::NoCall(read_base) => {
-                self.basecall_counts
-                    .entry(read_base)
-                    .and_modify(|x| *x = x.saturating_add(1))
-                    .or_insert(1);
+                self.basecall_counts[read_base as usize] += 1;
             }
             Call::CanonicalCall { primary_base, mod_codes } => {
-                self.modcall_counts
-                    .entry(primary_base)
-                    .or_insert_with(FxHashMap::default)
+                let mod_calls = &mut self.modcall_counts[primary_base as usize];
+                mod_calls
                     .entry(ModifiedBase::UnModified)
                     .and_modify(|x| *x = x.saturating_add(1))
                     .or_insert(1);
                 for mod_code in mod_codes {
-                    self.modcall_counts
-                        .entry(primary_base)
-                        .or_insert_with(FxHashMap::default)
+                    mod_calls
                         .entry(ModifiedBase::Modified(mod_code))
                         .or_insert(0);
                 }
             }
             Call::ModifiedCall { primary_base, mod_code, mod_codes } => {
-                self.modcall_counts
-                    .entry(primary_base)
-                    .or_insert_with(FxHashMap::default)
+                let mod_calls = &mut self.modcall_counts[primary_base as usize];
+                mod_calls
                     .entry(ModifiedBase::Modified(mod_code))
                     .and_modify(|x| *x = x.saturating_add(1))
                     .or_insert(1);
                 for mod_code in mod_codes {
-                    self.modcall_counts
-                        .entry(primary_base)
-                        .or_insert_with(FxHashMap::default)
+                    mod_calls
                         .entry(ModifiedBase::Modified(mod_code))
                         .or_insert(0);
                 }
@@ -254,7 +243,20 @@ impl Tally2 {
     ) -> Vec<PileupFeatureCounts> {
         self.modcall_counts
             .into_iter()
-            .flat_map(|(base, calls)| {
+            .enumerate()
+            .filter_map(|(i, calls)| {
+                let valid_coverage = calls.values().sum::<u32>();
+                if valid_coverage == 0 {
+                    None
+                } else {
+                    Some((i, calls, valid_coverage))
+                }
+            })
+            .map(|(i, calls, valid_coverage)| {
+                let b: DnaBase = DnaBase::try_from(i).unwrap();
+                (b, calls, valid_coverage)
+            })
+            .flat_map(|(base, calls, filtered_coverage)| {
                 let n_modified_all = calls
                     .iter()
                     .filter_map(|(mb, c)| match mb {
@@ -263,23 +265,22 @@ impl Tally2 {
                     })
                     .sum::<u32>();
 
-                let (n_diff, n_nocall) = self.basecall_counts.iter().fold(
-                    (0u32, 0u32),
-                    |(n_diff, n_nocall), (b, c)| {
-                        if *b == base {
+                let (n_diff, n_nocall) = self
+                    .basecall_counts
+                    .iter()
+                    .enumerate()
+                    .fold((0u32, 0u32), |(n_diff, n_nocall), (b, c)| {
+                        if b == (base as usize) {
                             (n_diff, n_nocall.saturating_add(*c))
                         } else {
                             (n_diff.saturating_add(*c), n_nocall)
                         }
-                    },
-                );
+                    });
 
-                let n_filt =
-                    self.n_filtered.get(&base).copied().unwrap_or(0u32);
+                let n_filt = self.n_filtered[base as usize];
                 let n_canonical =
                     calls.get(&ModifiedBase::UnModified).copied().unwrap_or(0);
-                let filtered_coverage = calls.values().sum::<u32>();
-                assert!(filtered_coverage > 0);
+                assert!(filtered_coverage > 0, "{base} {calls:?}");
                 let calls = if combine_mods {
                     let mut tmp = FxHashMap::default();
                     tmp.insert(
@@ -333,7 +334,7 @@ fn read_info_to_features(
         })
         .fold(FxHashMap::default(), |mut acc, (pos, base)| {
             let seen = acc.insert(pos, base).is_some();
-            assert!(!seen);
+            debug_assert!(!seen);
             acc
         });
 
@@ -490,8 +491,7 @@ pub(super) fn process_stream(
     });
 
     let mut curr_chrom_id = Option::<ChromId>::None;
-    let mut chrom_features: FxHashMap<PositionStrand, Tally2> =
-        FxHashMap::default();
+    let mut chrom_features: BTreeMap<PositionStrand, Tally2> = BTreeMap::new();
     for ((chrom_id, strand), features) in rcv_feats {
         // initial conditions
         if curr_chrom_id.is_none() {
@@ -501,7 +501,7 @@ pub(super) fn process_stream(
         if on_new_chrom {
             // emit
             let finished_counts =
-                std::mem::replace(&mut chrom_features, FxHashMap::default());
+                std::mem::replace(&mut chrom_features, BTreeMap::new());
             let prev_chrom_id =
                 std::mem::replace(&mut curr_chrom_id, Some(chrom_id)).unwrap();
             let counts = finished_counts
@@ -509,10 +509,9 @@ pub(super) fn process_stream(
                 .map(|((ref_pos, strand), tally)| {
                     let pileup_feature_counts: Vec<PileupFeatureCounts> =
                         tally.into_counts(combine_mods, strand);
-                    ((ref_pos, strand), pileup_feature_counts)
+                    (ref_pos, pileup_feature_counts)
                 })
-                .collect::<BTreeMap<PositionStrand, Vec<PileupFeatureCounts>>>(
-                );
+                .collect::<Vec<(RefPosition, Vec<PileupFeatureCounts>)>>();
 
             let pileup = ModPileup { chrom_id: prev_chrom_id, counts };
             snd_pileups.send(pileup).unwrap();
@@ -523,6 +522,20 @@ pub(super) fn process_stream(
                 .or_insert_with(Tally2::default)
                 .add_call(call_feature);
         });
+    }
+
+    if !chrom_features.is_empty() {
+        let counts = chrom_features
+            .into_iter()
+            .map(|((ref_pos, strand), tally)| {
+                let pileup_feature_counts: Vec<PileupFeatureCounts> =
+                    tally.into_counts(combine_mods, strand);
+                (ref_pos, pileup_feature_counts)
+            })
+            .collect::<Vec<(RefPosition, Vec<PileupFeatureCounts>)>>();
+
+        let pileup = ModPileup { chrom_id: curr_chrom_id.unwrap(), counts };
+        snd_pileups.send(pileup).unwrap();
     }
 
     features_handle.join().expect("should join features");

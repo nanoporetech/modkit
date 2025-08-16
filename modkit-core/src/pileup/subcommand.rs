@@ -1635,9 +1635,6 @@ pub struct StreamModBamPileup {
 impl StreamModBamPileup {
     pub fn run(&self) -> anyhow::Result<()> {
         let _ = init_logging(self.log_filepath.as_ref());
-        let _ = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.threads)
-            .build_global()?;
         let mut reader = match self.in_bam.as_str() {
             "stdin" | "-" => bam::Reader::from_stdin(),
             p @ _ => bam::Reader::from_path(p),

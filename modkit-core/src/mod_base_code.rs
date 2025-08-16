@@ -174,15 +174,16 @@ impl From<u32> for ModCodeRepr {
 #[derive(
     Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, ValueEnum,
 )]
+#[repr(usize)]
 pub enum DnaBase {
     #[clap(name = "A")]
-    A,
+    A = 0,
     #[clap(name = "C")]
-    C,
+    C = 1,
     #[clap(name = "G")]
-    G,
+    G = 2,
     #[clap(name = "T")]
-    T,
+    T = 3,
 }
 
 impl DnaBase {
@@ -248,6 +249,20 @@ impl Display for DnaBase {
     }
 }
 
+impl TryFrom<usize> for DnaBase {
+    type Error = MkError;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            0usize => Ok(DnaBase::A),
+            1usize => Ok(DnaBase::C),
+            2usize => Ok(DnaBase::G),
+            3usize => Ok(DnaBase::T),
+            _ => Err(MkError::InvalidDnaBase),
+        }
+    }
+}
+
 // TODO this little enum is ripe for a refactor, try to make it just { DnaBase,
 //  Modified(code) | Canonical }
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -270,4 +285,19 @@ impl Display for BaseState {
 #[derive(new)]
 pub struct ProbHistogram {
     pub prob_counts: HashMap<BaseAndState, BTreeMap<u8, usize>>,
+}
+
+#[cfg(test)]
+mod mod_base_code_tests {
+    use crate::mod_base_code::DnaBase;
+
+    #[test]
+    fn test_dna_base_usize() {
+        let mut x = [0u32; 4];
+        dbg!(&x);
+        x[DnaBase::A as usize] += 1;
+        dbg!(&x);
+        x[DnaBase::G as usize] += 1;
+        dbg!(&x);
+    }
 }
