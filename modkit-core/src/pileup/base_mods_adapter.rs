@@ -46,7 +46,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
         let seq = record.seq();
         let mm = match record
             .aux("MM".as_bytes())
-            .or(record.aux("Ml".as_bytes()))?
+            .or(record.aux("Mm".as_bytes()))?
         {
             bam::record::Aux::String(x) => x.as_bytes(),
             _ => bail!("MM tag must be a string"),
