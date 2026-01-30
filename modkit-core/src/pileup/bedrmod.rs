@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use clap::Args;
 use itertools::Itertools;
 use linear_map::LinearMap;
+use log::warn;
 use rust_htslib::bam;
 use rustc_hash::FxHashMap;
 
@@ -102,16 +103,35 @@ impl BedRModArgs {
             self.parse_user_modomics_codes()?;
         let header = bam::Header::from_template(bam_header);
         let tags = header.to_hashmap();
-        let ds_record =
-            tags.get("RG").and_then(|rg_tag| find_ds_tag(rg_tag)).ok_or_else(
-                || anyhow!("failed to find DS in RG record mapping"),
-            )?;
-        let modbase_models_list = parse_modbase_models(&ds_record)?;
-        let basecaller_model = ds_record
-            .split_whitespace()
-            .find(|x| x.starts_with("basecall_model="))
-            .map(|x| x.replace("basecall_model=", ""))
-            .map(|x| format!("{x},{modbase_models_list}"));
+        let basecaller_model = match self.basecalling.as_ref() {
+            Some(basecaller) => Some(basecaller.to_owned()),
+            None => {
+                match tags
+                    .get("RG")
+                    .and_then(|rg_tag| find_ds_tag(rg_tag))
+                    .ok_or_else(|| {
+                        anyhow!("failed to find DS in RG record mapping")
+                    }) {
+                    Ok(ds_record) => {
+                        let modbase_models_list =
+                            parse_modbase_models(&ds_record)?;
+                        let basecaller_model = ds_record
+                            .split_whitespace()
+                            .find(|x| x.starts_with("basecall_model="))
+                            .map(|x| x.replace("basecall_model=", ""))
+                            .map(|x| format!("{x},{modbase_models_list}"));
+                        basecaller_model
+                    }
+                    Err(_) => {
+                        warn!(
+                            "failed to parse DS record from RG header record. \
+                             Basecaller not provided so will be empty"
+                        );
+                        None
+                    }
+                }
+            }
+        };
         let modification_names_info = modified_base_options
             .iter()
             .map(|modified_base_option| {
@@ -171,11 +191,7 @@ impl BedRModArgs {
             ),
             make_header_line(
                 "basecalling",
-                self.basecalling
-                    .as_ref()
-                    .or(basecaller_model.as_ref())
-                    .unwrap_or_else(|| &empty)
-                    .as_str(),
+                basecaller_model.as_ref().unwrap_or_else(|| &empty).as_str(),
             ),
             make_header_line(
                 "bioinformatics_workflow",
