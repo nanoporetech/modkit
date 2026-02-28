@@ -5,6 +5,8 @@ use bitvec::slice::BitSlice;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::ops::BitOrAssign;
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 
 use crate::{
     errs::{MkError, MkResult},
@@ -32,6 +34,74 @@ use rust_htslib::{
     },
     htslib::{self},
 };
+
+// ---- Reservoir sampling support ----
+
+enum ReservoirDecision {
+    Accept,
+    Replace,
+    Reject,
+}
+
+struct ReservoirState {
+    n_seen: Vec<u32>,
+    rng: SmallRng,
+    max_depth: u16,
+}
+
+impl ReservoirState {
+    fn new(max_depth: u16) -> Self {
+        Self {
+            n_seen: Vec::new(),
+            rng: SmallRng::from_entropy(),
+            max_depth,
+        }
+    }
+
+    fn reset(&mut self, n_slots: usize) {
+        self.n_seen.clear();
+        self.n_seen.resize(n_slots, 0u32);
+    }
+
+    #[inline]
+    fn check(&mut self, slot_index: usize) -> ReservoirDecision {
+        if slot_index >= self.n_seen.len() {
+            return ReservoirDecision::Reject;
+        }
+        self.n_seen[slot_index] =
+            self.n_seen[slot_index].saturating_add(1);
+        let seen = self.n_seen[slot_index];
+        let max = self.max_depth as u32;
+
+        if seen <= max {
+            ReservoirDecision::Accept
+        } else if self.rng.gen_ratio(max.min(seen), seen) {
+            ReservoirDecision::Replace
+        } else {
+            ReservoirDecision::Reject
+        }
+    }
+}
+
+#[inline]
+fn reservoir_slot<const STRANDS: usize>(
+    width: usize,
+    rpos: u32,
+    reverse: bool,
+    haplotype: u8,
+) -> usize {
+    let strand_slots = width;
+    if reverse && STRANDS > 1 {
+        rpos as usize
+            + strand_slots
+            + (strand_slots * 2 * haplotype as usize)
+    } else {
+        rpos as usize
+            + (strand_slots * STRANDS * haplotype as usize)
+    }
+}
+
+// ---- End reservoir sampling support ----
 
 pub trait PileupWorker
 where
@@ -61,6 +131,7 @@ pub(super) struct DnaPileupWorker<
     edge_filter_end: usize,
     matrix: M,
     t: PhantomData<T>,
+    reservoir: Option<ReservoirState>,
 }
 
 impl<
@@ -119,6 +190,11 @@ impl<
             motif_bases,
             matrix,
             t: PhantomData::<T>,
+            reservoir: if CHECK_DEPTH {
+                Some(ReservoirState::new(max_depth))
+            } else {
+                None
+            },
         })
     }
 }
@@ -145,6 +221,11 @@ impl<
             .ok_or_else(|| anyhow!("interval end before start"))?
             as usize;
         self.matrix.reset(width, self.phased);
+
+        if let Some(ref mut reservoir) = self.reservoir {
+            let n_hp = if self.phased { 3usize } else { 1usize };
+            reservoir.reset(width * STRANDS * n_hp);
+        }
 
         let chrom_name =
             String::from_utf8_lossy(self.reader.header().tid2name(chrom_tid))
@@ -268,8 +349,17 @@ impl<
                 });
             'pileup: for (qpos, rpos, ref_base) in aligned_pairs_iter {
                 if CHECK_DEPTH {
-                    if self.matrix.reached_max_depth(rpos, reverse, hp) {
-                        continue 'pileup;
+                    if let Some(ref mut reservoir) = self.reservoir {
+                        let slot = reservoir_slot::<STRANDS>(
+                            width, rpos, reverse, hp,
+                        );
+                        match reservoir.check(slot) {
+                            ReservoirDecision::Accept
+                            | ReservoirDecision::Replace => {}
+                            ReservoirDecision::Reject => {
+                                continue 'pileup;
+                            }
+                        }
                     }
                 }
                 match (qpos, mod_state) {
@@ -471,6 +561,7 @@ pub struct GenericPileupWorker {
     pileup_numeric_options: PileupNumericOptions,
     combine_strands: bool,
     max_depth: u16,
+    reservoir_rng: SmallRng,
 }
 
 impl GenericPileupWorker {
@@ -509,6 +600,7 @@ impl GenericPileupWorker {
             pileup_numeric_options,
             combine_strands,
             max_depth,
+            reservoir_rng: SmallRng::from_entropy(),
         })
     }
 }
@@ -547,6 +639,9 @@ impl PileupWorker for GenericPileupWorker {
 
         let mut chrom_features: FxHashMap<PositionStrand, Tally2> =
             FxHashMap::default();
+        let max_depth = self.max_depth;
+        let combine_strands = self.combine_strands;
+        let rng = &mut self.reservoir_rng;
         let mut add_to_tally = |position_strand: PositionStrand,
                                 call: Call,
                                 motif_info: Option<&MotifInfo>,
@@ -565,7 +660,7 @@ impl PileupWorker for GenericPileupWorker {
                 None => call,
             };
             let position_strand = match motif_info {
-                Some(motif_info) if self.combine_strands => {
+                Some(motif_info) if combine_strands => {
                     let (rpos, strand) = position_strand;
                     if strand == Strand::Negative {
                         (
@@ -586,7 +681,7 @@ impl PileupWorker for GenericPileupWorker {
             chrom_features
                 .entry(position_strand)
                 .or_insert_with(Tally2::default)
-                .add_call(call, motif_idxs, self.max_depth);
+                .add_call(call, motif_idxs, max_depth, rng);
         };
 
         let mut mod_pos = Option::<usize>::None;
@@ -2224,6 +2319,7 @@ pub(super) struct Tally2 {
     basecall_counts: [u16; 4],
     modcall_counts: [FxHashMap<ModifiedBase, u16>; 4],
     motif_idxs: u8,
+    n_seen: u32,
 }
 
 impl Tally2 {
@@ -2232,12 +2328,23 @@ impl Tally2 {
         call: Call,
         motif_idxs: u8,
         max_coverage: u16,
+        rng: &mut SmallRng,
     ) {
         self.motif_idxs.bitor_assign(motif_idxs);
-        self.total_cov = self.total_cov.saturating_add(1);
-        if self.total_cov > max_coverage {
-            return;
+        self.n_seen = self.n_seen.saturating_add(1);
+        if self.total_cov >= max_coverage {
+            // Reservoir sampling: accept with probability
+            // max_coverage / n_seen
+            let max = max_coverage as u32;
+            let seen = self.n_seen;
+            if !rng.gen_ratio(max.min(seen), seen) {
+                return;
+            }
+            // Accepted via replacement — we slightly overcount
+            // but selection is random. The u16 saturation on
+            // total_cov prevents overflow.
         }
+        self.total_cov = self.total_cov.saturating_add(1);
         match call {
             Call::Delete => {
                 self.n_delete = self.n_delete.saturating_add(1);
