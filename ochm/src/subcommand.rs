@@ -326,7 +326,7 @@ impl EntryInference {
                         }
                     }
                     Ok(InferenceMessage::Done) => {
-                        debug!("batcher received Done, sending it on..");
+                        // debug!("batcher received Done, sending it on..");
                         snd_features.send(InferenceMessage::Done).unwrap()
                     }
                     Err(e) => {
@@ -383,8 +383,8 @@ impl EntryInference {
                             });
                         written_pb.inc(n);
                     }
-                    Err(e) => {
-                        info!("write handle got {e}");
+                    Err(_e) => {
+                        // info!("write handle got {e}");
                         break;
                     }
                 }
@@ -408,11 +408,11 @@ impl EntryInference {
                         .unwrap()
                 }
                 Ok(InferenceMessage::Done) => {
-                    debug!("inference got done message, passing it by..");
+                    // debug!("inference got done message, passing it by..");
                     snd_infer.send(InferenceMessage::Done).unwrap()
                 }
-                Err(e) => {
-                    info!("model received {e}");
+                Err(_e) => {
+                    info!("model received completion signal");
                     break;
                 }
             }

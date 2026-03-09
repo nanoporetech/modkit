@@ -3,7 +3,6 @@ use derive_new::new;
 use log::debug;
 use mod_kit::util::TAB;
 use ndarray::{s, Array1};
-use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::{Display, Formatter};
@@ -56,7 +55,7 @@ impl ProbMerger {
 
     pub(crate) fn into_records(self) -> Vec<OpenChromRecord> {
         self.preds
-            .into_par_iter()
+            .into_iter()
             .flat_map(|(chrom, intervals)| {
                 calc_base_level_probs(chrom, intervals, self.filter_threshold)
             })
