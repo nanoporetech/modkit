@@ -3,7 +3,7 @@
 Nanopore sequencing can detect multiple base modifications simultaneously and we can leverage this capability by introducing exogenous base modifications at specific functional regions.
 One such method uses a 6mA methyltransferase such as EcoGII or Hia5 to label accessible regions of chromatinized DNA, usually by treatment of cell nuclei with the enzyme.
 
-![Chromatin Accessibility treatment](./images/chromatin_stenciling_3.png "Cartoon schematic showing exogenous 6mA introduced to regions of accessible chromatin")
+![Chromatin Accessibility treatment](./images/chromatin_stenciling_3_no_alpha.png "Cartoon schematic showing exogenous 6mA introduced to regions of accessible chromatin")
 
 ## Predict regions of open chromatin
 Modkit comes with a machine learning model that has been trained to identify regions of open chromatin based on 6mA signal.
