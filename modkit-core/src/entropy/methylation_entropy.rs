@@ -1,6 +1,6 @@
 use derive_new::new;
 use itertools::Itertools;
-use log_once::debug_once;
+use log::debug;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeSet, HashMap};
@@ -167,14 +167,17 @@ fn calc_entropy(sequences: &[String], window_size: usize) -> f32 {
     });
 
     let total = counts.values().sum::<f32>();
-    if total - sequences.len() as f32 > 1e-3 {
-        if total > sequences.len() as f32 {
-            debug_once!(
-                "encountered discordant total value calculation, too high"
+    if total - sequences.len() as f32 > 0.1f32 {
+        let n_seqs = sequences.len() as f32;
+        if total > n_seqs {
+            debug!(
+                "encountered discordant total value calculation, too high \
+                 total={total} n_seqs={n_seqs}"
             );
         } else {
-            debug_once!(
-                "encountered discordant total value calculation, too low"
+            debug!(
+                "encountered discordant total value calculation, too low \
+                 total={total} n_seqs={n_seqs}"
             );
         }
     }
