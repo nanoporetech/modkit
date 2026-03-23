@@ -102,11 +102,23 @@ install_xcode_tools() {
         
         echo ""
         echo "Waiting for Xcode Command Line Tools installation to complete..."
-        echo "This may take several minutes."
+        echo "This may take several minutes (timeout: 10 minutes)."
         
-        # Wait for installation to complete
+        # Wait for installation to complete with a timeout
+        local MAX_WAIT=600  # 10 minutes in seconds
+        local WAITED=0
         while ! xcode-select -p &> /dev/null; do
             sleep 5
+            WAITED=$((WAITED + 5))
+            if [[ ${WAITED} -ge ${MAX_WAIT} ]]; then
+                print_error "Timed out waiting for Xcode Command Line Tools installation"
+                echo "Please try one of the following:"
+                echo "  1. Re-run: xcode-select --install"
+                echo "  2. Install via: System Settings > Software Update"
+                echo "  3. Download from: https://developer.apple.com/download/more/"
+                echo "Then re-run this script."
+                exit 1
+            fi
         done
         
         print_success "Xcode Command Line Tools installed successfully"
@@ -135,14 +147,20 @@ install_homebrew() {
         echo "Installing Homebrew..."
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
         
-        # Add Homebrew to PATH based on architecture
+        # Add Homebrew to PATH based on architecture (only if not already in .zprofile)
         if [[ $(uname -m) == "arm64" ]]; then
             # Apple Silicon
-            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "${HOME}/.zprofile"
+            local BREW_LINE='eval "$(/opt/homebrew/bin/brew shellenv)"'
+            if ! grep -qF "${BREW_LINE}" "${HOME}/.zprofile" 2>/dev/null; then
+                echo "${BREW_LINE}" >> "${HOME}/.zprofile"
+            fi
             eval "$(/opt/homebrew/bin/brew shellenv)"
         else
             # Intel
-            echo 'eval "$(/usr/local/bin/brew shellenv)"' >> "${HOME}/.zprofile"
+            local BREW_LINE='eval "$(/usr/local/bin/brew shellenv)"'
+            if ! grep -qF "${BREW_LINE}" "${HOME}/.zprofile" 2>/dev/null; then
+                echo "${BREW_LINE}" >> "${HOME}/.zprofile"
+            fi
             eval "$(/usr/local/bin/brew shellenv)"
         fi
         
@@ -169,10 +187,13 @@ install_rustup() {
     if command_exists rustup; then
         print_success "rustup already installed at: $(which rustup)"
         echo "Current version: $(rustup --version)"
+    elif command_exists rustup-init; then
+        print_success "rustup-init already available at: $(which rustup-init)"
+        echo "Will be used in the next step to install the Rust toolchain."
     else
-        echo "Installing rustup via Homebrew..."
+        echo "Installing rustup-init via Homebrew..."
         brew install rustup-init
-        print_success "rustup package installed via Homebrew"
+        print_success "rustup-init installed via Homebrew"
     fi
 }
 
@@ -259,9 +280,14 @@ checkout_version() {
     cd "${MODKIT_REPO_DIR}"
     
     if [[ "${MODKIT_VERSION}" == "latest" ]]; then
-        # Get the latest release tag
+        # Get the latest release tag by semantic version (sorted by version, descending)
         echo "Fetching latest release version..."
-        LATEST_TAG=$(git describe --tags "$(git rev-list --tags --max-count=1)" 2>/dev/null || echo "")
+        LATEST_TAG=$(git tag -l "v*" --sort=-v:refname 2>/dev/null | head -n1 || echo "")
+        
+        if [[ -z "${LATEST_TAG}" ]]; then
+            # Fallback: try all tags if no v* tags exist
+            LATEST_TAG=$(git tag --sort=-v:refname 2>/dev/null | head -n1 || echo "")
+        fi
         
         if [[ -z "${LATEST_TAG}" ]]; then
             print_warning "No release tags found, using main branch"
@@ -474,7 +500,7 @@ export LIBTORCH_USE_PYTORCH=1
 export LIBTORCH_BYPASS_VERSION_CHECK=1
 export LIBTORCH="${MODKIT_VENV_DIR}/lib/${MODKIT_PYTHON_VER}/site-packages/torch"
 export DYLD_LIBRARY_PATH="${LIBTORCH}/lib"
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:${DYLD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${DYLD_LIBRARY_PATH}"
 
 ################################################################################
 # Step 4: Add modkit binary to PATH
@@ -552,7 +578,7 @@ SETUP_EOF
     
     echo ""
     echo "To set up this environment in a new terminal session, run:"
-    echo "  source ${SETUP_SCRIPT} ${INSTALL_DIR}"
+    echo "  source \"${SETUP_SCRIPT}\" \"${INSTALL_DIR}\""
 }
 
 ################################################################################
@@ -653,7 +679,7 @@ PyTorch Version: $(python3 -c "import torch; print(torch.__version__)" 2>/dev/nu
 
 Quick Start:
 -----------
-source ${SETUP_SCRIPT} ${INSTALL_DIR}
+source "${SETUP_SCRIPT}" "${INSTALL_DIR}"
 modkit --version
 
 For detailed usage instructions, run:
@@ -732,9 +758,17 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 1
 fi
 
-# Check macOS version
+# Check macOS version (require 11.0+)
 MACOS_VERSION=$(sw_vers -productVersion)
 echo "Detected macOS version: ${MACOS_VERSION}"
+
+MACOS_MAJOR=$(echo "${MACOS_VERSION}" | cut -d. -f1)
+if [[ "${MACOS_MAJOR}" -lt 11 ]]; then
+    print_error "macOS 11 (Big Sur) or later is required for Metal GPU support"
+    echo "Detected macOS version: ${MACOS_VERSION} (major: ${MACOS_MAJOR})"
+    echo "Please upgrade your macOS before running this script."
+    exit 1
+fi
 
 # Run main installation
 main
