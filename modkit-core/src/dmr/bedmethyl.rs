@@ -168,14 +168,16 @@ impl Display for BedMethylLine {
 pub(super) fn aggregate_counts2(
     bm_lines: &[BedMethylLine],
     code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
+    single_code: Option<ModCodeRepr>,
 ) -> MkResult<AggregatedCounts> {
     let lines = bm_lines.iter().collect::<Vec<&BedMethylLine>>();
-    aggregate_counts(&lines, code_lookup)
+    aggregate_counts(&lines, code_lookup, single_code)
 }
 
 pub(super) fn aggregate_counts(
     bm_lines: &[&BedMethylLine],
     code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
+    single_code: Option<ModCodeRepr>,
 ) -> MkResult<AggregatedCounts> {
     if bm_lines.is_empty() {
         return Ok(AggregatedCounts::default());
@@ -192,6 +194,13 @@ pub(super) fn aggregate_counts(
         Vec<&BedMethylLine>,
     > = bm_lines
         .iter()
+        .filter(|bml| {
+            if let Some(code) = single_code {
+                bml.raw_mod_code == code
+            } else {
+                true
+            }
+        })
         .fold(FxHashMap::default(), |mut acc, bm_line| {
             let code = bm_line.raw_mod_code;
             let e = acc
@@ -248,6 +257,9 @@ pub(super) fn aggregate_counts(
                 *acc.entry(x.raw_mod_code).or_insert(0) +=
                     x.count_methylated as usize;
                 check += x.count_methylated as usize;
+                if single_code.is_some() {
+                    check += x.count_other as usize;
+                }
             }
             if check != valid_coverage {
                 let mut message = format!(
@@ -412,15 +424,20 @@ mod bedmethylline_tests {
             })
             .collect::<Vec<BedMethylLine>>();
         let counts =
-            aggregate_counts2(&bedmethyl_lines, &MOD_CODE_TO_DNA_BASE).unwrap();
+            aggregate_counts2(&bedmethyl_lines, &MOD_CODE_TO_DNA_BASE, None)
+                .unwrap();
         assert_eq!(&counts.string_counts(), "h:2,m:4");
         assert_eq!(counts.total, 6);
         let filtered_bm_lines = bedmethyl_lines
             .into_iter()
             .filter(|l| l.raw_mod_code == ModCodeRepr::Code('m'))
             .collect::<Vec<BedMethylLine>>();
-        assert!(aggregate_counts2(&filtered_bm_lines, &MOD_CODE_TO_DNA_BASE)
-            .is_err());
+        assert!(aggregate_counts2(
+            &filtered_bm_lines,
+            &MOD_CODE_TO_DNA_BASE,
+            None
+        )
+        .is_err());
     }
 
     #[test]

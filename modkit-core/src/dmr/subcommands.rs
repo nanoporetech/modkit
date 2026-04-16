@@ -181,6 +181,11 @@ pub struct PairwiseDmr {
     #[clap(help_heading = "Sample Options")]
     #[arg(long="assign-code", action=clap::ArgAction::Append)]
     mod_code_assignments: Option<Vec<String>>,
+    /// Calculate differential methylation for this modification code in
+    /// isolation.
+    #[clap(help_heading = "Sample Options")]
+    #[arg(long = "single-code")]
+    single_modification_code: Option<String>,
 
     /// Log out which sequences are in common between the samples and the
     /// reference FASTA, useful for debugging
@@ -422,7 +427,7 @@ impl PairwiseDmr {
         let b_handlers = self
             .exp_bed_methyl
             .iter()
-            .map(|fp| HtsTabixHandler::<BedMethylLine>::from_path(fp))
+            .map(|fp| BedMethylTbxIndex::from_path(fp))
             .collect::<anyhow::Result<Vec<BedMethylTbxIndex>>>()?;
         let handlers = a_handlers
             .into_iter()
@@ -501,6 +506,15 @@ impl PairwiseDmr {
                 (self.threads as f32 * 1.5f32).floor() as usize
             });
 
+        let single_code_op = self
+            .single_modification_code
+            .as_ref()
+            .map(|x| ModCodeRepr::parse(&x))
+            .transpose()?;
+        if let Some(code) = single_code_op.as_ref() {
+            info!("calculating differntial methylation for {code} in isolation")
+        }
+
         if self.is_single_site() {
             info!("running single-site analysis");
             let linear_transitions = if self.fine_grained {
@@ -508,6 +522,7 @@ impl PairwiseDmr {
             } else {
                 !self.log_transition_decay
             };
+
             return SingleSiteDmrAnalysis::new(
                 sample_index,
                 genome_positions,
@@ -522,6 +537,7 @@ impl PairwiseDmr {
                 self.n_sample_records,
                 self.header,
                 self.segmentation_fp.as_ref(),
+                single_code_op,
                 mpb.clone(),
                 &pool,
             )?
@@ -585,6 +601,7 @@ impl PairwiseDmr {
             self.header,
             "a",
             "b",
+            single_code_op,
             failures.clone(),
             batch_failures.clone(),
             mpb.clone(),
@@ -658,6 +675,12 @@ pub struct MultiSampleDmr {
     #[clap(help_heading = "Sample Options")]
     #[arg(long="assign-code", action=clap::ArgAction::Append)]
     mod_code_assignments: Option<Vec<String>>,
+    /// Calculate differential methylation for this modification code in
+    /// isolation.
+    #[clap(help_heading = "Sample Options")]
+    #[arg(long = "single-code")]
+    single_modification_code: Option<String>,
+
     /// File to write logs to, it's recommended to use this option.
     #[clap(help_heading = "Logging Options")]
     #[arg(long, alias = "log")]
@@ -814,6 +837,15 @@ impl MultiSampleDmr {
         let chunk_size = (self.threads as f32 * 1.5f32).floor() as usize;
         info!("processing {chunk_size} regions concurrently");
 
+        let single_code_op = self
+            .single_modification_code
+            .as_ref()
+            .map(|x| ModCodeRepr::parse(&x))
+            .transpose()?;
+        if let Some(code) = single_code_op.as_ref() {
+            info!("calculating differntial methylation for {code} in isolation")
+        }
+
         let sample_pb =
             mpb.add(get_master_progress_bar(sample_index.num_combinations()?));
 
@@ -865,6 +897,7 @@ impl MultiSampleDmr {
                         self.header,
                         a_name,
                         b_name,
+                        single_code_op,
                         failures.clone(),
                         batch_failures.clone(),
                         mpb.clone(),

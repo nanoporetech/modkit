@@ -5,6 +5,7 @@ use crate::dmr::llr_model::{AggregatedCounts, ModificationCounts};
 use crate::dmr::tabix::{ChromToSampleBMLines, MultiSampleIndex};
 use crate::dmr::util::{DmrBatch, RegionOfInterest, RoiIter};
 use crate::errs::{MkError, MkResult};
+use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::BorrowingMoniod;
 use indicatif::{MultiProgress, ProgressBar};
 use log::{debug, error};
@@ -48,11 +49,18 @@ fn filter_sample_records<'a>(
 fn aggregate_counts_per_sample(
     per_sample_filtered_records: &FxHashMap<usize, Vec<&BedMethylLine>>,
     sample_index: &MultiSampleIndex,
+    single_code_op: Option<ModCodeRepr>,
 ) -> MkResult<AggregatedCounts> {
     // per_sample_filtered_records should always have non-zero length vectors
     let combined_counts = per_sample_filtered_records
         .values()
-        .map(|records| aggregate_counts(&records, &sample_index.code_lookup))
+        .map(|records| {
+            aggregate_counts(
+                &records,
+                &sample_index.code_lookup,
+                single_code_op,
+            )
+        })
         .collect::<MkResult<Vec<AggregatedCounts>>>()?;
     combined_counts.into_iter().reduce(|a, b| a.op(&b)).ok_or_else(|| {
         // shouldn't really ever happen?
@@ -69,6 +77,7 @@ fn aggregate_counts_per_sample(
 pub(super) fn get_modification_counts(
     sample_index: &MultiSampleIndex,
     dmr_batch: DmrBatch<Vec<RegionOfInterest>>,
+    single_code_op: Option<ModCodeRepr>,
 ) -> MkResult<Vec<Result<ModificationCounts, (MkError, Option<MkError>)>>> {
     // these are the bedmethyl records associated with the entire batch.
     // however, due to how tabix works, there will likely be additional
@@ -105,10 +114,16 @@ pub(super) fn get_modification_counts(
                 debug!("{message}");
                 Err((MkError::DmrMissing, None))
             } else {
-                let control_counts =
-                    aggregate_counts_per_sample(&filtered_a, &sample_index);
-                let exp_counts =
-                    aggregate_counts_per_sample(&filtered_b, &sample_index);
+                let control_counts = aggregate_counts_per_sample(
+                    &filtered_a,
+                    &sample_index,
+                    single_code_op,
+                );
+                let exp_counts = aggregate_counts_per_sample(
+                    &filtered_b,
+                    &sample_index,
+                    single_code_op,
+                );
                 match (control_counts, exp_counts) {
                     (Ok(control_counts), Ok(exp_counts)) => {
                         ModificationCounts::new(
@@ -162,6 +177,7 @@ pub(super) fn run_pairwise_dmr(
     header: bool,
     a_name: &str,
     b_name: &str,
+    single_code_op: Option<ModCodeRepr>,
     failure_counter: ProgressBar,
     batch_failures: ProgressBar,
     multi_progress: MultiProgress,
@@ -193,7 +209,8 @@ pub(super) fn run_pairwise_dmr(
                     }
                 }
             };
-            match get_modification_counts(&sample_index, batch) {
+            match get_modification_counts(&sample_index, batch, single_code_op)
+            {
                 Ok(results) => {
                     let results = BatchResult::Results(results);
                     match snd.send(results) {

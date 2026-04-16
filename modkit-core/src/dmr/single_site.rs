@@ -58,12 +58,17 @@ impl SingleSiteDmrAnalysis {
         sample_n: usize,
         header: bool,
         segmentation_fp: Option<&PathBuf>,
+        single_code_op: Option<ModCodeRepr>,
         progress: MultiProgress,
         pool: &rayon::ThreadPool,
     ) -> anyhow::Result<Self> {
-        let sample_index =
-            SingleSiteSampleIndex::new(sample_index, num_a, num_b)
-                .map(|x| Arc::new(x))?;
+        let sample_index = SingleSiteSampleIndex::new(
+            sample_index,
+            num_a,
+            num_b,
+            single_code_op,
+        )
+        .map(|x| Arc::new(x))?;
         let genome_positions = Arc::new(genome_positions);
         if cap_coverages {
             info!("capping coverages when combining samples");

@@ -170,6 +170,7 @@ pub(super) struct SingleSiteSampleIndex {
     multi_sample_index: MultiSampleIndex,
     pub(super) control_idxs: Vec<usize>,
     pub(super) exp_idxs: Vec<usize>,
+    single_code_op: Option<ModCodeRepr>,
 }
 
 impl SingleSiteSampleIndex {
@@ -177,6 +178,7 @@ impl SingleSiteSampleIndex {
         multi_sample_index: MultiSampleIndex,
         num_a: usize,
         num_b: usize,
+        single_code_op: Option<ModCodeRepr>,
     ) -> anyhow::Result<Self> {
         if num_a == 0 || num_b == 0 {
             bail!("must be at least 1 sample for 'a' and 'b'")
@@ -185,7 +187,7 @@ impl SingleSiteSampleIndex {
         let control_idxs = (0..num_a).collect::<Vec<usize>>();
         let exp_idxs = (0..num_b).map(|x| x + num_a).collect::<Vec<usize>>();
 
-        Ok(Self { multi_sample_index, control_idxs, exp_idxs })
+        Ok(Self { multi_sample_index, control_idxs, exp_idxs, single_code_op })
     }
 
     pub(super) fn has_contig(&self, name: &str) -> bool {
@@ -202,6 +204,7 @@ impl SingleSiteSampleIndex {
     }
 
     fn organize_bedmethy_lines(
+        &self,
         sample: SampleToChromBMLines,
         code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
     ) -> MkResult<ChromToPosAggregatedCounts> {
@@ -228,7 +231,14 @@ impl SingleSiteSampleIndex {
                         .reduce(|| BTreeMap::new(), |a, b| a.op(b))
                         .into_par_iter()
                         .map(|(position, lines)| {
-                            (position, aggregate_counts2(&lines, &code_lookup))
+                            (
+                                position,
+                                aggregate_counts2(
+                                    &lines,
+                                    &code_lookup,
+                                    self.single_code_op,
+                                ),
+                            )
                         })
                         .collect::<FxHashMap<
                             StrandedPosition<DnaBase>,
@@ -328,11 +338,11 @@ impl SingleSiteSampleIndex {
             self.read_bedmethyl_lines_filtered_by_position(&dmr_batch)?;
 
         // group by chrom, this can fail if the records are deemed invalid
-        let counts_a = Self::organize_bedmethy_lines(
+        let counts_a = self.organize_bedmethy_lines(
             bedmethyl_lines_a,
             &self.multi_sample_index.code_lookup,
         )?;
-        let counts_b = Self::organize_bedmethy_lines(
+        let counts_b = self.organize_bedmethy_lines(
             bedmethyl_lines_b,
             &self.multi_sample_index.code_lookup,
         )?;
