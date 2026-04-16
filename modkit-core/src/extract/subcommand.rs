@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::bail;
 use clap::{Args, Subcommand};
+use common_macros::hash_map;
 use crossbeam_channel::bounded;
 use indicatif::{MultiProgress, ProgressIterator};
 use log::{debug, error, info};
@@ -12,22 +13,27 @@ use rust_htslib::bam::{self, Read};
 use modkit_logging::init_logging_smart;
 
 use crate::command_utils::{
-    get_serial_reader, get_threshold_from_options, parse_edge_filter_input,
-    parse_per_mod_thresholds, parse_thresholds, using_stream,
+    get_serial_reader, parse_edge_filter_input, parse_per_mod_thresholds,
+    parse_thresholds, using_stream,
 };
 use crate::extract::args::InputArgs;
 use crate::extract::util::ReferencePositionFilter;
 use crate::extract::writer::{OutwriterWithMemory, TsvWriterWithContigNames};
 use crate::fasta::HtsLibFastaRecords;
 use crate::interval_chunks::ReferenceIntervalBatchesFeeder;
-use crate::mod_bam::CollapseMethod;
-use crate::mod_base_code::ModCodeRepr;
+use crate::mod_bam::{CollapseMethod, EdgeFilter};
+use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::motifs::motif_bed::MotifPositionLookup;
+use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, PositionModCalls, ReadsBaseModProfile,
 };
 use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
+use crate::sample_probs::{
+    calc_per_base_thresholds_from_indexed_hts_file,
+    calc_per_base_thresholds_from_stream,
+};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{get_ticker, Region, KMER_SIZE};
 use crate::writers::TsvWriter;
@@ -357,6 +363,10 @@ pub struct EntryExtractCalls {
     /// output. (alias: ref)
     #[arg(long, alias = "ref")]
     pub reference: Option<PathBuf>,
+    /// Preload the reference sequences, useful when working with many, short
+    /// reference sequences such as a transcriptome.
+    #[arg(long, requires = "reference", default_value_t = false)]
+    preload_references: bool,
 
     /// Only output base modification calls that pass the minimum confidence
     /// threshold. (alias: pass)
@@ -464,6 +474,65 @@ pub struct EntryExtractCalls {
 }
 
 impl EntryExtractCalls {
+    fn calc_per_base_thersholds(
+        &self,
+        region: Option<&Region>,
+        per_mod_thresholds: Option<&HashMap<ModCodeRepr, f32>>,
+        edge_filter: Option<&EdgeFilter>,
+        position_filter: Option<StrandedPositionFilter<()>>,
+        io_threadpool: &rust_htslib::tpool::ThreadPool,
+        multi_progress: MultiProgress,
+    ) -> anyhow::Result<MultipleThresholdModCaller> {
+        let per_base_thresholds = if bam::IndexedReader::from_path(
+            &self.input_args.in_bam,
+        )
+        .is_err()
+        {
+            calc_per_base_thresholds_from_stream(
+                &Path::new(&self.input_args.in_bam).to_path_buf(),
+                self.sample_num_reads,
+                false,
+                position_filter,
+                edge_filter,
+                self.filter_percentile,
+                self.input_args.io_threads as usize,
+                &multi_progress,
+            )?
+        } else {
+            calc_per_base_thresholds_from_indexed_hts_file(
+                &Path::new(&self.input_args.in_bam).to_path_buf(),
+                self.reference.as_ref(),
+                self.filter_percentile,
+                false,
+                self.preload_references,
+                self.input_args.mask,
+                self.sampling_frac,
+                self.sample_num_reads,
+                position_filter,
+                self.input_args.motif.as_ref(),
+                self.input_args.cpg,
+                self.input_args.threads,
+                self.sampling_interval_size,
+                self.seed,
+                region,
+                edge_filter,
+                io_threadpool,
+                multi_progress,
+            )?
+        };
+        let per_base_thresholds = hash_map! {
+            DnaBase::A => per_base_thresholds[DnaBase::A as usize],
+            DnaBase::C => per_base_thresholds[DnaBase::C as usize],
+            DnaBase::G => per_base_thresholds[DnaBase::G as usize],
+            DnaBase::T => per_base_thresholds[DnaBase::T as usize],
+        };
+        Ok(MultipleThresholdModCaller::new(
+            per_base_thresholds,
+            per_mod_thresholds.cloned().unwrap_or_else(HashMap::new),
+            0f32,
+        ))
+    }
+
     fn using_stdin(&self) -> bool {
         using_stream(&self.input_args.in_bam)
     }
@@ -581,6 +650,9 @@ impl EntryExtractCalls {
             &pool,
         )?;
 
+        let io_threadpool =
+            rust_htslib::tpool::ThreadPool::new(self.input_args.io_threads)?;
+
         let caller = if !self.no_filtering {
             // stdin input and want a threshold, not allowed
             if self.using_stdin() && self.filter_threshold.is_none() {
@@ -595,36 +667,20 @@ impl EntryExtractCalls {
             if let Some(raw_threshold) = &self.filter_threshold {
                 parse_thresholds(raw_threshold, per_mod_thresholds)?
             } else {
-                let in_bam = Path::new(&self.input_args.in_bam).to_path_buf();
-                if !in_bam.exists() {
-                    bail!(
-                        "failed to find input modBAM file at {}",
-                        self.input_args.in_bam
-                    );
-                }
-                pool.install(|| {
-                    get_threshold_from_options(
-                        &in_bam,
-                        self.input_args.threads,
-                        self.sampling_interval_size,
-                        self.sampling_frac,
-                        self.sample_num_reads,
-                        false,
-                        self.filter_percentile,
-                        self.seed,
-                        region.as_ref(),
-                        per_mod_thresholds,
-                        edge_filter.as_ref(),
-                        collapse_method.as_ref(),
-                        reference_position_filter.include_pos.as_ref(),
-                        reference_position_filter.only_mapped_positions(),
-                        self.input_args.suppress_progress,
-                    )
-                })?
+                self.calc_per_base_thersholds(
+                    region.as_ref(),
+                    per_mod_thresholds.as_ref(),
+                    edge_filter.as_ref(),
+                    reference_position_filter.include_pos.clone(),
+                    &io_threadpool,
+                    multi_prog.clone(),
+                )?
             }
         } else {
             MultipleThresholdModCaller::new_passthrough()
         };
+        // TODO(arand) once I refactor extract, I'll want to keep this around.
+        drop(io_threadpool);
 
         let with_motifs = self.input_args.motif.is_some();
         let output_header = if self.input_args.no_headers {

@@ -63,9 +63,9 @@ stages:
     fi
 
 # build images
-.rust_image: &rust_image
-  # 1.86.0 (https://hub.docker.com/layers/library/rust/1.86.0-bookworm/images/sha256-afcf03f9dc98b318f8c5e98d9b9699475fe1dafd1c53b76b541bd96749d6b4c3)
-  image: rust@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+.rust_image:
+  &rust_image # 1.90.0 (https://hub.docker.com/layers/library/rust/1.90.0-bookworm/)
+  image: rust@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f
 
 .ubuntu_1604_image: &ub16_image
   image: ubuntu@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6
@@ -73,15 +73,14 @@ stages:
 .centos7_image: &centos7_image
   image: centos@sha256:be65f488b7764ad3638f236b7b515b3678369a5124c47b8d32916d6487418ea4
 
-
 # rules/stages
 format:
   <<: *rust_image
   stage: format
   script:
-    - rustup install nightly-2023-12-19
-    - rustup component add rustfmt --toolchain nightly-2023-12-19-x86_64-unknown-linux-gnu
-    - cargo +nightly-2023-12-19 fmt --check
+    - rustup install nightly-2025-09-04
+    - rustup component add rustfmt --toolchain nightly-2025-09-04-x86_64-unknown-linux-gnu
+    - cargo +nightly-2025-09-04 fmt --check
 
 test:
   <<: *rust_image
@@ -109,7 +108,6 @@ prerelease_checks:
     - *check_tag_version
     - *check_changelog
 
-
 manual_build_modkit_linux:
   <<: *rust_image
   when: manual
@@ -120,14 +118,12 @@ manual_build_modkit_linux:
     paths:
       - target/release/modkit
 
-
 .build_with_cmake_around: &build_with_cmake_around |
   wget https://github.com/Kitware/CMake/releases/download/v3.26.3/cmake-3.26.3-linux-x86_64.tar.gz
   tar zxvf cmake-3.26.3-linux-x86_64.tar.gz
   ls cmake-3.26.3-linux-x86_64/bin
   export PATH="$(pwd)/cmake-3.26.3-linux-x86_64/bin:$PATH"
   cargo build --release
-  
 
 # TODO change `dist` directory to modkit_v{CRATE_VERSION}_{GIT_SHA}
 .pack_up_dist: &pack_up_dist |
@@ -194,7 +190,6 @@ deploy_linux_artefact:
     - github_release modkit ${CI_COMMIT_TAG} CHANGELOG.md ${MODKIT_BOT_GH_KEY} --artifacts modkit_$(arch).tar.gz
     - echo "finished"
 
-
 deploy_source_code:
   <<: *rust_image
   stage: release
@@ -205,7 +200,6 @@ deploy_source_code:
     - *setup_gh_push
     - git remote add github https://github.com/nanoporetech/modkit.git
     - git push github master -f
-
 
 build_modkit_docs:
   <<: *rust_image

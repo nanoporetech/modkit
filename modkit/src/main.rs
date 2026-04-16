@@ -1,5 +1,6 @@
 use crate::commands::Commands;
 use clap::Parser;
+use log::error;
 
 pub mod commands;
 
@@ -21,7 +22,7 @@ fn main() -> Result<(), String> {
         );
     }
     if let Err(err) = cli.command.run() {
-        eprintln!("> Error! {err}");
+        error!("Error! {err}");
         for cause in err.chain().skip(1) {
             eprintln!(" caused by {cause}")
         }

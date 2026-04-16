@@ -16,6 +16,7 @@ use crate::motifs::motif_bed::{find_motif_hits, MotifInfo, RegexMotif};
 use crate::position_filter::StrandedPositionFilter;
 use crate::util::Strand;
 
+#[derive(Clone)]
 struct HtsFastaHandle {
     fasta_fp: PathBuf,
     contigs: FxHashMap<String, u64>,
@@ -143,6 +144,7 @@ impl HtsLibFastaRecords {
     }
 }
 
+#[derive(Clone)]
 pub struct MotifLocationsLookup {
     reader: HtsFastaHandle,
     mask: bool,
@@ -273,7 +275,7 @@ impl MotifLocationsLookup {
             break mask;
         };
         Ok((
-            FocusPositions2::SimpleMask {
+            FocusPositions2::MotifMask {
                 mask,
                 num_motifs: self.num_motifs() as u8,
             },
@@ -308,7 +310,7 @@ impl MotifLocationsLookup {
                 tid,
                 stranded_position_filter,
             );
-            let focus_positions = FocusPositions2::SimpleMask {
+            let focus_positions = FocusPositions2::MotifMask {
                 mask,
                 num_motifs: self.num_motifs() as u8,
             };

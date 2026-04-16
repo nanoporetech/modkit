@@ -1,6 +1,7 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use anyhow::{anyhow, bail};
+use bitvec::bitvec;
 use bitvec::order::Lsb0;
 use bitvec::vec::BitVec;
 use derive_new::new;
@@ -10,6 +11,7 @@ use rustc_hash::FxHashMap;
 
 use crate::errs::MkResult;
 use crate::fasta::MotifLocationsLookup;
+use crate::mod_base_code::DnaBase;
 use crate::motifs::motif_bed::MotifInfo;
 use crate::position_filter::{GenomeIntervals, StrandedPositionFilter};
 use crate::util::{ReferenceRecord, StrandRule};
@@ -30,7 +32,8 @@ pub fn slice_dna_sequence(str_seq: &str, start: usize, end: usize) -> String {
 }
 
 pub(crate) enum FocusPositions2 {
-    SimpleMask { mask: BitVec<usize, Lsb0>, num_motifs: u8 },
+    MotifMask { mask: BitVec<usize, Lsb0>, num_motifs: u8 },
+    MaskedPositions { mask: BitVec<usize, Lsb0> },
     AllPositions,
 }
 
@@ -125,23 +128,16 @@ impl FocusPositions {
     }
 }
 
+#[derive(new)]
 pub(crate) struct ChromCoordinates {
     pub chrom_tid: u32,
     pub start_pos: u32,
     pub end_pos: u32,
     pub focus_positions: FocusPositions2,
+    pub final_interval: bool,
 }
 
 impl ChromCoordinates {
-    fn new(
-        chrom_tid: u32,
-        start_pos: u32,
-        end_pos: u32,
-        focus_positions: FocusPositions2,
-    ) -> Self {
-        Self { chrom_tid, start_pos, end_pos, focus_positions }
-    }
-
     pub(crate) fn len(&self) -> u32 {
         self.end_pos.checked_sub(self.start_pos).unwrap_or(0u32)
     }
@@ -157,6 +153,7 @@ impl ChromCoordinates {
             start_pos: std::cmp::min(self.start_pos, other.start_pos),
             end_pos: std::cmp::max(self.end_pos, other.end_pos),
             focus_positions: FocusPositions2::AllPositions,
+            final_interval: self.final_interval || other.final_interval,
         }
     }
 }
@@ -303,8 +300,13 @@ impl ReferenceIntervalBatchesFeeder {
             // in the "short contig" case, chrom_coords.len() will be less than
             // interval size so batch length will be less than
             // interval size for a few rounds
-            let chrom_coords =
-                ChromCoordinates::new(tid, start, end, focus_positions);
+            let chrom_coords = ChromCoordinates::new(
+                tid,
+                start,
+                end,
+                focus_positions,
+                end == self.curr_contig.end(),
+            );
             batch_length += chrom_coords.len();
             batch.push(chrom_coords);
             if batch_length >= self.interval_size {
@@ -352,10 +354,12 @@ impl TotalLength for ChromCoordinatesFeeder {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct ChromCoordinatesFeeder {
     contigs: VecDeque<ReferenceRecord>,
     interval_size: u32,
     motifs: Option<MotifLocationsLookup>,
+    // TODO: make this a borrow
     position_filter: Option<StrandedPositionFilter<()>>,
     combine_strands: bool,
     curr_contig: ReferenceRecord,
@@ -365,12 +369,13 @@ pub(crate) struct ChromCoordinatesFeeder {
 
 impl ChromCoordinatesFeeder {
     pub(crate) fn new(
-        reference_records: Vec<ReferenceRecord>,
+        reference_records: &[ReferenceRecord],
         interval_size: u32,
         motifs: Option<MotifLocationsLookup>,
         combine_strands: bool,
         position_filter: Option<StrandedPositionFilter<()>>,
     ) -> anyhow::Result<Self> {
+        debug!("there is {} reference record(s)", reference_records.len());
         if combine_strands & !motifs.is_some() {
             bail!("cannot combine strands without a motif")
         }
@@ -383,6 +388,7 @@ impl ChromCoordinatesFeeder {
                     true
                 }
             })
+            .cloned()
             .collect::<VecDeque<_>>();
         let n_contigs = contigs.iter().map(|r| r.tid).unique().count();
 
@@ -397,9 +403,9 @@ impl ChromCoordinatesFeeder {
                 contigs.len()
             );
         }
-        let curr_contig = contigs
-            .pop_front()
-            .ok_or(anyhow!("should be at least 1 contig"))?;
+        let curr_contig = contigs.pop_front().ok_or(anyhow!(
+            "should be at least 1 contig, are all of the reads unmapped?"
+        ))?;
         let curr_position = curr_contig.start;
         Ok(Self {
             contigs,
@@ -419,20 +425,24 @@ impl ChromCoordinatesFeeder {
                 self.curr_position = rr.start;
                 self.curr_contig = rr;
             } else {
+                debug!("feeder is done");
                 self.done = true;
             }
         } else {
             self.curr_position = end
         }
     }
+
     fn get_next(&mut self) -> MkResult<Option<ChromCoordinates>> {
         if self.done {
             return Ok(None);
         }
         let start = self.curr_position;
         let tid = self.curr_contig.tid;
-        let end =
-            std::cmp::min(start + self.interval_size, self.curr_contig.end());
+        let end = std::cmp::min(
+            start.saturating_add(self.interval_size),
+            self.curr_contig.end(),
+        );
 
         let (focus_positions, end) = if let Some(lookup) = self.motifs.as_mut()
         {
@@ -447,21 +457,88 @@ impl ChromCoordinatesFeeder {
                 self.combine_strands,
             )?;
             (fps, end)
-        } else if let Some(_pos_filt) = self.position_filter.as_ref() {
-            // TODO: Currently blocked by check that include-bed always has
-            // either a motif or modified bases, remove this
-            // eventually.
-            todo!()
+        } else if let Some(pos_filt) = self.position_filter.as_ref() {
+            let mut mask = bitvec![0; (end.saturating_sub(start) as usize) * 2];
+            if !pos_filt.contains_chrom_id(&(tid as i64)) {
+                (FocusPositions2::MaskedPositions { mask }, end)
+            } else {
+                if let Some(pos_strand_intervals) =
+                    pos_filt.pos_positions.get(&tid)
+                {
+                    let mut cursor = 0usize;
+                    for (i, pos) in (start..end).enumerate() {
+                        if pos_strand_intervals
+                            .seek(
+                                pos as u64,
+                                pos.saturating_add(1) as u64,
+                                &mut cursor,
+                            )
+                            .count()
+                            >= 1
+                        {
+                            mask.set(i * 2, true);
+                        }
+                    }
+                }
+                if let Some(negative_strand_intervals) =
+                    pos_filt.neg_positions.get(&tid)
+                {
+                    let mut cursor = 0usize;
+                    for (i, pos) in (start..end).enumerate() {
+                        if negative_strand_intervals
+                            .seek(
+                                pos as u64,
+                                pos.saturating_add(1) as u64,
+                                &mut cursor,
+                            )
+                            .count()
+                            >= 1
+                        {
+                            mask.set((i * 2) + 1, true);
+                        }
+                    }
+                }
+                (FocusPositions2::MaskedPositions { mask }, end)
+            }
         } else {
             (FocusPositions2::AllPositions, end)
         };
 
         let end = std::cmp::min(end, self.curr_contig.end());
-        let chrom_coords =
-            ChromCoordinates::new(tid, start, end, focus_positions);
+        let chrom_coords = ChromCoordinates::new(
+            tid,
+            start,
+            end,
+            focus_positions,
+            end == self.curr_contig.end(),
+        );
         self.update_current(end);
 
         Ok(Some(chrom_coords))
+    }
+
+    pub(crate) fn ref_motifs(&self) -> Option<&MotifLocationsLookup> {
+        self.motifs.as_ref()
+    }
+
+    pub(crate) fn has_position_filter(&self) -> bool {
+        self.position_filter.is_some()
+    }
+
+    pub(crate) fn get_motif_bases(&self) -> Option<[DnaBase; 4]> {
+        if let Some(motif_lookup) = self.ref_motifs() {
+            let motif_primary_bases = motif_lookup
+                .motif_infos()
+                .map(|motif_info| motif_info.primary_base)
+                .collect::<BTreeSet<DnaBase>>();
+            let mut motif_bases = [DnaBase::A; 4];
+            for (i, b) in motif_primary_bases.into_iter().enumerate() {
+                motif_bases[i] = b
+            }
+            Some(motif_bases)
+        } else {
+            None
+        }
     }
 }
 

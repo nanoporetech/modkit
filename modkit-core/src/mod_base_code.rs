@@ -346,7 +346,7 @@ impl Display for BaseState {
 
 #[derive(new)]
 pub struct ProbHistogram {
-    pub prob_counts: HashMap<BaseAndState, BTreeMap<u8, usize>>,
+    pub prob_counts: HashMap<BaseAndState, BTreeMap<u8, u64>>,
 }
 
 const LN_FIVE_HYDROXY_METHYL_CYTOSINE: &str = "5hmC";

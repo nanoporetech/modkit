@@ -59,11 +59,11 @@ c9b656f4-65bc-432f-bbd7-d9677dd6914e	145	17	oligo_741_adapters	+	-	-	15	0	15	146
 c9b656f4-65bc-432f-bbd7-d9677dd6914e	142	20	oligo_741_adapters	+	-	-	15	0	15	146	148	0.9316406	-	6	ACGTA	TTCGT	C	C	false	false	true	16
 c9b656f4-65bc-432f-bbd7-d9677dd6914e	139	23	oligo_741_adapters	+	-	-	15	0	15	146	148	0.5761719	a	6	TATTG	CAATT	A	A	false	false	true	16
 c9b656f4-65bc-432f-bbd7-d9677dd6914e	138	24	oligo_741_adapters	+	-	-	15	0	15	146	148	0.7441406	-	6	ATTGC	GCAAT	A	A	false	false	true	16
-c9b656f4-65bc-432f-bbd7-d9677dd6914e	137	25	oligo_741_adapters	+	-	-	15	0	15	146	148	0.7714844	-	5	TTGCT	GGCAA	C	C	true	false	true	16
+c9b656f4-65bc-432f-bbd7-d9677dd6914e	137	25	oligo_741_adapters	+	-	-	15	0	15	146	148	0.7714844	-	5	TTGCT	GGCAA	C	C	false	false	true	16
 c9b656f4-65bc-432f-bbd7-d9677dd6914e	134	29	oligo_741_adapters	+	-	-	15	0	15	146	148	0.9980469	m	4	TCGGG	CACGG	C	C	false	false	true	16
 c9b656f4-65bc-432f-bbd7-d9677dd6914e	133	30	oligo_741_adapters	+	-	-	15	0	15	146	148	0.5371094	a	4	CGGGA	TCACG	A	A	true	false	true	16
 c9b656f4-65bc-432f-bbd7-d9677dd6914e	132	31	oligo_741_adapters	+	-	-	15	0	15	146	148	1	-	3	GGGAT	ATCAC	C	C	false	true	true	16
-c9b656f4-65bc-432f-bbd7-d9677dd6914e	130	33	oligo_741_adapters	+	-	-	15	0	15	146	148	0.5527344	-	6	GATCT	GAATC	A	A	true	false	true	16
+c9b656f4-65bc-432f-bbd7-d9677dd6914e	130	33	oligo_741_adapters	+	-	-	15	0	15	146	148	0.5527344	-	6	GATCT	GAATC	A	A	false	false	true	16
 c9b656f4-65bc-432f-bbd7-d9677dd6914e	129	-1	oligo_741_adapters	+	-	-	15	0	15	146	148	0.8105469	a	7	.	GGAAT	A	A	false	false	true	16
 c9b656f4-65bc-432f-bbd7-d9677dd6914e	124	35	oligo_741_adapters	+	-	-	15	0	15	146	148	0.9160156	-	19	TCTGG	CCAGG	A	A	false	false	true	16
 c9b656f4-65bc-432f-bbd7-d9677dd6914e	123	36	oligo_741_adapters	+	-	-	15	0	15	146	148	0.9238281	-	21	CTGGC	GCCAG	C	C	false	false	true	16

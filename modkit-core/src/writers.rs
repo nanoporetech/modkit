@@ -35,8 +35,8 @@ use crate::mod_base_code::{
 use crate::pileup::bedrmod::BedRModArgs;
 use crate::pileup::duplex::DuplexModBasePileup;
 use crate::pileup::{ModBasePileup2, PileupFeatureCounts2};
+use crate::sample_probs::PercentileThresholdQual;
 use crate::summarize::ModSummary;
-use crate::thresholds::Percentiles;
 use crate::util::{get_ticker_with_rate, TAB};
 
 pub trait PileupWriter<T> {
@@ -874,7 +874,7 @@ pub struct MultiTableWriter {
 #[derive(new)]
 pub struct SampledProbs {
     histograms: Option<ProbHistogram>,
-    percentiles: HashMap<DnaBase, Percentiles>,
+    percentiles: HashMap<DnaBase, Vec<PercentileThresholdQual>>,
     prefix: Option<String>,
     primary_base_colors: HashMap<DnaBase, String>,
     mod_base_colors: HashMap<ModCodeRepr, String>,
@@ -957,11 +957,13 @@ impl SampledProbs {
     fn thresholds_table(&self) -> Table {
         let mut table = Table::new();
         table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
-        table.set_titles(row!["base", "percentile", "threshold"]);
-        for (base, percentiles) in &self.percentiles {
-            for (q, p) in percentiles.qs.iter() {
-                let q = *q * 100f32;
-                table.add_row(row![base.char(), q, *p]);
+        table.set_titles(row!["base", "percentile", "threshold", "mod_qual"]);
+        for (base, percentiles) in
+            self.percentiles.iter().sorted_by(|(a, _), (b, _)| a.cmp(b))
+        {
+            for x in percentiles.iter() {
+                let (q, p, qu) = (x.percentile, x.threshold, x.qual);
+                table.add_row(row![base.char(), q, p, qu]);
             }
         }
         table
@@ -1070,16 +1072,16 @@ impl ProbHistogram {
             };
             // dbg!(label, color);
             colors.push(color);
-            let total = counts.values().sum::<usize>() as f32;
+            let total = counts.values().sum::<u64>() as f64;
             // todo could this be a .scan?
             let (stats, _) = counts.iter().fold(
-                (BTreeMap::new(), 0f32),
+                (BTreeMap::new(), 0f64),
                 |(mut acc, cum_sum), (b, c)| {
-                    let n = *c as f32;
+                    let n = *c as f64;
                     let f = n / total;
                     let cum_sum = cum_sum + n;
                     let percentile_rank =
-                        ((cum_sum - (0.5f32 * n)) / total) * 100f32;
+                        ((cum_sum - (0.5f64 * n)) / total) * 100f64;
                     acc.insert(*b, (*c, f, percentile_rank));
                     (acc, cum_sum)
                 },

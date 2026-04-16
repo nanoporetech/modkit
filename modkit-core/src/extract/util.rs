@@ -39,10 +39,6 @@ pub(super) struct ReferencePositionFilter {
 }
 
 impl ReferencePositionFilter {
-    pub(super) fn only_mapped_positions(&self) -> bool {
-        !self.include_unmapped_positions
-    }
-
     fn keep(
         &self,
         chrom_id: u32,

@@ -12,7 +12,7 @@ use bio::alphabets::dna::complement;
 use clap::ValueEnum;
 use derive_new::new;
 use indexmap::IndexMap;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use linear_map::LinearMap;
@@ -38,7 +38,10 @@ use crate::parsing_utils::{
     consume_char, consume_digit, consume_dot, consume_float, consume_string,
     consume_string_spaces,
 };
+use crate::position_filter::StrandedPositionFilter;
+use crate::reads_sampler::sampling_schedule::IdxStats;
 
+pub(crate) const DEFAULT_NUM_READS: usize = 10_042;
 pub const TAB: char = '\t';
 pub const MISSING_SYMBOL: &'static str = ".";
 
@@ -493,7 +496,51 @@ pub fn get_targets(
         .collect::<Vec<ReferenceRecord>>()
 }
 
-#[derive(Debug, new)]
+pub(crate) fn filter_reference_records(
+    reference_records: Vec<ReferenceRecord>,
+    hts_fp: &PathBuf,
+    region: Option<&Region>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
+    multi_progress: &MultiProgress,
+) -> anyhow::Result<Vec<ReferenceRecord>> {
+    let Ok(reader) = bam::IndexedReader::from_path(hts_fp) else {
+        multi_progress
+            .suspend(|| info!("BAM not indexed, all contigs will be checked"));
+        return Ok(reference_records);
+    };
+    if reader_is_cram(&reader) {
+        multi_progress.suspend(|| {
+            info!(
+                "not checking for mapped reads or filtering contigs with CRAM \
+                 input"
+            );
+        });
+        Ok(reference_records)
+    } else {
+        let idx_stats =
+            IdxStats::new_from_path(hts_fp, region, position_filter)?;
+        if idx_stats.mapped_read_count == 0 {
+            bail!(
+                "did not find any mapped reads, perform alignment first or \
+                 use modkit extract and/or modkit summary to inspect \
+                 unaligned modBAMs"
+            );
+        }
+        let n_before = reference_records.len();
+        let filtered = reference_records
+            .into_iter()
+            .filter(|x| idx_stats.contig_has_mapped_reads(x.tid))
+            .collect::<Vec<_>>();
+        let after = filtered.len();
+        info!(
+            "discarded {} contigs with zero aligned reads",
+            n_before.saturating_sub(after)
+        );
+        Ok(filtered)
+    }
+}
+
+#[derive(Debug, new, Clone)]
 pub struct ReferenceRecord {
     // todo make this usize and unify all of the "Genome types"
     pub tid: u32,
@@ -1111,9 +1158,105 @@ impl<T: Hash + Eq> MutOpMax for HashMap<T, f32> {
 }
 
 #[inline]
-pub(crate) fn qual_to_prob(qual: i32) -> f32 {
-    let q = qual as f32;
+pub(crate) fn qual_to_prob<
+    T: num_traits::Num + num_traits::cast::AsPrimitive<f32>,
+>(
+    qual: T,
+) -> f32 {
+    let q = qual.as_();
     (q + 0.5f32) / 256f32
+}
+
+pub(crate) trait CheckedAddArr {
+    type Error;
+    type Element;
+    fn checked_add_ar(&mut self, other: &Self) -> Result<(), Self::Error>;
+    fn approx_checked_add(
+        &mut self,
+        other: &Self,
+        this_total: &mut Self::Element,
+        other_total: Self::Element,
+    ) -> Result<(), ()>;
+}
+
+impl<
+        const SIZE: usize,
+        T: num_traits::CheckedAdd
+            + num_traits::SaturatingAdd
+            + num_traits::Bounded
+            + num_traits::cast::AsPrimitive<u128>
+            + num_traits::cast::FromPrimitive
+            + num_traits::Zero
+            + num_traits::One
+            + Copy,
+    > CheckedAddArr for [T; SIZE]
+{
+    type Error = anyhow::Error;
+    type Element = T;
+
+    fn checked_add_ar(&mut self, other: &Self) -> Result<(), Self::Error> {
+        for (idx, (ag, x)) in self.iter_mut().zip(other.iter()).enumerate() {
+            let Some(v) = ag.checked_add(x) else {
+                return Err(anyhow!("failed to add at {idx}"));
+            };
+            *ag = v;
+        }
+        Ok(())
+    }
+
+    fn approx_checked_add(
+        &mut self,
+        other: &Self,
+        this_total: &mut Self::Element,
+        other_total: Self::Element,
+    ) -> Result<(), ()> {
+        match this_total.checked_add(&other_total) {
+            Some(val) => {
+                self.checked_add_ar(other).expect("should not overflow");
+                *this_total = val;
+                Ok(())
+            }
+            None => {
+                let mut combined_u128 = [0u128; 256];
+                let mut total: u128 = 0;
+
+                for i in 0..SIZE {
+                    let a: u128 = self[i].as_();
+                    let b: u128 = other[i].as_();
+                    let v = a.saturating_add(b);
+                    combined_u128[i] = v;
+                    total = total.saturating_add(v);
+                }
+                assert!(total > 0);
+                let target: u128 = T::max_value().as_();
+
+                self.iter_mut().for_each(|x| *x = T::zero());
+                let mut remainders = [(0u128, 0usize); 256];
+                let mut floor_sum: u128 = 0;
+
+                for i in 0..SIZE {
+                    let prod = combined_u128[i] * target;
+                    let q = prod / total;
+                    let r = prod % total;
+
+                    self[i] = T::from_u128(q)
+                        .expect(&format!("could not convert {q}"));
+                    remainders[i] = (r, i);
+                    floor_sum += q;
+                }
+
+                let leftover = (target - floor_sum) as usize;
+                remainders.sort_unstable_by(|a, b| b.cmp(a));
+
+                for (_, idx) in remainders.iter().take(leftover) {
+                    let x = self[*idx].saturating_add(&T::one());
+                    self[*idx] = x
+                }
+                *this_total = T::max_value();
+                Err(())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1126,7 +1269,7 @@ mod utils_tests {
     use crate::errs::MkError;
     use crate::util::{
         get_query_name_string, get_stringable_aux, parse_partition_tags,
-        GenomeRegion, Region, SamTag, StrandRule,
+        CheckedAddArr, GenomeRegion, Region, SamTag, StrandRule,
     };
 
     use super::Kmer;
@@ -1354,5 +1497,22 @@ mod utils_tests {
             }
             e @ _ => assert!(false, "incorrect error {e}"),
         }
+    }
+
+    #[test]
+    fn test_approx_checked_add_arr() {
+        let mut a = [u64::MAX, 0u64];
+        let b = [0u64, u64::MAX];
+        let mut a_total = u64::MAX;
+        let x = a.approx_checked_add(&b, &mut a_total, u64::MAX);
+        assert!(x.is_err());
+        assert_eq!(a, [9223372036854775807, 9223372036854775808]);
+
+        let mut a = [u8::MAX, 0u8];
+        let b = [0u8, u8::MAX];
+        let mut a_total = u8::MAX;
+        let x = a.approx_checked_add(&b, &mut a_total, u8::MAX);
+        assert!(x.is_err());
+        assert_eq!(a, [127u8, 128u8]);
     }
 }

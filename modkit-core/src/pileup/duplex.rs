@@ -251,12 +251,10 @@ fn process_region_duplex<T: AsRef<Path>>(
     edge_filter: Option<&EdgeFilter>,
 ) -> anyhow::Result<DuplexModBasePileup> {
     let mask = match focus_positions {
-        FocusPositions2::SimpleMask { mask, num_motifs }
-            if *num_motifs == 1 =>
-        {
+        FocusPositions2::MotifMask { mask, num_motifs } if *num_motifs == 1 => {
             mask
         }
-        FocusPositions2::SimpleMask { num_motifs, .. } if *num_motifs > 1 => {
+        FocusPositions2::MotifMask { num_motifs, .. } if *num_motifs > 1 => {
             bail!("currently, only 1 motif supported for duplex pileup")
         }
         _ => bail!("duplex requires a motif"),

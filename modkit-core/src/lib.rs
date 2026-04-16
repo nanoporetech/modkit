@@ -32,6 +32,7 @@ pub mod writers;
 
 pub(crate) mod genome_positions;
 pub(crate) mod parsing_utils;
+pub(crate) mod sample_probs;
 
 mod fasta;
 mod hmm;

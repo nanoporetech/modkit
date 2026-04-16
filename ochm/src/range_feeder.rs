@@ -219,7 +219,7 @@ mod range_feeder_tests {
         assert_eq!(step_size, 5);
         let batch_size = 5u32;
         let region_width = ((step_size * batch_size) - step_size) + chunk_width;
-        dbg!(region_width);
+        // dbg!(region_width);
         let tid_to_name = hash_map! {
             1u32 => "chr1".to_string(),
             2u32 => "chr2".to_string()
@@ -236,8 +236,8 @@ mod range_feeder_tests {
             done: false,
         };
 
-        for batch in range_feeder {
-            dbg!(batch);
-        }
+        // for batch in range_feeder {
+        //     dbg!(batch);
+        // }
     }
 }

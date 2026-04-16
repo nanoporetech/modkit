@@ -14,6 +14,10 @@ pub(super) struct InputArgs {
     #[clap(help_heading = "Compute Options")]
     #[arg(short = 't', long, default_value_t = 4)]
     pub threads: usize,
+    /// Number of IO/decompression threads to use
+    #[clap(help_heading = "Compute Options")]
+    #[arg(long, default_value_t = 4)]
+    pub io_threads: u32,
     /// Write output as BGZF compressed file.
     #[clap(help_heading = "Output Options")]
     #[arg(long, default_value_t = false)]

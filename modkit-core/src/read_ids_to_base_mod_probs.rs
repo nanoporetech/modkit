@@ -223,12 +223,13 @@ impl ReadIdsToBaseModProbs {
                     .map(|x| prob_to_qual(x as f32))
                     .counts()
                     .into_iter()
-                    .collect::<BTreeMap<u8, usize>>();
+                    .map(|(k, v)| (k, v as u64))
+                    .collect::<BTreeMap<u8, u64>>();
                 let max_q = counts.keys().max().unwrap();
                 debug!("{base_state:?} {max_p} {max_q}");
                 (base_state, counts)
             })
-            .collect::<HashMap<BaseAndState, BTreeMap<u8, usize>>>();
+            .collect::<HashMap<BaseAndState, BTreeMap<u8, u64>>>();
         ProbHistogram::new(prob_counts)
     }
 

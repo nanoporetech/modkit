@@ -1480,7 +1480,9 @@ fn check_mn_tag_correct(
     Ok(())
 }
 
-fn validate_mn_tag_on_record(record: &bam::Record) -> MkResult<Option<usize>> {
+pub(crate) fn validate_mn_tag_on_record(
+    record: &bam::Record,
+) -> MkResult<Option<usize>> {
     let mn_tag_value = get_mn_tag_from_record(record)?;
     check_mn_tag_correct(record, mn_tag_value).map(|_| mn_tag_value)
 }

@@ -1,18 +1,16 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::num::ParseFloatError;
 use std::ops::AddAssign;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context};
 use clap::{Args, Subcommand, ValueEnum};
-use indicatif::{
-    MultiProgress, ParallelProgressIterator, ProgressDrawTarget,
-    ProgressIterator,
-};
+use indicatif::{MultiProgress, ParallelProgressIterator, ProgressDrawTarget};
 use log::{debug, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::record::{Aux, AuxArray};
-use rust_htslib::bam::{FetchDefinition, Read};
+use rust_htslib::bam::{FetchDefinition, HeaderView, Read};
 use rust_htslib::{bam, tpool};
 
 use itertools::Itertools;
@@ -21,18 +19,21 @@ use rustc_hash::FxHashMap;
 
 use crate::adjust::adjust_modbam;
 use crate::command_utils::{
-    get_bam_writer, get_serial_reader, get_threshold_from_options,
-    parse_edge_filter_input, parse_forward_motifs, parse_per_mod_thresholds,
-    parse_thresholds, using_stream,
+    get_bam_writer, get_motif_lookup_from_parts, get_serial_reader,
+    get_threshold_from_options, parse_edge_filter_input, parse_forward_motifs,
+    parse_per_mod_thresholds, parse_raw_motifs, parse_thresholds, using_stream,
 };
 use crate::errs::{MkError, MkResult};
 use crate::interval_chunks::{
-    ReferenceIntervalBatchesFeeder, TotalLength, WithPrevEnd,
+    ChromCoordinatesFeeder, ReferenceIntervalBatchesFeeder, TotalLength,
+    WithPrevEnd,
 };
 use crate::mod_bam::{
     format_mm_ml_tag, CollapseMethod, ModBaseInfo, SkipMode, ML_TAGS, MM_TAGS,
 };
-use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::mod_base_code::{
+    BaseAndState, BaseState, DnaBase, ModCodeRepr, ProbHistogram,
+};
 use crate::modbam_util::check_tags::ModTagViews;
 use crate::monoid::Moniod;
 use crate::position_filter::StrandedPositionFilter;
@@ -44,12 +45,18 @@ use crate::reads_sampler::{
 };
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::repair_tags::RepairTags;
+use crate::sample_probs::{
+    run_extract_probs_workers, AlignedBaseAndModArgmaxProbs,
+    AlignedBaseArgmaxProbs, BaseAndModArgmaxProbs, BaseArgmaxProbs,
+    ExtractProbsWorker, ProbsExtractor, QualHist, RegionMleProbs,
+};
 use crate::summarize::{sampled_reads_to_summary, ModSummary};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::thresholds::{calc_thresholds_per_base, Percentiles};
+use crate::thresholds::calc_thresholds_per_base;
 use crate::util::{
-    add_modkit_pg_records, format_errors_table, get_master_progress_bar,
-    get_subroutine_progress_bar, get_targets, get_ticker, Region,
+    add_modkit_pg_records, filter_reference_records, format_errors_table,
+    get_master_progress_bar, get_subroutine_progress_bar, get_targets,
+    get_ticker, ReferenceRecord, Region, DEFAULT_NUM_READS,
 };
 use crate::writers::{
     MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
@@ -156,7 +163,7 @@ pub struct EntryCheckTags {
     /// using a large BAM without an index. If an indexed BAM is provided, the
     /// reads will be sampled evenly over the length of the aligned reference.
     /// If a region is passed with the --region option, they will be sampled
-    /// over the genomic region. Actual number of reads used may deviate
+    /// over the region. Actual number of reads used may deviate
     /// slightly from this number.
     #[clap(help_heading = "Selection Options")]
     #[arg(short = 'n', long)]
@@ -883,10 +890,45 @@ pub struct SampleModBaseProbs {
     /// reference sequence. Can be a path to a file or one of `-` or
     /// `stdin` to specify a stream from standard input.
     in_bam: String,
-    /// Number of threads to use.
+    /// Ignore the BAM index (if it exists) and default to a serial scan of the
+    /// BAM, otherwise if an index is found, multiple workers will be used to
+    /// read the BAM in parallel. Conflicts with --threads since there will
+    /// only be one reader.
+    #[arg(
+        long,
+        conflicts_with = "threads",
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    pub ignore_index: bool,
+    /// Reference sequence in FASTA format. (alias: 'ref')
+    #[arg(long = "reference", alias = "ref", short = 'r')]
+    reference_fasta: Option<PathBuf>,
+    /// Preload the reference sequences, useful when working with many, short
+    /// reference sequences such as a transcriptome.
+    #[arg(long, default_value_t = false, requires = "reference_fasta")]
+    preload_references: bool,
+    /// Respect soft masking in the reference FASTA.
+    #[arg(
+        long,
+        short = 'k',
+        requires = "reference_fasta",
+        default_value_t = false,
+        hide_short_help = true
+    )]
+    mask: bool,
+    /// Number of workers to run concurrently. When an aligned, indexed BAM is
+    /// found, multiple workers (threads) will be spawned to read disjoint
+    /// sections of the BAM in parallel.
     #[clap(help_heading = "Compute Options")]
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
+    /// Number of IO/decompression threads to use, these are shared across
+    /// workers (if an indexed BAM is found) or used for a single reader if
+    /// --ignore-index is passed, stdin is used, or an index is not found.
+    #[clap(help_heading = "Compute Options")]
+    #[arg(long, default_value_t = 4)]
+    io_threads: u32,
     /// Specify a file for debug logs to be written to, otherwise ignore them.
     /// Setting a file is recommended.
     #[clap(help_heading = "Logging Options")]
@@ -896,10 +938,28 @@ pub struct SampleModBaseProbs {
     #[clap(help_heading = "Logging Options")]
     #[arg(long, default_value_t = false, hide_short_help = true)]
     suppress_progress: bool,
-    /// Percentiles to calculate, a space separated list of floats.
+    /// Percentiles to calculate, a space separated list of floats (for
+    /// example: "10,20,90").
     #[clap(help_heading = "Output Options")]
-    #[arg(short, long, default_value_t=String::from("0.1,0.5,0.9"))]
+    #[arg(short, long, default_value_t=String::from("10,50,90"))]
     percentiles: String,
+    /// Quantiles to calculate, a space separated list of floats (for example:
+    /// "0.1,0.2,0.9").
+    #[clap(help_heading = "Output Options")]
+    #[arg(short, long, conflicts_with = "percentiles", hide_short_help = true)]
+    quantiles: Option<String>,
+    /// Tabulate base modification probabilities at motifs (or single bases).
+    /// The first argument should be the sequence motif and the second
+    /// argument is the 0-based offset to the base to pileup base
+    /// modification counts for. For example: --motif CGCG 0 indicates to
+    /// collect base mofification probabilities for the first C on the top
+    /// strand and the last C (complement to G) on the bottom strand. For
+    /// single bases, --motif C 0 or --motif A 0 would restrict to
+    /// probabilities on C or A reference bases, respectively.
+    /// This argument can be passed multiple times.
+    #[clap(help_heading = "Selection Options")]
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
+    motif: Option<Vec<String>>,
     /// Directory to deposit result tables into. Required for model probability
     /// histogram output.
     #[clap(help_heading = "Output Options")]
@@ -913,14 +973,6 @@ pub struct SampleModBaseProbs {
     #[clap(help_heading = "Output Options")]
     #[arg(long, requires = "out_dir", default_value_t = false)]
     force: bool,
-    /// Ignore a modified base class  _in_situ_ by redistributing base
-    /// modification probability equally across other options. For example,
-    /// if collapsing 'h', with 'm' and canonical options, half of the
-    /// probability of 'h' will be added to both 'm' and 'C'. A full
-    /// description of the methods can be found in collapse.md.
-    #[clap(help_heading = "Modified Base Options")]
-    #[arg(long, hide_short_help = true)]
-    ignore: Option<String>,
     /// Discard base modification calls that are this many bases from the start
     /// or the end of the read. Two comma-separated values may be provided
     /// to asymmetrically filter out base modification calls from the start
@@ -955,38 +1007,39 @@ pub struct SampleModBaseProbs {
     #[arg(long="mod-color", requires = "histogram", num_args = 2, action = clap::ArgAction::Append)]
     mod_base_colors: Option<Vec<String>>,
 
-    /// Approximate maximum number of reads to use, especially recommended when
-    /// using a large BAM without an index. If an indexed BAM is provided, the
-    /// reads will be sampled evenly over the length of the aligned reference.
-    /// If a region is passed with the --region option, they will be sampled
-    /// over the genomic region. Actual number of reads used may deviate
-    /// slightly from this number.
+    // Approximate maximum number of reads to use, especially recommended when
+    // using a large BAM without an index. If an indexed BAM is provided, the
+    // reads will be sampled evenly over the length of the aligned reference.
+    // If a region is passed with the --region option, they will be sampled
+    // over the genomic region. Actual number of reads used may deviate
+    // slightly from this number when using an indexed BAM.
     #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'n',
         long,
-        default_value_t = 10_042
+        conflicts_with = "no_sampling"
     )]
-    num_reads: usize,
+    num_reads: Option<usize>,
     /// Instead of using a defined number of reads, specify a fraction of reads
     /// to sample, for example 0.1 will sample 1/10th of the reads.
     #[clap(help_heading = "Sampling Options")]
-    #[arg(group = "sampling_options", short = 'f', long)]
+    #[arg(
+        short = 'f',
+        long,
+        alias = "sample-frac",
+        group = "sampling_options",
+        conflicts_with = "no_sampling"
+    )]
     sampling_frac: Option<f64>,
     /// No sampling, use all of the reads to calculate the filter thresholds.
     #[clap(help_heading = "Sampling Options")]
-    #[arg(
-        long,
-        alias = "no_filtering",
-        group = "sampling_options",
-        default_value_t = false
-    )]
+    #[arg(long, alias = "no_filtering", default_value_t = false)]
     no_sampling: bool,
     /// Random seed for deterministic running, the default is
     /// non-deterministic, only used when no BAM index is provided.
     #[clap(help_heading = "Sampling Options")]
-    #[arg(short, requires = "sampling_frac", long)]
+    #[arg(short, conflicts_with = "no_sampling", long)]
     seed: Option<u64>,
 
     /// Process only the specified region of the BAM when collecting
@@ -1006,20 +1059,390 @@ pub struct SampleModBaseProbs {
     #[clap(help_heading = "Selection Options")]
     #[arg(long, alias = "include-positions")]
     include_bed: Option<PathBuf>,
-    /// Only use base modification probabilities that are aligned (i.e. ignore
-    /// soft-clipped, and inserted bases).
+    /// Use non-primary mappings, may cause double-counting of reads with
+    /// primary and one or more non-primary mappings. Requires MN tag to be
+    /// correct. See documentation for help on proper alignment.
     #[clap(help_heading = "Selection Options")]
-    #[arg(
-        long = "mapped-only",
-        alias = "only-mapped",
-        default_value_t = false
-    )]
-    only_mapped: bool,
+    #[arg(long, default_value_t = false)]
+    use_non_primary: bool,
 }
 
 impl SampleModBaseProbs {
+    pub(crate) fn calc_counts_per_chrom(
+        interval_size: u32,
+        header: &HeaderView,
+        num_reads: usize,
+        region: Option<&Region>,
+    ) -> anyhow::Result<FxHashMap<u32, usize>> {
+        let total_reference_length = if let Some(region) = region {
+            header
+                .tid(region.name.as_bytes())
+                .and_then(|tid| header.target_len(tid))
+                .ok_or(anyhow!("didn't find {region} in header"))?
+        } else {
+            (0..header.target_count())
+                .map(|tid| header.target_len(tid).unwrap_or(0))
+                .sum::<u64>()
+        };
+        let out = (0..header.target_count())
+            .filter(|tid| {
+                region
+                    .map(|region| {
+                        header.tid2name(*tid) == region.name.as_bytes()
+                    })
+                    .unwrap_or(true)
+            })
+            .filter_map(|tid| header.target_len(tid).map(|l| (tid, l)))
+            .map(|(tid, l)| {
+                let frac = l as f64 / total_reference_length as f64;
+                debug!("tid {tid} is {frac} of the total length");
+                let n_reads_for_chrom = frac * num_reads as f64;
+                debug!("sampling {n_reads_for_chrom} reads from {tid}");
+                let frac_of_chrom_per_interval = if interval_size as u64 > l {
+                    1f64
+                } else {
+                    interval_size as f64 / l as f64
+                };
+                debug!(
+                    "each {interval_size} bp interval is \
+                     {frac_of_chrom_per_interval:.3} fraction of {tid} which \
+                     has lengh {l}"
+                );
+                let n_reads_per_interval =
+                    frac_of_chrom_per_interval * n_reads_for_chrom;
+                let fudge_factor = n_reads_per_interval * 0.25;
+                let total_reads_per_interval =
+                    (n_reads_per_interval + fudge_factor).ceil() as usize;
+                debug!(
+                    "sampling {total_reads_per_interval} total reads per \
+                     interval from {tid} with fudge factor of {fudge_factor} \
+                     ({n_reads_per_interval} calculated)"
+                );
+                (tid, total_reads_per_interval)
+            })
+            .collect();
+        Ok(out)
+    }
+
+    fn get_region(
+        &self,
+        header: &HeaderView,
+    ) -> anyhow::Result<Option<Region>> {
+        if let Some(raw_region) = &self.region {
+            info!("parsing region {raw_region}");
+            Ok(Some(Region::parse_str(raw_region, header)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_position_filter(
+        &self,
+        reference_records: &[ReferenceRecord],
+    ) -> anyhow::Result<Option<StrandedPositionFilter<()>>> {
+        self.include_bed
+            .as_ref()
+            .map(|bed_fp| {
+                let chrom_to_tid = reference_records
+                    .iter()
+                    .map(|reference_record| {
+                        (reference_record.name.as_str(), reference_record.tid)
+                    })
+                    .collect::<HashMap<&str, u32>>();
+                StrandedPositionFilter::from_bed_file(
+                    bed_fp,
+                    &chrom_to_tid,
+                    self.suppress_progress,
+                )
+            })
+            .transpose()
+    }
+
+    fn get_base_mod_probs_from_stream(
+        &self,
+        mut reader: bam::Reader,
+        multi_progress: MultiProgress,
+    ) -> anyhow::Result<QualHist> {
+        if self.region.is_some() {
+            bail!("cannot use --region without indexed, sorted modBAM")
+        }
+        reader.set_threads(self.io_threads as usize)?;
+        let header = reader.header();
+        let reference_records = get_targets(header, None);
+
+        let stranded_position_filter =
+            self.get_position_filter(&reference_records)?;
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .transpose()?;
+        QualHist::from_records(
+            reader.records(),
+            stranded_position_filter,
+            self.num_reads,
+            self.sampling_frac,
+            self.seed,
+            edge_filter.as_ref(),
+            self.histogram,
+            false,
+            &multi_progress,
+        )
+    }
+
+    fn get_base_mod_probs_from_indexed_hts_file(
+        &self,
+        reader: bam::IndexedReader,
+        multi_progress: MultiProgress,
+    ) -> anyhow::Result<QualHist> {
+        let bam_fp = Path::new(&self.in_bam).to_path_buf();
+        let num_reads = self.num_reads.unwrap_or(DEFAULT_NUM_READS);
+        let thread_pool = rust_htslib::tpool::ThreadPool::new(self.io_threads)?;
+        let header = reader.header();
+        let region = self.get_region(header)?;
+        let edge_filter = self
+            .edge_filter
+            .as_ref()
+            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .transpose()?;
+        let reference_records = get_targets(header, region.as_ref());
+        let stranded_position_filter =
+            self.get_position_filter(&reference_records)?;
+        // should also adjust start/ends here.
+        let reference_records = filter_reference_records(
+            reference_records,
+            &bam_fp,
+            region.as_ref(),
+            stranded_position_filter.as_ref(),
+            &multi_progress,
+        )?;
+
+        let regex_motifs = if let Some(raw_motifs) = self.motif.as_ref() {
+            Some(parse_raw_motifs(raw_motifs, false, true)?)
+        } else {
+            None
+        };
+        let motif_primary_bases = regex_motifs.as_ref().map(|rms| {
+            rms.iter()
+                .map(|x| x.motif_info.primary_base)
+                .collect::<BTreeSet<DnaBase>>()
+        });
+
+        let motif_lookup = get_motif_lookup_from_parts(
+            regex_motifs,
+            self.reference_fasta.as_ref(),
+            false,
+            self.mask,
+            self.preload_references,
+        )?;
+
+        let (chrom_to_counts, rng_sample, sample_frac) =
+            if let Some(user_sampling_frac) = self.sampling_frac {
+                multi_progress.suspend(|| {
+                    info!("sampling {}% of reads", user_sampling_frac * 100f64);
+                });
+                (None, true, user_sampling_frac)
+            } else {
+                multi_progress.suspend(|| {
+                    info!("attempting to sample at least {num_reads} reads");
+                });
+                (
+                    Some(Arc::new(Self::calc_counts_per_chrom(
+                        self.interval_size,
+                        header,
+                        num_reads,
+                        region.as_ref(),
+                    )?)),
+                    false,
+                    0f64,
+                )
+            };
+
+        let mut workers: Vec<Box<dyn ExtractProbsWorker>> =
+            Vec::with_capacity(self.threads);
+        let mut motif_bases = [DnaBase::A; 4];
+        if let Some(motif_primary_bases) = motif_primary_bases.as_ref() {
+            assert!(motif_lookup.is_some());
+            for (i, b) in motif_primary_bases.into_iter().enumerate() {
+                motif_bases[i] = *b;
+            }
+        }
+
+        if stranded_position_filter.is_some() || motif_lookup.is_some() {
+            if let Some(motif_primary_bases) = motif_primary_bases.as_ref() {
+                info!(
+                    "scanning over motif bases: {}",
+                    motif_primary_bases.iter().join(",")
+                );
+            }
+            if stranded_position_filter.is_some() {
+                info!("subsetting to posiitons in BED file");
+            }
+            if self.histogram {
+                info!(
+                    "collecting base and modification histograms at aligned \
+                     positions"
+                );
+                for i in 0..self.threads {
+                    let w = RegionMleProbs::<
+                        AlignedBaseAndModArgmaxProbs,
+                        ProbsExtractor,
+                    >::new(
+                        &bam_fp,
+                        self.reference_fasta.as_ref(),
+                        self.use_non_primary,
+                        motif_bases,
+                        edge_filter.as_ref(),
+                        &thread_pool,
+                        self.seed.unwrap_or(i as u64),
+                        rng_sample,
+                        sample_frac,
+                        chrom_to_counts.clone(),
+                    )?;
+                    workers.push(Box::new(w));
+                }
+            } else {
+                info!("collecting base-level histograms at aligned positions");
+                for i in 0..self.threads {
+                    let w = RegionMleProbs::<
+                        AlignedBaseArgmaxProbs,
+                        ProbsExtractor,
+                    >::new(
+                        &bam_fp,
+                        self.reference_fasta.as_ref(),
+                        self.use_non_primary,
+                        motif_bases,
+                        edge_filter.as_ref(),
+                        &thread_pool,
+                        self.seed.unwrap_or(i as u64),
+                        rng_sample,
+                        sample_frac,
+                        chrom_to_counts.clone(),
+                    )?;
+                    workers.push(Box::new(w));
+                }
+            };
+        } else {
+            if self.histogram {
+                info!(
+                    "collecting base and modification histograms, using all \
+                     read positions"
+                );
+                for i in 0..self.threads {
+                    let w = RegionMleProbs::<
+                        BaseAndModArgmaxProbs,
+                        ProbsExtractor,
+                    >::new(
+                        &bam_fp,
+                        self.reference_fasta.as_ref(),
+                        self.use_non_primary,
+                        motif_bases,
+                        edge_filter.as_ref(),
+                        &thread_pool,
+                        self.seed.unwrap_or(i as u64),
+                        rng_sample,
+                        sample_frac,
+                        chrom_to_counts.clone(),
+                    )?;
+                    workers.push(Box::new(w));
+                }
+            } else {
+                info!(
+                    "collecting base-level histograms, using all read \
+                     positions"
+                );
+                for i in 0..self.threads {
+                    let w =
+                        RegionMleProbs::<BaseArgmaxProbs, ProbsExtractor>::new(
+                            &bam_fp,
+                            self.reference_fasta.as_ref(),
+                            self.use_non_primary,
+                            motif_bases,
+                            edge_filter.as_ref(),
+                            &thread_pool,
+                            self.seed.unwrap_or(i as u64),
+                            rng_sample,
+                            sample_frac,
+                            chrom_to_counts.clone(),
+                        )?;
+                    workers.push(Box::new(w));
+                }
+            };
+        }
+        let feeder = ChromCoordinatesFeeder::new(
+            &reference_records,
+            self.interval_size,
+            motif_lookup,
+            false,
+            stranded_position_filter,
+        )?;
+        let qual_hist =
+            run_extract_probs_workers(workers, multi_progress.clone(), feeder)?;
+
+        if qual_hist.ok_records < num_reads && !self.no_sampling {
+            multi_progress.suspend(|| {
+                warn!(
+                    "Only sampled {} reads when {} were requested. Has the \
+                     input been subsampled already? Consider using \
+                     --sample-frac or --no-sampling",
+                    qual_hist.ok_records, num_reads
+                );
+            })
+        } else {
+            multi_progress.suspend(|| {
+                info!("Sampled {} reads", qual_hist.ok_records);
+            })
+        }
+        Ok(qual_hist)
+    }
+
+    fn get_base_mod_probs(
+        &self,
+        multi_progress: MultiProgress,
+    ) -> anyhow::Result<QualHist> {
+        if using_stream(&self.in_bam) {
+            info!(
+                "reading BAM from stdin, --threads greater than 1 will not \
+                 have an effect (--io-threads will)"
+            );
+            let reader = bam::Reader::from_stdin()?;
+            self.get_base_mod_probs_from_stream(reader, multi_progress.clone())
+        } else {
+            if self.ignore_index {
+                info!("running streaming scan (not splitting into chunks)");
+                let reader = bam::Reader::from_path(&self.in_bam)?;
+                return self.get_base_mod_probs_from_stream(
+                    reader,
+                    multi_progress.clone(),
+                );
+            }
+            let Ok(indexed_reader) =
+                bam::IndexedReader::from_path(&self.in_bam)
+            else {
+                let reader = bam::Reader::from_path(&self.in_bam)?;
+                return self.get_base_mod_probs_from_stream(
+                    reader,
+                    multi_progress.clone(),
+                );
+            };
+            info!(
+                "collecting modification call probabilities from indexed HTS \
+                 file"
+            );
+            self.get_base_mod_probs_from_indexed_hts_file(
+                indexed_reader,
+                multi_progress,
+            )
+        }
+    }
+
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        let multi_progress = MultiProgress::new();
+        if self.suppress_progress {
+            multi_progress
+                .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
         if let Some(p) = self.out_dir.as_ref() {
             SampledProbs::check_files(
                 p,
@@ -1066,156 +1489,85 @@ impl SampleModBaseProbs {
                 HashMap::new()
             };
 
-        let mut reader = get_serial_reader(&self.in_bam)?;
+        let desired_percentiles = self
+            .quantiles
+            .as_ref()
+            .map(|raw_quantiles| {
+                parse_percentiles(raw_quantiles).map(|x| {
+                    x.into_iter().map(|x| x * 100f32).collect::<Vec<f32>>()
+                })
+            })
+            .unwrap_or_else(|| parse_percentiles(&self.percentiles))?;
 
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.threads)
-            .build()?;
+        let qual_hist = self.get_base_mod_probs(multi_progress.clone())?;
+        let percentiles = qual_hist
+            .base_level_percentiles(&desired_percentiles, &multi_progress);
 
-        let region = if let Some(raw_region) = &self.region {
-            info!("parsing region {raw_region}");
-            Some(Region::parse_str(raw_region, reader.header())?)
+        let histograms = if self.histogram {
+            let mut prob_counts = HashMap::new();
+            for (i, base_total) in qual_hist.base_totals.iter().enumerate() {
+                if *base_total > 0 {
+                    let primary_base = DnaBase::try_from(i).unwrap();
+                    let counts = qual_hist.hist[i]
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| **c > 0u64)
+                        .fold(BTreeMap::new(), |mut agg, (i, c)| {
+                            assert!(i <= u8::MAX as usize);
+                            agg.insert(i as u8, *c);
+                            agg
+                        });
+                    let base_and_state: BaseAndState =
+                        (primary_base, BaseState::Canonical(primary_base));
+                    prob_counts.insert(base_and_state, counts);
+                }
+            }
+
+            for mod_hist in qual_hist.mods_hists.iter() {
+                let counts = mod_hist
+                    .hist
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| **c > 0u64)
+                    .fold(BTreeMap::new(), |mut agg, (i, c)| {
+                        assert!(i <= u8::MAX as usize);
+                        agg.insert(i as u8, *c);
+                        agg
+                    });
+                let primary_base = mod_hist.dna_base;
+                let mod_code = mod_hist.mod_code;
+                let base_and_state =
+                    (primary_base, BaseState::Modified(mod_code));
+                prob_counts.insert(base_and_state, counts);
+            }
+            Some(ProbHistogram::new(prob_counts))
         } else {
             None
         };
-        let edge_filter = self
-            .edge_filter
-            .as_ref()
-            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
-            .transpose()?;
 
-        let (sample_frac, num_reads) = get_sampling_options(
-            self.no_sampling,
-            self.sampling_frac,
-            self.num_reads,
+        let sampled_probs = SampledProbs::new(
+            histograms,
+            percentiles,
+            self.prefix.clone(),
+            extra_dna_colors,
+            extra_mod_colors,
         );
-
-        let targets = get_targets(reader.header(), region.as_ref());
-        let position_filter = self
-            .include_bed
-            .as_ref()
-            .map(|bed_fp| {
-                let chrom_to_tid = targets
-                    .iter()
-                    .map(|reference_record| {
-                        (reference_record.name.as_str(), reference_record.tid)
-                    })
-                    .collect::<HashMap<&str, u32>>();
-                StrandedPositionFilter::from_bed_file(
-                    bed_fp,
-                    &chrom_to_tid,
-                    self.suppress_progress,
-                )
-            })
-            .transpose()?;
-
-        let collapse_method =
-            if let Some(raw_mod_code_to_ignore) = self.ignore.as_ref() {
-                let mod_code_to_ignore =
-                    ModCodeRepr::parse(raw_mod_code_to_ignore)?;
-                Some(CollapseMethod::ReDistribute(mod_code_to_ignore))
+        //
+        let mut writer: Box<dyn OutWriter<SampledProbs>> =
+            if let Some(p) = &self.out_dir {
+                if !p.exists() {
+                    info!("creating directory at {p:?}");
+                    std::fs::create_dir_all(p)?;
+                }
+                sampled_probs.check_path(p, self.force)?;
+                Box::new(MultiTableWriter::new(p.clone()))
             } else {
-                None
+                Box::new(TsvWriter::new_stdout(None))
             };
 
-        let desired_percentiles = parse_percentiles(&self.percentiles)
-            .with_context(|| {
-                format!("failed to parse percentiles: {}", &self.percentiles)
-            })?;
+        writer.write(sampled_probs)?;
 
-        pool.install(|| {
-            let read_ids_to_base_mod_calls = if using_stream(&self.in_bam) {
-                reader.set_threads(self.threads)?;
-                let record_sampler = RecordSampler::new_from_options(
-                    sample_frac,
-                    num_reads,
-                    self.seed,
-                );
-                let read_ids_to_base_mod_probs =
-                    ReadIdsToBaseModProbs::process_records(
-                        reader.records(),
-                        !self.suppress_progress,
-                        record_sampler,
-                        collapse_method.as_ref(),
-                        edge_filter.as_ref(),
-                        position_filter.as_ref(),
-                        self.only_mapped || position_filter.is_some(),
-                        false,
-                        None,
-                        None,
-                    )?;
-                debug!("sampled {} records", read_ids_to_base_mod_probs.len());
-                read_ids_to_base_mod_probs
-            } else {
-                drop(reader);
-                get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
-                    &Path::new(&self.in_bam).to_path_buf(),
-                    self.threads,
-                    self.interval_size,
-                    sample_frac,
-                    num_reads,
-                    self.seed,
-                    region.as_ref(),
-                    collapse_method.as_ref(),
-                    edge_filter.as_ref(),
-                    position_filter.as_ref(),
-                    self.only_mapped || position_filter.is_some(),
-                    self.suppress_progress,
-                )?
-            };
-
-            let histograms = if self.histogram {
-                Some(
-                    read_ids_to_base_mod_calls
-                        .get_per_mod_histograms(self.suppress_progress),
-                )
-            } else {
-                None
-            };
-
-            let mle_probs_per_base =
-                read_ids_to_base_mod_calls.mle_probs_per_base_merged();
-            let pb = get_master_progress_bar(mle_probs_per_base.len());
-            pb.set_message("calculating percentiles");
-            let percentiles = mle_probs_per_base
-                .into_iter()
-                .progress_with(pb)
-                .map(|(canonical_base, mut probs)| {
-                    Percentiles::new(&mut probs, &desired_percentiles)
-                        .with_context(|| {
-                            format!(
-                                "failed to calculate threshold for base {}",
-                                canonical_base.char()
-                            )
-                        })
-                        .map(|percs| (canonical_base, percs))
-                })
-                .collect::<anyhow::Result<HashMap<DnaBase, Percentiles>>>()?;
-
-            let sampled_probs = SampledProbs::new(
-                histograms,
-                percentiles,
-                self.prefix.clone(),
-                extra_dna_colors,
-                extra_mod_colors,
-            );
-
-            let mut writer: Box<dyn OutWriter<SampledProbs>> =
-                if let Some(p) = &self.out_dir {
-                    if !p.exists() {
-                        info!("creating directory at {p:?}");
-                        std::fs::create_dir_all(p)?;
-                    }
-                    sampled_probs.check_path(p, self.force)?;
-                    Box::new(MultiTableWriter::new(p.clone()))
-                } else {
-                    Box::new(TsvWriter::new_stdout(None))
-                };
-
-            writer.write(sampled_probs)?;
-
-            Ok(())
-        })
+        Ok(())
     }
 }
 
@@ -1248,7 +1600,7 @@ pub struct ModSummarize {
     /// using a large BAM without an index. If an indexed BAM is provided, the
     /// reads will be sampled evenly over the length of the aligned reference.
     /// If a region is passed with the --region option, they will be sampled
-    /// over the genomic region. Actual number of reads used may deviate
+    /// over the region. Actual number of reads used may deviate
     /// slightly from this number.
     #[clap(help_heading = "Sampling Options")]
     #[arg(

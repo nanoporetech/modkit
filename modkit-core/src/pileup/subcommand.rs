@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context};
 use clap::Args;
@@ -10,19 +11,21 @@ use indicatif::{MultiProgress, ParallelProgressIterator};
 use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
-use rust_htslib::bam::{self, Read};
+use rust_htslib::bam::{self, HeaderView, Read};
 
 use modkit_logging::init_logging;
 
 use crate::command_utils::{
-    get_threshold_from_options, parse_edge_filter_input,
-    parse_per_base_thresholds, parse_per_mod_thresholds, parse_thresholds,
+    get_motif_lookup_from_parts, get_threshold_from_options,
+    parse_edge_filter_input, parse_per_base_thresholds,
+    parse_per_mod_thresholds, parse_raw_motifs, parse_thresholds,
+    parse_thresholds_values,
 };
 use crate::fasta::MotifLocationsLookup;
 use crate::interval_chunks::{
     ChromCoordinatesFeeder, ReferenceIntervalBatchesFeeder, TotalLength,
 };
-use crate::mod_bam::CollapseMethod;
+use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{
     DnaBase, ModCodeRepr, ModifiedBasesOptions, ANY_ADENINE, ANY_CYTOSINE,
     ANY_GUANINE, ANY_THYMINE, METHYL_CYTOSINE, SIX_METHYL_ADENINE,
@@ -38,8 +41,13 @@ use crate::pileup::pileup_processor::{
 use crate::pileup::{ModBasePileup2, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::sampling_schedule::IdxStats;
+use crate::sample_probs::{
+    calculate_reads_per_contig, run_extract_probs_workers,
+    AlignedBaseArgmaxProbs, BaseArgmaxProbs, ExtractProbsWorker,
+    ProbsExtractor, RegionMleProbs,
+};
 use crate::util::{
-    create_out_directory, get_master_progress_bar,
+    create_out_directory, filter_reference_records, get_master_progress_bar,
     get_master_progress_bar_fancy, get_subroutine_progress_bar, get_targets,
     get_ticker, reader_is_bam, reader_is_cram, Region,
 };
@@ -87,6 +95,10 @@ pub struct ModBamPileup {
     #[clap(help_heading = "Compute Options")]
     #[arg(short, long, default_value_t = 4)]
     threads: usize,
+    /// Number of IO/decompression threads to use
+    #[clap(help_heading = "Compute Options")]
+    #[arg(long, default_value_t = 4)]
+    io_threads: u32,
     /// Use this many threads when performing threshold estimation, setting
     /// this to a higher value can speed up execution.
     #[clap(help_heading = "Compute Options")]
@@ -144,6 +156,17 @@ pub struct ModBamPileup {
         default_value_t = 10_042
     )]
     num_reads: usize,
+    /// Fail if we cannot sample at least the requested number of reads when
+    /// estimating the pass threshold
+    #[clap(help_heading = "Sampling Options")]
+    #[arg(
+        long,
+        alias = "strict",
+        conflicts_with_all = ["no_filtering", "sampling_frac"],
+        default_value_t = false,
+        hide_short_help = true,
+    )]
+    strict_sampling: bool,
     /// Sample this fraction of the reads when estimating the pass-threshold.
     /// In practice, 10-100 thousand reads is sufficient to estimate the model
     /// output distribution and determine the filtering threshold. See
@@ -378,23 +401,7 @@ pub struct ModBamPileup {
 impl ModBamPileup {
     fn parse_user_motifs(&self) -> Option<anyhow::Result<Vec<RegexMotif>>> {
         if let Some(raw_motif_parts) = &self.motif {
-            if raw_motif_parts.len() % 2 != 0 {
-                return Some(Err(anyhow!("illegal number of parts for motif")));
-            }
-            match RegexMotif::from_raw_parts(raw_motif_parts, self.cpg) {
-                Ok(regex_motifs) => {
-                    for motif in regex_motifs.iter() {
-                        if motif.length() == 1 {
-                            return Some(Err(anyhow!(
-                                "single base motifs not supported, use \
-                                 --modified-bases"
-                            )));
-                        }
-                    }
-                    Some(Ok(regex_motifs))
-                }
-                e @ _ => Some(e),
-            }
+            Some(parse_raw_motifs(raw_motif_parts, self.cpg, false))
         } else if self.cpg {
             Some(Ok(vec![RegexMotif::parse_string("CG", 0).unwrap()]))
         } else {
@@ -699,11 +706,191 @@ impl ModBamPileup {
         }
     }
 
+    fn calc_per_base_thresholds(
+        &self,
+        regex_motifs: Option<Vec<RegexMotif>>,
+        stranded_position_filter: Option<StrandedPositionFilter<()>>,
+        bam_header: &HeaderView,
+        thread_pool: &rust_htslib::tpool::ThreadPool,
+        edge_filter: Option<&EdgeFilter>,
+        preset: Option<&Presets>,
+        sampling_frac: Option<f64>,
+        sampling_region: Option<&Region>,
+        multi_progress: MultiProgress,
+    ) -> anyhow::Result<[f32; 4]> {
+        let motif_lookup = get_motif_lookup_from_parts(
+            regex_motifs.clone(),
+            self.reference_fasta.as_ref(),
+            false,
+            self.mask,
+            self.preload_references,
+        )?;
+        let reference_records = get_targets(bam_header, sampling_region);
+        let feeder = ChromCoordinatesFeeder::new(
+            &reference_records,
+            self.sampling_interval_size,
+            motif_lookup,
+            false,
+            stranded_position_filter.clone(),
+        )?;
+        let mut workers: Vec<Box<dyn ExtractProbsWorker>> = Vec::new();
+        let n_workers = self.sampling_threads.unwrap_or(self.threads);
+        let (chrom_to_counts, rng_sample, sample_frac) =
+            calculate_reads_per_contig(
+                bam_header,
+                sampling_frac,
+                self.num_reads,
+                &multi_progress,
+                self.sampling_interval_size,
+                sampling_region,
+            )?;
+        let chrom_to_counts = chrom_to_counts.map(|x| Arc::new(x));
+
+        if let Some(preset) = preset {
+            let motif_bases = match preset {
+                Presets::DnaCpGCombineStrands { cytosine_other_mod: _ }
+                | Presets::DnaCytosineCombine => {
+                    multi_progress.suspend(|| {
+                        info!(
+                            "calculating threshold value with probabilities \
+                             aligned to reference bases cytosines",
+                        )
+                    });
+                    [DnaBase::C; 4]
+                }
+                Presets::DnaAllContext { cytosine_mod_op: _, motif_bases }
+                | Presets::DynamicAllContext {
+                    mod_codes: _,
+                    motif_bases,
+                    motif_offset: _,
+                } => {
+                    multi_progress.suspend(|| {
+                        info!(
+                            "calculating threshold value with probabilities \
+                             aligned to reference bases {}",
+                            motif_bases.iter().unique().join(",")
+                        )
+                    });
+                    *motif_bases
+                }
+            };
+            for i in 0..n_workers {
+                let worker = RegionMleProbs::<
+                    AlignedBaseArgmaxProbs,
+                    ProbsExtractor,
+                >::new(
+                    &self.in_bam,
+                    self.reference_fasta.as_ref(),
+                    false,
+                    motif_bases,
+                    edge_filter,
+                    thread_pool,
+                    self.seed.unwrap_or(i as u64),
+                    rng_sample,
+                    sample_frac,
+                    chrom_to_counts.clone(),
+                )?;
+                workers.push(Box::new(worker));
+            }
+        } else if let Some(motif_bases) = feeder.get_motif_bases() {
+            multi_progress.suspend(|| {
+                info!(
+                    "calculating threshold value with probabilities aligned \
+                     to reference bases {}",
+                    motif_bases.iter().unique().join(",")
+                )
+            });
+            for i in 0..n_workers {
+                let worker = RegionMleProbs::<
+                    AlignedBaseArgmaxProbs,
+                    ProbsExtractor,
+                >::new(
+                    &self.in_bam,
+                    self.reference_fasta.as_ref(),
+                    false,
+                    motif_bases,
+                    edge_filter,
+                    thread_pool,
+                    self.seed.unwrap_or(i as u64),
+                    rng_sample,
+                    sample_frac,
+                    chrom_to_counts.clone(),
+                )?;
+                workers.push(Box::new(worker));
+            }
+        } else {
+            multi_progress.suspend(|| {
+                info!(
+                    "calculating threshold value with probabilites from reads",
+                )
+            });
+            for i in 0..n_workers {
+                let worker =
+                    RegionMleProbs::<BaseArgmaxProbs, ProbsExtractor>::new(
+                        &self.in_bam,
+                        self.reference_fasta.as_ref(),
+                        false,
+                        [DnaBase::A; 4],
+                        edge_filter,
+                        thread_pool,
+                        self.seed.unwrap_or(i as u64),
+                        rng_sample,
+                        sample_frac,
+                        chrom_to_counts.clone(),
+                    )?;
+                workers.push(Box::new(worker));
+            }
+        }
+
+        let qual_hist = run_extract_probs_workers(
+            workers,
+            multi_progress.clone(),
+            feeder.clone(),
+        )?;
+        if qual_hist.ok_records < self.num_reads
+            && sampling_frac.is_none()
+            && self.strict_sampling
+        {
+            let sample_frac = 0.2f64;
+            multi_progress.suspend(|| {
+                warn!(
+                    "failed to sample enough records, got {}, looking for {}, \
+                     trying again sampling {:.0}% of reads",
+                    qual_hist.ok_records,
+                    self.num_reads,
+                    sample_frac * 100f64
+                );
+            });
+            return self.calc_per_base_thresholds(
+                regex_motifs.clone(),
+                stranded_position_filter.clone(),
+                bam_header,
+                thread_pool,
+                edge_filter,
+                preset,
+                Some(sample_frac),
+                sampling_region,
+                multi_progress,
+            );
+        }
+        if qual_hist.ok_records == 0 {
+            bail!(
+                "Failed to sample _any_ records to estimate threshold. Use \
+                 --sample-frac with a value greater than {sample_frac:.2}, \
+                 lower --num-reads, or use --no-filtering"
+            )
+        }
+        qual_hist.get_base_thresholds(self.filter_percentile, &multi_progress)
+    }
+
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
         let master_progress = MultiProgress::new();
         master_progress
             .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+
+        let io_thread_pool =
+            rust_htslib::tpool::ThreadPool::new(self.io_threads)?;
 
         if self.filter_percentile > 1.0 {
             bail!("filter percentile must be <= 1.0")
@@ -777,33 +964,15 @@ impl ModBamPileup {
                 )
             })
             .transpose()?;
-        // use the path here instead of passing the reader directly to avoid
-        // potentially changing mutable internal state of the reader.
 
         let reference_records = if check_idx {
-            let idx_stats = IdxStats::new_from_path(
+            filter_reference_records(
+                reference_records,
                 &self.in_bam,
                 region.as_ref(),
                 position_filter.as_ref(),
-            )?;
-            if idx_stats.mapped_read_count == 0 {
-                bail!(
-                    "did not find any mapped reads, perform alignment first \
-                     or use modkit extract and/or modkit summary to inspect \
-                     unaligned modBAMs"
-                );
-            }
-            let n_before = reference_records.len();
-            let filtered = reference_records
-                .into_iter()
-                .filter(|x| idx_stats.contig_has_mapped_reads(x.tid))
-                .collect::<Vec<_>>();
-            let after = filtered.len();
-            info!(
-                "discarded {} contigs with zero aligned reads",
-                n_before.saturating_sub(after)
-            );
-            filtered
+                &master_progress,
+            )?
         } else {
             info!(
                 "not checking for mapped reads or filtering contigs with CRAM \
@@ -972,38 +1141,31 @@ impl ModBamPileup {
                 }
             }
         };
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.threads)
-            .build()
-            .with_context(|| "failed to make threadpool")?;
-        let motif_lookup = if let Some(motifs) = regex_motifs {
-            let fasta_fp = self.reference_fasta.as_ref().ok_or(anyhow!(
-                "reference fasta is required for using --modified-bases, \
-                 --motif or --cpg options"
-            ))?;
-            if combine_strands {
-                if motifs.iter().any(|rm| !rm.is_palendrome()) {
-                    bail!(
-                        "cannot combine strands with a motif that is not a \
-                         palindrome"
-                    )
-                }
-                debug!("combining + and - strand counts");
-            }
+        let motif_lookup = get_motif_lookup_from_parts(
+            regex_motifs.clone(),
+            self.reference_fasta.as_ref(),
+            combine_strands,
+            self.mask,
+            self.preload_references,
+        )?;
 
-            Some(MotifLocationsLookup::from_paths(
-                fasta_fp,
-                self.mask,
-                None,
-                motifs,
-                self.preload_references,
-            )?)
-        } else {
-            None
-        };
-
+        // TODO: re-enable this after a think about the best way to "optimize"
+        // let reference_records = if let Some(pf) = position_filter.as_ref() {
+        //     info!(
+        //         "optimizing reference records, started with {}",
+        //         reference_records.len()
+        //     );
+        //     let rr = pf.optimize_reference_records(
+        //         reference_records,
+        //         self.interval_size,
+        //     );
+        //     info!("..finished with {}", rr.len());
+        //     rr
+        // } else {
+        //     reference_records
+        // };
         // start the actual work here
-        let threshold_caller =
+        let (default_threshold, base_thresholds) =
             if let Some(raw_threshold) = &self.filter_threshold {
                 if preset.is_some() {
                     let (default_threshold, per_base_thresholds) =
@@ -1028,87 +1190,27 @@ impl ModBamPileup {
                         }
                     }
                 }
-                parse_thresholds(raw_threshold, per_mod_thresholds.clone())?
+                parse_thresholds_values(raw_threshold)?
+            } else if self.no_filtering {
+                info!("not performing filtering");
+                (0f32, [0f32; 4])
             } else {
-                pool.install(|| {
-                    get_threshold_from_options(
-                        &self.in_bam,
-                        self.sampling_threads.unwrap_or(self.threads),
-                        self.sampling_interval_size,
-                        self.sampling_frac,
-                        self.num_reads,
-                        self.no_filtering,
-                        self.filter_percentile,
-                        self.seed,
-                        sampling_region.as_ref().or(region.as_ref()),
-                        per_mod_thresholds.clone(),
+                (
+                    0f32,
+                    self.calc_per_base_thresholds(
+                        regex_motifs.clone(),
+                        position_filter.clone(),
+                        &header,
+                        &io_thread_pool,
                         edge_filter.as_ref(),
-                        None,
-                        position_filter.as_ref(),
-                        !self.include_unmapped,
-                        self.suppress_progress,
-                    )
-                })?
+                        preset.as_ref(),
+                        self.sampling_frac,
+                        region.as_ref().or(sampling_region.as_ref()),
+                        master_progress.clone(),
+                    )?,
+                )
             };
-
-        if !self.no_filtering {
-            for (base, threshold) in threshold_caller.iter_thresholds() {
-                let base = base.char();
-                match (threshold * 100f32).ceil() as usize {
-                    0..=60 => error!(
-                        "Threshold of {threshold} for base {base} is very \
-                         low. Consider increasing the filter-percentile or \
-                         specifying a higher threshold."
-                    ),
-                    61..=70 => warn!(
-                        "Threshold of {threshold} for base {base} is low. \
-                         Consider increasing the filter-percentile or \
-                         specifying a higher threshold."
-                    ),
-                    _ => info!(
-                        "Using filter threshold {} for {base}.",
-                        threshold
-                    ),
-                }
-            }
-            for (base, threshold) in threshold_caller.iter_mod_thresholds() {
-                match (threshold * 100f32).ceil() as usize {
-                    0..=60 => error!(
-                        "Threshold of {threshold} for mod code {base} is very \
-                         low. Consider increasing the filter-percentile or \
-                         specifying a higher threshold."
-                    ),
-                    61..=70 => warn!(
-                        "Threshold of {threshold} for mod code {base} is low. \
-                         Consider increasing the filter-percentile or \
-                         specifying a higher threshold."
-                    ),
-                    _ => info!(
-                        "Using filter threshold {} for mod code {base}.",
-                        threshold
-                    ),
-                }
-            }
-        }
-
-        // TODO: re-enable this after a think about the best way to "optimize"
-        // let reference_records = if let Some(pf) = position_filter.as_ref() {
-        //     info!(
-        //         "optimizing reference records, started with {}",
-        //         reference_records.len()
-        //     );
-        //     let rr = pf.optimize_reference_records(
-        //         reference_records,
-        //         self.interval_size,
-        //     );
-        //     info!("..finished with {}", rr.len());
-        //     rr
-        // } else {
-        //     reference_records
-        // };
-
         let in_bam_fp = self.in_bam.clone();
-        let base_thresholds = threshold_caller.base_thresholds();
         let per_mod_thresholds = per_mod_thresholds
             .map(|x| x.into_iter().collect::<Vec<_>>())
             .unwrap_or_else(Vec::new);
@@ -1348,7 +1450,9 @@ impl ModBamPileup {
                             &self.in_bam,
                             self.reference_fasta.as_ref(),
                             motif_infos.clone(),
-                            threshold_caller.clone(),
+                            default_threshold,
+                            base_thresholds,
+                            &per_mod_thresholds,
                             pileup_options.clone(),
                             self.combine_strands,
                             self.max_depth,
@@ -1362,7 +1466,7 @@ impl ModBamPileup {
         };
 
         let feeder = ChromCoordinatesFeeder::new(
-            reference_records,
+            &reference_records,
             self.interval_size,
             motif_lookup,
             combine_strands,

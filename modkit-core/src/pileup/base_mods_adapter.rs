@@ -1,7 +1,11 @@
 use anyhow::{anyhow, bail};
 use derive_new::new;
 use memchr::{memchr, memchr_iter};
-use rust_htslib::bam::{self, record::AuxArray};
+use rust_htslib::bam::{
+    self,
+    ext::{BamRecordExtensions, IterAlignedPairs},
+    record::AuxArray,
+};
 
 use crate::{
     errs::MkResult,
@@ -10,7 +14,7 @@ use crate::{
 };
 
 #[derive(Debug, Copy, Clone, new)]
-pub(super) struct ModState {
+pub(crate) struct ModState {
     pub mod_position: usize,
     pub modified: bool,
     pub filtered: bool,
@@ -18,12 +22,11 @@ pub(super) struct ModState {
     pub primary_base: DnaBase,
     #[cfg(test)]
     pub inferred: bool,
-    #[cfg(test)]
     pub mod_qual: u8,
 }
 
 #[derive(Debug)]
-pub(super) struct BaseModsAdapter<'a, const SIZE: usize = 16> {
+pub(crate) struct BaseModsAdapter<'a, const SIZE: usize = 16> {
     mm: &'a [u8],
     seq: bam::record::Seq<'a>,
     ml: AuxArray<'a, u8>,
@@ -157,9 +160,10 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                         b'T' => freq[3],
                         _ => unreachable!(),
                     };
-                    let remainder = total
-                        .checked_sub(count)
-                        .expect("count should be less than or equal total");
+                    let remainder = total.checked_sub(count).expect(&format!(
+                        "count should be less than or equal total, MN tag \
+                         incorrect?"
+                    ));
                     let ml_idx =
                         ml_start + ((n_deltas - 1) as usize * mods_in_rec);
                     (Some(remainder), record_end + i, n_deltas, ml_idx)
@@ -200,6 +204,12 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
             reverse,
             left_to_right_seq_pos: 0,
         })
+    }
+
+    pub fn next_modified_position_no_thresh(
+        &mut self,
+    ) -> MkResult<Option<ModState>> {
+        self.next_modified_position([0f32; 4], &Vec::new())
     }
 
     pub fn next_modified_position(
@@ -301,6 +311,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                         qual_to_prob(canonical_qual as i32) < threshold,
                         ModCodeRepr::Code(base as char),
                         primary_base,
+                        canonical_qual,
                     ))
                 }
             } else {
@@ -335,6 +346,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                         qual_to_prob(mod_qual as i32) < mod_threshold,
                         mod_code,
                         primary_base,
+                        mod_qual,
                     ))
                 }
             };
@@ -476,6 +488,76 @@ fn base_complement(base: u8) -> u8 {
         b'G' => b'C',
         b'T' => b'A',
         _ => panic!("not allowed base"),
+    }
+}
+
+pub(crate) struct AlignedBaseModsIterator<'a> {
+    aligned_pairs_iter: IterAlignedPairs,
+    modbase_iter: BaseModsAdapter<'a>,
+    mod_state: Option<ModState>,
+}
+
+impl<'a> AlignedBaseModsIterator<'a> {
+    pub(crate) fn new(record: &'a bam::Record) -> anyhow::Result<Self> {
+        let aligned_pairs_iter = record.aligned_pairs();
+        let mut modbase_iter = BaseModsAdapter::new(record)?;
+        let mod_state = modbase_iter.next_modified_position_no_thresh()?;
+        Ok(Self { aligned_pairs_iter, modbase_iter, mod_state })
+    }
+
+    fn next_res(&mut self) -> MkResult<Option<(u32, u32, ModState)>> {
+        if self.mod_state.is_none() {
+            return Ok(None);
+        }
+        'scan: loop {
+            let Some((qpos, r_pos)) =
+                self.aligned_pairs_iter.next().and_then(|x| {
+                    if x[0] < 0i64 || x[1] < 0i64 {
+                        None
+                    } else {
+                        Some((x[0] as u32, x[1] as u32))
+                    }
+                })
+            else {
+                return Ok(None);
+            };
+            let mod_pos = self.mod_state.unwrap().mod_position as u32;
+            if mod_pos == qpos {
+                return Ok(Some((qpos, r_pos, self.mod_state.unwrap())));
+            } else if qpos < mod_pos {
+                continue 'scan;
+            } else {
+                assert!(qpos > mod_pos);
+                'advance_mods: loop {
+                    self.mod_state =
+                        self.modbase_iter.next_modified_position_no_thresh()?;
+                    match self.mod_state.as_ref() {
+                        Some(ms) => {
+                            if ms.mod_position < qpos as usize {
+                                continue 'advance_mods;
+                            } else if ms.mod_position == qpos as usize {
+                                let ret = Ok(Some((qpos, r_pos, *ms)));
+                                self.mod_state = self
+                                    .modbase_iter
+                                    .next_modified_position_no_thresh()?;
+                                return ret;
+                            } else {
+                                continue 'scan;
+                            }
+                        }
+                        None => return Ok(None),
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for AlignedBaseModsIterator<'a> {
+    type Item = MkResult<(u32, u32, ModState)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_res().transpose()
     }
 }
 

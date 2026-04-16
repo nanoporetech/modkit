@@ -7,7 +7,8 @@ use log::{debug, info, warn};
 use rust_htslib::bam::{self, Header};
 
 use crate::adjust::OverlappingRegexOffset;
-use crate::mod_bam::{CollapseMethod, EdgeFilter};
+use crate::fasta::MotifLocationsLookup;
+use crate::mod_bam::{prob_to_qual, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::motifs::motif_bed::RegexMotif;
 use crate::position_filter::StrandedPositionFilter;
@@ -46,6 +47,59 @@ pub fn parse_per_mod_thresholds(
     Ok(per_mod_thresholds)
 }
 
+pub fn parse_thresholds_values(
+    raw_base_thresholds: &[String],
+) -> anyhow::Result<(f32, [f32; 4])> {
+    let (default_threshold, per_base_thresholds) =
+        parse_per_base_thresholds(raw_base_thresholds)?;
+    if !per_base_thresholds.is_empty() {
+        for (base, threshold) in per_base_thresholds.iter() {
+            info!(
+                "using user-specified filter threshold {threshold} (qual: {}) \
+                 for {base}",
+                prob_to_qual(*threshold)
+            );
+        }
+    }
+    if let Some(default_threshold) = default_threshold {
+        info!(
+            "user-specified pass threshold {default_threshold} (qual: {})",
+            prob_to_qual(default_threshold)
+        );
+    } else {
+        let bases_with_thresholds = per_base_thresholds
+            .keys()
+            .map(|x| format!("{}", x.char()))
+            .join(",");
+        info!(
+            "no default pass threshold was provided, so base modifications at \
+             primary sequence bases other than {bases_with_thresholds} will \
+             not be filtered"
+        );
+    }
+
+    let base_thresholds = [
+        *per_base_thresholds
+            .get(&DnaBase::A)
+            .or(default_threshold.as_ref())
+            .unwrap_or(&0f32),
+        *per_base_thresholds
+            .get(&DnaBase::C)
+            .or(default_threshold.as_ref())
+            .unwrap_or(&0f32),
+        *per_base_thresholds
+            .get(&DnaBase::G)
+            .or(default_threshold.as_ref())
+            .unwrap_or(&0f32),
+        *per_base_thresholds
+            .get(&DnaBase::T)
+            .or(default_threshold.as_ref())
+            .unwrap_or(&0f32),
+    ];
+
+    Ok((default_threshold.unwrap_or(0f32), base_thresholds))
+}
+
 pub fn parse_thresholds(
     raw_base_thresholds: &[String],
     per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
@@ -66,7 +120,7 @@ pub fn parse_thresholds(
 
     Ok(MultipleThresholdModCaller::new(
         per_base_thresholds,
-        per_mod_thresholds.unwrap_or(HashMap::new()),
+        per_mod_thresholds.unwrap_or_else(HashMap::new),
         default.unwrap_or(0f32),
     ))
 }
@@ -157,13 +211,12 @@ pub(crate) fn parse_per_base_thresholds(
     raw_thresholds: &[String],
 ) -> anyhow::Result<(Option<f32>, HashMap<DnaBase, f32>)> {
     if raw_thresholds.is_empty() {
-        return Err(anyhow!("no thresholds provided"));
+        bail!("no thresholds provided")
     }
     if raw_thresholds.len() == 1 {
         let raw = &raw_thresholds[0];
         if raw.contains(':') {
             let (dna_base, threshold) = parse_raw_threshold(raw)?;
-            info!("using threshold {} for base {}", threshold, dna_base.char());
             let per_base_threshold = vec![(dna_base, threshold)]
                 .into_iter()
                 .collect::<HashMap<DnaBase, f32>>();
@@ -180,11 +233,6 @@ pub(crate) fn parse_per_base_thresholds(
         for raw_threshold in raw_thresholds {
             if raw_threshold.contains(':') {
                 let (dna_base, threshold) = parse_raw_threshold(raw_threshold)?;
-                debug!(
-                    "parsed user-specified threshold {} for base {}",
-                    threshold,
-                    dna_base.char()
-                );
                 let repeated = per_base_thresholds.insert(dna_base, threshold);
                 if repeated.is_some() {
                     bail!("repeated threshold for base {}", dna_base.char())
@@ -197,7 +245,6 @@ pub(crate) fn parse_per_base_thresholds(
                     raw_threshold.parse::<f32>().context(format!(
                         "failed to parse default threshold {raw_threshold}"
                     ))?;
-                info!("setting default threshold to {}", default_threshold);
                 default = Some(default_threshold);
             }
         }
@@ -330,5 +377,66 @@ pub fn parse_forward_motifs(
             Ok(Some(motifs))
         }
         (None, false) => Ok(None),
+    }
+}
+
+pub(crate) fn get_motif_lookup_from_parts(
+    regex_motifs: Option<Vec<RegexMotif>>,
+    reference_fasta: Option<&PathBuf>,
+    combine_strands: bool,
+    mask: bool,
+    preload_references: bool,
+) -> anyhow::Result<Option<MotifLocationsLookup>> {
+    if let Some(motifs) = regex_motifs {
+        let fasta_fp = reference_fasta.as_ref().ok_or(anyhow!(
+            "reference fasta is required for using --modified-bases, --motif \
+             or --cpg options"
+        ))?;
+        if combine_strands {
+            if motifs.iter().any(|rm| !rm.is_palendrome()) {
+                bail!(
+                    "cannot combine strands with a motif that is not a \
+                     palindrome"
+                )
+            }
+            debug!("combining + and - strand counts");
+        }
+
+        Ok(Some(MotifLocationsLookup::from_paths(
+            fasta_fp,
+            mask,
+            None,
+            motifs,
+            preload_references,
+        )?))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) fn parse_raw_motifs(
+    raw_motif_parts: &[String],
+    cpg: bool,
+    allow_single_base: bool,
+) -> anyhow::Result<Vec<RegexMotif>> {
+    if raw_motif_parts.len() % 2 != 0 {
+        bail!("illegal number of parts for motif")
+    }
+    if raw_motif_parts.is_empty() {
+        bail!("zero motif parts")
+    }
+    match RegexMotif::from_raw_parts(raw_motif_parts, cpg) {
+        Ok(regex_motifs) => {
+            for motif in regex_motifs.iter() {
+                if motif.length() == 1 && !allow_single_base {
+                    bail!(
+                        "single base motifs not supported, use \
+                         --modified-bases"
+                    )
+                }
+            }
+            Ok(regex_motifs)
+        }
+        e @ _ => e,
     }
 }

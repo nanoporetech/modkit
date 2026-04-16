@@ -1,7 +1,11 @@
-use std::{cmp::Ordering, marker::PhantomData, ops::Range, path::PathBuf};
+use std::{
+    cmp::Ordering, collections::HashMap, marker::PhantomData, ops::Range,
+    path::PathBuf,
+};
 
 use anyhow::{anyhow, bail};
 use bitvec::slice::BitSlice;
+use common_macros::hash_map;
 use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::ops::BitOrAssign;
@@ -165,7 +169,6 @@ impl<
                     || read_length <= self.edge_filter_end)
             })
             .filter_ok(|record| record_is_primary(record))
-            // TODO: capture errors
             .filter_map(|res| match res {
                 Ok(record) => {
                     if self.phased {
@@ -176,6 +179,7 @@ impl<
                         Some((record, 0u8))
                     }
                 }
+                // TODO: tabulate this error
                 Err(_) => None,
             });
 
@@ -226,7 +230,7 @@ impl<
                     }
                 })
                 .filter_map(|(qpos, rpos)| match &item.focus_positions {
-                    FocusPositions2::SimpleMask { mask, num_motifs } => {
+                    FocusPositions2::MotifMask { mask, num_motifs } => {
                         let st = (rpos * 2 * (*num_motifs as u32))
                             + (*num_motifs * reverse as u8) as u32;
                         let st = st as usize;
@@ -254,7 +258,7 @@ impl<
                             None
                         }
                     }
-                    FocusPositions2::AllPositions => unreachable!(),
+                    _ => unreachable!(),
                 })
                 .filter_map(|(qpos, rpos, ref_base)| match qpos {
                     Some(qpos)
@@ -478,7 +482,9 @@ impl GenericPileupWorker {
         in_bam_fp: &PathBuf,
         reference_fp: Option<&PathBuf>,
         motif_bases: Vec<MotifInfo>,
-        caller: MultipleThresholdModCaller,
+        default_threshold: f32,
+        base_thresholds: [f32; 4],
+        mod_code_thresholds: &[(ModCodeRepr, f32)],
         pileup_numeric_options: PileupNumericOptions,
         combine_strands: bool,
         max_depth: u16,
@@ -502,6 +508,21 @@ impl GenericPileupWorker {
             }
         };
 
+        let per_base_thresholds = hash_map! {
+            DnaBase::A => base_thresholds[DnaBase::A as usize],
+            DnaBase::C => base_thresholds[DnaBase::C as usize],
+            DnaBase::G => base_thresholds[DnaBase::G as usize],
+            DnaBase::T => base_thresholds[DnaBase::T as usize],
+        };
+        let per_mod_thresholds = mod_code_thresholds
+            .iter()
+            .copied()
+            .collect::<HashMap<ModCodeRepr, f32>>();
+        let caller = MultipleThresholdModCaller::new(
+            per_base_thresholds,
+            per_mod_thresholds,
+            default_threshold,
+        );
         Ok(Self {
             reader,
             motif_bases,
@@ -652,7 +673,7 @@ impl PileupWorker for GenericPileupWorker {
                 })
                 .filter_map(|(qpos, rpos)| {
                     match &chrom_coordinates.focus_positions {
-                        FocusPositions2::SimpleMask { mask, num_motifs } => {
+                        FocusPositions2::MotifMask { mask, num_motifs } => {
                             let st = (rpos * 2 * (*num_motifs as u32))
                                 + (*num_motifs * reverse as u8) as u32;
                             let st = st as usize;
@@ -675,6 +696,9 @@ impl PileupWorker for GenericPileupWorker {
                         }
                         FocusPositions2::AllPositions => {
                             Some((qpos, rpos, Option::<&MotifInfo>::None, 0u8))
+                        }
+                        FocusPositions2::MaskedPositions { mask: _ } => {
+                            unreachable!()
                         }
                     }
                 });
