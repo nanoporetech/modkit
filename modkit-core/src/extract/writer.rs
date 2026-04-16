@@ -1,6 +1,11 @@
 use std::collections::HashMap;
-use std::io::Write;
+use std::fs::File;
+use std::io::{BufWriter, Cursor, Write};
+use std::path::Path;
 
+use indicatif::MultiProgress;
+
+use crate::extract::util::ReadModsStatsRecord;
 use crate::mod_bam::BaseModCall;
 use crate::motifs::motif_bed::MotifPositionLookup;
 use crate::read_ids_to_base_mod_probs::{
@@ -8,9 +13,10 @@ use crate::read_ids_to_base_mod_probs::{
 };
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{
-    get_reference_mod_strand, Kmer, Strand, MISSING_SYMBOL, TAB,
+    get_reference_mod_strand, get_ticker_with_rate, Kmer, Strand,
+    MISSING_SYMBOL, TAB,
 };
-use crate::writers::TsvWriter;
+use crate::writers::{RecordingWriter, TsvWriter};
 
 impl PositionModCalls {
     pub(super) fn header(with_motifs: bool) -> String {
@@ -304,5 +310,128 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
 
     fn num_reads(&self) -> usize {
         self.number_of_written_reads
+    }
+}
+
+pub(super) trait CanWriteReadModStatsRecords<R> {
+    fn write(&mut self, record: R) -> anyhow::Result<()>;
+}
+
+pub(super) struct ReadModStatsWriter<T: Write, const SIZE: usize> {
+    buff: Cursor<Vec<u8>>,
+    inner: RecordingWriter<T>,
+    mods_per_base: [u8; 4],
+    start_idxs_per_base: [usize; 4],
+    chrom_names: Vec<String>,
+    return_mem: crossbeam::channel::Sender<ReadModsStatsRecord<SIZE>>,
+}
+
+impl<const SIZE: usize> ReadModStatsWriter<BufWriter<std::io::Stdout>, SIZE> {
+    pub(super) fn new_stdout(
+        header: &str,
+        mods_per_base: [u8; 4],
+        start_idxs_per_base: [usize; 4],
+        return_mem: crossbeam::channel::Sender<ReadModsStatsRecord<SIZE>>,
+        chrom_names: Vec<String>,
+        multi_progress: MultiProgress,
+    ) -> anyhow::Result<Self> {
+        let write_pb = multi_progress.add(get_ticker_with_rate());
+        write_pb.set_message(format!("B written stdout"));
+        write_pb.set_position(0);
+        let mut writer = RecordingWriter::new_stdout(write_pb);
+        writer.write(header.as_bytes())?;
+        let buff = Cursor::new(vec![0u8; 1 << 20]);
+
+        Ok(Self {
+            buff,
+            inner: writer,
+            mods_per_base,
+            start_idxs_per_base,
+            chrom_names,
+            return_mem,
+        })
+    }
+}
+
+impl<const SIZE: usize> ReadModStatsWriter<BufWriter<File>, SIZE> {
+    pub(super) fn new_file(
+        path: &Path,
+        header: &str,
+        mods_per_base: [u8; 4],
+        start_idxs_per_base: [usize; 4],
+        return_mem: crossbeam::channel::Sender<ReadModsStatsRecord<SIZE>>,
+        chrom_names: Vec<String>,
+        multi_progress: MultiProgress,
+    ) -> anyhow::Result<Self> {
+        let fh = File::create(path)?;
+        let write_pb = multi_progress.add(get_ticker_with_rate());
+        let out_fn = path
+            .file_name()
+            .and_then(|x| x.to_str())
+            .map(|x| x.to_string())
+            .unwrap_or_else(|| "failed to parse filename".to_string());
+        write_pb.set_message(format!("B written to output: {out_fn}"));
+        write_pb.set_position(0);
+        let mut writer = RecordingWriter::new_file(fh, write_pb);
+        writer.write(header.as_bytes())?;
+        let buff = Cursor::new(vec![0u8; 1 << 20]);
+
+        Ok(Self {
+            buff,
+            inner: writer,
+            mods_per_base,
+            start_idxs_per_base,
+            chrom_names,
+            return_mem,
+        })
+    }
+}
+
+impl<T: Write, const SIZE: usize>
+    CanWriteReadModStatsRecords<ReadModsStatsRecord<SIZE>>
+    for ReadModStatsWriter<T, SIZE>
+{
+    fn write(
+        &mut self,
+        record: ReadModsStatsRecord<SIZE>,
+    ) -> anyhow::Result<()> {
+        if record.read_length == 0usize {
+            return Ok(());
+        }
+        let chrom_name = if record.chrom_id >= 0i32 {
+            let idx = record.chrom_id as usize;
+            if idx < self.chrom_names.len() {
+                self.chrom_names[idx].as_str()
+            } else {
+                "not-in-header"
+            }
+        } else {
+            "unmapped"
+        };
+        write!(
+            self.buff,
+            "{},{chrom_name},{},",
+            record.read_id, record.aln_start
+        )?;
+        for b in 0..4usize {
+            if self.mods_per_base[b] > 0 {
+                write!(self.buff, "{},", record.count_unmodified[b])?;
+                write!(self.buff, "{},", record.count_unmodified_fail[b])?;
+                let n_mods = self.mods_per_base[b] as usize;
+                let st_index = self.start_idxs_per_base[b];
+                for i in st_index..st_index.saturating_add(n_mods) {
+                    write!(self.buff, "{},", record.mod_counts[i])?;
+                    write!(self.buff, "{},", record.filtered_mod_counts[i])?;
+                }
+                write!(self.buff, "{},", record.other_modified[b])?;
+                write!(self.buff, "{},", record.other_modified_fail[b])?;
+            }
+        }
+        write!(self.buff, "{}\n", record.read_length)?;
+        let pos = self.buff.position() as usize;
+        self.inner.write(&self.buff.get_ref()[..pos])?;
+        self.buff.set_position(0);
+        let _ = self.return_mem.send(record);
+        Ok(())
     }
 }

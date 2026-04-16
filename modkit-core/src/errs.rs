@@ -5,6 +5,8 @@ pub type MkResult<T, E = MkError> = Result<T, E>;
 #[derive(thiserror::Error, Debug)]
 pub enum MkError {
     // Tag parsing
+    #[error("invalid-aux-tags")]
+    InvalidTags,
     #[error("invalid-MM-tag")]
     InvalidMm(String),
     #[error("invalid-ML-tag")]

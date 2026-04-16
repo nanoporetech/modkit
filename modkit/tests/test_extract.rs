@@ -22,6 +22,9 @@ fn test_extract_help() {
     run_modkit(&["extract", "full", "--help"])
         .context("modkit extract full --help failed")
         .unwrap();
+    run_modkit(&["extract", "read-stats", "--help"])
+        .context("modkit extract read-stats --help failed")
+        .unwrap();
 }
 
 fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {

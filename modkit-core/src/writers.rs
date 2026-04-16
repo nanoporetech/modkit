@@ -1218,25 +1218,29 @@ fn format_feature_counts2(
     Ok(())
 }
 
-struct RecordingWriter<T: Write> {
+pub(crate) struct RecordingWriter<T: Write> {
     inner: T,
     pb: ProgressBar,
 }
 
 impl RecordingWriter<BufWriter<std::io::Stdout>> {
-    fn new_stdout(pb: ProgressBar) -> Self {
+    pub(crate) fn new_stdout(pb: ProgressBar) -> Self {
         Self { inner: BufWriter::with_capacity(1 << 20, std::io::stdout()), pb }
     }
 }
 
 impl RecordingWriter<BufWriter<File>> {
-    fn new_file(file: File, pb: ProgressBar) -> Self {
+    pub(crate) fn new_file(file: File, pb: ProgressBar) -> Self {
         Self { inner: BufWriter::with_capacity(1 << 20, file), pb }
     }
 }
 
 impl RecordingWriter<ParCompress<Bgzf>> {
-    fn new_bgzf(file: File, compress_threads: usize, pb: ProgressBar) -> Self {
+    pub(crate) fn new_bgzf(
+        file: File,
+        compress_threads: usize,
+        pb: ProgressBar,
+    ) -> Self {
         let inner = ParCompressBuilder::<Bgzf>::new()
             .num_threads(compress_threads)
             .unwrap()
@@ -1245,7 +1249,7 @@ impl RecordingWriter<ParCompress<Bgzf>> {
     }
 }
 impl<T: Write> RecordingWriter<T> {
-    fn write(&mut self, bulk: &[u8]) -> anyhow::Result<()> {
+    pub(crate) fn write(&mut self, bulk: &[u8]) -> anyhow::Result<()> {
         let n = bulk.len();
         self.inner.write_all(bulk)?;
         self.pb.inc(n as u64);
@@ -1253,7 +1257,7 @@ impl<T: Write> RecordingWriter<T> {
         Ok(())
     }
 
-    fn flush(&mut self) -> anyhow::Result<()> {
+    pub(crate) fn flush(&mut self) -> anyhow::Result<()> {
         self.inner.flush()?;
         Ok(())
     }

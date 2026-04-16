@@ -1,12 +1,15 @@
+use crate::errs::{MkError, MkResult};
 use crate::extract::args::InputArgs;
 use crate::interval_chunks::{
     ReferenceIntervalBatchesFeeder, TotalLength, WithPrevEnd,
 };
 use crate::mod_bam::{CollapseMethod, EdgeFilter, TrackingModRecordIter};
+use crate::mod_base_code::ModCodeRepr;
 use crate::monoid::Moniod;
 use crate::motifs::motif_bed::{
     find_motif_hits, MotifPositionLookup, RegexMotif,
 };
+use crate::pileup::base_mods_adapter::BaseModsAdapter;
 use crate::position_filter::{GenomeIntervals, Iv, StrandedPositionFilter};
 use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
@@ -16,15 +19,17 @@ use crate::reads_sampler::sample_reads_from_interval;
 use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
 use crate::util::{
-    get_guage, get_master_progress_bar, get_reference_mod_strand,
-    get_subroutine_progress_bar, get_targets, get_ticker, Region, Strand,
+    get_guage, get_master_progress_bar, get_query_name_string,
+    get_reference_mod_strand, get_subroutine_progress_bar, get_targets,
+    get_ticker, record_is_primary, Region, Strand,
 };
 use derive_new::new;
-use indicatif::{MultiProgress, ParallelProgressIterator};
+use indicatif::{MultiProgress, ParallelProgressIterator, ProgressBar};
 use itertools::Itertools;
 use log::{debug, error, info};
 use rayon::prelude::*;
 use rayon::ThreadPool;
+use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -608,4 +613,207 @@ fn process_records_to_chan<'a, T: Read>(
     }
     pb.finish_and_clear();
     (mod_iter.num_skipped, mod_iter.num_failed)
+}
+
+pub(super) struct ReadModsStatsRecord<const SIZE: usize> {
+    pub read_id: String,
+    pub chrom_id: i32,
+    pub aln_start: i64,
+    pub count_unmodified: [u32; 4],
+    pub count_unmodified_fail: [u32; 4],
+    pub other_modified: [u32; 4],
+    pub other_modified_fail: [u32; 4],
+    pub mod_counts: [u32; SIZE],
+    pub filtered_mod_counts: [u32; SIZE],
+    pub read_length: usize,
+}
+
+impl<const SIZE: usize> ReadModsStatsRecord<SIZE> {
+    fn zero(&mut self) {
+        self.count_unmodified = [0u32; 4];
+        self.count_unmodified_fail = [0u32; 4];
+        self.other_modified = [0u32; 4];
+        self.other_modified_fail = [0u32; 4];
+        self.mod_counts = [0u32; SIZE];
+        self.filtered_mod_counts = [0u32; SIZE];
+        self.read_length = 0usize;
+    }
+
+    pub(super) fn empty() -> Self {
+        Self {
+            read_id: "".to_string(),
+            chrom_id: -1i32,
+            aln_start: -1i64,
+            count_unmodified: [0u32; 4],
+            count_unmodified_fail: [0u32; 4],
+            other_modified: [0u32; 4],
+            other_modified_fail: [0u32; 4],
+            mod_counts: [0u32; SIZE],
+            filtered_mod_counts: [0u32; SIZE],
+            read_length: 0usize,
+        }
+    }
+
+    fn new(
+        record: &bam::Record,
+        mut mem: Self,
+        mods_per_base: &[u8; 4],
+        mods_codes_and_idx: &[(ModCodeRepr, usize)],
+        filter_thresholds: [f32; 4],
+        mod_thresholds: &[(ModCodeRepr, f32)],
+    ) -> MkResult<Self> {
+        mem.zero();
+        let read_id = get_query_name_string(record)?;
+        let ref_start = record.reference_start();
+        let chrom_id = record.tid();
+        let mut adapter = BaseModsAdapter::<SIZE>::new(record)
+            .map_err(|_| MkError::InvalidTags)?;
+        loop {
+            match adapter
+                .next_modified_position(filter_thresholds, mod_thresholds)
+            {
+                Ok(Some(mod_pos)) => {
+                    let idx = mod_pos.primary_base as usize;
+                    if mods_per_base[idx] > 0 {
+                        if mod_pos.modified {
+                            if let Some(i) =
+                                mods_codes_and_idx.iter().find_map(|(c, x)| {
+                                    if *c == mod_pos.mod_code {
+                                        Some(*x)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            {
+                                let ar = if mod_pos.filtered {
+                                    &mut mem.filtered_mod_counts
+                                } else {
+                                    &mut mem.mod_counts
+                                };
+                                ar[i] = ar[i].saturating_add(1);
+                            }
+                        } else {
+                            let ar = if mod_pos.filtered {
+                                &mut mem.count_unmodified_fail
+                            } else {
+                                &mut mem.count_unmodified
+                            };
+                            ar[idx] = ar[idx].saturating_add(1);
+                        }
+                    } else {
+                        continue;
+                    }
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        mem.read_length = record.seq_len();
+        mem.read_id = read_id;
+        mem.chrom_id = chrom_id;
+        mem.aln_start = ref_start;
+        return Ok(mem);
+    }
+}
+
+pub(super) struct ReadModStatsProcessor<const SIZE: usize> {
+    mods_per_base: [u8; 4],
+    mod_codes_and_idx: Vec<(ModCodeRepr, usize)>,
+    reader: bam::Reader,
+    filter_thresholds: [f32; 4],
+    mod_thresholds: Vec<(ModCodeRepr, f32)>,
+    failed_records: ProgressBar,
+    skipped_records: ProgressBar,
+    in_channel: crossbeam::channel::Receiver<ReadModsStatsRecord<SIZE>>,
+    out_channel:
+        crossbeam::channel::Sender<MkResult<ReadModsStatsRecord<SIZE>>>,
+}
+
+impl<const SIZE: usize> ReadModStatsProcessor<SIZE> {
+    pub(super) fn new(
+        in_channel: crossbeam::channel::Receiver<ReadModsStatsRecord<SIZE>>,
+        out_channel: crossbeam::channel::Sender<
+            MkResult<ReadModsStatsRecord<SIZE>>,
+        >,
+        reader: bam::Reader,
+        mods_per_base: [u8; 4],
+        mod_codes: &[ModCodeRepr],
+        mod_code_idxs: &[usize],
+        filter_thresholds: [f32; 4],
+        mod_thresholds: Vec<(ModCodeRepr, f32)>,
+        multi_prog: MultiProgress,
+    ) -> Self {
+        assert_eq!(mod_codes.len(), mod_code_idxs.len());
+        let mod_codes_and_idx = mod_codes
+            .iter()
+            .zip(mod_code_idxs.iter())
+            .map(|(code, idx)| (*code, *idx))
+            .collect();
+        let failed_records = multi_prog.add(get_ticker());
+        failed_records.set_message("failed records");
+        let skipped_records = multi_prog.add(get_ticker());
+        skipped_records.set_message("skipped records");
+
+        Self {
+            in_channel,
+            mods_per_base,
+            mod_codes_and_idx,
+            reader,
+            filter_thresholds,
+            mod_thresholds,
+            out_channel,
+            failed_records,
+            skipped_records,
+        }
+    }
+
+    pub(super) fn process_bam(&mut self) {
+        let get_mem = || -> Result<ReadModsStatsRecord<SIZE>, ()> {
+            match self.in_channel.recv() {
+                Ok(mem) => Ok(mem),
+                Err(_) => Err(()),
+            }
+        };
+        let iter = self
+            .reader
+            .records()
+            .map(|r| r.map_err(|e| MkError::from(e)))
+            .filter_ok(|rec| {
+                if record_is_primary(&rec) {
+                    true
+                } else {
+                    self.skipped_records.inc(1);
+                    false
+                }
+            });
+        'records: for res in iter {
+            match res {
+                Ok(record) => match get_mem() {
+                    Ok(mem) => {
+                        let stats_res = ReadModsStatsRecord::new(
+                            &record,
+                            mem,
+                            &self.mods_per_base,
+                            &self.mod_codes_and_idx,
+                            self.filter_thresholds,
+                            &self.mod_thresholds,
+                        );
+                        if let Err(_) = self.out_channel.send(stats_res) {
+                            break 'records;
+                        }
+                    }
+                    Err(_) => {
+                        self.failed_records.inc(1);
+                        break 'records;
+                    }
+                },
+                Err(e) => {
+                    error!("reading from BAM failed, {e}");
+                    break 'records;
+                }
+            }
+        }
+    }
 }

@@ -1,7 +1,9 @@
-use std::collections::HashMap;
+use itertools::Itertools;
+use rustc_hash::FxHashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::bail;
+use anyhow::{bail, Context};
 use clap::{Args, Subcommand};
 use common_macros::hash_map;
 use crossbeam_channel::bounded;
@@ -13,16 +15,21 @@ use rust_htslib::bam::{self, Read};
 use modkit_logging::init_logging_smart;
 
 use crate::command_utils::{
-    get_serial_reader, parse_edge_filter_input, parse_per_mod_thresholds,
-    parse_thresholds, using_stream,
+    get_serial_reader, parse_edge_filter_input, parse_per_base_thresholds,
+    parse_per_mod_thresholds, parse_thresholds, using_stream,
 };
 use crate::extract::args::InputArgs;
-use crate::extract::util::ReferencePositionFilter;
-use crate::extract::writer::{OutwriterWithMemory, TsvWriterWithContigNames};
+use crate::extract::util::{
+    ReadModStatsProcessor, ReadModsStatsRecord, ReferencePositionFilter,
+};
+use crate::extract::writer::{
+    CanWriteReadModStatsRecords, OutwriterWithMemory, ReadModStatsWriter,
+    TsvWriterWithContigNames,
+};
 use crate::fasta::HtsLibFastaRecords;
 use crate::interval_chunks::ReferenceIntervalBatchesFeeder;
 use crate::mod_bam::{CollapseMethod, EdgeFilter};
-use crate::mod_base_code::{DnaBase, ModCodeRepr};
+use crate::mod_base_code::{DnaBase, ModCodeRepr, ModifiedBasesOptions};
 use crate::motifs::motif_bed::MotifPositionLookup;
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::{
@@ -35,7 +42,7 @@ use crate::sample_probs::{
     calc_per_base_thresholds_from_stream,
 };
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{get_ticker, Region, KMER_SIZE};
+use crate::util::{format_errors_table, get_ticker, Region, KMER_SIZE};
 use crate::writers::TsvWriter;
 
 #[derive(Subcommand)]
@@ -48,6 +55,11 @@ pub enum ExtractMods {
     /// using the same thresholding algorithm as in pileup, or summary (see
     /// online documentation for details on thresholds).
     Calls(EntryExtractCalls),
+    /// Produce a table where modification counts are summarized on the read
+    /// level. This table will have one record per valid read and count the
+    /// number of modified and unmodified bases for each base moficiation
+    /// requested.
+    ReadStats(EntryReadStats),
 }
 
 impl ExtractMods {
@@ -55,6 +67,7 @@ impl ExtractMods {
         match self {
             ExtractMods::Full(x) => x.run(),
             ExtractMods::Calls(x) => x.run(),
+            ExtractMods::ReadStats(x) => x.run(),
         }
     }
 }
@@ -838,5 +851,306 @@ impl EntryExtractCalls {
             n_failed.position()
         );
         Ok(())
+    }
+}
+
+#[derive(Args)]
+#[command(arg_required_else_help = true)]
+pub struct EntryReadStats {
+    /// Input modBAM. Can be a path to a file or "-"/"stdin" for standard input
+    in_bam: String,
+    /// Path to file for output, default will be to stdout
+    out_path: String,
+    /// Specify the filter threshold globally or per-base. Global filter
+    /// threshold can be specified with by a decimal number (e.g. 0.75).
+    /// Per-base thresholds can be specified by colon-separated values, for
+    /// example C:0.75 specifies a threshold value of 0.75 for cytosine
+    /// modification calls. Additional per-base thresholds can be specified
+    /// by repeating the option: for example --filter-threshold C:0.75
+    /// --filter-threshold A:0.70 or specify a single base option and a
+    /// default for all other bases with: --filter-threshold A:0.70
+    /// --filter-threshold 0.9 will specify a threshold value of 0.70 for
+    /// adenine and 0.9 for all other base modification calls.
+    #[arg(long)]
+    filter_threshold: Vec<String>,
+    /// Specify a passing threshold to use for a base modification, independent
+    /// of the threshold for the primary sequence base or the default. For
+    /// example, to set the pass threshold for 5hmC to 0.8 use
+    /// `--mod-threshold h:0.8`. The pass threshold will still be estimated
+    /// as usual and used for canonical cytosine and other modifications
+    /// unless the `--filter-threshold` option is also passed.
+    #[arg(long)]
+    mod_thresholds: Option<Vec<String>>,
+    /// Specify which modcodes to tabulate, should be <primary_base>:<mod_code>
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(ModifiedBasesOptions),
+        num_args = 1..,
+        value_delimiter = ' '
+    )]
+    mod_codes: Vec<ModifiedBasesOptions>,
+    /// Path to file to write run log.
+    #[clap(help_heading = "Logging Options")]
+    #[arg(long, alias = "log")]
+    log_filepath: Option<PathBuf>,
+    /// Queue size, maximum number of reads to be held in memory waiting for
+    /// records to be written
+    #[arg(long, default_value_t = 10_000usize)]
+    queue_size: usize,
+    #[arg(long, default_value_t = 4usize)]
+    io_threads: usize,
+}
+
+impl EntryReadStats {
+    fn run(&self) -> anyhow::Result<()> {
+        let stream_out = using_stream(self.out_path.as_str());
+        let _ = init_logging_smart(self.log_filepath.as_ref(), stream_out);
+        let mpb = MultiProgress::new();
+        if self.mod_codes.is_empty() {
+            bail!("need to provide at least 1 base:mod-code pair")
+        }
+        let per_base_thresholds = self.parse_thresholds()?;
+        let per_mod_thresholds = self.parse_per_mod_thresholds()?;
+        let mut header = vec![
+            "read_id".to_string(),
+            "chrom".to_string(),
+            "aln_start".to_string(),
+        ];
+        let bases_to_codes = self
+            .mod_codes
+            .iter()
+            .map(|x| (x.primary_base, x.mod_code))
+            .collect::<Vec<(DnaBase, ModCodeRepr)>>();
+
+        let grouped = bases_to_codes
+            .iter()
+            .fold(HashMap::new(), |mut agg, (base, code)| {
+                agg.entry(*base).or_insert(HashSet::new()).insert(*code);
+                agg
+            })
+            .into_iter()
+            .map(|(b, codes)| {
+                (b, codes.into_iter().sorted().collect::<Vec<_>>())
+            })
+            .collect::<HashMap<DnaBase, Vec<ModCodeRepr>>>();
+
+        let mut reader = match self.in_bam.as_str() {
+            "-" | "stdin" => bam::Reader::from_stdin()?,
+            p @ _ => {
+                let fp = Path::new(&self.in_bam);
+                if !fp.exists() {
+                    bail!("didn't find BAM at {p}");
+                }
+                bam::Reader::from_path(fp)?
+            }
+        };
+        let contigs = reader
+            .header()
+            .target_names()
+            .iter()
+            .map(|raw_name| {
+                raw_name.iter().map(|b| *b as char).collect::<String>()
+            })
+            .collect::<Vec<String>>();
+
+        reader.set_threads(self.io_threads)?;
+
+        let mut mod_codes = Vec::new();
+        let mut mod_code_idxs = Vec::new();
+        let mut mods_per_base = [0u8; 4];
+        for (base, codes) in grouped.iter().sorted_by(|(a, _), (b, _)| a.cmp(b))
+        {
+            header.push(format!("unmodified_{base}"));
+            header.push(format!("filtered_unmodified_{base}"));
+            mods_per_base[*base as usize] =
+                codes.len().try_into().context("too many mods for {base}")?;
+            for code in codes {
+                mod_codes.push(*code);
+                let idx = mod_code_idxs.len();
+                mod_code_idxs.push(idx);
+                // mod_idxs_per_base[*base as usize].push(idx);
+                header.push(format!("modified_{code}"));
+                header.push(format!("filtered_modified_{code}"));
+            }
+            header.push(format!("other_modified_{base}"));
+            header.push(format!("filtered_other_modified_{base}"));
+        }
+        header.push("read_length".to_string());
+
+        let (start_idx_per_base, _) = mods_per_base.iter().fold(
+            (Vec::new(), 0usize),
+            |(mut agg, cum_sum), next| {
+                agg.push(cum_sum);
+                (agg, cum_sum.saturating_add(*next as usize))
+            },
+        );
+        assert_eq!(start_idx_per_base.len(), 4usize);
+        let start_idx_per_base = [
+            start_idx_per_base[0],
+            start_idx_per_base[1],
+            start_idx_per_base[2],
+            start_idx_per_base[3],
+        ];
+
+        let header = header.join(",");
+        let header = format!("{header}\n");
+
+        let (snd_results, rcv_results) = crossbeam::channel::unbounded();
+        let (snd_mem, rcv_mem) = crossbeam::channel::unbounded();
+        for _ in 0..self.queue_size {
+            match snd_mem.send(ReadModsStatsRecord::<16>::empty()) {
+                Ok(_) => {}
+                Err(_) => {
+                    bail!("failed to initiate memory allocation")
+                }
+            }
+        }
+
+        let mut read_processor = ReadModStatsProcessor::<16>::new(
+            rcv_mem,
+            snd_results,
+            reader,
+            mods_per_base,
+            &mod_codes,
+            &mod_code_idxs,
+            per_base_thresholds,
+            per_mod_thresholds,
+            mpb.clone(),
+        );
+
+        let mut writer: Box<
+            dyn CanWriteReadModStatsRecords<ReadModsStatsRecord<16>>,
+        > = {
+            match self.out_path.as_str() {
+                "-" | "stdout" => Box::new(ReadModStatsWriter::new_stdout(
+                    &header,
+                    mods_per_base,
+                    start_idx_per_base,
+                    snd_mem,
+                    contigs,
+                    mpb.clone(),
+                )?),
+                _ => {
+                    let fp = Path::new(self.out_path.as_str());
+                    Box::new(ReadModStatsWriter::new_file(
+                        fp,
+                        &header,
+                        mods_per_base,
+                        start_idx_per_base,
+                        snd_mem,
+                        contigs,
+                        mpb.clone(),
+                    )?)
+                }
+            }
+        };
+
+        let reader_handle =
+            std::thread::spawn(move || read_processor.process_bam());
+
+        let mut errs = FxHashMap::default();
+        let done_records = mpb.add(get_ticker());
+        done_records.set_message("records processed successfully");
+
+        for result in rcv_results {
+            match result {
+                Ok(record) => {
+                    writer.write(record)?;
+                    done_records.inc(1);
+                }
+                Err(e) => {
+                    let c = errs.entry(e.to_string()).or_insert(0usize);
+                    *c = c.saturating_add(1);
+                }
+            }
+        }
+
+        match reader_handle.join() {
+            Ok(_) => {}
+            Err(e) => {
+                bail!("reader thread paniced, {e:?}")
+            }
+        };
+        if !errs.is_empty() {
+            let table = format_errors_table(&errs);
+            mpb.suspend(|| {
+                info!("errors:\n{table}");
+            })
+        }
+        Ok(())
+    }
+
+    fn parse_thresholds(&self) -> anyhow::Result<[f32; 4]> {
+        if self.filter_threshold.is_empty() {
+            info!("no thresholds provided, no filtering will be done");
+            return Ok([0f32; 4]);
+        }
+        let (default_threshold, per_base_thresholds) =
+            parse_per_base_thresholds(&self.filter_threshold)?;
+        let bases_with_thresholds = per_base_thresholds.keys().join(",");
+        let bases_without_thresholds =
+            [DnaBase::A, DnaBase::C, DnaBase::G, DnaBase::T]
+                .into_iter()
+                .filter(|x| !per_base_thresholds.contains_key(x))
+                .collect::<Vec<_>>();
+
+        match (default_threshold, per_base_thresholds.is_empty()) {
+            (Some(x), true) => {
+                info!("using threshold value {x} for all primary bases");
+                Ok([x; 4])
+            }
+            (Some(x), false) => {
+                if bases_with_thresholds.is_empty() {
+                    info!(
+                        "using provided thresholds for {bases_with_thresholds}"
+                    );
+                } else {
+                    info!(
+                        "using provided thresholds for \
+                         {bases_with_thresholds} and {x} for {}",
+                        bases_without_thresholds.iter().join(",")
+                    );
+                }
+                let mut thresholds = [x; 4];
+                for (base, thresh) in per_base_thresholds {
+                    thresholds[base as usize] = thresh;
+                }
+                Ok(thresholds)
+            }
+            (None, true) => {
+                info!("no thresholds provided, no filtering will be done");
+                Ok([0f32; 4])
+            }
+            (None, false) => {
+                if bases_with_thresholds.is_empty() {
+                    info!(
+                        "using provided thresholds for {bases_with_thresholds}"
+                    );
+                } else {
+                    info!(
+                        "using provided thresholds for \
+                         {bases_with_thresholds} and 0 for {}",
+                        bases_without_thresholds.iter().join(",")
+                    );
+                }
+                let mut thresholds = [0f32; 4];
+                for (base, thresh) in per_base_thresholds {
+                    thresholds[base as usize] = thresh;
+                }
+                Ok(thresholds)
+            }
+        }
+    }
+
+    fn parse_per_mod_thresholds(
+        &self,
+    ) -> anyhow::Result<Vec<(ModCodeRepr, f32)>> {
+        if let Some(raw_mod_thresholds) = &self.mod_thresholds.as_ref() {
+            let per_mod_thresholds =
+                parse_per_mod_thresholds(raw_mod_thresholds)?;
+            Ok(per_mod_thresholds.into_iter().collect())
+        } else {
+            Ok(Vec::new())
+        }
     }
 }

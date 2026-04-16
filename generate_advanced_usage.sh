@@ -40,7 +40,7 @@ do
   echo "\`\`\`" >> ${doc_file}
 done
 
-for subcommand in "full" "calls"; do
+for subcommand in "full" "calls" "read-stats"; do
   echo "" >> ${doc_file}
   echo "## extract ${subcommand}" >> ${doc_file}
   echo "\`\`\`text" >> ${doc_file}
