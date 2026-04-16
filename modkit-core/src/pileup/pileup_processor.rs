@@ -13,7 +13,10 @@ use std::ops::BitOrAssign;
 use crate::{
     errs::{MkError, MkResult},
     interval_chunks::{ChromCoordinates, FocusPositions2},
-    mod_bam::{BaseModCall, BaseModProbs, EdgeFilter, MmTagInfo},
+    mod_bam::{
+        validate_mn_tag_on_record, BaseModCall, BaseModProbs, EdgeFilter,
+        MmTagInfo,
+    },
     mod_base_code::{
         DnaBase, ModCodeRepr, ANY_CYTOSINE, HYDROXY_METHYL_CYTOSINE,
         METHYL_CYTOSINE, SIX_METHYL_ADENINE,
@@ -25,8 +28,8 @@ use crate::{
     },
     threshold_mod_caller::MultipleThresholdModCaller,
     util::{
-        get_haplotype_tag, qual_to_prob, reader_is_cram, record_is_primary,
-        SamTag, Strand,
+        get_haplotype_tag, qual_to_prob, reader_is_cram, record_is_not_primary,
+        record_is_primary, SamTag, Strand,
     },
 };
 use rust_htslib::{
@@ -58,6 +61,7 @@ pub(super) struct DnaPileupWorker<
     phased: bool,
     dna_mod_option: DnaModOption,
     combine_mods: bool,
+    allow_non_primary: bool,
     filter_thresholds: [f32; 4],
     mod_thresholds: Vec<(ModCodeRepr, f32)>,
     motif_bases: [DnaBase; 4],
@@ -81,6 +85,7 @@ impl<
         filter_thresholds: [f32; 4],
         motif_bases: [DnaBase; 4],
         dna_mod_option: DnaModOption,
+        allow_non_primary: bool,
         mod_codes: Vec<(DnaBase, ModCodeRepr)>,
         mod_thresholds: Vec<(ModCodeRepr, f32)>,
         edge_filter: Option<&EdgeFilter>,
@@ -116,6 +121,7 @@ impl<
             phased,
             dna_mod_option,
             combine_mods,
+            allow_non_primary,
             filter_thresholds,
             mod_thresholds,
             edge_filter_start,
@@ -168,7 +174,9 @@ impl<
                 !(read_length <= self.edge_filter_start
                     || read_length <= self.edge_filter_end)
             })
-            .filter_ok(|record| record_is_primary(record))
+            .filter_ok(|record| {
+                record_is_primary(record) || self.allow_non_primary
+            })
             .filter_map(|res| match res {
                 Ok(record) => {
                     if self.phased {
@@ -184,6 +192,13 @@ impl<
             });
 
         'records: for (record, hp) in records {
+            if self.allow_non_primary && record_is_not_primary(&record) {
+                if validate_mn_tag_on_record(&record).is_err() {
+                    erred_records = erred_records.saturating_add(1);
+                    continue 'records;
+                }
+            }
+
             let reverse = record.is_reverse();
             let read_length = record.seq_len();
             let Ok(mut modbase_iter) = BaseModsAdapter::<16>::new(&record)

@@ -344,9 +344,20 @@ pub struct ModBamPileup {
         hide_short_help = true
     )]
     combine_mods: bool,
+    /// Use non-primary alignments in pileup (e.g. secondary and
+    /// supplementaty). Keep in mind these mappings will be used _in
+    /// addition_ to the primary mappings.
+    #[clap(help_heading = "Modified Base Options")]
+    #[arg(
+        long,
+        default_value_t = false,
+        hide_short_help = true,
+        requires = "modified_bases"
+    )]
+    allow_non_primary: bool,
     /// When performing motif analysis (such as CpG), sum the counts from the
     /// positive and negative strands into the counts for the positive
-    /// strand position.
+    /// strand position. Requires that the BAM records have correct MN tags.
     #[clap(help_heading = "Modified Base Options")]
     #[arg(long, default_value_t = false)]
     combine_strands: bool,
@@ -1252,6 +1263,7 @@ impl ModBamPileup {
                                     DnaModOption::Single
                                 }
                             },
+                            self.allow_non_primary,
                             Vec::new(),
                             per_mod_thresholds.clone(),
                             edge_filter.as_ref(),
@@ -1290,6 +1302,7 @@ impl ModBamPileup {
                             base_thresholds,
                             DNA_BASES_CYTOSINE_FIRST,
                             DnaModOption::Combine,
+                            self.allow_non_primary,
                             Vec::new(),
                             per_mod_thresholds.clone(),
                             edge_filter.as_ref(),
@@ -1333,6 +1346,7 @@ impl ModBamPileup {
                                 base_thresholds,
                                 motif_bases,
                                 dna_mod_option,
+                                self.allow_non_primary,
                                 Vec::new(),
                                 per_mod_thresholds.clone(),
                                 edge_filter.as_ref(),
@@ -1400,6 +1414,7 @@ impl ModBamPileup {
                             base_thresholds,
                             motif_bases,
                             dna_mod_option,
+                            self.allow_non_primary,
                             mod_codes.clone(),
                             per_mod_thresholds.clone(),
                             edge_filter.as_ref(),
@@ -1420,6 +1435,7 @@ impl ModBamPileup {
                             base_thresholds,
                             motif_bases,
                             dna_mod_option,
+                            self.allow_non_primary,
                             mod_codes.clone(),
                             per_mod_thresholds.clone(),
                             edge_filter.as_ref(),

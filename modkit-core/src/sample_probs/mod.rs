@@ -674,7 +674,6 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
                 if !self.allow_non_primary {
                     continue 'records;
                 }
-                debug!("non primary record encountered");
                 if validate_mn_tag_on_record(&record).is_err() {
                     mem.erred_records = mem.erred_records.saturating_add(1);
                     continue 'records;
