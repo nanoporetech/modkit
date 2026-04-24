@@ -981,15 +981,6 @@ pub struct SampleModBaseProbs {
     #[clap(help_heading = "Selection Options")]
     #[arg(long)]
     edge_filter: Option<String>,
-    /// Invert the edge filter, instead of filtering out base modification
-    /// calls at the ends of reads, only _keep_ base modification calls at
-    /// the ends of reads. E.g. if usually, "4,8" would remove (i.e. filter
-    /// out) base modification calls in the first 4 and last 8 bases of the
-    /// read, using this flag will keep only base modification calls in the
-    /// first 4 and last 8 bases.
-    #[clap(help_heading = "Selection Options")]
-    #[arg(long, requires = "edge_filter", default_value_t = false)]
-    invert_edge_filter: bool,
 
     // probability histogram options
     /// Output histogram of base modification prediction probabilities.
@@ -1175,7 +1166,7 @@ impl SampleModBaseProbs {
         let edge_filter = self
             .edge_filter
             .as_ref()
-            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .map(|raw| parse_edge_filter_input(raw, false))
             .transpose()?;
         QualHist::from_records(
             reader.records(),
@@ -1203,7 +1194,7 @@ impl SampleModBaseProbs {
         let edge_filter = self
             .edge_filter
             .as_ref()
-            .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
+            .map(|raw| parse_edge_filter_input(raw, false))
             .transpose()?;
         let reference_records = get_targets(header, region.as_ref());
         let stranded_position_filter =
