@@ -1095,29 +1095,29 @@ impl SampleModBaseProbs {
             .filter_map(|tid| header.target_len(tid).map(|l| (tid, l)))
             .map(|(tid, l)| {
                 let frac = l as f64 / total_reference_length as f64;
-                debug!("tid {tid} is {frac} of the total length");
+                // debug!("tid {tid} is {frac} of the total length");
                 let n_reads_for_chrom = frac * num_reads as f64;
-                debug!("sampling {n_reads_for_chrom} reads from {tid}");
+                // debug!("sampling {n_reads_for_chrom} reads from {tid}");
                 let frac_of_chrom_per_interval = if interval_size as u64 > l {
                     1f64
                 } else {
                     interval_size as f64 / l as f64
                 };
-                debug!(
-                    "each {interval_size} bp interval is \
-                     {frac_of_chrom_per_interval:.3} fraction of {tid} which \
-                     has lengh {l}"
-                );
+                // debug!(
+                //     "each {interval_size} bp interval is \
+                //      {frac_of_chrom_per_interval:.3} fraction of {tid} which
+                // \      has lengh {l}"
+                // );
                 let n_reads_per_interval =
                     frac_of_chrom_per_interval * n_reads_for_chrom;
                 let fudge_factor = n_reads_per_interval * 0.25;
                 let total_reads_per_interval =
                     (n_reads_per_interval + fudge_factor).ceil() as usize;
-                debug!(
-                    "sampling {total_reads_per_interval} total reads per \
-                     interval from {tid} with fudge factor of {fudge_factor} \
-                     ({n_reads_per_interval} calculated)"
-                );
+                // debug!(
+                //     "sampling {total_reads_per_interval} total reads per \
+                //      interval from {tid} with fudge factor of {fudge_factor}
+                // \      ({n_reads_per_interval} calculated)"
+                // );
                 (tid, total_reads_per_interval)
             })
             .collect();

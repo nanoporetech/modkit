@@ -6,7 +6,7 @@ use anyhow::{anyhow, bail};
 use derive_new::new;
 use indicatif::MultiProgress;
 use itertools::Itertools;
-use log::{debug, info};
+use log::{debug, info, warn};
 use log_once::{debug_once, warn_once};
 use prettytable::row;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
@@ -23,7 +23,7 @@ use crate::{
     interval_chunks::{
         ChromCoordinates, ChromCoordinatesFeeder, FocusPositions2, TotalLength,
     },
-    mod_bam::{validate_mn_tag_on_record, EdgeFilter},
+    mod_bam::{prob_to_qual, validate_mn_tag_on_record, EdgeFilter},
     mod_base_code::ModCodeRepr,
     modbam_util::subcommands::SampleModBaseProbs,
     motifs::motif_bed::RegexMotif,
@@ -99,6 +99,7 @@ impl ModHist {
 pub(crate) struct QualHist {
     pub hist: [[u64; 256]; 4],
     pub base_totals: [u64; 4],
+    pub explicit_canonical_probs: [u8; 4],
     pub mods_hists: Vec<ModHist>,
     pub interval_length: u32,
     pub erred_records: usize,
@@ -110,6 +111,7 @@ impl QualHist {
         for ar in self.hist.iter_mut() {
             ar.iter_mut().for_each(|x| *x = 0u64);
         }
+        self.explicit_canonical_probs.iter_mut().for_each(|x| *x = 0u8);
         self.base_totals.iter_mut().for_each(|x| *x = 0u64);
         self.mods_hists.iter_mut().for_each(|h| h.clear());
         self.erred_records = 0usize;
@@ -149,6 +151,13 @@ impl QualHist {
             }
         }
         // self.check_all("combine middle")?;
+        for (x, y) in self
+            .explicit_canonical_probs
+            .iter_mut()
+            .zip(other.explicit_canonical_probs.iter())
+        {
+            *x = std::cmp::max(*x, *y);
+        }
 
         for mod_hist in other.mods_hists.iter() {
             let this_idx = self
@@ -344,10 +353,10 @@ impl QualHist {
         'records: for res in records {
             if let Some(num_records) = num_reads {
                 if mem.ok_records >= num_records {
-                    debug!(
-                        "sampled {} records, done. {} records failed",
-                        mem.ok_records, mem.erred_records
-                    );
+                    // debug!(
+                    //     "sampled {} records, done. {} records failed",
+                    //     mem.ok_records, mem.erred_records
+                    // );
                     return Ok(mem);
                 }
             }
@@ -411,6 +420,7 @@ impl QualHist {
                                 increment_mods_counts(
                                     mod_state,
                                     &mut rng,
+                                    &mut mem.explicit_canonical_probs,
                                     &mut mem.hist,
                                     &mut mem.base_totals,
                                     &mut mem.mods_hists,
@@ -418,6 +428,7 @@ impl QualHist {
                             } else {
                                 increment_base_counts(
                                     mod_state,
+                                    &mut mem.explicit_canonical_probs,
                                     &mut mem.hist,
                                     &mut mem.base_totals,
                                     &mut rng,
@@ -447,6 +458,7 @@ impl QualHist {
                                     increment_mods_counts(
                                         mod_state,
                                         &mut rng,
+                                        &mut mem.explicit_canonical_probs,
                                         &mut mem.hist,
                                         &mut mem.base_totals,
                                         &mut mem.mods_hists,
@@ -454,6 +466,7 @@ impl QualHist {
                                 } else {
                                     increment_base_counts(
                                         mod_state,
+                                        &mut mem.explicit_canonical_probs,
                                         &mut mem.hist,
                                         &mut mem.base_totals,
                                         &mut rng,
@@ -479,6 +492,7 @@ impl QualHist {
     pub(crate) fn get_base_thresholds(
         &self,
         filter_percentile: f32,
+        max_thresholds_per_base: Option<[f32; 4]>,
         multi_progress: &MultiProgress,
     ) -> anyhow::Result<[f32; 4]> {
         if self.ok_records == 0 {
@@ -499,16 +513,52 @@ impl QualHist {
         ) {
             assert_eq!(vals.len(), 1);
             let (t, q) = (vals[0].threshold, vals[0].qual);
-            multi_progress.suspend(|| {
-                info!(
-                    "setting threshold {t} (qual: {q}) for base {base}, \
-                     percentile {}, {} total probabilites",
-                    filter_percentile, self.base_totals[base as usize]
-                );
-            });
-            base_thresholds[base as usize] = t;
+            let user_specified_max_threshold =
+                max_thresholds_per_base.map(|x| x[base as usize]);
+            if q == 255u8
+                || user_specified_max_threshold
+                    .map(|x| qual_to_prob(q) > x)
+                    .unwrap_or(false)
+            {
+                if let Some(user_specified_threshold) =
+                    user_specified_max_threshold
+                {
+                    let user_specified_threshold_qual =
+                        prob_to_qual(user_specified_threshold);
+                    multi_progress.suspend(|| {
+                        warn!(
+                            "estimated threshold ({t}, qual: {q}) for {base} \
+                             higher than specified threshold, \
+                             {user_specified_threshold}. Setting threshold to \
+                             {user_specified_threshold} (qual: \
+                             {user_specified_threshold_qual})",
+                        );
+                    });
+                    base_thresholds[base as usize] = user_specified_threshold;
+                } else {
+                    let q_fb = self.explicit_canonical_probs[base as usize];
+                    let t_fb = qual_to_prob(q_fb);
+                    multi_progress.suspend(|| {
+                        warn!(
+                            "estimated threshold for {base} too high ({t}, \
+                             qual: {q}), setting threshold {t_fb} (qual: \
+                             {q_fb}), highest discovered explicit canonical \
+                             value",
+                        );
+                    });
+                    base_thresholds[base as usize] = t_fb;
+                }
+            } else {
+                multi_progress.suspend(|| {
+                    info!(
+                        "setting threshold {t} (qual: {q}) for base {base}, \
+                         percentile {}, {} total probabilites",
+                        filter_percentile, self.base_totals[base as usize]
+                    );
+                });
+                base_thresholds[base as usize] = t;
+            }
         }
-
         Ok(base_thresholds)
     }
 
@@ -533,6 +583,7 @@ impl Default for QualHist {
     fn default() -> Self {
         Self {
             hist: [[0u64; 256]; 4],
+            explicit_canonical_probs: [0u8; 4],
             base_totals: Default::default(),
             mods_hists: Default::default(),
             erred_records: Default::default(),
@@ -554,6 +605,7 @@ pub(crate) trait ExtractsMleProbs<T> {
         &mut self,
         record: &bam::Record,
         chrom_corrds: &ChromCoordinates,
+        explicit_canonical_probs: &mut [u8; 4],
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         mods_hists: &mut Vec<ModHist>,
@@ -640,7 +692,7 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
         let start_pos = item.start_pos;
         let end_pos = item.end_pos;
         mem.interval_length = item.len();
-        debug!("worker starting on {chrom_tid}:{start_pos}-{end_pos}");
+        // debug!("worker starting on {chrom_tid}:{start_pos}-{end_pos}");
 
         self.reader.fetch(FetchDefinition::Region(
             chrom_tid as i32,
@@ -658,11 +710,11 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
         'records: for res in self.reader.records() {
             if let Some(num_records) = num_records {
                 if mem.ok_records >= num_records {
-                    debug!(
-                        "worker {chrom_tid}:{start_pos}-{end_pos} sampled {} \
-                         records, done. {} records failed",
-                        mem.ok_records, mem.erred_records
-                    );
+                    // debug!(
+                    //     "worker {chrom_tid}:{start_pos}-{end_pos} sampled {}
+                    // \      records, done. {} records
+                    // failed",     mem.ok_records,
+                    // mem.erred_records );
                     return Ok(mem);
                 }
             }
@@ -682,6 +734,7 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
             match self.hist.process_record(
                 &record,
                 &item,
+                &mut mem.explicit_canonical_probs,
                 &mut mem.hist,
                 &mut mem.base_totals,
                 &mut mem.mods_hists,
@@ -696,11 +749,11 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
                 }
             }
         }
-        debug!(
-            "worker {chrom_tid}:{start_pos}-{end_pos} processed {} records, \
-             done. {} records failed",
-            mem.ok_records, mem.erred_records
-        );
+        // debug!(
+        //     "worker {chrom_tid}:{start_pos}-{end_pos} processed {} records, \
+        //      done. {} records failed",
+        //     mem.ok_records, mem.erred_records
+        // );
         Ok(mem)
     }
 }
@@ -803,6 +856,7 @@ impl ProbsExtractor {
 fn increment_mods_counts<R: rand::Rng>(
     mod_state: ModState,
     rng: &mut R,
+    explicit_canonical_probs: &mut [u8; 4],
     base_hist: &mut [[u64; 256]; 4],
     base_totals: &mut [u64; 4],
     mods_hists: &mut Vec<ModHist>,
@@ -869,11 +923,17 @@ fn increment_mods_counts<R: rand::Rng>(
         }
         let count = base_hist[primary_base_idx][i].saturating_add(1);
         base_hist[primary_base_idx][i] = count;
+        if !mod_state.modified && !mod_state.inferred {
+            let p = explicit_canonical_probs[mod_state.primary_base as usize];
+            explicit_canonical_probs[mod_state.primary_base as usize] =
+                std::cmp::max(p, mod_state.mod_qual);
+        }
     }
 }
 
 fn increment_base_counts<R: rand::Rng>(
     mod_state: ModState,
+    explicit_canonical_probs: &mut [u8; 4],
     base_hist: &mut [[u64; 256]; 4],
     base_totals: &mut [u64; 4],
     rng: &mut R,
@@ -902,6 +962,11 @@ fn increment_base_counts<R: rand::Rng>(
     }
     let count = base_hist[primary_base_idx][i].saturating_add(1);
     base_hist[primary_base_idx][i] = count;
+    if !mod_state.modified && !mod_state.inferred {
+        let p = explicit_canonical_probs[mod_state.primary_base as usize];
+        explicit_canonical_probs[mod_state.primary_base as usize] =
+            std::cmp::max(p, mod_state.mod_qual);
+    }
 }
 
 impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
@@ -928,6 +993,7 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
         &mut self,
         record: &bam::Record,
         chrom_corrds: &ChromCoordinates,
+        explicit_canonical_probs: &mut [u8; 4],
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         _mods_hists: &mut Vec<ModHist>,
@@ -953,6 +1019,7 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
                 Ok(Some(mod_state)) => {
                     increment_base_counts(
                         mod_state,
+                        explicit_canonical_probs,
                         base_hist,
                         base_totals,
                         &mut self.rng,
@@ -992,6 +1059,7 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
         &mut self,
         record: &bam::Record,
         chrom_corrds: &ChromCoordinates,
+        explicit_canonical_probs: &mut [u8; 4],
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         mods_hists: &mut Vec<ModHist>,
@@ -1018,6 +1086,7 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
                     increment_mods_counts(
                         mod_state,
                         &mut self.rng,
+                        explicit_canonical_probs,
                         base_hist,
                         base_totals,
                         mods_hists,
@@ -1061,6 +1130,7 @@ impl ExtractsMleProbs<AlignedBaseAndModArgmaxProbs> for ProbsExtractor {
         &mut self,
         record: &bam::Record,
         chrom_coords: &ChromCoordinates,
+        explicit_canonical_probs: &mut [u8; 4],
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         mods_hists: &mut Vec<ModHist>,
@@ -1087,6 +1157,7 @@ impl ExtractsMleProbs<AlignedBaseAndModArgmaxProbs> for ProbsExtractor {
                     increment_mods_counts(
                         mod_state,
                         &mut self.rng,
+                        explicit_canonical_probs,
                         base_hist,
                         base_totals,
                         mods_hists,
@@ -1129,6 +1200,7 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
         &mut self,
         record: &bam::Record,
         chrom_coords: &ChromCoordinates,
+        explicit_canonical_probs: &mut [u8; 4],
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         _mods_hists: &mut Vec<ModHist>,
@@ -1154,6 +1226,7 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
                 Ok(mod_state) => {
                     increment_base_counts(
                         mod_state,
+                        explicit_canonical_probs,
                         base_hist,
                         base_totals,
                         &mut self.rng,
@@ -1195,19 +1268,10 @@ pub(crate) fn run_extract_probs_workers(
                         .suspend(|| error!("failed to fetch sequence, {e}"));
                 }
             })
-            .filter_ok(|cc| {
-                let keep = match &cc.focus_positions {
-                    FocusPositions2::MotifMask { mask, num_motifs: _ }
-                    | FocusPositions2::MaskedPositions { mask } => mask.any(),
-                    FocusPositions2::AllPositions => true,
-                };
-                if !keep {
-                    debug!(
-                        "discarding {}:{}-{}, zero positions",
-                        cc.chrom_tid, cc.start_pos, cc.end_pos
-                    );
-                }
-                keep
+            .filter_ok(|cc| match &cc.focus_positions {
+                FocusPositions2::MotifMask { mask, num_motifs: _ }
+                | FocusPositions2::MaskedPositions { mask } => mask.any(),
+                FocusPositions2::AllPositions => true,
             })
             .filter_map(|r| r.ok());
         move || {
@@ -1281,6 +1345,7 @@ pub(crate) fn calc_per_base_thresholds_from_stream(
     edge_filter: Option<&EdgeFilter>,
     filter_percentile: f32,
     io_threads: usize,
+    max_thresholds_per_base: Option<[f32; 4]>,
     multi_progress: &MultiProgress,
 ) -> anyhow::Result<[f32; 4]> {
     let mut records = bam::Reader::from_path(bam_fp)?;
@@ -1296,7 +1361,11 @@ pub(crate) fn calc_per_base_thresholds_from_stream(
         allow_non_primary,
         multi_progress,
     )?
-    .get_base_thresholds(filter_percentile, multi_progress)
+    .get_base_thresholds(
+        filter_percentile,
+        max_thresholds_per_base,
+        multi_progress,
+    )
 }
 
 pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
@@ -1308,6 +1377,7 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
     mask: bool,
     sample_frac: Option<f64>,
     num_reads: usize,
+    max_thresholds_per_base: Option<[f32; 4]>,
     stranded_position_filter: Option<StrandedPositionFilter<()>>,
     raw_motifs: Option<&Vec<String>>,
     cpg: bool,
@@ -1436,7 +1506,11 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
         qual_hist.combine(&unmapped_qual_hist, &multi_progress)?;
     }
 
-    qual_hist.get_base_thresholds(filter_percentile, &multi_progress)
+    qual_hist.get_base_thresholds(
+        filter_percentile,
+        max_thresholds_per_base,
+        &multi_progress,
+    )
 }
 
 pub(crate) fn calculate_reads_per_contig(
@@ -1500,7 +1574,6 @@ pub(crate) fn calculate_reads_per_contig(
         debug!(
             "sample schedule for {num_reads} reads\n{sample_schedule_table}",
         );
-        debug!("chrom_to_counts={chrom_to_counts:?}",);
     }
     Ok((chrom_to_counts, rng_sample, sample_frac))
 }

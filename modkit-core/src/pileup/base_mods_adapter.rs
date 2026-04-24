@@ -20,7 +20,6 @@ pub(crate) struct ModState {
     pub filtered: bool,
     pub mod_code: ModCodeRepr,
     pub primary_base: DnaBase,
-    #[cfg(test)]
     pub inferred: bool,
     pub mod_qual: u8,
 }
@@ -220,7 +219,6 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
         let mut mod_pos = None;
         let mut pos = self.left_to_right_seq_pos;
         let mut done = false;
-        #[cfg(test)]
         let mut inferred = true;
 
         while !done && pos < self.seq.len() {
@@ -236,10 +234,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                         if self.canonical_bases[i] == base {
                             done = true;
                             mod_pos = Some(pos);
-                            #[cfg(test)]
-                            {
-                                inferred = false;
-                            }
+                            inferred = false;
                         }
                     }
                     Some(skip_count) => {
@@ -291,29 +286,15 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
             let primary_base = DnaBase::parse(base as char).unwrap();
             let threshold = filter_thresholds[primary_base as usize];
             let mod_state = if canonical_qual > mod_qual {
-                #[cfg(test)]
-                {
-                    Some(ModState::new(
-                        mod_pos,
-                        false,
-                        qual_to_prob(canonical_qual as i32) < threshold,
-                        ModCodeRepr::Code(base as char),
-                        primary_base,
-                        inferred,
-                        canonical_qual,
-                    ))
-                }
-                #[cfg(not(test))]
-                {
-                    Some(ModState::new(
-                        mod_pos,
-                        false,
-                        qual_to_prob(canonical_qual as i32) < threshold,
-                        ModCodeRepr::Code(base as char),
-                        primary_base,
-                        canonical_qual,
-                    ))
-                }
+                Some(ModState::new(
+                    mod_pos,
+                    false,
+                    qual_to_prob(canonical_qual as i32) < threshold,
+                    ModCodeRepr::Code(base as char),
+                    primary_base,
+                    inferred,
+                    canonical_qual,
+                ))
             } else {
                 let mod_threshold =
                     mod_thresholds
@@ -326,29 +307,15 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                             }
                         })
                         .unwrap_or(threshold);
-                #[cfg(test)]
-                {
-                    Some(ModState::new(
-                        mod_pos,
-                        true,
-                        qual_to_prob(mod_qual as i32) < mod_threshold,
-                        mod_code,
-                        primary_base,
-                        inferred,
-                        mod_qual,
-                    ))
-                }
-                #[cfg(not(test))]
-                {
-                    Some(ModState::new(
-                        mod_pos,
-                        true,
-                        qual_to_prob(mod_qual as i32) < mod_threshold,
-                        mod_code,
-                        primary_base,
-                        mod_qual,
-                    ))
-                }
+                Some(ModState::new(
+                    mod_pos,
+                    true,
+                    qual_to_prob(mod_qual as i32) < mod_threshold,
+                    mod_code,
+                    primary_base,
+                    inferred,
+                    mod_qual,
+                ))
             };
 
             self.move_forward(mod_pos, base);

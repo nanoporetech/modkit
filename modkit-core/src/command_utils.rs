@@ -252,6 +252,20 @@ pub(crate) fn parse_per_base_thresholds(
     }
 }
 
+pub(crate) fn parse_raw_thresholds_string_with_default(
+    raw_thresholds: &[String],
+) -> anyhow::Result<[f32; 4]> {
+    parse_per_base_thresholds(raw_thresholds).map(|(x, per_base)| {
+        let default = x.unwrap_or(0f32);
+        [
+            per_base.get(&DnaBase::A).copied().unwrap_or(default),
+            per_base.get(&DnaBase::C).copied().unwrap_or(default),
+            per_base.get(&DnaBase::G).copied().unwrap_or(default),
+            per_base.get(&DnaBase::T).copied().unwrap_or(default),
+        ]
+    })
+}
+
 pub fn using_stream(raw: &str) -> bool {
     raw == "-" || raw == "stdin" || raw == "stdout"
 }

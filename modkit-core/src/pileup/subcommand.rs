@@ -18,7 +18,8 @@ use modkit_logging::init_logging;
 use crate::command_utils::{
     get_motif_lookup_from_parts, get_threshold_from_options,
     parse_edge_filter_input, parse_per_base_thresholds,
-    parse_per_mod_thresholds, parse_raw_motifs, parse_thresholds,
+    parse_per_mod_thresholds, parse_raw_motifs,
+    parse_raw_thresholds_string_with_default, parse_thresholds,
     parse_thresholds_values,
 };
 use crate::fasta::MotifLocationsLookup;
@@ -238,6 +239,19 @@ pub struct ModBamPileup {
     action = clap::ArgAction::Append
     )]
     mod_thresholds: Option<Vec<String>>,
+    /// Maximum threhsold value to use, if the estimated threshold value for
+    /// any primary sequence base is greater than this value, use this value
+    /// instead. To set a default value for all primary bases, use
+    /// --max-threshold 0.8, for example. Or use per-base threshold values like
+    /// --max-threshold C:0.8.
+    #[clap(help_heading = "Filtering Options")]
+    #[arg(
+    long,
+    group = "thresholds",
+    alias = "max-threshold",
+    action = clap::ArgAction::Append,
+    )]
+    max_filter_threshold: Option<Vec<String>>,
     /// Specify a region for sampling reads from when estimating the threshold
     /// probability. If this option is not provided, but --region is
     /// provided, the genomic interval passed to --region will be used.
@@ -679,7 +693,8 @@ impl ModBamPileup {
                     motif_primary_bases.insert(*dna_base);
                 }
             }
-            let mut motif_bases = [DnaBase::C; 4];
+            let mut motif_bases =
+                [motif_primary_bases.iter().nth(0).copied().unwrap(); 4];
             for (i, b) in motif_primary_bases.into_iter().enumerate() {
                 motif_bases[i] = b;
             }
@@ -729,6 +744,12 @@ impl ModBamPileup {
         sampling_region: Option<&Region>,
         multi_progress: MultiProgress,
     ) -> anyhow::Result<[f32; 4]> {
+        let max_per_base_trehsolds = self
+            .max_filter_threshold
+            .as_ref()
+            .map(|x| parse_raw_thresholds_string_with_default(x))
+            .transpose()?;
+
         let motif_lookup = get_motif_lookup_from_parts(
             regex_motifs.clone(),
             self.reference_fasta.as_ref(),
@@ -778,7 +799,7 @@ impl ModBamPileup {
                     multi_progress.suspend(|| {
                         info!(
                             "calculating threshold value with probabilities \
-                             aligned to reference bases {}",
+                             aligned to reference base(s) {}",
                             motif_bases.iter().unique().join(",")
                         )
                     });
@@ -807,7 +828,7 @@ impl ModBamPileup {
             multi_progress.suspend(|| {
                 info!(
                     "calculating threshold value with probabilities aligned \
-                     to reference bases {}",
+                     to reference base(s) {}",
                     motif_bases.iter().unique().join(",")
                 )
             });
@@ -891,7 +912,11 @@ impl ModBamPileup {
                  lower --num-reads, or use --no-filtering"
             )
         }
-        qual_hist.get_base_thresholds(self.filter_percentile, &multi_progress)
+        qual_hist.get_base_thresholds(
+            self.filter_percentile,
+            max_per_base_trehsolds,
+            &multi_progress,
+        )
     }
 
     pub fn run(&self) -> anyhow::Result<()> {
@@ -899,6 +924,11 @@ impl ModBamPileup {
         let master_progress = MultiProgress::new();
         master_progress
             .set_draw_target(indicatif::ProgressDrawTarget::hidden());
+
+        if !self.suppress_progress {
+            master_progress
+                .set_draw_target(indicatif::ProgressDrawTarget::stderr());
+        }
 
         let io_thread_pool =
             rust_htslib::tpool::ThreadPool::new(self.io_threads)?;
@@ -1185,7 +1215,7 @@ impl ModBamPileup {
                         Some(t) if t <= 0.3f32 => {
                             warn!(
                                 "--modified-bases uses simple thresholding \
-                                 algorith, using low threshold {t} may not \
+                                 algorithm, using low threshold {t} may not \
                                  produce desired results"
                             )
                         }
@@ -1195,7 +1225,7 @@ impl ModBamPileup {
                         if t <= 0.3 {
                             warn!(
                                 "--modified-bases uses simple thresholding \
-                                 algorith, using low threshold {t} for base \
+                                 algorithm, using low threshold {t} for base \
                                  {b} may not produce desired results"
                             )
                         }
@@ -1489,10 +1519,6 @@ impl ModBamPileup {
             position_filter,
         )?;
 
-        if !self.suppress_progress {
-            master_progress
-                .set_draw_target(indicatif::ProgressDrawTarget::stderr());
-        }
         let tid_progress = master_progress
             .add(get_master_progress_bar_fancy(feeder.total_length()));
         tid_progress.set_message("genome positions");

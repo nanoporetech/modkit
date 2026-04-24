@@ -16,7 +16,8 @@ use modkit_logging::init_logging_smart;
 
 use crate::command_utils::{
     get_serial_reader, parse_edge_filter_input, parse_per_base_thresholds,
-    parse_per_mod_thresholds, parse_thresholds, using_stream,
+    parse_per_mod_thresholds, parse_raw_thresholds_string_with_default,
+    parse_thresholds, using_stream,
 };
 use crate::extract::args::InputArgs;
 use crate::extract::util::{
@@ -420,6 +421,19 @@ pub struct EntryExtractCalls {
         hide_short_help = true
     )]
     mod_thresholds: Option<Vec<String>>,
+    /// Maximum threhsold value to use, if the estimated threshold value for
+    /// any primary sequence base is greater than this value, use this value
+    /// instead. To set a default value for all primary bases, use
+    /// --max-threshold 0.8, for example. Or use per-base threshold values like
+    /// --max-threshold C:0.8.
+    #[clap(help_heading = "Filtering Options")]
+    #[arg(
+    long,
+    group = "thresholds",
+    alias = "max-threshold",
+    action = clap::ArgAction::Append,
+    )]
+    max_filter_threshold: Option<Vec<String>>,
     /// Don't estimate the pass threshold, all calls will "pass".
     #[clap(help_heading = "Filtering Options")]
     #[arg(
@@ -496,6 +510,13 @@ impl EntryExtractCalls {
         io_threadpool: &rust_htslib::tpool::ThreadPool,
         multi_progress: MultiProgress,
     ) -> anyhow::Result<MultipleThresholdModCaller> {
+        let max_thresholds_per_base = self
+            .max_filter_threshold
+            .as_ref()
+            .map(|raw_thresholds| {
+                parse_raw_thresholds_string_with_default(raw_thresholds)
+            })
+            .transpose()?;
         let per_base_thresholds = if bam::IndexedReader::from_path(
             &self.input_args.in_bam,
         )
@@ -509,6 +530,7 @@ impl EntryExtractCalls {
                 edge_filter,
                 self.filter_percentile,
                 self.input_args.io_threads as usize,
+                max_thresholds_per_base,
                 &multi_progress,
             )?
         } else {
@@ -521,6 +543,7 @@ impl EntryExtractCalls {
                 self.input_args.mask,
                 self.sampling_frac,
                 self.sample_num_reads,
+                max_thresholds_per_base,
                 position_filter,
                 self.input_args.motif.as_ref(),
                 self.input_args.cpg,

@@ -1868,10 +1868,10 @@ mod mod_bam_tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    fn qual_to_prob(qual: u16) -> f32 {
-        let q = qual as f32;
-        (q + 0.5f32) / 256f32
-    }
+    // fn qual_to_prob(qual: u16) -> f32 {
+    //     let q = qual as f32;
+    //     (q + 0.5f32) / 256f32
+    // }
 
     // first implementation that does not account for multiple mods in the MM
     // tag (i.e. C and A)) pub fn get_mod_probs_for_query_positions(

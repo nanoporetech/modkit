@@ -12,7 +12,6 @@ use log::{debug, error, info};
 use prettytable::row;
 use rustc_hash::FxHashMap;
 
-use crate::dmr::bedmethyl::BedMethylLine;
 use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::single_site::SingleSiteDmrAnalysis;
 use crate::dmr::tabix::MultiSampleIndex;
@@ -21,7 +20,7 @@ use crate::errs::MkResult;
 use crate::genome_positions::GenomePositions;
 use crate::mod_base_code::{DnaBase, ModCodeRepr, MOD_CODE_TO_DNA_BASE};
 use crate::monoid::Moniod;
-use crate::tabix::{BedMethylTbxIndex, HtsTabixHandler};
+use crate::tabix::BedMethylTbxIndex;
 use crate::util::{
     create_out_directory, format_errors_table, get_master_progress_bar,
     get_subroutine_progress_bar, get_ticker,
