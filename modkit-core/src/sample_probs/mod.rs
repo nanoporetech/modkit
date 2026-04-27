@@ -3,6 +3,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail};
+use bitvec::{order::Lsb0, view::BitView};
 use derive_new::new;
 use indicatif::MultiProgress;
 use itertools::Itertools;
@@ -68,6 +69,7 @@ impl ModHist {
             hist,
         }
     }
+
     fn clear(&mut self) {
         self.total = 0u64;
         self.hist.iter_mut().for_each(|x| *x = 0u64);
@@ -99,6 +101,7 @@ impl ModHist {
 pub(crate) struct QualHist {
     pub hist: [[u64; 256]; 4],
     pub base_totals: [u64; 4],
+    pub num_records_with_base_mods: [u32; 4],
     pub explicit_canonical_probs: [u8; 4],
     pub mods_hists: Vec<ModHist>,
     pub interval_length: u32,
@@ -114,6 +117,7 @@ impl QualHist {
         self.explicit_canonical_probs.iter_mut().for_each(|x| *x = 0u8);
         self.base_totals.iter_mut().for_each(|x| *x = 0u64);
         self.mods_hists.iter_mut().for_each(|h| h.clear());
+        self.num_records_with_base_mods.iter_mut().for_each(|x| *x = 0u32);
         self.erred_records = 0usize;
         self.ok_records = 0usize;
         self.interval_length = 0u32;
@@ -158,6 +162,13 @@ impl QualHist {
         {
             *x = std::cmp::max(*x, *y);
         }
+        for (x, y) in self
+            .num_records_with_base_mods
+            .iter_mut()
+            .zip(other.num_records_with_base_mods)
+        {
+            *x = x.saturating_add(y);
+        }
 
         for mod_hist in other.mods_hists.iter() {
             let this_idx = self
@@ -187,6 +198,15 @@ impl QualHist {
         }
         // self.check_all("combine end")
         Ok(())
+    }
+
+    fn add_bases_from_record(&mut self, bases: u8) {
+        for (i, _) in
+            bases.view_bits::<Lsb0>().iter().enumerate().filter(|(_, x)| **x)
+        {
+            let count = self.num_records_with_base_mods[i];
+            self.num_records_with_base_mods[i] = count.saturating_add(1u32);
+        }
     }
 
     fn calc_base_percentile_ranks(
@@ -281,6 +301,7 @@ impl QualHist {
         &self,
         desired_percentiles: &[f32],
         multi_progress: &MultiProgress,
+        verbose: bool,
     ) -> HashMap<DnaBase, Vec<PercentileThresholdQual>> {
         // self.check_all("base level percentiles")
         //     .expect("shold work at base level percentiles");
@@ -319,16 +340,55 @@ impl QualHist {
                 show_table = true
             }
         }
-        if show_table {
+        if show_table && verbose {
             multi_progress.suspend(|| {
                 info!(
                     "Total number of probabilities collected per primary \
                      sequence base:\n{total_counts_table}"
                 );
             });
+        } else {
+            debug!(
+                "Total number of probabilities collected per primary sequence \
+                 base:\n{total_counts_table}"
+            );
         }
 
         Self::percentiles(&agg.hist, &agg.base_totals, desired_percentiles)
+    }
+
+    pub(crate) fn combine_mods(&mut self, multi_progress: &MultiProgress) {
+        let mut mod_hists = (0..4usize)
+            .map(|x| {
+                let primary_base = DnaBase::try_from(x).unwrap();
+                ModHist {
+                    total: 0,
+                    mod_code: ModCodeRepr::Code(primary_base.char()),
+                    dna_base: primary_base,
+                    hist: [0u64; 256],
+                }
+            })
+            .collect::<Vec<ModHist>>();
+        for mod_hist in self.mods_hists.iter() {
+            let idx = mod_hist.dna_base as usize;
+            let agg = &mut mod_hists[idx];
+            let sat = agg.hist.approx_checked_add(
+                &mod_hist.hist,
+                &mut agg.total,
+                mod_hist.total,
+            );
+            if sat.is_err() {
+                multi_progress.suspend(|| {
+                    warn_once!(
+                        "Saturated counts for base modifications to primary \
+                         base {}, counts will be approximate",
+                        mod_hist.dna_base
+                    );
+                })
+            }
+        }
+        mod_hists.retain(|x| x.total > 0);
+        let _ = std::mem::replace(&mut self.mods_hists, mod_hists);
     }
 
     pub(crate) fn from_records<R: bam::Read>(
@@ -340,6 +400,7 @@ impl QualHist {
         edge_filter: Option<&EdgeFilter>,
         collect_mod_probs: bool,
         allow_non_primary: bool,
+        mapped_only: bool,
         multi_progress: &MultiProgress,
     ) -> anyhow::Result<Self> {
         let edge_filter_start =
@@ -373,6 +434,9 @@ impl QualHist {
                     continue 'records;
                 }
             }
+            if mapped_only && record.is_unmapped() {
+                continue 'records;
+            }
             let read_length = record.seq_len();
             let (left_edge_filter, right_edge_filter) = if record.is_reverse() {
                 (edge_filter_end, read_length.saturating_sub(edge_filter_start))
@@ -403,6 +467,11 @@ impl QualHist {
                     mem.erred_records = mem.erred_records.saturating_add(1);
                     continue 'records;
                 };
+
+                let bases_in_record =
+                    aligned_pairs_iter.primary_bases_in_record();
+                mem.add_bases_from_record(bases_in_record);
+
                 let aligned_pairs_iter = aligned_pairs_iter
                     .into_iter()
                     .filter_ok(move |(qpos, _rpos, _mod_state)| {
@@ -442,12 +511,17 @@ impl QualHist {
                         }
                     }
                 }
+                mem.ok_records = mem.ok_records.saturating_add(1);
+                record_counter.inc(1);
             } else {
                 let Ok(mut modbase_iter) = BaseModsAdapter::<16>::new(&record)
                 else {
                     mem.erred_records = mem.erred_records.saturating_add(1);
                     continue 'records;
                 };
+                mem.add_bases_from_record(
+                    modbase_iter.primary_bases_in_record(),
+                );
                 'mods: loop {
                     match modbase_iter.next_modified_position_no_thresh() {
                         Ok(Some(mod_state)) => {
@@ -585,6 +659,7 @@ impl Default for QualHist {
             hist: [[0u64; 256]; 4],
             explicit_canonical_probs: [0u8; 4],
             base_totals: Default::default(),
+            num_records_with_base_mods: [0u32; 4],
             mods_hists: Default::default(),
             erred_records: Default::default(),
             interval_length: Default::default(),
@@ -609,6 +684,7 @@ pub(crate) trait ExtractsMleProbs<T> {
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         mods_hists: &mut Vec<ModHist>,
+        num_records_with_base_mods: &mut [u32; 4],
     ) -> anyhow::Result<bool>;
 }
 
@@ -722,6 +798,7 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
                 mem.erred_records = mem.erred_records.saturating_add(1);
                 continue 'records;
             };
+
             if record_is_not_primary(&record) {
                 if !self.allow_non_primary {
                     continue 'records;
@@ -738,6 +815,7 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
                 &mut mem.hist,
                 &mut mem.base_totals,
                 &mut mem.mods_hists,
+                &mut mem.num_records_with_base_mods,
             ) {
                 Ok(true) => {
                     mem.ok_records = mem.ok_records.saturating_add(1);
@@ -772,6 +850,8 @@ impl ProbsExtractor {
         record: &'a bam::Record,
         chrom_coords: &'a ChromCoordinates,
         motif_bases: &'a [DnaBase; 4],
+        records_with_base_mods: &'a mut [u32; 4],
+        should_count_record: bool,
         start_pos: u32,
         end_pos: u32,
         edge_filter_start: usize,
@@ -781,6 +861,10 @@ impl ProbsExtractor {
         let reverse = record.is_reverse();
         let reverse_offset = reverse as usize;
         let aligned_pairs_iter = AlignedBaseModsIterator::new(record)?;
+        if should_count_record {
+            let bases = aligned_pairs_iter.primary_bases_in_record();
+            byte_to_bool_positions(bases, records_with_base_mods);
+        }
         let read_length = record.seq_len();
         let mod_state_iter = aligned_pairs_iter
             .into_iter()
@@ -992,11 +1076,12 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
     fn process_record(
         &mut self,
         record: &bam::Record,
-        chrom_corrds: &ChromCoordinates,
+        chrom_coords: &ChromCoordinates,
         explicit_canonical_probs: &mut [u8; 4],
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         _mods_hists: &mut Vec<ModHist>,
+        records_with_base_mods: &mut [u32; 4],
     ) -> anyhow::Result<bool> {
         if self.sample {
             if !self.rng.gen_bool(self.sample_frac) {
@@ -1004,16 +1089,24 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
             }
         }
 
-        if chrom_corrds.final_interval {
+        if !chrom_coords.final_interval {
             let aln_end = record.reference_end();
-            if aln_end < 0i64 {
-                return Ok(false);
-            } else if aln_end as u32 >= chrom_corrds.end_pos {
+            if aln_end < 0i64 || (aln_end as u32) > chrom_coords.end_pos {
                 return Ok(false);
             }
         }
+        // if chrom_corrds.final_interval {
+        //     let aln_end = record.reference_end();
+        //     if aln_end < 0i64 {
+        //         return Ok(false);
+        //     } else if aln_end as u32 >= chrom_corrds.end_pos {
+        //         return Ok(false);
+        //     }
+        // }
 
         let mut modbase_iter = BaseModsAdapter::<16>::new(record)?;
+        let bases = modbase_iter.primary_bases_in_record();
+        byte_to_bool_positions(bases, records_with_base_mods);
         loop {
             match modbase_iter.next_modified_position_no_thresh() {
                 Ok(Some(mod_state)) => {
@@ -1058,28 +1151,37 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
     fn process_record(
         &mut self,
         record: &bam::Record,
-        chrom_corrds: &ChromCoordinates,
+        chrom_coords: &ChromCoordinates,
         explicit_canonical_probs: &mut [u8; 4],
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         mods_hists: &mut Vec<ModHist>,
+        records_with_base_mods: &mut [u32; 4],
     ) -> anyhow::Result<bool> {
         if self.sample {
             if !self.rng.gen_bool(self.sample_frac) {
                 return Ok(false);
             }
         }
-
-        if chrom_corrds.final_interval {
+        if !chrom_coords.final_interval {
             let aln_end = record.reference_end();
-            if aln_end < 0i64 {
-                return Ok(false);
-            } else if aln_end as u32 >= chrom_corrds.end_pos {
+            if aln_end < 0i64 || (aln_end as u32) > chrom_coords.end_pos {
                 return Ok(false);
             }
         }
 
+        // if chrom_corrds.final_interval {
+        //     let aln_end = record.reference_end();
+        //     if aln_end < 0i64 {
+        //         return Ok(false);
+        //     } else if aln_end as u32 >= chrom_corrds.end_pos {
+        //         return Ok(false);
+        //     }
+        // }
+
         let mut modbase_iter = BaseModsAdapter::<16>::new(record)?;
+        let bases = modbase_iter.primary_bases_in_record();
+        byte_to_bool_positions(bases, records_with_base_mods);
         loop {
             match modbase_iter.next_modified_position_no_thresh() {
                 Ok(Some(mod_state)) => {
@@ -1134,6 +1236,7 @@ impl ExtractsMleProbs<AlignedBaseAndModArgmaxProbs> for ProbsExtractor {
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         mods_hists: &mut Vec<ModHist>,
+        records_with_base_mods: &mut [u32; 4],
     ) -> anyhow::Result<bool> {
         if self.sample {
             if !self.rng.gen_bool(self.sample_frac) {
@@ -1142,15 +1245,29 @@ impl ExtractsMleProbs<AlignedBaseAndModArgmaxProbs> for ProbsExtractor {
         }
         let start_pos = chrom_coords.start_pos;
         let end_pos = chrom_coords.end_pos;
+        let should_count_record = if !chrom_coords.final_interval {
+            let aln_end = record.reference_end();
+            if aln_end < 0i64 || (aln_end as u32) > chrom_coords.end_pos {
+                false
+            } else {
+                true
+            }
+        } else {
+            // is the final interval
+            true
+        };
         let modstate_iter = Self::get_aligned_mod_state_iterator(
             record,
             chrom_coords,
             &self.motif_bases,
+            records_with_base_mods,
+            should_count_record,
             start_pos,
             end_pos,
             self.edge_filter_start,
             self.edge_filter_end,
         )?;
+
         for res in modstate_iter {
             match res {
                 Ok(mod_state) => {
@@ -1168,7 +1285,7 @@ impl ExtractsMleProbs<AlignedBaseAndModArgmaxProbs> for ProbsExtractor {
                 }
             }
         }
-        Ok(true)
+        Ok(should_count_record)
     }
 }
 
@@ -1204,18 +1321,32 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
         base_hist: &mut [[u64; 256]; 4],
         base_totals: &mut [u64; 4],
         _mods_hists: &mut Vec<ModHist>,
+        records_with_base_mods: &mut [u32; 4],
     ) -> anyhow::Result<bool> {
         if self.sample {
             if !self.rng.gen_bool(self.sample_frac) {
                 return Ok(false);
             }
         }
+        let should_count_record = if !chrom_coords.final_interval {
+            let aln_end = record.reference_end();
+            if aln_end < 0i64 || (aln_end as u32) > chrom_coords.end_pos {
+                false
+            } else {
+                true
+            }
+        } else {
+            // is the final interval
+            true
+        };
         let start_pos = chrom_coords.start_pos;
         let end_pos = chrom_coords.end_pos;
         let modstate_iter = Self::get_aligned_mod_state_iterator(
             record,
             chrom_coords,
             &self.motif_bases,
+            records_with_base_mods,
+            should_count_record,
             start_pos,
             end_pos,
             self.edge_filter_start,
@@ -1237,7 +1368,7 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
                 }
             }
         }
-        Ok(true)
+        Ok(should_count_record)
     }
 }
 
@@ -1337,37 +1468,6 @@ pub(crate) fn run_extract_probs_workers(
     Ok(qual_hist)
 }
 
-pub(crate) fn calc_per_base_thresholds_from_stream(
-    bam_fp: &PathBuf,
-    num_reads: usize,
-    allow_non_primary: bool,
-    stranded_position_filter: Option<StrandedPositionFilter<()>>,
-    edge_filter: Option<&EdgeFilter>,
-    filter_percentile: f32,
-    io_threads: usize,
-    max_thresholds_per_base: Option<[f32; 4]>,
-    multi_progress: &MultiProgress,
-) -> anyhow::Result<[f32; 4]> {
-    let mut records = bam::Reader::from_path(bam_fp)?;
-    records.set_threads(io_threads)?;
-    QualHist::from_records(
-        records.records(),
-        stranded_position_filter,
-        Some(num_reads),
-        None,
-        None,
-        edge_filter,
-        false,
-        allow_non_primary,
-        multi_progress,
-    )?
-    .get_base_thresholds(
-        filter_percentile,
-        max_thresholds_per_base,
-        multi_progress,
-    )
-}
-
 pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
     bam_fp: &PathBuf,
     reference_fasta: Option<&PathBuf>,
@@ -1389,6 +1489,78 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
     io_threadpool: &rust_htslib::tpool::ThreadPool,
     multi_progress: MultiProgress,
 ) -> anyhow::Result<[f32; 4]> {
+    let motifs = if let Some(raw_motif_parts) = raw_motifs {
+        Some(RegexMotif::from_raw_parts(&raw_motif_parts, cpg)?)
+    } else if cpg {
+        Some(vec![RegexMotif::parse_string("CG", 0).unwrap()])
+    } else {
+        None
+    };
+    let mut qual_hist = get_base_mods_quals_from_indexed_hts_file(
+        bam_fp,
+        reference_fasta,
+        false,
+        allow_non_primary,
+        preload_references,
+        mask,
+        sample_frac,
+        Some(num_reads),
+        stranded_position_filter,
+        motifs,
+        n_workers,
+        interval_size,
+        seed,
+        sampling_region,
+        edge_filter,
+        io_threadpool,
+        multi_progress.clone(),
+    )?;
+    if qual_hist.ok_records < 100 {
+        multi_progress
+            .suspend(|| info!("collecting probabilities from unmapped reads"));
+        let mut records = bam::IndexedReader::from_path(bam_fp)?;
+        records.fetch(FetchDefinition::Unmapped)?;
+        let unmapped_qual_hist = QualHist::from_records(
+            records.records(),
+            None,
+            Some(num_reads.saturating_sub(qual_hist.ok_records)),
+            None,
+            seed,
+            edge_filter,
+            false,
+            allow_non_primary,
+            false,
+            &multi_progress,
+        )?;
+        qual_hist.combine(&unmapped_qual_hist, &multi_progress)?;
+    }
+
+    qual_hist.get_base_thresholds(
+        filter_percentile,
+        max_thresholds_per_base,
+        &multi_progress,
+    )
+}
+
+pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
+    bam_fp: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
+    collect_mod_histograms: bool,
+    allow_non_primary: bool,
+    preload_references: bool,
+    mask: bool,
+    sample_frac: Option<f64>,
+    num_reads: Option<usize>,
+    stranded_position_filter: Option<StrandedPositionFilter<()>>,
+    motifs: Option<Vec<RegexMotif>>,
+    n_workers: usize,
+    interval_size: u32,
+    seed: Option<u64>,
+    sampling_region: Option<&Region>,
+    edge_filter: Option<&EdgeFilter>,
+    io_threadpool: &rust_htslib::tpool::ThreadPool,
+    multi_progress: MultiProgress,
+) -> anyhow::Result<QualHist> {
     let bam_reader = bam::IndexedReader::from_path(bam_fp)?;
     let reference_records = get_targets(bam_reader.header(), sampling_region);
     let mut workers: Vec<Box<dyn ExtractProbsWorker>> = Vec::new();
@@ -1402,13 +1574,6 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
             sampling_region,
         )?;
     let chrom_to_counts = chrom_to_counts.map(|x| Arc::new(x));
-    let motifs = if let Some(raw_motif_parts) = raw_motifs {
-        Some(RegexMotif::from_raw_parts(&raw_motif_parts, cpg)?)
-    } else if cpg {
-        Some(vec![RegexMotif::parse_string("CG", 0).unwrap()])
-    } else {
-        None
-    };
     let motif_lookup = get_motif_lookup_from_parts(
         motifs,
         reference_fasta,
@@ -1424,16 +1589,13 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
         stranded_position_filter.clone(),
     )?;
     if let Some(motif_bases) = feeder.get_motif_bases() {
-        multi_progress.suspend(|| {
-            info!(
-                "calculating threshold value with probabilities aligned to \
-                 reference bases {}",
-                motif_bases.iter().unique().join(",")
-            )
-        });
         for i in 0..n_workers {
-            let worker =
-                RegionMleProbs::<AlignedBaseArgmaxProbs, ProbsExtractor>::new(
+            let worker: Box<dyn ExtractProbsWorker> = if collect_mod_histograms
+            {
+                Box::new(RegionMleProbs::<
+                    AlignedBaseAndModArgmaxProbs,
+                    ProbsExtractor,
+                >::new(
                     bam_fp,
                     reference_fasta,
                     allow_non_primary,
@@ -1444,13 +1606,34 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
-                )?;
-            workers.push(Box::new(worker));
+                )?)
+            } else {
+                Box::new(RegionMleProbs::<
+                    AlignedBaseArgmaxProbs,
+                    ProbsExtractor,
+                >::new(
+                    bam_fp,
+                    reference_fasta,
+                    allow_non_primary,
+                    motif_bases,
+                    edge_filter,
+                    io_threadpool,
+                    seed.unwrap_or(i as u64),
+                    rng_sample,
+                    sample_frac,
+                    chrom_to_counts.clone(),
+                )?)
+            };
+            workers.push(worker);
         }
     } else if feeder.has_position_filter() {
         for i in 0..n_workers {
-            let worker =
-                RegionMleProbs::<AlignedBaseArgmaxProbs, ProbsExtractor>::new(
+            let worker: Box<dyn ExtractProbsWorker> = if collect_mod_histograms
+            {
+                Box::new(RegionMleProbs::<
+                    AlignedBaseAndModArgmaxProbs,
+                    ProbsExtractor,
+                >::new(
                     bam_fp,
                     reference_fasta,
                     allow_non_primary,
@@ -1461,62 +1644,68 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
-                )?;
-            workers.push(Box::new(worker));
+                )?)
+            } else {
+                Box::new(RegionMleProbs::<
+                    AlignedBaseArgmaxProbs,
+                    ProbsExtractor,
+                >::new(
+                    bam_fp,
+                    reference_fasta,
+                    allow_non_primary,
+                    [DnaBase::A; 4],
+                    edge_filter,
+                    io_threadpool,
+                    seed.unwrap_or(i as u64),
+                    rng_sample,
+                    sample_frac,
+                    chrom_to_counts.clone(),
+                )?)
+            };
+            workers.push(worker);
         }
     } else {
         for i in 0..n_workers {
-            let worker =
-                RegionMleProbs::<BaseArgmaxProbs, ProbsExtractor>::new(
-                    bam_fp,
-                    reference_fasta,
-                    allow_non_primary,
-                    [DnaBase::A; 4],
-                    edge_filter,
-                    io_threadpool,
-                    seed.unwrap_or(i as u64),
-                    rng_sample,
-                    sample_frac,
-                    chrom_to_counts.clone(),
-                )?;
-            workers.push(Box::new(worker));
+            let worker: Box<dyn ExtractProbsWorker> = if collect_mod_histograms
+            {
+                Box::new(RegionMleProbs::<BaseAndModArgmaxProbs, ProbsExtractor>::new(
+                                    bam_fp,
+                                    reference_fasta,
+                                    allow_non_primary,
+                                    [DnaBase::A; 4],
+                                    edge_filter,
+                                    io_threadpool,
+                                    seed.unwrap_or(i as u64),
+                                    rng_sample,
+                                    sample_frac,
+                                    chrom_to_counts.clone(),
+                                )?)
+            } else {
+                Box::new(
+                    RegionMleProbs::<BaseArgmaxProbs, ProbsExtractor>::new(
+                        bam_fp,
+                        reference_fasta,
+                        allow_non_primary,
+                        [DnaBase::A; 4],
+                        edge_filter,
+                        io_threadpool,
+                        seed.unwrap_or(i as u64),
+                        rng_sample,
+                        sample_frac,
+                        chrom_to_counts.clone(),
+                    )?,
+                )
+            };
+            workers.push(worker);
         }
     }
-    let mut qual_hist = run_extract_probs_workers(
-        workers,
-        multi_progress.clone(),
-        feeder.clone(),
-    )?;
-    if qual_hist.ok_records < 100 {
-        multi_progress
-            .suspend(|| info!("collecting probabilities from unmapped reads"));
-        let mut records = bam::IndexedReader::from_path(bam_fp)?;
-        records.fetch(FetchDefinition::Unmapped)?;
-        let unmapped_qual_hist = QualHist::from_records(
-            records.records(),
-            stranded_position_filter,
-            Some(num_reads.saturating_sub(qual_hist.ok_records)),
-            None,
-            seed,
-            edge_filter,
-            false,
-            allow_non_primary,
-            &multi_progress,
-        )?;
-        qual_hist.combine(&unmapped_qual_hist, &multi_progress)?;
-    }
-
-    qual_hist.get_base_thresholds(
-        filter_percentile,
-        max_thresholds_per_base,
-        &multi_progress,
-    )
+    run_extract_probs_workers(workers, multi_progress.clone(), feeder.clone())
 }
 
 pub(crate) fn calculate_reads_per_contig(
     bam_header: &HeaderView,
     sampling_frac: Option<f64>,
-    num_reads: usize,
+    num_reads: Option<usize>,
     multi_progress: &MultiProgress,
     interval_size: u32,
     sampling_region: Option<&Region>,
@@ -1527,7 +1716,7 @@ pub(crate) fn calculate_reads_per_contig(
                 info!("sampling {}% of reads", user_sampling_frac * 100f64);
             });
             (None, true, user_sampling_frac)
-        } else {
+        } else if let Some(num_reads) = num_reads {
             multi_progress.suspend(|| {
                 info!("attempting to sample at least {num_reads} reads");
             });
@@ -1537,43 +1726,53 @@ pub(crate) fn calculate_reads_per_contig(
                 num_reads,
                 sampling_region,
             )?;
-            (Some(counts), false, 0f64)
-        };
-    if let Some(chrom_to_counts) = chrom_to_counts.as_ref() {
-        let mut sample_schedule_table = get_human_readable_table();
-        sample_schedule_table.set_titles(row![
-            "contig",
-            "num_reads_per_interval",
-            "contig_length",
-            "intervals_over_contig",
-            "total_reads_per_contig"
-        ]);
-        for (tid, count) in
-            chrom_to_counts.iter().sorted_by(|(a, _), (b, _)| a.cmp(b))
-        {
-            let contig_name = bam_header
-                .tid2name(*tid)
-                .into_iter()
-                .map(|b| *b as char)
-                .collect::<String>();
-            let contig_length = bam_header
-                .target_len(*tid)
-                .ok_or(anyhow!("header missing length for {tid}"))?;
-            let intervals_per_contig =
-                std::cmp::max(contig_length / interval_size as u64, 1u64);
-            let total_reads_for_contig =
-                count.saturating_mul(intervals_per_contig as usize);
-            sample_schedule_table.add_row(row![
-                contig_name,
-                count,
-                contig_length,
-                intervals_per_contig,
-                total_reads_for_contig
+            let mut sample_schedule_table = get_human_readable_table();
+            sample_schedule_table.set_titles(row![
+                "contig",
+                "num_reads_per_interval",
+                "contig_length",
+                "intervals_over_contig",
+                "total_reads_per_contig"
             ]);
-        }
-        debug!(
-            "sample schedule for {num_reads} reads\n{sample_schedule_table}",
-        );
-    }
+            for (tid, count) in
+                counts.iter().sorted_by(|(a, _), (b, _)| a.cmp(b))
+            {
+                let contig_name = bam_header
+                    .tid2name(*tid)
+                    .into_iter()
+                    .map(|b| *b as char)
+                    .collect::<String>();
+                let contig_length = bam_header
+                    .target_len(*tid)
+                    .ok_or(anyhow!("header missing length for {tid}"))?;
+                let intervals_per_contig =
+                    std::cmp::max(contig_length / interval_size as u64, 1u64);
+                let total_reads_for_contig =
+                    count.saturating_mul(intervals_per_contig as usize);
+                sample_schedule_table.add_row(row![
+                    contig_name,
+                    count,
+                    contig_length,
+                    intervals_per_contig,
+                    total_reads_for_contig
+                ]);
+            }
+            debug!(
+                "sample schedule for {num_reads} \
+                 reads\n{sample_schedule_table}",
+            );
+            (Some(counts), false, 0f64)
+        } else {
+            (None, false, 0f64)
+        };
     Ok((chrom_to_counts, rng_sample, sample_frac))
+}
+
+#[inline]
+fn byte_to_bool_positions<const SIZE: usize>(b: u8, agg: &mut [u32; SIZE]) {
+    for (i, _) in b.view_bits::<Lsb0>().iter().enumerate().filter(|(_, x)| **x)
+    {
+        let count = agg[i];
+        agg[i] = count.saturating_add(1u32);
+    }
 }

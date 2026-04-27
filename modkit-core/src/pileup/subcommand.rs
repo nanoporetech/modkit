@@ -246,10 +246,10 @@ pub struct ModBamPileup {
     /// --max-threshold C:0.8.
     #[clap(help_heading = "Filtering Options")]
     #[arg(
-    long,
-    group = "thresholds",
-    alias = "max-threshold",
-    action = clap::ArgAction::Append,
+        long,
+        group = "thresholds",
+        alias = "max-threshold",
+        action = clap::ArgAction::Append,
     )]
     max_filter_threshold: Option<Vec<String>>,
     /// Specify a region for sampling reads from when estimating the threshold
@@ -771,7 +771,7 @@ impl ModBamPileup {
             calculate_reads_per_contig(
                 bam_header,
                 sampling_frac,
-                self.num_reads,
+                Some(self.num_reads),
                 &multi_progress,
                 self.sampling_interval_size,
                 sampling_region,

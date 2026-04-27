@@ -1,4 +1,5 @@
 use anyhow::{anyhow, bail};
+use bitvec::{order::Lsb0, view::BitView};
 use derive_new::new;
 use memchr::{memchr, memchr_iter};
 use rust_htslib::bam::{
@@ -328,6 +329,20 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
         Ok(mod_state)
     }
 
+    pub fn primary_bases_in_record(&self) -> u8 {
+        let mut bs = 0u8;
+        for &raw_can_base in self.canonical_bases.iter().take(self.n_codes) {
+            match raw_can_base {
+                b'A' => bs.view_bits_mut::<Lsb0>().set(0, true),
+                b'C' => bs.view_bits_mut::<Lsb0>().set(1, true),
+                b'G' => bs.view_bits_mut::<Lsb0>().set(2, true),
+                b'T' => bs.view_bits_mut::<Lsb0>().set(3, true),
+                _ => unreachable!(),
+            }
+        }
+        bs
+    }
+
     #[inline]
     fn move_forward(&mut self, last_pos: usize, base: u8) {
         self.left_to_right_seq_pos = last_pos.saturating_add(1);
@@ -517,6 +532,10 @@ impl<'a> AlignedBaseModsIterator<'a> {
                 }
             }
         }
+    }
+
+    pub fn primary_bases_in_record(&self) -> u8 {
+        self.modbase_iter.primary_bases_in_record()
     }
 }
 

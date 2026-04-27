@@ -21,7 +21,8 @@ use crate::command_utils::{
 };
 use crate::extract::args::InputArgs;
 use crate::extract::util::{
-    ReadModStatsProcessor, ReadModsStatsRecord, ReferencePositionFilter,
+    calc_per_base_thresholds_from_stream, ReadModStatsProcessor,
+    ReadModsStatsRecord, ReferencePositionFilter,
 };
 use crate::extract::writer::{
     CanWriteReadModStatsRecords, OutwriterWithMemory, ReadModStatsWriter,
@@ -38,10 +39,7 @@ use crate::read_ids_to_base_mod_probs::{
 };
 use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
-use crate::sample_probs::{
-    calc_per_base_thresholds_from_indexed_hts_file,
-    calc_per_base_thresholds_from_stream,
-};
+use crate::sample_probs::calc_per_base_thresholds_from_indexed_hts_file;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{format_errors_table, get_ticker, Region, KMER_SIZE};
 use crate::writers::TsvWriter;

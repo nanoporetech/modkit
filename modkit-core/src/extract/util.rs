@@ -18,6 +18,7 @@ use crate::reads_sampler::record_sampler::RecordSampler;
 use crate::reads_sampler::sample_reads_from_interval;
 use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
+use crate::sample_probs::QualHist;
 use crate::util::{
     get_guage, get_master_progress_bar, get_query_name_string,
     get_reference_mod_strand, get_subroutine_progress_bar, get_targets,
@@ -33,7 +34,7 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(new)]
 pub(super) struct ReferencePositionFilter {
@@ -816,4 +817,42 @@ impl<const SIZE: usize> ReadModStatsProcessor<SIZE> {
             }
         }
     }
+}
+
+pub(super) fn calc_per_base_thresholds_from_stream(
+    bam_fp: &PathBuf,
+    num_reads: usize,
+    allow_non_primary: bool,
+    stranded_position_filter: Option<StrandedPositionFilter<()>>,
+    edge_filter: Option<&EdgeFilter>,
+    filter_percentile: f32,
+    io_threads: usize,
+    max_thresholds_per_base: Option<[f32; 4]>,
+    multi_progress: &MultiProgress,
+) -> anyhow::Result<[f32; 4]> {
+    multi_progress.suspend(|| {
+        info!(
+            "estimating base thresholds from modBAM, taking first {num_reads} \
+             including any unmapped records"
+        );
+    });
+    let mut records = bam::Reader::from_path(bam_fp)?;
+    records.set_threads(io_threads)?;
+    QualHist::from_records(
+        records.records(),
+        stranded_position_filter,
+        Some(num_reads),
+        None,
+        None,
+        edge_filter,
+        false,
+        allow_non_primary,
+        false,
+        multi_progress,
+    )?
+    .get_base_thresholds(
+        filter_percentile,
+        max_thresholds_per_base,
+        multi_progress,
+    )
 }

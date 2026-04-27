@@ -1,19 +1,21 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use common_macros::hash_map;
 use derive_new::new;
-use indicatif::ParallelProgressIterator;
+use indicatif::{MultiProgress, ParallelProgressIterator};
 
 use log::{debug, error, info};
 use rayon::prelude::*;
 
-use crate::mod_bam::{BaseModCall, CollapseMethod, EdgeFilter};
+use crate::mod_bam::{prob_to_qual, BaseModCall, CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{BaseState, DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
 use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
 use crate::record_processor::WithRecords;
+use crate::sample_probs::{ModHist, QualHist};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 
 use crate::thresholds::calc_thresholds_per_base;
@@ -51,6 +53,186 @@ impl<'a> ModSummary<'a> {
             .map(|d| d.char().to_string())
             .collect::<Vec<String>>()
             .join(",")
+    }
+
+    fn unpack_counts(
+        mod_hists: &[ModHist],
+        base_totals: [u64; 4],
+    ) -> HashMap<DnaBase, HashMap<BaseState, u64>> {
+        let mut mod_call_counts =
+            mod_hists.iter().fold(HashMap::new(), |mut agg, mod_hist| {
+                let e =
+                    agg.entry(mod_hist.dna_base).or_insert_with(HashMap::new);
+                e.insert(
+                    BaseState::Modified(mod_hist.mod_code),
+                    mod_hist.total,
+                );
+                agg
+            });
+        for primary_base in (0..4).map(|x: usize| DnaBase::try_from(x).unwrap())
+        {
+            if base_totals[primary_base as usize] > 0 {
+                let e = mod_call_counts
+                    .entry(primary_base)
+                    .or_insert_with(HashMap::new);
+                e.insert(
+                    BaseState::Canonical(primary_base),
+                    base_totals[primary_base as usize],
+                );
+            }
+        }
+
+        mod_call_counts
+    }
+
+    fn threshold_qual_hist(
+        qual_hist: &QualHist,
+        per_base_thresholds: [f32; 4],
+        mod_thresholds: &HashMap<ModCodeRepr, f32>,
+        pass: bool,
+    ) -> QualHist {
+        let mut this = QualHist::default();
+        for b in 0..4usize {
+            let t = per_base_thresholds[b];
+            let q = prob_to_qual(t);
+            let counts = qual_hist.hist[b];
+            let mut total = 0u64;
+            let range = if pass {
+                (q as usize)..256usize
+            } else {
+                0usize..(q as usize)
+            };
+            for idx in range {
+                assert!(idx < counts.len());
+                let count = counts[idx];
+                total = total.saturating_add(count);
+            }
+            this.base_totals[b] = total;
+        }
+        for mod_hist in qual_hist.mods_hists.iter() {
+            let t = mod_thresholds
+                .get(&mod_hist.mod_code)
+                .copied()
+                .unwrap_or(per_base_thresholds[mod_hist.dna_base as usize]);
+            let q = prob_to_qual(t);
+            let mut total = 0u64;
+            let range = if pass {
+                (q as usize)..256usize
+            } else {
+                0usize..(q as usize)
+            };
+            for idx in range {
+                assert!(idx < mod_hist.hist.len());
+                let count = mod_hist.hist[idx];
+                total = total.saturating_add(count);
+            }
+            this.mods_hists.push(ModHist {
+                total,
+                mod_code: mod_hist.mod_code,
+                dna_base: mod_hist.dna_base,
+                hist: [0u64; 256],
+            });
+        }
+        this
+    }
+
+    pub(crate) fn from_qual_hist(
+        qual_hist: QualHist,
+        filter_percentile: f32,
+        max_thresholds_per_base: Option<[f32; 4]>,
+        region: Option<&'a Region>,
+        base_thresholds: Option<[f32; 4]>,
+        mod_thresholds: Option<&HashMap<ModCodeRepr, f32>>,
+        multi_progress: &MultiProgress,
+    ) -> anyhow::Result<Self> {
+        let reads_with_mod_calls = hash_map!{
+            DnaBase::A => qual_hist.num_records_with_base_mods[DnaBase::A as usize] as u64,
+            DnaBase::C => qual_hist.num_records_with_base_mods[DnaBase::C as usize] as u64,
+            DnaBase::G => qual_hist.num_records_with_base_mods[DnaBase::G as usize] as u64,
+            DnaBase::T => qual_hist.num_records_with_base_mods[DnaBase::T as usize] as u64,
+        }.into_iter().filter(|(_, c)| *c > 0).collect::<HashMap<DnaBase, u64>>();
+        let base_thresholds = if let Some(x) = base_thresholds {
+            x
+        } else {
+            let mut agg = [0f32; 4];
+            let base_level_threshs = qual_hist.base_level_percentiles(
+                &[filter_percentile],
+                multi_progress,
+                false,
+            );
+            for b in (0usize..4).map(|x| DnaBase::try_from(x).unwrap()) {
+                if let Some(res) = base_level_threshs.get(&b) {
+                    let t = res[0].threshold;
+                    if let Some(max_ts) = &max_thresholds_per_base {
+                        let max_t = max_ts[b as usize];
+                        agg[b as usize] = if t > max_t { max_t } else { t }
+                    } else {
+                        agg[b as usize] = t;
+                    }
+                }
+            }
+            agg
+        };
+
+        let mut base_totals = qual_hist.base_totals;
+        for mod_hist in qual_hist.mods_hists.iter() {
+            // debug!("{} has total={}", mod_hist.mod_code, mod_hist.total);
+            let c = base_totals[mod_hist.dna_base as usize]
+                .saturating_add(mod_hist.total);
+            base_totals[mod_hist.dna_base as usize] = c;
+        }
+
+        let pass_qual_hist = Self::threshold_qual_hist(
+            &qual_hist,
+            base_thresholds,
+            mod_thresholds.unwrap_or(&HashMap::new()),
+            true,
+        );
+        let fail_qual_hist = Self::threshold_qual_hist(
+            &qual_hist,
+            base_thresholds,
+            mod_thresholds.unwrap_or(&HashMap::new()),
+            false,
+        );
+
+        let mod_call_counts = Self::unpack_counts(
+            &pass_qual_hist.mods_hists,
+            pass_qual_hist.base_totals,
+        );
+        let filtered_mod_call_counts = Self::unpack_counts(
+            &fail_qual_hist.mods_hists,
+            fail_qual_hist.base_totals,
+        );
+        let total_reads_used = qual_hist.ok_records;
+        let per_base_thresholds = hash_map! {
+             DnaBase::A => base_thresholds[DnaBase::A as usize],
+             DnaBase::C => base_thresholds[DnaBase::C as usize],
+             DnaBase::G => base_thresholds[DnaBase::G as usize],
+             DnaBase::T => base_thresholds[DnaBase::T as usize],
+        }
+        .into_iter()
+        .filter(|(b, _)| base_totals[*b as usize] > 0)
+        .collect::<HashMap<DnaBase, f32>>();
+
+        let per_base_mod_codes = qual_hist.mods_hists.iter().fold(
+            HashMap::new(),
+            |mut agg, mod_hist| {
+                let e =
+                    agg.entry(mod_hist.dna_base).or_insert_with(HashSet::new);
+                e.insert(mod_hist.mod_code);
+                agg
+            },
+        );
+
+        Ok(Self {
+            reads_with_mod_calls,
+            mod_call_counts,
+            filtered_mod_call_counts,
+            total_reads_used,
+            per_base_thresholds,
+            region,
+            per_base_mod_codes,
+        })
     }
 }
 

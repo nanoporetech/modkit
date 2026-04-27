@@ -582,13 +582,19 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
         metadata_table.set_format(metadata_format);
         metadata_table.add_row(row!["bases", item.mod_bases()]);
         metadata_table.add_row(row!["total_reads_used", item.total_reads_used]);
-        for (dna_base, reads_with_calls) in item.reads_with_mod_calls {
+        for (dna_base, reads_with_calls) in item
+            .reads_with_mod_calls
+            .iter()
+            .sorted_by(|(a, _), (b, _)| a.cmp(b))
+        {
             metadata_table.add_row(row![
                 format!("count_reads_{}", dna_base.char()),
                 reads_with_calls
             ]);
         }
-        for (dna_base, threshold) in item.per_base_thresholds {
+        for (dna_base, threshold) in
+            item.per_base_thresholds.iter().sorted_by(|(a, _), (b, _)| a.cmp(b))
+        {
             metadata_table.add_row(row![
                 format!("pass_threshold_{}", dna_base.char()),
                 threshold
@@ -597,6 +603,15 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
         if let Some(region) = item.region {
             metadata_table.add_row(row!["region", region.to_string()]);
         }
+        for (base, codes) in
+            item.per_base_mod_codes.iter().sorted_by(|(a, _), (b, _)| a.cmp(b))
+        {
+            metadata_table.add_row(row![
+                format!("modification_codes_for_{base}"),
+                format!("{}", codes.iter().copied().sorted().join(","))
+            ]);
+        }
+
         let emitted = metadata_table.print(&mut self.writer)?;
 
         let mut report_table = Table::new();
@@ -610,14 +625,16 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
             "all_frac",
         ]);
 
-        let iter = item.per_base_mod_codes.into_iter().map(
-            |(primary_base, mod_codes)| {
+        let iter = item
+            .per_base_mod_codes
+            .into_iter()
+            .sorted_by(|(a, _), (b, _)| a.cmp(b))
+            .map(|(primary_base, mod_codes)| {
                 let pass_counts = item.mod_call_counts.get(&primary_base);
                 let filtered_counts =
                     item.filtered_mod_call_counts.get(&primary_base);
                 (primary_base, pass_counts, filtered_counts, mod_codes)
-            },
-        );
+            });
         for (
             canonical_base,
             pass_mod_to_counts,
