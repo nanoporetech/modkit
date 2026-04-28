@@ -76,6 +76,10 @@ pub enum MkError {
     InvalidIO,
     #[error("invalid-reference-coordinates")]
     InvalidReferenceCoordinates,
+    #[error("failed-to-read")]
+    IOFail(#[from] std::io::Error),
+    #[error("empty-input")]
+    EmptyInput,
 
     // Entropy
     #[error("zero-reads")]

@@ -11,7 +11,7 @@ use bigtools::{
 use clap::{Args, Subcommand};
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use itertools::Itertools;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -21,6 +21,7 @@ use modkit_logging::init_logging;
 use crate::bedmethyl_util::BedMethylStream;
 use crate::command_utils::calculate_chunk_size;
 use crate::dmr::bedmethyl::BedMethylLine;
+use crate::errs::MkError;
 use crate::interval_chunks::{
     ChromCoordinates, ReferenceIntervalBatchesFeeder, TotalLength,
 };
@@ -553,12 +554,21 @@ impl EntryToBigWig {
             }
         };
 
-        let in_stream = BedMethylStream::new(
+        let in_stream = match BedMethylStream::new(
             in_stream,
             include_codes,
             self.negative_strand_values,
             counter.clone(),
-        )?;
+        ) {
+            Ok(x) => x,
+            Err(MkError::EmptyInput) => {
+                mpb.suspend(|| {
+                    warn!("empty input, producing empty bigwig");
+                });
+                return Ok(());
+            }
+            Err(e) => bail!("{e}"),
+        };
         let vals = BedParserStreamingIterator::new(
             in_stream,
             !self.force_chromosome_ordering,

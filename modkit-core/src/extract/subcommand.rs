@@ -56,7 +56,7 @@ pub enum ExtractMods {
     Calls(EntryExtractCalls),
     /// Produce a table where modification counts are summarized on the read
     /// level. This table will have one record per valid read and count the
-    /// number of modified and unmodified bases for each base moficiation
+    /// number of modified and unmodified bases for each base modification
     /// requested.
     ReadStats(EntryReadStats),
 }

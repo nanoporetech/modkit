@@ -1,6 +1,5 @@
 use std::io::BufRead;
 
-use anyhow::bail;
 use bigtools::{
     bed::bedparser::{BedValueError, StreamingBedValues},
     Value,
@@ -10,7 +9,10 @@ use log::debug;
 use rustc_hash::FxHashSet;
 
 use crate::{
-    dmr::bedmethyl::BedMethylLine, mod_base_code::ModCodeRepr, util::StrandRule,
+    dmr::bedmethyl::BedMethylLine,
+    errs::{MkError, MkResult},
+    mod_base_code::ModCodeRepr,
+    util::StrandRule,
 };
 
 pub mod subcommands;
@@ -30,12 +32,14 @@ impl<R: BufRead> BedMethylStream<R> {
         mod_codes: FxHashSet<ModCodeRepr>,
         negative_strand_values: bool,
         counter: ProgressBar,
-    ) -> anyhow::Result<Self> {
+    ) -> MkResult<Self> {
         let mut first_record = None;
         let mut buf = String::new();
         loop {
             buf.clear();
-            let b = in_stream.read_line(&mut buf)?;
+            let b = in_stream
+                .read_line(&mut buf)
+                .map_err(|x| MkError::IOFail(x))?;
             if b == 0 {
                 break;
             }
@@ -52,7 +56,7 @@ impl<R: BufRead> BedMethylStream<R> {
             }
         }
         if first_record.is_none() {
-            bail!("no bedmethyl lines")
+            MkResult::Err(MkError::EmptyInput)
         } else {
             Ok(Self {
                 in_stream,
