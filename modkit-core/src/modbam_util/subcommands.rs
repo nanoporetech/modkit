@@ -888,7 +888,7 @@ pub struct SampleModBaseProbs {
     /// reference sequence. Can be a path to a file or one of `-` or
     /// `stdin` to specify a stream from standard input.
     in_bam: String,
-    /// Ignore the BAM index (if it exists) and default to a serial scan of the
+    /// Ignore the BAM index (if it exists) perform a serial scan of the
     /// BAM, otherwise if an index is found, multiple workers will be used to
     /// read the BAM in parallel. Conflicts with --threads since there will
     /// only be one reader.
@@ -1570,7 +1570,7 @@ pub struct ModSummarize {
     /// Input modBam, can be a path to a file or one of `-` or
     /// `stdin` to specify a stream from standard input.
     in_bam: String,
-    /// Ignore the BAM index (if it exists) and default to a serial scan of the
+    /// Ignore the BAM index (if it exists) perform a serial scan of the
     /// BAM, otherwise if an index is found, multiple workers will be used to
     /// read the BAM in parallel. Conflicts with --threads since there will
     /// only be one reader.
@@ -1709,7 +1709,7 @@ pub struct ModSummarize {
     /// Only summarize base modification probabilities that are aligned
     /// to the positions in this BED file. (alias: include-positions)
     #[clap(help_heading = "Selection Options")]
-    #[arg(long, alias = "include-positions")]
+    #[arg(long, alias = "include-positions", conflicts_with = "mapped_only")]
     include_bed: Option<PathBuf>,
     /// Only use modBAM records that are mapped, don't include unmapped
     /// records.
@@ -2456,30 +2456,6 @@ impl CallMods {
         Ok(())
     }
 }
-
-// fn get_sampling_options(
-//     no_sampling: bool,
-//     sampling_frac: Option<f64>,
-//     num_reads: usize,
-// ) -> (Option<f64>, Option<usize>) {
-//     match (no_sampling, sampling_frac, num_reads) {
-//         // Both None tells RecordSampler to use passthrough
-//         // see `RecordSampler::new_from_options`
-//         (true, _, _) => {
-//             info!("not subsampling, using all reads");
-//             (None, None)
-//         }
-//         (false, Some(frac), _) => {
-//             let pct = frac * 100f64;
-//             info!("sampling {pct}% of reads");
-//             (sampling_frac, None)
-//         }
-//         (false, None, num_reads) => {
-//             info!("sampling {num_reads} reads from BAM");
-//             (None, Some(num_reads))
-//         }
-//     }
-// }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 #[allow(non_camel_case_types)]

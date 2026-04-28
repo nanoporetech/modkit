@@ -1095,14 +1095,6 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
                 return Ok(false);
             }
         }
-        // if chrom_corrds.final_interval {
-        //     let aln_end = record.reference_end();
-        //     if aln_end < 0i64 {
-        //         return Ok(false);
-        //     } else if aln_end as u32 >= chrom_corrds.end_pos {
-        //         return Ok(false);
-        //     }
-        // }
 
         let mut modbase_iter = BaseModsAdapter::<16>::new(record)?;
         let bases = modbase_iter.primary_bases_in_record();
@@ -1169,15 +1161,6 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
                 return Ok(false);
             }
         }
-
-        // if chrom_corrds.final_interval {
-        //     let aln_end = record.reference_end();
-        //     if aln_end < 0i64 {
-        //         return Ok(false);
-        //     } else if aln_end as u32 >= chrom_corrds.end_pos {
-        //         return Ok(false);
-        //     }
-        // }
 
         let mut modbase_iter = BaseModsAdapter::<16>::new(record)?;
         let bases = modbase_iter.primary_bases_in_record();
