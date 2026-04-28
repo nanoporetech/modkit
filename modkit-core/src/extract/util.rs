@@ -692,6 +692,16 @@ impl<const SIZE: usize> ReadModsStatsRecord<SIZE> {
                                     &mut mem.mod_counts
                                 };
                                 ar[i] = ar[i].saturating_add(1);
+                            } else {
+                                if mod_pos.filtered {
+                                    let count = mem.other_modified_fail[idx]
+                                        .saturating_add(1);
+                                    mem.other_modified_fail[idx] = count;
+                                } else {
+                                    let count = mem.other_modified[idx]
+                                        .saturating_add(1);
+                                    mem.other_modified[idx] = count;
+                                }
                             }
                         } else {
                             let ar = if mod_pos.filtered {

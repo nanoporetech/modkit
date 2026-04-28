@@ -318,6 +318,7 @@ pub(super) trait CanWriteReadModStatsRecords<R> {
 }
 
 pub(super) struct ReadModStatsWriter<T: Write, const SIZE: usize> {
+    has_filtering: bool,
     buff: Cursor<Vec<u8>>,
     inner: RecordingWriter<T>,
     mods_per_base: [u8; 4],
@@ -328,6 +329,7 @@ pub(super) struct ReadModStatsWriter<T: Write, const SIZE: usize> {
 
 impl<const SIZE: usize> ReadModStatsWriter<BufWriter<std::io::Stdout>, SIZE> {
     pub(super) fn new_stdout(
+        has_filtering: bool,
         header: &str,
         mods_per_base: [u8; 4],
         start_idxs_per_base: [usize; 4],
@@ -343,6 +345,7 @@ impl<const SIZE: usize> ReadModStatsWriter<BufWriter<std::io::Stdout>, SIZE> {
         let buff = Cursor::new(vec![0u8; 1 << 20]);
 
         Ok(Self {
+            has_filtering,
             buff,
             inner: writer,
             mods_per_base,
@@ -355,6 +358,7 @@ impl<const SIZE: usize> ReadModStatsWriter<BufWriter<std::io::Stdout>, SIZE> {
 
 impl<const SIZE: usize> ReadModStatsWriter<BufWriter<File>, SIZE> {
     pub(super) fn new_file(
+        has_filtering: bool,
         path: &Path,
         header: &str,
         mods_per_base: [u8; 4],
@@ -377,6 +381,7 @@ impl<const SIZE: usize> ReadModStatsWriter<BufWriter<File>, SIZE> {
         let buff = Cursor::new(vec![0u8; 1 << 20]);
 
         Ok(Self {
+            has_filtering,
             buff,
             inner: writer,
             mods_per_base,
@@ -416,15 +421,25 @@ impl<T: Write, const SIZE: usize>
         for b in 0..4usize {
             if self.mods_per_base[b] > 0 {
                 write!(self.buff, "{},", record.count_unmodified[b])?;
-                write!(self.buff, "{},", record.count_unmodified_fail[b])?;
+                if self.has_filtering {
+                    write!(self.buff, "{},", record.count_unmodified_fail[b])?;
+                }
                 let n_mods = self.mods_per_base[b] as usize;
                 let st_index = self.start_idxs_per_base[b];
                 for i in st_index..st_index.saturating_add(n_mods) {
                     write!(self.buff, "{},", record.mod_counts[i])?;
-                    write!(self.buff, "{},", record.filtered_mod_counts[i])?;
+                    if self.has_filtering {
+                        write!(
+                            self.buff,
+                            "{},",
+                            record.filtered_mod_counts[i]
+                        )?;
+                    }
                 }
                 write!(self.buff, "{},", record.other_modified[b])?;
-                write!(self.buff, "{},", record.other_modified_fail[b])?;
+                if self.has_filtering {
+                    write!(self.buff, "{},", record.other_modified_fail[b])?;
+                }
             }
         }
         write!(self.buff, "{}\n", record.read_length)?;

@@ -12,7 +12,7 @@ use log::{debug, error, info};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use rust_htslib::bam::{self, Read};
 
-use modkit_logging::init_logging_smart;
+use modkit_logging::{init_logging, init_logging_smart};
 
 use crate::command_utils::{
     get_serial_reader, parse_edge_filter_input, parse_per_base_thresholds,
@@ -905,6 +905,7 @@ pub struct EntryReadStats {
     /// Specify which modcodes to tabulate, should be <primary_base>:<mod_code>
     #[arg(
         long,
+        alias = "mod-code",
         value_parser = clap::value_parser!(ModifiedBasesOptions),
         num_args = 1..,
         value_delimiter = ' '
@@ -920,13 +921,19 @@ pub struct EntryReadStats {
     queue_size: usize,
     #[arg(long, default_value_t = 4usize)]
     io_threads: usize,
+    /// Hide the progress bar.
+    #[clap(help_heading = "Logging Options")]
+    #[arg(long, default_value_t = false, hide_short_help = true)]
+    pub suppress_progress: bool,
 }
 
 impl EntryReadStats {
     fn run(&self) -> anyhow::Result<()> {
-        let stream_out = using_stream(self.out_path.as_str());
-        let _ = init_logging_smart(self.log_filepath.as_ref(), stream_out);
+        let _ = init_logging(self.log_filepath.as_ref());
         let mpb = MultiProgress::new();
+        if self.suppress_progress {
+            mpb.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+        }
         if self.mod_codes.is_empty() {
             bail!("need to provide at least 1 base:mod-code pair")
         }
@@ -982,7 +989,9 @@ impl EntryReadStats {
         for (base, codes) in grouped.iter().sorted_by(|(a, _), (b, _)| a.cmp(b))
         {
             header.push(format!("unmodified_{base}"));
-            header.push(format!("filtered_unmodified_{base}"));
+            if self.has_filtering() {
+                header.push(format!("fail_unmodified_{base}"));
+            }
             mods_per_base[*base as usize] =
                 codes.len().try_into().context("too many mods for {base}")?;
             for code in codes {
@@ -991,10 +1000,14 @@ impl EntryReadStats {
                 mod_code_idxs.push(idx);
                 // mod_idxs_per_base[*base as usize].push(idx);
                 header.push(format!("modified_{code}"));
-                header.push(format!("filtered_modified_{code}"));
+                if self.has_filtering() {
+                    header.push(format!("fail_modified_{code}"));
+                }
             }
             header.push(format!("other_modified_{base}"));
-            header.push(format!("filtered_other_modified_{base}"));
+            if self.has_filtering() {
+                header.push(format!("fail_other_modified_{base}"));
+            }
         }
         header.push("read_length".to_string());
 
@@ -1044,6 +1057,7 @@ impl EntryReadStats {
         > = {
             match self.out_path.as_str() {
                 "-" | "stdout" => Box::new(ReadModStatsWriter::new_stdout(
+                    self.has_filtering(),
                     &header,
                     mods_per_base,
                     start_idx_per_base,
@@ -1054,6 +1068,7 @@ impl EntryReadStats {
                 _ => {
                     let fp = Path::new(self.out_path.as_str());
                     Box::new(ReadModStatsWriter::new_file(
+                        self.has_filtering(),
                         fp,
                         &header,
                         mods_per_base,
@@ -1173,5 +1188,9 @@ impl EntryReadStats {
         } else {
             Ok(Vec::new())
         }
+    }
+
+    fn has_filtering(&self) -> bool {
+        !(self.filter_threshold.is_empty() && self.mod_thresholds.is_none())
     }
 }
