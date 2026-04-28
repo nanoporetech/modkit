@@ -9,7 +9,7 @@ Then set the following environment variables:
 
 export LIBTORCH={path/to/}libtorch
 export DYLD_LIBRARY_PATH=${LIBTORCH}/lib
-export LD_LIBRARY_PATH=${DYLD_LIBRARY_PATH}
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${DYLD_LIBRARY_PATH}"
 
 You can check that everything is working by running `modkit open-chromatin predict <args> --dryrun`.
 

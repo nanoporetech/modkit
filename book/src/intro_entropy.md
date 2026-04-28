@@ -9,7 +9,7 @@ Probably the simplest visual description of methylation entropy is the following
 
 <div style="text-align: center;">
 
-![methylation_entropy_background](./images/me.png)
+![methylation_entropy_background](./images/me_no_alpha.png)
 
 </div>
 
