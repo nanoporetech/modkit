@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.6.2]
+### Fixes
+  - [docs] Fixes transparent background making it difficult to view images thank you @SuhasSrinivasan
+  - [pileup] Fix "typo" that ignored `Mm` tags
+  - [pileup, bedRmod] Allow DS tag to fail parsing or be missing
+### Adds
+  - [pileup] Allow optional usage of non-primary alignments with `--allow-non-primary` flag
+  - [extract] Adds `extract read-stats` command to make tables of read-level modification counts
+### Changes
+  - [modbam, sample-probs] Refactor algorithm to decrease memory usage when sampling from the whole modBAM and decrease run time
+  - [dmr] Allow single modification to be run is isolation. This makes tests "mod" vs "unmodified or other mod".
+  - [modbam, summary] Refactor to use same mechanism as `sample-probs`. Allow summary at `--matched-only` sites.
+
+
 ## [v0.6.1]
 ### Fixes
 - [pileup] Fix combine strands when falling back to 'generic workers' fixes #545
