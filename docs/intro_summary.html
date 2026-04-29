@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1e02af50.js";
+            window.path_to_searchindex_js = "searchindex-b1d0ec24.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-bf89a952.js"></script>
+        <script src="toc-a172ac56.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,26 +178,48 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="summarizing-a-modbam"><a class="header" href="#summarizing-a-modbam">Summarizing a modBAM.</a></h1>
-<p>The <code>modkit modbam summary</code> sub-command is intended for collecting read-level statistics on either a sample of reads, a region, or an entire modBam.
-It is important to note that the default behavior of <code>modkit summary</code> is to take a sample of the reads to get a quick estimate.</p>
+<p>The <code>modkit modbam summary</code> sub-command is intended for collecting read-level or genome-level statistics from a modBAM.
+It can optionally sample a fraction of the reads, sample a target number of reads, and subset to a region.</p>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>Changes for v0.6.0+
+The <code>--no-sampling</code> option has been removed, using the entire modBAM is now the default.
+The default behavior is to gather a summary of the entire modBAM.
+The fastest run time will be to use <code>--num-reads</code>, followed by <code>--sample-frac</code>.</p>
+</blockquote>
 <h2 id="summarize-the-base-modification-calls-in-a-modbam"><a class="header" href="#summarize-the-base-modification-calls-in-a-modbam">Summarize the base modification calls in a modBAM.</a></h2>
 <pre><code>modkit modbam summary input.bam 
 </code></pre>
 <p>will output a table similar to this</p>
-<pre><code class="language-bash">&gt; parsing region chr20  # only present if --region option is provided
-&gt; sampling 10042 reads from BAM # modulated with --num-reads
-&gt; calculating threshold at 10% percentile # modulated with --filter-percentile
-&gt; calculated thresholds: C: 0.7167969 # calculated per-canonical base, on the fly
-# bases             C
-# total_reads_used  9989
-# count_reads_C     9989
-# pass_threshold_C  0.7167969
-# region            chr20:0-64444167
- base  code  pass_count  pass_frac   all_count  all_frac
- C     m     1192533     0.58716166  1305956    0.5790408
- C     h     119937      0.0590528   195335     0.086608544
- C     -     718543      0.3537855   754087     0.33435062
+<pre><code class="language-text">&gt; not subsampling, using all reads
+&gt; calculating threshold that removes lowest 10 percentile of calls
+&gt; collecting base modification calls from unmapped records
+# bases                     C,A
+# total_reads_used          8340404
+# count_reads_C             8340404
+# count_reads_A             8340404
+# pass_threshold_A          0.7128906
+# pass_threshold_C          0.7089844
+# modification_codes_for_A  a
+# modification_codes_for_C  h,m
+ base  code  pass_count   pass_frac     all_count    all_frac
+ A     -     38789589231  0.9522225     41493100163  0.91872257
+ A     a     1946256088   0.04777748    3670806258   0.08127743
+ C     -     26729831806  0.95418394    28992497768  0.9339372
+ C     h     113554922    0.0040536085  374670368    0.01206928
+ C     m     1169904115   0.041762467   1676137832   0.053993538`
 </code></pre>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>Changes for v0.6.0+</p>
+</blockquote>
+<h2 id="summarize-only-the-matched-base-modification-calls"><a class="header" href="#summarize-only-the-matched-base-modification-calls">Summarize only the matched base modification calls</a></h2>
+<p>When a reference is passed to <code>modkit modbam summary</code> the program can be set to only record base modifications on reads where the base in the read matches the reference base.
+This may sound intuitive, but the alternative is to record base modifications on mismatches, the default (e.g. a 5mC call on a A&gt;C mismatch).</p>
+<p>To enable this behavior, pass the <code>--matched-only</code> flag.
+When this flag is passed, only mapped records are used.
+Another option is to use <code>--motif</code>, for example <code>--motif DRACH 2</code>.
+This has the effect of only calculating statistics at certain reference motifs <em>and</em> the base in the read must match.</p>
 <h2 id="description-of-columns-in-modkit-summary"><a class="header" href="#description-of-columns-in-modkit-summary">Description of columns in <code>modkit summary</code>:</a></h2>
 <h3 id="totals-table"><a class="header" href="#totals-table">Totals table</a></h3>
 <p>The lines of the totals table are prefixed with a <code>#</code> character.</p>
@@ -210,7 +232,8 @@ It is important to note that the default behavior of <code>modkit summary</code>
 <tr><td>1</td><td>bases</td><td>comma-separated list of canonical bases with modification calls.</td><td>str</td></tr>
 <tr><td>2</td><td>total_reads_used</td><td>total number of reads from which base modification calls were extracted</td><td>int</td></tr>
 <tr><td>3+</td><td>count_reads_{base}</td><td>total number of reads that contained base modifications for {base}</td><td>int</td></tr>
-<tr><td>4+</td><td>filter_threshold_{base}</td><td>filter threshold used for {base}</td><td>float</td></tr>
+<tr><td>4+</td><td>modification_codes_for_{base}</td><td>comma-separated list of modification codes found for this base</td><td>str</td></tr>
+<tr><td>5+</td><td>filter_threshold_{base}</td><td>filter threshold used for {base}</td><td>float</td></tr>
 </tbody>
 </table>
 </div>
@@ -232,12 +255,7 @@ It is important to note that the default behavior of <code>modkit summary</code>
 </table>
 </div>
 <p>For more details on thresholds see <a href="./filtering.html">filtering base modification calls</a>.</p>
-<p>By default <code>modkit modbam summary</code> will only use ten thousand reads when generating the summary
-(or fewer if the modBAM has fewer than that). To use all of the reads in the modBAM set
-the <code>--no-sampling</code> flag.</p>
-<pre><code>modkit modbam summary input.bam --no-sampling
-</code></pre>
-<p>There are <code>--no-filtering</code>, <code>--filter-percentile</code>, and <code>--filter-threshold</code> options that
+<p>There are  <code>--filter-percentile</code>, and <code>--filter-threshold</code> options that
 can be used with or without sampling.</p>
 <h3 id="passing-a-threshold-directly"><a class="header" href="#passing-a-threshold-directly">Passing a threshold directly.</a></h3>
 <p>To estimate the pass thresholds on a subset of reads, but then summarize <em>all</em> of the
@@ -253,10 +271,29 @@ reads, there is a two-step process. First, determine the thresholds with <code>m
  C     90          0.9941406
 </code></pre>
 <p>You can then use pass this threshold directly to <code>modkit modbam summary</code>:</p>
-<pre><code>modkit modbam summary input.bam \
-    --filter-threshold 0.6972656 \ # filter 10% lowest confidence calls
-    --no-sampling
+<pre><code>modkit modbam summary input.bam --filter-threshold 0.6972656
 </code></pre>
+<h2 id="sampling-the-modbam"><a class="header" href="#sampling-the-modbam">Sampling the modBAM</a></h2>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>Changes for v0.6.0+</p>
+</blockquote>
+<p>Often summarizing the entire modBAM is unnecessary to get a quick answer.
+There are 3 ways to sub-sample the modBAM:</p>
+<ol>
+<li>Use <code>--region</code> (with aligned BAM only) to look at only a specific region</li>
+<li>Use <code>--num-reads</code> to sample approximately this many reads from the BAM.
+See the details on <a href="./sampling.html">sampling</a> for how this algorithm works.</li>
+<li>Use <code>--sampling-frac</code> (optionally with <code>-seed</code>).</li>
+</ol>
+<p>Using <code>--num-reads</code> is often the fastest.</p>
+<h2 id="performance-considerations"><a class="header" href="#performance-considerations">Performance considerations</a></h2>
+<p>When using <code>--ignore-index</code> or an unaligned modBAM, memory consumption should be stable and low.
+In this case the execution time is bounded by the speed with which the program can read the BAM (set <code>--io-threads</code>) and parse the MM tag.
+If you have an sorted, indexed modBAM the work can be divided up into intervals and processed in parallel.
+Adding more <code>--threads</code> will generally speed up execution time proportionally, however it will require more memory.
+Each worker (“thread”) holds a histogram of probabilities that it uses compiles as it scans over it’s section of the modBAM.
+There is always a stable number of these histograms initialized at the start of execution, but there will be more of them initialized with more threads.</p>
 
                     </main>
 

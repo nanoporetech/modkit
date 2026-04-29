@@ -36,3 +36,4 @@
         - [Numeric details](./filtering_numeric_details.md)
     - [DMR model and scoring details](./dmr_scoring_details.md)
     - [Ignoring and combining calls](./collapse.md)
+    - [Sampling reads from a BAM](./sampling.md)

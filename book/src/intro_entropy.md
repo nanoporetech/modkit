@@ -21,6 +21,7 @@ Citation: [Lee et al.](https://github.com/dohlee/metheor/blob/master/img/me.png)
 modkit entropy --in-bam ${mod_bam} \
  -o ${output_entropy_bedgraph} \
  --ref ${ref} \
+ --cpg \
  --threads 32 \
  --log-filepath modkit_entropy.log
 ```

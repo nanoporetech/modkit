@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Numeric details - Modkit</title>
+        <title>Sampling reads from a BAM - Modkit</title>
 
 
         <!-- Custom HTML head -->
@@ -177,40 +177,50 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="filtering-base-modification-calls"><a class="header" href="#filtering-base-modification-calls">Filtering base modification calls.</a></h1>
-<p>Modified base calls are qualitied with a probability that is contained in the ML tag (see the
-<a href="https://samtools.github.io/hts-specs/SAMtags.pdf">specification</a>). We calculate the confidence that the model
-has in the base modification prediction as \(\mathcal{q} = argmax(\textbf{P})\) where \(\textbf{P}\) is the
-vector of probabilities for each modification. For example, given a model that can classify canonical
-cytosine, 5mC, and 5hmC, \(\textbf{P}\) is \([P_{C}, P_m, P_h]\), and \(\mathcal{q}\) will be \(\mathcal{q} =
-argmax(P_{C}, P_m, P_h)\), the maximum of the three probabilities.  Filtering in <code>modkit</code> is performed by
-first determining the value of \(\mathcal{q}\) for the lowest n-th percentile of calls (10th percentile by
-default).  The threshold value is typically an estimate because the base modification probabilities are
-sampled from a subset of the reads. All calls can be used to calculate the exact value, but in practice the
-approximation gives the same value. Base modification calls with a confidence value less than this number will
-not be counted.  Determination of the threshold value can be performed on the fly (by sampling) or the
-threshold value can be specified on the command line with the <code>--filter_threshold</code> flag. The <code>sample-probs</code>
-command can be used to quickly estimate the value of \(\mathcal{q}\) at various percentiles.</p>
-<h1 id="a-note-on-the-probability-of-modification--mm-flag"><a class="header" href="#a-note-on-the-probability-of-modification--mm-flag">A note on the “probability of modification” (<code>.</code>) MM flag.</a></h1>
-<p>The <code>.</code> flag (e.g. <code>C+m.</code>) indicates that primary sequence bases without base modification calls can be inferred to be
-canonical (<a href="https://samtools.github.io/hts-specs/SAMtags.pdf">SAM tags</a>). Some base modification callers,
-for example <a href="https://github.com/nanoporetech/dorado/"><code>dorado</code></a> have a default threshold, below which a base modification
-probability will be omitted (meaning it will be inferred to be a canonical/unmodified base). In general, omitting
-the base modification probabilities when they are very confidently canonical will not change the results from <code>modkit</code>.
-However, since the base modification probabilities are effectively changed to 100% canonical, can affect the
-estimation of the pass threshold.</p>
+                        <h1 id="details-on-how-reads-are-sampled-with---num-reads-and---sample-frac"><a class="header" href="#details-on-how-reads-are-sampled-with---num-reads-and---sample-frac">Details on how reads are sampled with <code>--num-reads</code> and <code>--sample-frac</code></a></h1>
+<h2 id="sampling-approximately---num-reads-from-an-aligned-modbam"><a class="header" href="#sampling-approximately---num-reads-from-an-aligned-modbam">Sampling approximately <code>--num-reads</code> from an aligned modBAM</a></h2>
+<p>This algorithm is meant be work quickly when the modBAM has generally uniform coverage over the aligned reference.
+It works by dividing the reference into “intervals” of length <code>--interval-size</code> (or sometimes <code>--sampling-interval-size</code> is available as an override) and taking the first \( \textbf{N} \) reads from that interval.
+The number of reads to take from that interval, \( \textbf{N} \), is determined by first proportionally distributing the number of requested reads over the contigs in the reference.
+Then for each contig in the reference, the number of reads to be sampled from that contig are divided evenly over the intervals that tile that reference.</p>
+<p>Here is a worked example:</p>
+<p>contig_1, length = 100
+contig_2, length = 50
+contig_3, length = 10</p>
+<p>Total reference length = 100 + 50 + 10 = 160</p>
+<p>Requested reads: 1000 (<code>--num-reads 1000</code>)</p>
+<p>contig_1 is \( \frac{100}{160}\) of the total, so it will get \( \lceil 1000 * \frac{100}{160} \rceil \).
+A small “fudge factor” of 25% is added.
+A table showing how many reads per interval and per contig is printed to the debug log (set with <code>--log &lt;file_name&gt;</code>).
+The same arithmetic is done for contig_2 and contig_3.</p>
+<p>After the number of reads per interval is calculated for each contig, Modkit will sample this many reads from the start of each interval:</p>
+<pre><code class="language-text">
+contig_1 &gt;------|-----|-----|-----|---&lt;
+         ^      ^     ^     ^     ^
+N reads are taken from the start of each "^"
+</code></pre>
+<p>This algorithm is the “roughest” of the options, however, with a typical whole genome or whole transcriptome alignment provides a robust estimate.</p>
+<h2 id="sampling---sampling-frac-fraction-of-reads"><a class="header" href="#sampling---sampling-frac-fraction-of-reads">Sampling <code>--sampling-frac</code> fraction of reads.</a></h2>
+<p>This is a more traditional option for sampling reads from the modBAM.
+In this scenario each reader (more on that below) only keeps a fraction of the records for processing, and discards the others.
+A “reader” can be a worker assigned to one interval of the reference (like above) or a single reader assigned to scan the entire modBAM file.
+The latter is the case when no index is available (unaligned modBAM) or <code>--ignore-index</code> is passed.
+The random state in the readers are seeded, so the same command will always sample the same records.
+The following will change this determinism:</p>
+<ol>
+<li>No options or flags.
+Deterministic unless the <code>--threads</code> or <code>--interval-size</code> changes.</li>
+<li>Set <code>--seed</code>, deterministic regardless of the number of workers (<code>--threads</code>), not deterministic when <code>--interval-size</code> changes!</li>
+</ol>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="filtering_details.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="collapse.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="dmr_scoring_details.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
-                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -218,13 +228,10 @@ estimation of the pass threshold.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="filtering_details.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="collapse.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="dmr_scoring_details.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
-                    </a>
             </nav>
 
         </div>

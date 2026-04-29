@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1e02af50.js";
+            window.path_to_searchindex_js = "searchindex-b1d0ec24.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-bf89a952.js"></script>
+        <script src="toc-a172ac56.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -272,7 +272,50 @@ To have non-primary alignments appear in the output, the <code>--allow-non-prima
 By default, the primary alignment will have all base modification information contained on the read, including soft-clipped and unaligned read positions.
 If the <code>--mapped-only</code> flag is used, soft clipped sections of the read will not be included.
 For secondary and supplementary alignments, soft-clipped positions are not repeated. See <a href="./advanced_usage.html">advanced usage</a> for more details.</p>
+<h1 id="tabulating-per-read-base-modification-content-with-extract-read-stats"><a class="header" href="#tabulating-per-read-base-modification-content-with-extract-read-stats">Tabulating per-read base modification content with <code>extract read-stats</code>.</a></h1>
+<p>Produce a table where modification counts are summarized on the read level.
+This table will have one record (line) per valid read and count the number of modified and unmodified bases for each base modification specified on the command line.
+To specify which modifications to use, pass <code>--mod-codes {primary_base}:{mod_code}</code> on the command line.
+Multiple <code>{primary_base}:{mod_code}</code> pairs can be passed, separated by spaces.
+For example <code>--mod-codes C:m C:m</code> will count the number of <code>m</code> (5mC) and <code>h</code> (5hmC) calls per-read.
+Modification codes that are encountered, but not specified on the command line will be added to the <code>other_modified_{primary_base}</code> count.
+For example, if you have direct RNA reads with m6A and Inosine calls you can use <code>--mod-codes A:a</code> and Modkit will count the m6A calls on each read and report it in the <code>modified_a</code> column.
+Inosine calls will be counted in <code>other_modified_A</code>.</p>
+<h2 id="using-a-filter-threshold"><a class="header" href="#using-a-filter-threshold">Using a filter-threshold</a></h2>
+<p>By default <code>extract read-stats</code> will simply tabulate the calls for each base modification on each read.
+The “call” is defined as the state with the highest probability.
+Passing <code>--filter-threshold</code> to <code>extract read-stats</code> will filter calls based on the probability, similar to what other functions do (see <a href="./filtering.html">filtering modified-base calls</a> for details).
+A filter threshold for each primary sequence base can be used (e.g. <code>--filter-threshold A:0.8 --filter-threshold C:0.9</code>) which will use 0.8 and 0.9 for any base call on adenine or cytosine base, respectively.
+To use a filter threshold for a specific base modification (e.g. for 6mA calls or 5hmC calls only) pass <code>--mod-thresholds {mod_code}:{threshold}</code> (e.g. <code>--mod-thresholds a:0.9</code> or <code>--mod-thresholds h:0.8</code>).
+When any threshold is used, extra columns are added to the output: <code>fail_modified_{mod_code}</code> and <code>fail_unmodified_{primary_base}</code>.
+These columns contain the counts of modified or unmodified calls that are below the pass threshold for that base/modification.</p>
+<h2 id="schema-of-output-for-modkit-extract-read-stats-without-filtering"><a class="header" href="#schema-of-output-for-modkit-extract-read-stats-without-filtering">Schema of output for <code>modkit extract read-stats</code> without filtering:</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>column</th><th>name</th><th>description</th><th>type</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>read_id</td><td>name of the BAM record</td><td>str</td></tr>
+<tr><td>2</td><td>chrom</td><td>name of the contig the read is mapped to or “unmapped” for unmapped reads</td><td>str</td></tr>
+<tr><td>3</td><td>aln_start</td><td>leftmost aligned position of the read on the reference genome (-1 for unmapped reads)</td><td>int</td></tr>
+<tr><td>3+n_bases</td><td>unmodified_{A|C |G |T}</td><td>number of unmodified (canonical) calls for this primary sequebce base</td><td>int</td></tr>
+<tr><td>3+n_bases+n_mods</td><td>modified_{modification_code}</td><td>number of modified bases of this type on this read</td><td>int</td></tr>
+<tr><td>3+n_bases+n_mods+1+n_bases</td><td>other_modified_{A|C|G|T}</td><td>number of modified bases not specified on the command line</td><td>int</td></tr>
+<tr><td>3+2*n_bases+n_mods</td><td>read_length</td><td>length of SEQ in the BAM record</td><td>int</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="example-usages"><a class="header" href="#example-usages">Example usages:</a></h2>
+<h3 id="extract-base-modification-counts-for-5mc-5hmc-and-6ma-on-each-read-in-a-bam"><a class="header" href="#extract-base-modification-counts-for-5mc-5hmc-and-6ma-on-each-read-in-a-bam">Extract base modification counts for 5mC, 5hmC, and 6mA on each read in a BAM</a></h3>
+<pre><code>modkit extract read-stats &lt;input.bam&gt; &lt;output.csv&gt; --mod-codes C:m C:h A:a
+</code></pre>
+<p>To enable filtering, use <code>--filter-threshold</code> (and optionally <code>--mod-thresholds</code>)</p>
+<pre><code>modkit extract read-stats &lt;input.bam&gt; &lt;output.csv&gt; --mod-codes C:m C:h A:a --filter-threshold 0.7 --mod-thresholds a:0.9
+</code></pre>
+<h3 id="extract-base-modification-counts-for-m6a-inosine-and-pseudouridine-from-a-direct-rna-modbam"><a class="header" href="#extract-base-modification-counts-for-m6a-inosine-and-pseudouridine-from-a-direct-rna-modbam">Extract base modification counts for m6A, Inosine, and pseudouridine from a direct RNA modBAM:</a></h3>
+<pre><code>modkit extract read-stats &lt;input.bam&gt; &lt;output.csv&gt; --mod-codes A:a A:17596 T:17802
+</code></pre>
 <h3 id="extract-a-table-of-base-modification-probabilities-from-an-aligned-and-indexed-bam"><a class="header" href="#extract-a-table-of-base-modification-probabilities-from-an-aligned-and-indexed-bam">Extract a table of base modification probabilities from an aligned and indexed BAM</a></h3>
 <pre><code>modkit extract full &lt;input.bam&gt; &lt;output.tsv&gt; [--bgzf]
 </code></pre>

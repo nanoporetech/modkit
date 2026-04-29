@@ -1,4 +1,6 @@
-# Inspecting base modification probabilities
+# Inspecting base modification probabilities, `modbam sample-probs`
+
+Calculate an estimate of the base modification probability distribution and estimate filter thresholds at various percentiles.
 
 > For details on how base modification probabilities are calculated, see the [FAQ page](./faq.html#how-are-base-modification-probabilities-calculated)
 

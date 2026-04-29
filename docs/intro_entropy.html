@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1e02af50.js";
+            window.path_to_searchindex_js = "searchindex-b1d0ec24.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-bf89a952.js"></script>
+        <script src="toc-a172ac56.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -193,6 +193,7 @@ Probably the simplest visual description of methylation entropy is the following
 <pre><code class="language-bash">modkit entropy --in-bam ${mod_bam} \
  -o ${output_entropy_bedgraph} \
  --ref ${ref} \
+ --cpg \
  --threads 32 \
  --log-filepath modkit_entropy.log
 </code></pre>

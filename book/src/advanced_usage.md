@@ -119,6 +119,11 @@ Compute Options:
           
           [default: 4]
 
+      --io-threads <IO_THREADS>
+          Number of IO/decompression threads to use
+          
+          [default: 4]
+
   -s, --sampling-threads <SAMPLING_THREADS>
           Use this many threads when performing threshold estimation, setting
           this to a higher value can speed up execution
@@ -184,6 +189,10 @@ Sampling Options:
           
           [default: 10042]
 
+      --strict-sampling
+          Fail if we cannot sample at least the requested number of reads when
+          estimating the pass threshold
+
   -f, --sampling-frac <SAMPLING_FRAC>
           Sample this fraction of the reads when estimating the pass-threshold.
           In practice, 10-100 thousand reads is sufficient to estimate the model
@@ -226,6 +235,13 @@ Filtering Options:
           usual and used for canonical cytosine and other modifications unless
           the `--filter-threshold` option is also passed. See the online
           documentation for more details
+
+      --max-filter-threshold <MAX_FILTER_THRESHOLD>
+          Maximum threhsold value to use, if the estimated threshold value for
+          any primary sequence base is greater than this value, use this value
+          instead. To set a default value for all primary bases, use
+          --max-threshold 0.8, for example. Or use per-base threshold values
+          like --max-threshold C:0.8
 
       --sample-region <SAMPLE_REGION>
           Specify a region for sampling reads from when estimating the threshold
@@ -276,10 +292,15 @@ Modified Base Options:
           Combine base modification calls, all counts of modified bases are
           summed together. See collapse.md for details
 
+      --allow-non-primary
+          Use non-primary alignments in pileup (e.g. secondary and
+          supplementaty). Keep in mind these mappings will be used _in addition_
+          to the primary mappings
+
       --combine-strands
           When performing motif analysis (such as CpG), sum the counts from the
           positive and negative strands into the counts for the positive strand
-          position
+          position. Requires that the BAM records have correct MN tags
 
 BedRMod Options:
       --organism <ORGANISM>
@@ -540,12 +561,37 @@ Arguments:
           standard input
 
 Options:
+      --ignore-index
+          Ignore the BAM index (if it exists) perform a serial scan of the BAM,
+          otherwise if an index is found, multiple workers will be used to read
+          the BAM in parallel. Conflicts with --threads since there will only be
+          one reader
+
+  -r, --reference <REFERENCE_FASTA>
+          Reference sequence in FASTA format. (alias: 'ref')
+
+      --preload-references
+          Preload the reference sequences, useful when working with many, short
+          reference sequences such as a transcriptome
+
+  -k, --mask
+          Respect soft masking in the reference FASTA
+
   -h, --help
           Print help (see a summary with '-h')
 
 Compute Options:
   -t, --threads <THREADS>
-          Number of threads to use
+          Number of workers to run concurrently. When an aligned, indexed BAM is
+          found, multiple workers (threads) will be spawned to read disjoint
+          sections of the BAM in parallel
+          
+          [default: 4]
+
+      --io-threads <IO_THREADS>
+          Number of IO/decompression threads to use, these are shared across
+          workers (if an indexed BAM is found) or used for a single reader if
+          --ignore-index is passed, stdin is used, or an index is not found
           
           [default: 4]
 
@@ -566,9 +612,14 @@ Logging Options:
 
 Output Options:
   -p, --percentiles <PERCENTILES>
-          Percentiles to calculate, a space separated list of floats
+          Percentiles to calculate, a space separated list of floats (for
+          example: "10,20,90")
           
-          [default: 0.1,0.5,0.9]
+          [default: 10,50,90]
+
+  -q, --quantiles <QUANTILES>
+          Quantiles to calculate, a space separated list of floats (for example:
+          "0.1,0.2,0.9")
 
   -o, --out-dir <OUT_DIR>
           Directory to deposit result tables into. Required for model
@@ -591,29 +642,24 @@ Output Options:
           Set colors of modified bases in histogram, should be RGB format, e.g.
           "#FF00FF" is default for 5hmC
 
-Modified Base Options:
-      --ignore <IGNORE>
-          Ignore a modified base class  _in_situ_ by redistributing base
-          modification probability equally across other options. For example, if
-          collapsing 'h', with 'm' and canonical options, half of the
-          probability of 'h' will be added to both 'm' and 'C'. A full
-          description of the methods can be found in collapse.md
-
 Selection Options:
+      --motif <MOTIF> <MOTIF>
+          Tabulate base modification probabilities at motifs (or single bases).
+          The first argument should be the sequence motif and the second
+          argument is the 0-based offset to the base to pileup base modification
+          counts for. For example: --motif CGCG 0 indicates to collect base
+          mofification probabilities for the first C on the top strand and the
+          last C (complement to G) on the bottom strand. For single bases,
+          --motif C 0 or --motif A 0 would restrict to probabilities on C or A
+          reference bases, respectively. This argument can be passed multiple
+          times
+
       --edge-filter <EDGE_FILTER>
           Discard base modification calls that are this many bases from the
           start or the end of the read. Two comma-separated values may be
           provided to asymmetrically filter out base modification calls from the
           start and end of the reads. For example, 4,8 will filter out base
           modification calls in the first 4 and last 8 bases of the read
-
-      --invert-edge-filter
-          Invert the edge filter, instead of filtering out base modification
-          calls at the ends of reads, only _keep_ base modification calls at the
-          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
-          base modification calls in the first 4 and last 8 bases of the read,
-          using this flag will keep only base modification calls in the first 4
-          and last 8 bases
 
       --region <REGION>
           Process only the specified region of the BAM when collecting
@@ -624,20 +670,14 @@ Selection Options:
           Only sample base modification probabilities that are aligned to the
           positions in this BED file. (alias: include-positions)
 
-      --mapped-only
-          Only use base modification probabilities that are aligned (i.e. ignore
-          soft-clipped, and inserted bases)
+      --use-non-primary
+          Use non-primary mappings, may cause double-counting of reads with
+          primary and one or more non-primary mappings. Requires MN tag to be
+          correct. See documentation for help on proper alignment
 
 Sampling Options:
   -n, --num-reads <NUM_READS>
-          Approximate maximum number of reads to use, especially recommended
-          when using a large BAM without an index. If an indexed BAM is
-          provided, the reads will be sampled evenly over the length of the
-          aligned reference. If a region is passed with the --region option,
-          they will be sampled over the genomic region. Actual number of reads
-          used may deviate slightly from this number
           
-          [default: 10042]
 
   -f, --sampling-frac <SAMPLING_FRAC>
           Instead of using a defined number of reads, specify a fraction of
@@ -665,12 +705,38 @@ Arguments:
           specify a stream from standard input
 
 Options:
+      --ignore-index
+          Ignore the BAM index (if it exists) perform a serial scan of the BAM,
+          otherwise if an index is found, multiple workers will be used to read
+          the BAM in parallel. Conflicts with --threads since there will only be
+          one reader
+
+  -r, --reference <REFERENCE_FASTA>
+          Reference sequence in FASTA format. (alias: 'ref')
+
+      --preload-references
+          Preload the reference sequences, useful when working with many, short
+          reference sequences such as a transcriptome
+
+  -k, --mask
+          Respect soft masking in the reference FASTA
+
+      --cpg
+          Shorthand for --motif CG 0. Requires a sorted, indexed modBAM
+
   -h, --help
           Print help (see a summary with '-h')
 
 Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
+          
+          [default: 4]
+
+      --io-threads <IO_THREADS>
+          Number of IO/decompression threads to use, these are shared across
+          workers (if an indexed BAM is found) or used for a single reader if
+          --ignore-index is passed, stdin is used, or an index is not found
           
           [default: 4]
 
@@ -693,37 +759,29 @@ Output Options:
       --tsv
           Output summary as a tab-separated variables stdout instead of a table
 
+      --combine-mods
+          Combine modification counts per primary sequence base when calculating
+          summary statistics
+
 Sampling Options:
   -n, --num-reads <NUM_READS>
-          Approximate maximum number of reads to use, especially recommended
-          when using a large BAM without an index. If an indexed BAM is
+          Approximate maximum number of reads to use. If an indexed BAM is
           provided, the reads will be sampled evenly over the length of the
           aligned reference. If a region is passed with the --region option,
-          they will be sampled over the genomic region. Actual number of reads
-          used may deviate slightly from this number
-          
-          [default: 10042]
+          they will be sampled over the region. Actual number of reads used may
+          deviate slightly from this number
 
   -f, --sampling-frac <SAMPLING_FRAC>
           Instead of using a defined number of reads, specify a fraction of
           reads to sample when estimating the filter threshold. For example 0.1
           will sample 1/10th of the reads
 
-      --no-sampling
-          No sampling, use all the reads to calculate the filter thresholds and
-          generating the summary
-
   -s, --seed <SEED>
           Sets a random seed for deterministic running (when using
-          --sample-frac), the default is non-deterministic, only used when no
-          BAM index is provided
+          --sample-frac)
 
 Filtering Options:
-      --no-filtering
-          Do not perform any filtering, include all base modification calls in
-          the summary. See filtering.md for details on filtering
-
-  -p, --filter-percentile <FILTER_PERCENTILE>
+  -p, --filter-quantile <FILTER_QUANTILE>
           Filter out modified base calls where the probability of the predicted
           variant is below this confidence percentile. For example, 0.1 will
           filter out the 10% lowest confidence base modification calls
@@ -751,13 +809,12 @@ Filtering Options:
           the `--filter-threshold` option is also passed. See the online
           documentation for more details
 
-Modified Base Options:
-      --ignore <IGNORE>
-          Ignore a modified base class  _in_situ_ by redistributing base
-          modification probability equally across other options. For example, if
-          collapsing 'h', with 'm' and canonical options, half of the
-          probability of 'h' will be added to both 'm' and 'C'. A full
-          description of the methods can be found in collapse.md
+      --max-filter-threshold <MAX_FILTER_THRESHOLD>
+          Maximum threhsold value to use, if the estimated threshold value for
+          any primary sequence base is greater than this value, use this value
+          instead. To set a default value for all primary bases, use
+          --max-threshold 0.8, for example. Or use per-base threshold values
+          like --max-threshold C:0.8
 
 Selection Options:
       --edge-filter <EDGE_FILTER>
@@ -767,21 +824,31 @@ Selection Options:
           start and end of the reads. For example, 4,8 will filter out base
           modification calls in the first 4 and last 8 bases of the read
 
-      --invert-edge-filter
-          Invert the edge filter, instead of filtering out base modification
-          calls at the ends of reads, only _keep_ base modification calls at the
-          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
-          base modification calls in the first 4 and last 8 bases of the read,
-          using this flag will keep only base modification calls in the first 4
-          and last 8 bases
-
       --include-bed <INCLUDE_BED>
           Only summarize base modification probabilities that are aligned to the
           positions in this BED file. (alias: include-positions)
 
       --mapped-only
-          Only use base modification probabilities that are aligned (i.e. ignore
-          soft-clipped, and inserted bases)
+          Only use modBAM records that are mapped, don't include unmapped
+          records
+
+      --matched-only
+          Only summarize base modifications that are mapped and are matches to
+          the appropriate primary sequence base. For example, require that 5mC
+          base modification calls be aligned to a reference C. Requires a
+          reference FASTA and an sorted, indexed modBAM
+
+      --motif <MOTIF> <MOTIF>
+          Calculate base modification statistics at reference motifs. This
+          option has the same behavior as "--matched-only" except it only
+          includes specified motifs. The first argument should be the sequence
+          motif and the second argument is the 0-based offset to the base to
+          pileup base modification counts for. For example: --motif CGCG 0
+          indicates to collect base mofification probabilities for the first C
+          on the top strand and the last C (complement to G) on the bottom
+          strand. For single bases, --motif C 0 or --motif A 0 would restrict to
+          probabilities on C or A reference bases, respectively. This argument
+          can be passed multiple times. Requires a sorted, indexed modBAM
 
       --region <REGION>
           Process only the specified region of the BAM when collecting
@@ -1624,6 +1691,11 @@ Compute Options:
           
           [default: 4]
 
+      --io-threads <IO_THREADS>
+          Number of IO/decompression threads to use
+          
+          [default: 4]
+
       --out-threads <OUT_THREADS>
           Number of threads to use for parallel bgzf writing
           
@@ -1779,12 +1851,21 @@ Options:
           If no reference is provided, `ref_kmer` column will be "." in the
           output. (alias: ref)
 
+      --preload-references
+          Preload the reference sequences, useful when working with many, short
+          reference sequences such as a transcriptome
+
   -h, --help
           Print help (see a summary with '-h')
 
 Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
+          
+          [default: 4]
+
+      --io-threads <IO_THREADS>
+          Number of IO/decompression threads to use
           
           [default: 4]
 
@@ -1943,6 +2024,13 @@ Filtering Options:
           the `--filter-threshold` option is also passed. See the online
           documentation for more details
 
+      --max-filter-threshold <MAX_FILTER_THRESHOLD>
+          Maximum threhsold value to use, if the estimated threshold value for
+          any primary sequence base is greater than this value, use this value
+          instead. To set a default value for all primary bases, use
+          --max-threshold 0.8, for example. Or use per-base threshold values
+          like --max-threshold C:0.8
+
       --no-filtering
           Don't estimate the pass threshold, all calls will "pass"
 
@@ -1981,6 +2069,53 @@ Sampling Options:
           Set a random seed for deterministic running, the default is
           non-deterministic when using `sampling_frac`. When using `num_reads`
           the output is still deterministic
+```
+
+## extract read-stats
+```text
+Produce a table where modification counts are summarized on the read level. This
+table will have one record per valid read and count the number of modified and
+unmodified bases for each base moficiation requested
+
+Usage: modkit extract read-stats [OPTIONS] <IN_BAM> <OUT_PATH>
+
+Arguments:
+  <IN_BAM>    Input modBAM. Can be a path to a file or "-"/"stdin" for standard
+              input
+  <OUT_PATH>  Path to file for output, default will be to stdout
+
+Options:
+      --filter-threshold <FILTER_THRESHOLD>
+          Specify the filter threshold globally or per-base. Global filter
+          threshold can be specified with by a decimal number (e.g. 0.75).
+          Per-base thresholds can be specified by colon-separated values, for
+          example C:0.75 specifies a threshold value of 0.75 for cytosine
+          modification calls. Additional per-base thresholds can be specified by
+          repeating the option: for example --filter-threshold C:0.75
+          --filter-threshold A:0.70 or specify a single base option and a
+          default for all other bases with: --filter-threshold A:0.70
+          --filter-threshold 0.9 will specify a threshold value of 0.70 for
+          adenine and 0.9 for all other base modification calls
+      --mod-thresholds <MOD_THRESHOLDS>
+          Specify a passing threshold to use for a base modification,
+          independent of the threshold for the primary sequence base or the
+          default. For example, to set the pass threshold for 5hmC to 0.8 use
+          `--mod-threshold h:0.8`. The pass threshold will still be estimated as
+          usual and used for canonical cytosine and other modifications unless
+          the `--filter-threshold` option is also passed
+      --mod-codes <MOD_CODES>...
+          Specify which modcodes to tabulate, should be
+          <primary_base>:<mod_code>
+      --queue-size <QUEUE_SIZE>
+          Queue size, maximum number of reads to be held in memory waiting for
+          records to be written [default: 10000]
+      --io-threads <IO_THREADS>
+          [default: 4]
+  -h, --help
+          Print help
+
+Logging Options:
+      --log-filepath <LOG_FILEPATH>  Path to file to write run log
 ```
 
 ## motif bed
@@ -2418,6 +2553,10 @@ Sample Options:
           not part of the specification, the bedMethyl record will not be used,
           this will be logged
 
+      --single-code <SINGLE_MODIFICATION_CODE>
+          Calculate differential methylation for this modification code in
+          isolation
+
   -k, --mask
           Respect soft masking in the reference FASTA
 
@@ -2595,6 +2734,9 @@ Sample Options:
           cytosine (C) primary sequence bases. If a code is encountered that is
           not part of the specification, the bedMethyl record will not be used,
           this will be logged
+      --single-code <SINGLE_MODIFICATION_CODE>
+          Calculate differential methylation for this modification code in
+          isolation
   -k, --mask
           Respect soft masking in the reference FASTA
       --min-valid-coverage <MIN_VALID_COVERAGE>
@@ -2988,12 +3130,37 @@ Arguments:
           standard input
 
 Options:
+      --ignore-index
+          Ignore the BAM index (if it exists) perform a serial scan of the BAM,
+          otherwise if an index is found, multiple workers will be used to read
+          the BAM in parallel. Conflicts with --threads since there will only be
+          one reader
+
+  -r, --reference <REFERENCE_FASTA>
+          Reference sequence in FASTA format. (alias: 'ref')
+
+      --preload-references
+          Preload the reference sequences, useful when working with many, short
+          reference sequences such as a transcriptome
+
+  -k, --mask
+          Respect soft masking in the reference FASTA
+
   -h, --help
           Print help (see a summary with '-h')
 
 Compute Options:
   -t, --threads <THREADS>
-          Number of threads to use
+          Number of workers to run concurrently. When an aligned, indexed BAM is
+          found, multiple workers (threads) will be spawned to read disjoint
+          sections of the BAM in parallel
+          
+          [default: 4]
+
+      --io-threads <IO_THREADS>
+          Number of IO/decompression threads to use, these are shared across
+          workers (if an indexed BAM is found) or used for a single reader if
+          --ignore-index is passed, stdin is used, or an index is not found
           
           [default: 4]
 
@@ -3014,9 +3181,14 @@ Logging Options:
 
 Output Options:
   -p, --percentiles <PERCENTILES>
-          Percentiles to calculate, a space separated list of floats
+          Percentiles to calculate, a space separated list of floats (for
+          example: "10,20,90")
           
-          [default: 0.1,0.5,0.9]
+          [default: 10,50,90]
+
+  -q, --quantiles <QUANTILES>
+          Quantiles to calculate, a space separated list of floats (for example:
+          "0.1,0.2,0.9")
 
   -o, --out-dir <OUT_DIR>
           Directory to deposit result tables into. Required for model
@@ -3039,29 +3211,24 @@ Output Options:
           Set colors of modified bases in histogram, should be RGB format, e.g.
           "#FF00FF" is default for 5hmC
 
-Modified Base Options:
-      --ignore <IGNORE>
-          Ignore a modified base class  _in_situ_ by redistributing base
-          modification probability equally across other options. For example, if
-          collapsing 'h', with 'm' and canonical options, half of the
-          probability of 'h' will be added to both 'm' and 'C'. A full
-          description of the methods can be found in collapse.md
-
 Selection Options:
+      --motif <MOTIF> <MOTIF>
+          Tabulate base modification probabilities at motifs (or single bases).
+          The first argument should be the sequence motif and the second
+          argument is the 0-based offset to the base to pileup base modification
+          counts for. For example: --motif CGCG 0 indicates to collect base
+          mofification probabilities for the first C on the top strand and the
+          last C (complement to G) on the bottom strand. For single bases,
+          --motif C 0 or --motif A 0 would restrict to probabilities on C or A
+          reference bases, respectively. This argument can be passed multiple
+          times
+
       --edge-filter <EDGE_FILTER>
           Discard base modification calls that are this many bases from the
           start or the end of the read. Two comma-separated values may be
           provided to asymmetrically filter out base modification calls from the
           start and end of the reads. For example, 4,8 will filter out base
           modification calls in the first 4 and last 8 bases of the read
-
-      --invert-edge-filter
-          Invert the edge filter, instead of filtering out base modification
-          calls at the ends of reads, only _keep_ base modification calls at the
-          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
-          base modification calls in the first 4 and last 8 bases of the read,
-          using this flag will keep only base modification calls in the first 4
-          and last 8 bases
 
       --region <REGION>
           Process only the specified region of the BAM when collecting
@@ -3072,20 +3239,14 @@ Selection Options:
           Only sample base modification probabilities that are aligned to the
           positions in this BED file. (alias: include-positions)
 
-      --mapped-only
-          Only use base modification probabilities that are aligned (i.e. ignore
-          soft-clipped, and inserted bases)
+      --use-non-primary
+          Use non-primary mappings, may cause double-counting of reads with
+          primary and one or more non-primary mappings. Requires MN tag to be
+          correct. See documentation for help on proper alignment
 
 Sampling Options:
   -n, --num-reads <NUM_READS>
-          Approximate maximum number of reads to use, especially recommended
-          when using a large BAM without an index. If an indexed BAM is
-          provided, the reads will be sampled evenly over the length of the
-          aligned reference. If a region is passed with the --region option,
-          they will be sampled over the genomic region. Actual number of reads
-          used may deviate slightly from this number
           
-          [default: 10042]
 
   -f, --sampling-frac <SAMPLING_FRAC>
           Instead of using a defined number of reads, specify a fraction of
@@ -3113,12 +3274,38 @@ Arguments:
           specify a stream from standard input
 
 Options:
+      --ignore-index
+          Ignore the BAM index (if it exists) perform a serial scan of the BAM,
+          otherwise if an index is found, multiple workers will be used to read
+          the BAM in parallel. Conflicts with --threads since there will only be
+          one reader
+
+  -r, --reference <REFERENCE_FASTA>
+          Reference sequence in FASTA format. (alias: 'ref')
+
+      --preload-references
+          Preload the reference sequences, useful when working with many, short
+          reference sequences such as a transcriptome
+
+  -k, --mask
+          Respect soft masking in the reference FASTA
+
+      --cpg
+          Shorthand for --motif CG 0. Requires a sorted, indexed modBAM
+
   -h, --help
           Print help (see a summary with '-h')
 
 Compute Options:
   -t, --threads <THREADS>
           Number of threads to use
+          
+          [default: 4]
+
+      --io-threads <IO_THREADS>
+          Number of IO/decompression threads to use, these are shared across
+          workers (if an indexed BAM is found) or used for a single reader if
+          --ignore-index is passed, stdin is used, or an index is not found
           
           [default: 4]
 
@@ -3141,37 +3328,29 @@ Output Options:
       --tsv
           Output summary as a tab-separated variables stdout instead of a table
 
+      --combine-mods
+          Combine modification counts per primary sequence base when calculating
+          summary statistics
+
 Sampling Options:
   -n, --num-reads <NUM_READS>
-          Approximate maximum number of reads to use, especially recommended
-          when using a large BAM without an index. If an indexed BAM is
+          Approximate maximum number of reads to use. If an indexed BAM is
           provided, the reads will be sampled evenly over the length of the
           aligned reference. If a region is passed with the --region option,
-          they will be sampled over the genomic region. Actual number of reads
-          used may deviate slightly from this number
-          
-          [default: 10042]
+          they will be sampled over the region. Actual number of reads used may
+          deviate slightly from this number
 
   -f, --sampling-frac <SAMPLING_FRAC>
           Instead of using a defined number of reads, specify a fraction of
           reads to sample when estimating the filter threshold. For example 0.1
           will sample 1/10th of the reads
 
-      --no-sampling
-          No sampling, use all the reads to calculate the filter thresholds and
-          generating the summary
-
   -s, --seed <SEED>
           Sets a random seed for deterministic running (when using
-          --sample-frac), the default is non-deterministic, only used when no
-          BAM index is provided
+          --sample-frac)
 
 Filtering Options:
-      --no-filtering
-          Do not perform any filtering, include all base modification calls in
-          the summary. See filtering.md for details on filtering
-
-  -p, --filter-percentile <FILTER_PERCENTILE>
+  -p, --filter-quantile <FILTER_QUANTILE>
           Filter out modified base calls where the probability of the predicted
           variant is below this confidence percentile. For example, 0.1 will
           filter out the 10% lowest confidence base modification calls
@@ -3199,13 +3378,12 @@ Filtering Options:
           the `--filter-threshold` option is also passed. See the online
           documentation for more details
 
-Modified Base Options:
-      --ignore <IGNORE>
-          Ignore a modified base class  _in_situ_ by redistributing base
-          modification probability equally across other options. For example, if
-          collapsing 'h', with 'm' and canonical options, half of the
-          probability of 'h' will be added to both 'm' and 'C'. A full
-          description of the methods can be found in collapse.md
+      --max-filter-threshold <MAX_FILTER_THRESHOLD>
+          Maximum threhsold value to use, if the estimated threshold value for
+          any primary sequence base is greater than this value, use this value
+          instead. To set a default value for all primary bases, use
+          --max-threshold 0.8, for example. Or use per-base threshold values
+          like --max-threshold C:0.8
 
 Selection Options:
       --edge-filter <EDGE_FILTER>
@@ -3215,21 +3393,31 @@ Selection Options:
           start and end of the reads. For example, 4,8 will filter out base
           modification calls in the first 4 and last 8 bases of the read
 
-      --invert-edge-filter
-          Invert the edge filter, instead of filtering out base modification
-          calls at the ends of reads, only _keep_ base modification calls at the
-          ends of reads. E.g. if usually, "4,8" would remove (i.e. filter out)
-          base modification calls in the first 4 and last 8 bases of the read,
-          using this flag will keep only base modification calls in the first 4
-          and last 8 bases
-
       --include-bed <INCLUDE_BED>
           Only summarize base modification probabilities that are aligned to the
           positions in this BED file. (alias: include-positions)
 
       --mapped-only
-          Only use base modification probabilities that are aligned (i.e. ignore
-          soft-clipped, and inserted bases)
+          Only use modBAM records that are mapped, don't include unmapped
+          records
+
+      --matched-only
+          Only summarize base modifications that are mapped and are matches to
+          the appropriate primary sequence base. For example, require that 5mC
+          base modification calls be aligned to a reference C. Requires a
+          reference FASTA and an sorted, indexed modBAM
+
+      --motif <MOTIF> <MOTIF>
+          Calculate base modification statistics at reference motifs. This
+          option has the same behavior as "--matched-only" except it only
+          includes specified motifs. The first argument should be the sequence
+          motif and the second argument is the 0-based offset to the base to
+          pileup base modification counts for. For example: --motif CGCG 0
+          indicates to collect base mofification probabilities for the first C
+          on the top strand and the last C (complement to G) on the bottom
+          strand. For single bases, --motif C 0 or --motif A 0 would restrict to
+          probabilities on C or A reference bases, respectively. This argument
+          can be passed multiple times. Requires a sorted, indexed modBAM
 
       --region <REGION>
           Process only the specified region of the BAM when collecting
@@ -3461,8 +3649,8 @@ Selection Options:
           when using a large BAM without an index. If an indexed BAM is
           provided, the reads will be sampled evenly over the length of the
           aligned reference. If a region is passed with the --region option,
-          they will be sampled over the genomic region. Actual number of reads
-          used may deviate slightly from this number
+          they will be sampled over the region. Actual number of reads used may
+          deviate slightly from this number
 
       --allow-non-primary
           Check tags on non-primary alignments as well. Keep in mind this may

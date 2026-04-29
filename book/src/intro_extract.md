@@ -90,7 +90,52 @@ By default, the primary alignment will have all base modification information co
 If the `--mapped-only` flag is used, soft clipped sections of the read will not be included. 
 For secondary and supplementary alignments, soft-clipped positions are not repeated. See [advanced usage](./advanced_usage.md) for more details.
 
+# Tabulating per-read base modification content with `extract read-stats`.
+Produce a table where modification counts are summarized on the read level.
+This table will have one record (line) per valid read and count the number of modified and unmodified bases for each base modification specified on the command line.
+To specify which modifications to use, pass `--mod-codes {primary_base}:{mod_code}` on the command line.
+Multiple `{primary_base}:{mod_code}` pairs can be passed, separated by spaces.
+For example `--mod-codes C:m C:m` will count the number of `m` (5mC) and `h` (5hmC) calls per-read.
+Modification codes that are encountered, but not specified on the command line will be added to the `other_modified_{primary_base}` count.
+For example, if you have direct RNA reads with m6A and Inosine calls you can use `--mod-codes A:a` and Modkit will count the m6A calls on each read and report it in the `modified_a` column.
+Inosine calls will be counted in `other_modified_A`.
+
+## Using a filter-threshold
+By default `extract read-stats` will simply tabulate the calls for each base modification on each read.
+The "call" is defined as the state with the highest probability.
+Passing `--filter-threshold` to `extract read-stats` will filter calls based on the probability, similar to what other functions do (see [filtering modified-base calls](./filtering.md) for details).
+A filter threshold for each primary sequence base can be used (e.g. `--filter-threshold A:0.8 --filter-threshold C:0.9`) which will use 0.8 and 0.9 for any base call on adenine or cytosine base, respectively.
+To use a filter threshold for a specific base modification (e.g. for 6mA calls or 5hmC calls only) pass `--mod-thresholds {mod_code}:{threshold}` (e.g. `--mod-thresholds a:0.9` or `--mod-thresholds h:0.8`).
+When any threshold is used, extra columns are added to the output: `fail_modified_{mod_code}` and `fail_unmodified_{primary_base}`.
+These columns contain the counts of modified or unmodified calls that are below the pass threshold for that base/modification.
+
+## Schema of output for `modkit extract read-stats` without filtering:
+
+| column | name                  | description                                                                                                             | type |
+|--------|-----------------------|-------------------------------------------------------------------------------------------------------------------------|------|
+| 1 | read_id | name of the BAM record | str | 
+| 2 | chrom | name of the contig the read is mapped to or "unmapped" for unmapped reads | str |
+| 3 | aln_start | leftmost aligned position of the read on the reference genome (-1 for unmapped reads) | int | 
+| 3+n_bases | unmodified_{A\|C \|G \|T} | number of unmodified (canonical) calls for this primary sequebce base | int |
+| 3+n_bases+n_mods | modified_{modification_code} | number of modified bases of this type on this read | int |
+| 3+n_bases+n_mods+1+n_bases | other_modified_{A\|C\|G\|T} | number of modified bases not specified on the command line | int |
+| 3+2*n_bases+n_mods | read_length | length of SEQ in the BAM record | int |
+
+
 ## Example usages:
+
+### Extract base modification counts for 5mC, 5hmC, and 6mA on each read in a BAM
+```
+modkit extract read-stats <input.bam> <output.csv> --mod-codes C:m C:h A:a
+```
+To enable filtering, use `--filter-threshold` (and optionally `--mod-thresholds`)
+```
+modkit extract read-stats <input.bam> <output.csv> --mod-codes C:m C:h A:a --filter-threshold 0.7 --mod-thresholds a:0.9
+```
+### Extract base modification counts for m6A, Inosine, and pseudouridine from a direct RNA modBAM:
+```
+modkit extract read-stats <input.bam> <output.csv> --mod-codes A:a A:17596 T:17802
+```
 
 ### Extract a table of base modification probabilities from an aligned and indexed BAM 
 ```
