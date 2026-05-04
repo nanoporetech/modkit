@@ -22,6 +22,17 @@ cargo install --path modkit
 cargo install --git https://github.com/nanoporetech/modkit.git
 ```
 
+### macOS (Apple Silicon)
+
+A script is provided to compile modkit on Apple Silicon Macs with Metal GPU (MPS) acceleration.
+Just download the script and run it with the desired installation directory, modkit version, and Python provider (system, conda, pyenv, or uv).
+
+```bash
+bash mac_compile_modkit.sh ~/tools
+```
+
+This installs all dependencies (Homebrew, Rust, PyTorch) and compiles modkit automatically. See the [macOS installation guide](./book/src/mac_compile_modkit.md) for full details, Python version control options, and troubleshooting.
+
 ## Usage
 
 Modkit comprises a suite of tools for manipulating modified-base data stored in [BAM](http://www.htslib.org/) files. Modified base information is stored in the `MM` and `ML` tags (see section 1.7 of the [SAM tags](https://samtools.github.io/hts-specs/SAMtags.pdf) specification). These tags are produced by contemporary basecallers of data from Oxford Nanopore Technologies sequencing platforms.
