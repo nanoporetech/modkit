@@ -24,13 +24,19 @@ Installs the latest modkit to `~/tools` using system Python. Takes 10–15 minut
 
 ## After Installation
 
-The installer automatically adds the environment setup to `~/.zprofile`, so modkit is available in every new terminal session without any manual steps.
+The installer automatically adds the environment setup to `~/.zprofile`, so modkit is available in every new terminal session **silently** — no output is printed on shell startup.
 
 To activate in the **current** session immediately after install:
 
 ```bash
 source ~/tools/setup_modkit_env.sh ~/tools
 modkit --version
+```
+
+To see full environment details:
+
+```bash
+source ~/tools/setup_modkit_env.sh ~/tools --verbose
 ```
 
 `setup_modkit_env.sh` configures:
