@@ -678,14 +678,17 @@ source "${MODKIT_VENV_DIR}/bin/activate"
 MODKIT_PYTHON_VER=$("${MODKIT_VENV_DIR}/bin/python" -c \
     "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')")
 
-# Suggestion 3/4/6 fix: export all required variables and prepend binary to PATH
 export LIBTORCH_USE_PYTORCH=1
 export LIBTORCH_BYPASS_VERSION_CHECK=1
 export LIBTORCH="${MODKIT_VENV_DIR}/lib/${MODKIT_PYTHON_VER}/site-packages/torch"
-# Suggestion 5 fix: use :- so this is safe under set -u in the caller
 export DYLD_LIBRARY_PATH="${LIBTORCH}/lib${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}"
 export LD_LIBRARY_PATH="${LIBTORCH}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export PATH="${MODKIT_REPO_DIR}/target/release:${PATH}"
+
+# Detect Apple Silicon Performance cores; fall back to all logical CPUs
+_PERF_CORES=$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
+export RAYON_NUM_THREADS="${_PERF_CORES}"
+unset _PERF_CORES
 
 echo ""
 echo "Modkit environment configured:"
@@ -694,9 +697,10 @@ echo "  LIBTORCH_BYPASS_VERSION_CHECK = ${LIBTORCH_BYPASS_VERSION_CHECK}"
 echo "  LIBTORCH                      = ${LIBTORCH}"
 echo "  DYLD_LIBRARY_PATH             = ${DYLD_LIBRARY_PATH}"
 echo "  LD_LIBRARY_PATH               = ${LD_LIBRARY_PATH}"
+echo "  PATH (prepended)              = ${MODKIT_REPO_DIR}/target/release"
+echo "  RAYON_NUM_THREADS             = ${RAYON_NUM_THREADS}  (P-cores)"
 echo "  Python                        = ${MODKIT_VENV_DIR}/bin/python" \
      "($("${MODKIT_VENV_DIR}/bin/python" --version 2>&1), ${MODKIT_PYTHON_VER})"
-echo "  PATH (prepended)              = ${MODKIT_REPO_DIR}/target/release"
 
 if [[ -d "${LIBTORCH}" ]]; then
     echo "  libtorch path                 = OK"
@@ -887,6 +891,15 @@ save_installation_info() {
 
  For detailed usage instructions, run:
  modkit --help
+
+ Runtime Threading:
+ ------------------
+ RAYON_NUM_THREADS is set automatically to the number of Performance cores
+ detected on your Mac (hw.perflevel0.logicalcpu). This is exported by
+ setup_modkit_env.sh each time it is sourced.
+
+ To override for a single run:
+   RAYON_NUM_THREADS=8 modkit pileup input.bam output.bed
 EOF
     
     echo "Installation information saved to: ${INFO_FILE}"
@@ -939,7 +952,18 @@ main() {
     
     # Save installation info
     save_installation_info
-    
+
+    # Add setup script to ~/.zprofile if not already present
+    local ZPROFILE="${HOME}/.zprofile"
+    local SOURCE_LINE="source \"${SETUP_SCRIPT}\" \"${INSTALL_DIR}\""
+    if grep -qF "${SOURCE_LINE}" "${ZPROFILE}" 2>/dev/null; then
+        print_success "~/.zprofile already contains the modkit environment setup"
+    else
+        echo "${SOURCE_LINE}" >> "${ZPROFILE}"
+        print_success "Added modkit environment setup to ~/.zprofile"
+        echo "  It will activate automatically in every new terminal session."
+    fi
+
     # Calculate installation time
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))

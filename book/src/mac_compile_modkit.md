@@ -24,16 +24,34 @@ Installs the latest modkit to `~/tools` using system Python. Takes 10–15 minut
 
 ## After Installation
 
-Every new terminal session requires:
+The installer automatically adds the environment setup to `~/.zprofile`, so modkit is available in every new terminal session without any manual steps.
+
+To activate in the **current** session immediately after install:
 
 ```bash
 source ~/tools/setup_modkit_env.sh ~/tools
 modkit --version
 ```
 
-This configures `LIBTORCH`, `DYLD_LIBRARY_PATH`, and adds modkit to `PATH`.
+`setup_modkit_env.sh` configures:
+- `LIBTORCH`, `DYLD_LIBRARY_PATH`, `LD_LIBRARY_PATH` — required for the modkit binary to find libtorch
+- `PATH` — so you can type `modkit` directly
+- `RAYON_NUM_THREADS` — automatically set to the number of **Performance cores** on your Mac
 
-**Tip:** Add the `source` line to `~/.zprofile` to run it automatically.
+### RAYON_NUM_THREADS
+
+Rayon is modkit's parallel processing library. On Apple Silicon, the script detects P-cores via:
+
+```bash
+sysctl -n hw.perflevel0.logicalcpu   # P-cores (used by default)
+sysctl -n hw.perflevel1.logicalcpu   # E-cores (for reference)
+```
+
+To override for a single run:
+
+```bash
+RAYON_NUM_THREADS=8 modkit pileup input.bam output.bed
+```
 
 ---
 
