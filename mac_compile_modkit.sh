@@ -624,7 +624,10 @@ setup_environment_variables() {
 # IMPORTANT: This script must be SOURCED, not executed.
 #
 # Usage:
-#   source setup_modkit_env.sh <installation_directory>
+#   source setup_modkit_env.sh <installation_directory> [--verbose]
+#
+# Options:
+#   --verbose    Print environment configuration details. Omit for silent setup.
 #
 # After sourcing:
 #   modkit --version
@@ -634,19 +637,33 @@ setup_environment_variables() {
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "Error: This script must be sourced, not executed."
-    echo "Usage: source ${0} <installation_directory>"
+    echo "Usage: source ${0} <installation_directory> [--verbose]"
     exit 1
 fi
 
-if [[ $# -lt 1 ]]; then
-    echo "Usage: source setup_modkit_env.sh <installation_directory>"
+# Parse arguments
+_MODKIT_VERBOSE=0
+_MODKIT_INSTALL_DIR=""
+for _arg in "$@"; do
+    case "${_arg}" in
+        --verbose|-v) _MODKIT_VERBOSE=1 ;;
+        *)            _MODKIT_INSTALL_DIR="${_arg}" ;;
+    esac
+done
+unset _arg
+
+if [[ -z "${_MODKIT_INSTALL_DIR}" ]]; then
+    echo "Usage: source setup_modkit_env.sh <installation_directory> [--verbose]"
+    unset _MODKIT_VERBOSE _MODKIT_INSTALL_DIR
     return 1
 fi
 
-MODKIT_INSTALL_DIR="$1"
+MODKIT_INSTALL_DIR="${_MODKIT_INSTALL_DIR}"
+unset _MODKIT_INSTALL_DIR
 
 if [[ ! -d "${MODKIT_INSTALL_DIR}" ]]; then
     echo "Error: Installation directory not found: ${MODKIT_INSTALL_DIR}"
+    unset MODKIT_INSTALL_DIR _MODKIT_VERBOSE
     return 1
 fi
 
@@ -656,22 +673,19 @@ MODKIT_BINARY="${MODKIT_REPO_DIR}/target/release/modkit"
 
 if [[ ! -d "${MODKIT_VENV_DIR}" ]]; then
     echo "Error: Virtual environment not found: ${MODKIT_VENV_DIR}"
+    unset MODKIT_INSTALL_DIR MODKIT_VENV_DIR MODKIT_REPO_DIR MODKIT_BINARY _MODKIT_VERBOSE
     return 1
-fi
-
-if [[ ! -f "${MODKIT_BINARY}" ]]; then
-    echo "Warning: modkit binary not found at: ${MODKIT_BINARY}"
 fi
 
 # Deactivate conda only if actually active
 if command -v conda &> /dev/null && [[ -n "${CONDA_DEFAULT_ENV:-}" ]]; then
-    echo "Deactivating conda environment '${CONDA_DEFAULT_ENV}' to avoid conflicts..."
+    [[ "${_MODKIT_VERBOSE}" == "1" ]] && \
+        echo "Deactivating conda environment '${CONDA_DEFAULT_ENV}'..."
     eval "$(conda shell.bash hook)"
     conda deactivate 2>/dev/null || true
 fi
 
-# Activate the Python virtual environment
-echo "Activating virtual environment: ${MODKIT_VENV_DIR}"
+# Activate the Python virtual environment (suppress output)
 source "${MODKIT_VENV_DIR}/bin/activate"
 
 # Detect Python version from venv
@@ -685,40 +699,39 @@ export DYLD_LIBRARY_PATH="${LIBTORCH}/lib${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PA
 export LD_LIBRARY_PATH="${LIBTORCH}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export PATH="${MODKIT_REPO_DIR}/target/release:${PATH}"
 
-# Detect Apple Silicon Performance cores; fall back to all logical CPUs
 _PERF_CORES=$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 export RAYON_NUM_THREADS="${_PERF_CORES}"
 unset _PERF_CORES
 
-echo ""
-echo "Modkit environment configured:"
-echo "  LIBTORCH_USE_PYTORCH          = ${LIBTORCH_USE_PYTORCH}"
-echo "  LIBTORCH_BYPASS_VERSION_CHECK = ${LIBTORCH_BYPASS_VERSION_CHECK}"
-echo "  LIBTORCH                      = ${LIBTORCH}"
-echo "  DYLD_LIBRARY_PATH             = ${DYLD_LIBRARY_PATH}"
-echo "  LD_LIBRARY_PATH               = ${LD_LIBRARY_PATH}"
-echo "  PATH (prepended)              = ${MODKIT_REPO_DIR}/target/release"
-echo "  RAYON_NUM_THREADS             = ${RAYON_NUM_THREADS}  (P-cores)"
-echo "  Python                        = ${MODKIT_VENV_DIR}/bin/python" \
-     "($("${MODKIT_VENV_DIR}/bin/python" --version 2>&1), ${MODKIT_PYTHON_VER})"
+if [[ "${_MODKIT_VERBOSE}" == "1" ]]; then
+    echo ""
+    echo "Modkit environment configured:"
+    echo "  LIBTORCH_USE_PYTORCH          = ${LIBTORCH_USE_PYTORCH}"
+    echo "  LIBTORCH_BYPASS_VERSION_CHECK = ${LIBTORCH_BYPASS_VERSION_CHECK}"
+    echo "  LIBTORCH                      = ${LIBTORCH}"
+    echo "  DYLD_LIBRARY_PATH             = ${DYLD_LIBRARY_PATH}"
+    echo "  LD_LIBRARY_PATH               = ${LD_LIBRARY_PATH}"
+    echo "  PATH (prepended)              = ${MODKIT_REPO_DIR}/target/release"
+    echo "  RAYON_NUM_THREADS             = ${RAYON_NUM_THREADS}  (P-cores)"
+    echo "  Python                        = ${MODKIT_VENV_DIR}/bin/python" \
+         "($("${MODKIT_VENV_DIR}/bin/python" --version 2>&1), ${MODKIT_PYTHON_VER})"
 
-if [[ -d "${LIBTORCH}" ]]; then
-    echo "  libtorch path                 = OK"
-else
-    echo "  WARNING: LIBTORCH path does not exist: ${LIBTORCH}"
+    if [[ -d "${LIBTORCH}" ]]; then
+        echo "  libtorch path                 = OK"
+    else
+        echo "  WARNING: LIBTORCH path does not exist: ${LIBTORCH}"
+    fi
+
+    if [[ -f "${MODKIT_BINARY}" ]]; then
+        echo "  modkit binary                 = ${MODKIT_BINARY}"
+        echo ""
+        echo "Ready. Run 'modkit --version' to verify."
+    else
+        echo "  modkit binary                 = NOT FOUND"
+    fi
 fi
 
-if [[ -f "${MODKIT_BINARY}" ]]; then
-    echo "  modkit binary                 = ${MODKIT_BINARY}"
-    echo ""
-    echo "Ready. Run 'modkit --version' to verify."
-else
-    echo "  modkit binary                 = NOT FOUND"
-    echo ""
-    echo "Environment variables are set, but modkit binary is missing."
-fi
-
-unset MODKIT_INSTALL_DIR MODKIT_VENV_DIR MODKIT_REPO_DIR MODKIT_BINARY MODKIT_PYTHON_VER
+unset MODKIT_INSTALL_DIR MODKIT_VENV_DIR MODKIT_REPO_DIR MODKIT_BINARY MODKIT_PYTHON_VER _MODKIT_VERBOSE
 SETUP_EOF
 
     chmod +x "${SETUP_SCRIPT}"
@@ -728,7 +741,8 @@ SETUP_EOF
     local SAVED_MODKIT_REPO_DIR="${MODKIT_REPO_DIR}"
     local SAVED_VENV_DIR="${VENV_DIR}"
 
-    source "${SETUP_SCRIPT}" "${INSTALL_DIR}"
+    # When sourcing during install, use --verbose so the installer still shows full output
+    source "${SETUP_SCRIPT}" "${INSTALL_DIR}" --verbose
 
     MODKIT_REPO_DIR="${SAVED_MODKIT_REPO_DIR}"
     VENV_DIR="${SAVED_VENV_DIR}"
