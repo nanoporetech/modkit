@@ -6,7 +6,7 @@
 # This script automates the compilation of Oxford
 # Nanopore's modkit bioinformatics tool on macOS with GPU acceleration support.
 #
-# Prerequisites: Apple Silicon Mac running macOS 11 or later
+# Prerequisites: Apple Silicon Mac running macOS 12.3 or later
 #
 # What this script does:
 #   0. Installs Xcode Command Line Tools
@@ -215,6 +215,17 @@ resolve_python_toolchain() {
                 PYENV_PREFIX="$(pyenv prefix "${MODKIT_PYTHON_VERSION}")"
                 MODKIT_PYTHON_BIN="${PYENV_PREFIX}/bin/python3"
             else
+                # Suggestion 1 fix: warn if version was requested but cannot be honoured
+                if [[ -n "${MODKIT_PYTHON_VERSION}" ]]; then
+                    print_warning "MODKIT_PYTHON_VERSION='${MODKIT_PYTHON_VERSION}' was requested but neither uv nor pyenv is available."
+                    print_warning "Falling back to system python3. The installed Python may not match the requested version."
+                    read -p "Continue anyway? (y/n): " -n 1 -r
+                    echo ""
+                    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                        echo "Aborted. Install uv (brew install uv) or pyenv (brew install pyenv) and retry."
+                        exit 1
+                    fi
+                fi
                 MODKIT_PYTHON_PROVIDER_EFFECTIVE="system"
                 MODKIT_PYTHON_BIN="$(command -v python3 || true)"
             fi
@@ -486,24 +497,55 @@ checkout_version() {
 
 create_venv() {
     print_step 6 "Creating Python Virtual Environment"
-    
+
     VENV_DIR="${INSTALL_DIR}/venv_modkit"
-    
+    local FINGERPRINT_FILE="${VENV_DIR}/.python_info"
+
     echo "Using Python: ${MODKIT_PYTHON_BIN} - $("${MODKIT_PYTHON_BIN}" --version 2>&1)"
-    
+
+    # Suggestion 2 fix: validate existing venv against current provider/version
     if [[ -d "${VENV_DIR}" ]]; then
-        print_warning "Virtual environment already exists at: ${VENV_DIR}"
-        echo "Using existing virtual environment"
-    else
+        if [[ -f "${FINGERPRINT_FILE}" ]]; then
+            local SAVED_PROVIDER SAVED_VERSION
+            SAVED_PROVIDER=$(grep '^provider=' "${FINGERPRINT_FILE}" | cut -d= -f2)
+            SAVED_VERSION=$(grep '^python_bin=' "${FINGERPRINT_FILE}" | cut -d= -f2)
+            if [[ "${SAVED_PROVIDER}" != "${MODKIT_PYTHON_PROVIDER_EFFECTIVE}" || \
+                  "${SAVED_VERSION}" != "${MODKIT_PYTHON_BIN}" ]]; then
+                print_warning "Existing venv was created with a different Python configuration:"
+                print_warning "  Saved provider:    ${SAVED_PROVIDER}  (current: ${MODKIT_PYTHON_PROVIDER_EFFECTIVE})"
+                print_warning "  Saved python_bin:  ${SAVED_VERSION}"
+                print_warning "  Current python_bin: ${MODKIT_PYTHON_BIN}"
+                read -p "Delete and recreate the venv with the new configuration? (y/n): " -n 1 -r
+                echo ""
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    rm -rf "${VENV_DIR}"
+                    echo "Deleted old virtual environment."
+                else
+                    print_warning "Keeping existing venv. Build may use wrong Python."
+                fi
+            else
+                print_success "Existing venv matches current configuration. Reusing."
+            fi
+        else
+            print_warning "Virtual environment exists but has no fingerprint file."
+            print_warning "Cannot verify it matches the current Python configuration. Reusing."
+        fi
+    fi
+
+    if [[ ! -d "${VENV_DIR}" ]]; then
         echo "Creating virtual environment at: ${VENV_DIR}"
         if [[ "${MODKIT_UV_ENABLED}" == "1" ]]; then
             uv venv --python "${MODKIT_PYTHON_BIN}" "${VENV_DIR}"
         else
             "${MODKIT_PYTHON_BIN}" -m venv "${VENV_DIR}"
         fi
+        # Write fingerprint
+        printf 'provider=%s\npython_bin=%s\n' \
+            "${MODKIT_PYTHON_PROVIDER_EFFECTIVE}" \
+            "${MODKIT_PYTHON_BIN}" > "${FINGERPRINT_FILE}"
         print_success "Virtual environment created"
     fi
-    
+
     # Verify virtual environment
     if [[ -f "${VENV_DIR}/bin/activate" && -x "${VENV_DIR}/bin/python" ]]; then
         print_success "Verification: Virtual environment ready"
@@ -570,68 +612,38 @@ install_pytorch() {
 
 setup_environment_variables() {
     print_step 8 "Setting Up Environment Variables for libtorch"
-    
+
     SETUP_SCRIPT="${INSTALL_DIR}/setup_modkit_env.sh"
-    
-    # Generate the environment setup script at the installation directory
+
     echo "Generating environment setup script at: ${SETUP_SCRIPT}"
     cat > "${SETUP_SCRIPT}" << 'SETUP_EOF'
 #!/bin/bash
 ################################################################################
 # Modkit Environment Setup Script
 ################################################################################
-#
-# This script sets up the environment variables required to run modkit
-# compiled with PyTorch (libtorch) and macOS GPU (MPS) support.
-#
-# IMPORTANT: This script must be SOURCED, not executed, so that the
-# environment variables persist in your current shell session.
+# IMPORTANT: This script must be SOURCED, not executed.
 #
 # Usage:
 #   source setup_modkit_env.sh <installation_directory>
 #
-# Arguments:
-#   installation_directory: Required. The path used during modkit installation
-#                           (the same path passed to mac_compile_modkit.sh).
-#
-# Examples:
-#   source setup_modkit_env.sh /path/to/install
-#   source setup_modkit_env.sh ~/tools
-#
-# What this script does:
-#   1. Deactivates any active conda environment to avoid conflicts
-#   2. Activates the Python virtual environment (venv_modkit)
-#   3. Detects the Python version inside the virtual environment
-#   4. Exports LIBTORCH_USE_PYTORCH, LIBTORCH, DYLD_LIBRARY_PATH, LD_LIBRARY_PATH
-#   5. Adds the modkit binary directory to PATH
-#   6. Verifies that all required paths exist
-#
-# After sourcing, you can run modkit directly:
+# After sourcing:
 #   modkit --version
 #   modkit pileup input.bam output.bed
 #   modkit open-chromatin predict --device mps -i input.bam -o output.bed
-#
 ################################################################################
 
-# Detect if script is being sourced or executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "Error: This script must be sourced, not executed."
     echo "Usage: source ${0} <installation_directory>"
     exit 1
 fi
 
-# Check for mandatory argument
 if [[ $# -lt 1 ]]; then
     echo "Usage: source setup_modkit_env.sh <installation_directory>"
-    echo "  installation_directory: Required. Path used during modkit installation."
     return 1
 fi
 
 MODKIT_INSTALL_DIR="$1"
-
-################################################################################
-# Validate installation directory
-################################################################################
 
 if [[ ! -d "${MODKIT_INSTALL_DIR}" ]]; then
     echo "Error: Installation directory not found: ${MODKIT_INSTALL_DIR}"
@@ -644,51 +656,47 @@ MODKIT_BINARY="${MODKIT_REPO_DIR}/target/release/modkit"
 
 if [[ ! -d "${MODKIT_VENV_DIR}" ]]; then
     echo "Error: Virtual environment not found: ${MODKIT_VENV_DIR}"
-    echo "Has modkit been installed to ${MODKIT_INSTALL_DIR}?"
     return 1
 fi
 
 if [[ ! -f "${MODKIT_BINARY}" ]]; then
     echo "Warning: modkit binary not found at: ${MODKIT_BINARY}"
-    echo "The environment will be set up, but modkit may not be runnable."
 fi
 
-################################################################################
-# Step 1: Deactivate conda if active
-################################################################################
-
-if command -v conda &> /dev/null; then
-    if [[ -n "${CONDA_DEFAULT_ENV:-}" ]]; then
-        echo "Deactivating conda environment '${CONDA_DEFAULT_ENV}' to avoid conflicts..."
-        eval "$(conda shell.bash hook)"
-        conda deactivate 2>/dev/null || true
-    fi
+# Deactivate conda only if actually active
+if command -v conda &> /dev/null && [[ -n "${CONDA_DEFAULT_ENV:-}" ]]; then
+    echo "Deactivating conda environment '${CONDA_DEFAULT_ENV}' to avoid conflicts..."
+    eval "$(conda shell.bash hook)"
+    conda deactivate 2>/dev/null || true
 fi
 
-################################################################################
-# Step 2: Activate the Python virtual environment
-################################################################################
-
+# Activate the Python virtual environment
 echo "Activating virtual environment: ${MODKIT_VENV_DIR}"
 source "${MODKIT_VENV_DIR}/bin/activate"
 
-################################################################################
-# Step 3: Detect Python version and set environment variables
-################################################################################
+# Detect Python version from venv
+MODKIT_PYTHON_VER=$("${MODKIT_VENV_DIR}/bin/python" -c \
+    "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')")
 
-MODKIT_PYTHON_VER=$("${MODKIT_VENV_DIR}/bin/python" -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')")
-
+# Suggestion 3/4/6 fix: export all required variables and prepend binary to PATH
 export LIBTORCH_USE_PYTORCH=1
 export LIBTORCH_BYPASS_VERSION_CHECK=1
 export LIBTORCH="${MODKIT_VENV_DIR}/lib/${MODKIT_PYTHON_VER}/site-packages/torch"
+# Suggestion 5 fix: use :- so this is safe under set -u in the caller
+export DYLD_LIBRARY_PATH="${LIBTORCH}/lib${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}"
+export LD_LIBRARY_PATH="${LIBTORCH}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+export PATH="${MODKIT_REPO_DIR}/target/release:${PATH}"
 
-# ...existing code inside generated setup_modkit_env.sh heredoc...
-
+echo ""
+echo "Modkit environment configured:"
 echo "  LIBTORCH_USE_PYTORCH          = ${LIBTORCH_USE_PYTORCH}"
 echo "  LIBTORCH_BYPASS_VERSION_CHECK = ${LIBTORCH_BYPASS_VERSION_CHECK}"
 echo "  LIBTORCH                      = ${LIBTORCH}"
 echo "  DYLD_LIBRARY_PATH             = ${DYLD_LIBRARY_PATH}"
-echo "  Python                        = ${MODKIT_VENV_DIR}/bin/python ($("${MODKIT_VENV_DIR}/bin/python" --version 2>&1), ${MODKIT_PYTHON_VER})"
+echo "  LD_LIBRARY_PATH               = ${LD_LIBRARY_PATH}"
+echo "  Python                        = ${MODKIT_VENV_DIR}/bin/python" \
+     "($("${MODKIT_VENV_DIR}/bin/python" --version 2>&1), ${MODKIT_PYTHON_VER})"
+echo "  PATH (prepended)              = ${MODKIT_REPO_DIR}/target/release"
 
 if [[ -d "${LIBTORCH}" ]]; then
     echo "  libtorch path                 = OK"
@@ -704,39 +712,33 @@ else
     echo "  modkit binary                 = NOT FOUND"
     echo ""
     echo "Environment variables are set, but modkit binary is missing."
-    echo "You may need to compile modkit first."
 fi
 
-# Clean up local variables to avoid polluting the caller's namespace
 unset MODKIT_INSTALL_DIR MODKIT_VENV_DIR MODKIT_REPO_DIR MODKIT_BINARY MODKIT_PYTHON_VER
 SETUP_EOF
 
     chmod +x "${SETUP_SCRIPT}"
     print_success "Environment setup script generated at: ${SETUP_SCRIPT}"
-    
-    # Source the generated script to configure the current session
+
     echo "Sourcing environment setup script..."
-    # Save variables that the setup script's cleanup will unset
     local SAVED_MODKIT_REPO_DIR="${MODKIT_REPO_DIR}"
     local SAVED_VENV_DIR="${VENV_DIR}"
-    
+
     source "${SETUP_SCRIPT}" "${INSTALL_DIR}"
-    
-    # Restore variables needed by subsequent build steps
+
     MODKIT_REPO_DIR="${SAVED_MODKIT_REPO_DIR}"
     VENV_DIR="${SAVED_VENV_DIR}"
-    
-    # Additional verification of paths
+
     echo ""
     echo "Verifying paths..."
-    
+
     if [[ -d "${LIBTORCH}" ]]; then
         print_success "LIBTORCH path exists: ${LIBTORCH}"
     else
         print_error "LIBTORCH path not found: ${LIBTORCH}"
         exit 1
     fi
-    
+
     if [[ -d "${LIBTORCH}/lib" ]]; then
         print_success "libtorch libraries found"
         echo "Sample libraries:"
@@ -745,7 +747,7 @@ SETUP_EOF
         print_error "libtorch lib directory not found"
         exit 1
     fi
-    
+
     echo ""
     echo "To set up this environment in a new terminal session, run:"
     echo "  source \"${SETUP_SCRIPT}\" \"${INSTALL_DIR}\""
@@ -777,9 +779,12 @@ build_modkit() {
         print_error "Compilation failed"
         echo ""
         echo "Troubleshooting tips:"
-        echo "  1. Ensure all environment variables are set correctly"
-        echo "  2. Check that PyTorch is installed: \"${VENV_DIR}/bin/python\" -m pip list | grep torch"
-        echo "  3. Try cleaning and rebuilding: cargo clean && cargo build --release --features accelerate,tch"
+        echo "  1. Set up the build environment first:"
+        echo "       source \"${INSTALL_DIR}/setup_modkit_env.sh\" \"${INSTALL_DIR}\""
+        echo "  2. Check that PyTorch is installed:"
+        echo "       \"${VENV_DIR}/bin/python\" -m pip list | grep torch"
+        echo "  3. Clean and rebuild:"
+        echo "       cd \"${MODKIT_REPO_DIR}\" && cargo clean && cargo build --release --features accelerate,tch"
         exit 1
     fi
     
@@ -963,10 +968,14 @@ MACOS_VERSION=$(sw_vers -productVersion)
 echo "Detected macOS version: ${MACOS_VERSION}"
 
 MACOS_MAJOR=$(echo "${MACOS_VERSION}" | cut -d. -f1)
-if [[ "${MACOS_MAJOR}" -lt 11 ]]; then
-    print_error "macOS 11 (Big Sur) or later is required for Metal GPU support"
-    echo "Detected macOS version: ${MACOS_VERSION} (major: ${MACOS_MAJOR})"
-    echo "Please upgrade your macOS before running this script."
+MACOS_MINOR=$(echo "${MACOS_VERSION}" | cut -d. -f2)
+
+if [[ "${MACOS_MAJOR}" -lt 12 ]] || \
+   [[ "${MACOS_MAJOR}" -eq 12 && "${MACOS_MINOR}" -lt 3 ]]; then
+    print_error "macOS 12.3 (Monterey) or later is required for PyTorch Metal (MPS) GPU support."
+    echo "Detected macOS version: ${MACOS_VERSION}"
+    echo "On macOS < 12.3 torch.backends.mps.is_available() returns false and GPU acceleration"
+    echo "cannot be used. Please upgrade macOS before running this script."
     exit 1
 fi
 
