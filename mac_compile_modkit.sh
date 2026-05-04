@@ -1027,9 +1027,10 @@ if [[ "${MACOS_MAJOR}" -lt 12 ]] || \
     echo "Detected macOS version: ${MACOS_VERSION}"
     echo "On macOS < 12.3 torch.backends.mps.is_available() returns false and GPU acceleration"
     echo "cannot be used. Please upgrade macOS before running this script."
+    exit 1
 fi
 
-# Run main installation  exit 1
-mainfi
+# Run main installation
+main
 
-exit 0n main installation
+exit 0
