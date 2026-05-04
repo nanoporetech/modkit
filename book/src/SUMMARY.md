@@ -29,6 +29,7 @@
     - [Check modified base tags](./intro_modbam_check_tags.md)
     - [Find regions of accessible chromatin](./intro_open_chromatin.md)
 - [Extended subcommand help](./advanced_usage.md)
+- [Compiling for Apple Silicon](./mac_compile_modkit.md)
 - [Troubleshooting](./troubleshooting.md)
 - [Frequently asked questions](./faq.md)
 - [Current limitations](./limitations.md)
