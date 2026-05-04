@@ -749,6 +749,13 @@ pub struct MultiSampleDmr {
     #[clap(help_heading = "Sample Options")]
     #[arg(long, alias = "min-coverage", default_value_t = 0)]
     min_valid_coverage: u64,
+    /// Reference sample name to compare all other samples against. When
+    /// provided, only performs comparisons between this reference and all
+    /// other samples, instead of all pairwise comparisons. The reference
+    /// sample must match one of the sample names provided via --sample.
+    #[clap(help_heading = "Sample Options")]
+    #[arg(long)]
+    ref_sample: Option<String>,
 }
 
 impl MultiSampleDmr {
@@ -877,15 +884,35 @@ impl MultiSampleDmr {
             info!("calculating differntial methylation for {code} in isolation")
         }
 
-        let sample_pb =
-            mpb.add(get_master_progress_bar(sample_index.num_combinations()?));
+        // Generate sample pairs based on whether a reference sample is specified
+        let sample_pairs: Vec<(&String, &String)> = if let Some(ref_name) = &self.ref_sample {
+            // Validate that the reference sample exists
+            if !names.contains_key(ref_name) {
+                return Err(anyhow::anyhow!(
+                    "reference sample '{}' not found in provided samples. Available samples: {}",
+                    ref_name,
+                    names.keys().sorted().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                ));
+            }
+            info!("using reference sample: {}", ref_name);
 
-        let samples = names.keys().sorted().collect::<Vec<&String>>();
-        for pair in
-            samples.into_iter().combinations(2).progress_with(sample_pb.clone())
-        {
-            let a_name = pair[0];
-            let b_name = pair[1];
+            // Compare all samples against the reference
+            names.keys()
+                .filter(|name| *name != ref_name)
+                .map(|name| (ref_name, name))
+                .collect()
+        } else {
+            // All pairwise comparisons
+            let samples = names.keys().sorted().collect::<Vec<&String>>();
+            samples.into_iter()
+                .combinations(2)
+                .map(|pair| (pair[0], pair[1]))
+                .collect()
+        };
+
+        let sample_pb = mpb.add(get_master_progress_bar(sample_pairs.len() as u64));
+
+        for (a_name, b_name) in sample_pairs.into_iter().progress_with(sample_pb.clone()) {
             let a_idxs = names.get(a_name).unwrap();
             let b_idxs = names.get(b_name).unwrap();
 
