@@ -22,10 +22,22 @@
 #
 # Usage:
 #   bash mac_compile_modkit.sh <installation_directory> [modkit_version]
+#   bash mac_compile_modkit.sh --help
 #
 # Examples:
 #   bash mac_compile_modkit.sh /path/to/install          # Install latest version to location
 #   bash mac_compile_modkit.sh ~/tools v0.5.0            # Install specific version to location
+#
+# Optional Python controls:
+#   MODKIT_PYTHON_PROVIDER=auto|system|pyenv|uv
+#   MODKIT_PYTHON_VERSION=3.11.9
+#   MODKIT_USE_UV=auto|0|1
+#
+# Examples:
+#   MODKIT_PYTHON_PROVIDER=system bash mac_compile_modkit.sh ~/tools
+#   MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash mac_compile_modkit.sh ~/tools
+#   MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash mac_compile_modkit.sh ~/tools
+#   MODKIT_USE_UV=0 bash mac_compile_modkit.sh ~/tools
 #
 ################################################################################
 
@@ -35,17 +47,63 @@ set -euo pipefail  # Exit on error, undefined variables, and pipe failures
 # Configuration
 ################################################################################
 
-# Installation directory (mandatory)
+print_usage() {
+    cat << EOF
+Usage:
+  bash $0 <installation_directory> [modkit_version]
+  bash $0 --help
+
+Arguments:
+  installation_directory    Required. Path where modkit will be installed.
+  modkit_version            Optional. Git tag to checkout. Default: latest.
+
+Optional Python environment controls:
+  MODKIT_PYTHON_PROVIDER    auto | system | pyenv | uv
+                            Default: auto
+
+  MODKIT_PYTHON_VERSION     Optional Python version request.
+                            For uv:    3.11, 3.12, 3.12.2 are acceptable.
+                            For pyenv: prefer an exact version, e.g. 3.11.9.
+
+  MODKIT_USE_UV             auto | 0 | 1
+                            auto: use uv for venv/pip if uv is available.
+                            0:    use python -m venv and python -m pip.
+                            1:    require/use uv venv and uv pip.
+
+Examples:
+  bash $0 ~/tools
+  bash $0 ~/tools v0.5.0
+  MODKIT_PYTHON_PROVIDER=system bash $0 ~/tools
+  MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash $0 ~/tools
+  MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash $0 ~/tools
+  MODKIT_USE_UV=0 bash $0 ~/tools
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    print_usage
+    exit 0
+fi
+
+# Installation directory mandatory
 if [[ $# -lt 1 ]]; then
-    echo "Usage: bash $0 <installation_directory> [modkit_version]"
-    echo "  installation_directory: Required. Path where modkit will be installed."
-    echo "  modkit_version:         Optional. Git tag to checkout (default: latest)."
+    print_usage
     exit 1
 fi
 INSTALL_DIR="$1"
 
-# Modkit version to install (default: latest release)
+# Modkit version to install default latest release
 MODKIT_VERSION="${2:-latest}"
+
+# Python toolchain controls
+MODKIT_PYTHON_PROVIDER="${MODKIT_PYTHON_PROVIDER:-auto}"  # auto | system | pyenv | uv
+MODKIT_PYTHON_VERSION="${MODKIT_PYTHON_VERSION:-}"        # optional
+MODKIT_USE_UV="${MODKIT_USE_UV:-auto}"                    # auto | 0 | 1
+
+# Resolved later by resolve_python_toolchain
+MODKIT_PYTHON_BIN=""
+MODKIT_PYTHON_PROVIDER_EFFECTIVE=""
+MODKIT_UV_ENABLED=0
 
 # Colors for output
 RED='\033[0;31m'
@@ -84,6 +142,118 @@ command_exists() {
 press_enter_to_continue() {
     echo ""
     read -p "Press Enter to continue..."
+}
+
+ensure_command_or_brew_install() {
+    local CMD="$1"
+    local FORMULA="${2:-$1}"
+
+    if command_exists "${CMD}"; then
+        return 0
+    fi
+
+    if command_exists brew; then
+        echo "Installing ${FORMULA} via Homebrew..."
+        brew install "${FORMULA}"
+    else
+        print_error "${CMD} is required but was not found, and Homebrew is unavailable"
+        exit 1
+    fi
+}
+
+resolve_python_toolchain() {
+    echo ""
+    echo "Resolving Python toolchain..."
+
+    case "${MODKIT_PYTHON_PROVIDER}" in
+        auto|system|pyenv|uv) ;;
+        *)
+            print_error "Invalid MODKIT_PYTHON_PROVIDER='${MODKIT_PYTHON_PROVIDER}'. Use auto, system, pyenv, or uv."
+            exit 1
+            ;;
+    esac
+
+    case "${MODKIT_PYTHON_PROVIDER}" in
+        system)
+            MODKIT_PYTHON_PROVIDER_EFFECTIVE="system"
+            MODKIT_PYTHON_BIN="$(command -v python3 || true)"
+            ;;
+
+        pyenv)
+            ensure_command_or_brew_install pyenv
+            MODKIT_PYTHON_PROVIDER_EFFECTIVE="pyenv"
+            if [[ -n "${MODKIT_PYTHON_VERSION}" ]]; then
+                pyenv install -s "${MODKIT_PYTHON_VERSION}"
+                local PYENV_PREFIX
+                PYENV_PREFIX="$(pyenv prefix "${MODKIT_PYTHON_VERSION}")"
+                MODKIT_PYTHON_BIN="${PYENV_PREFIX}/bin/python3"
+            else
+                MODKIT_PYTHON_BIN="$(pyenv which python3)"
+            fi
+            ;;
+
+        uv)
+            ensure_command_or_brew_install uv
+            MODKIT_PYTHON_PROVIDER_EFFECTIVE="uv"
+            if [[ -n "${MODKIT_PYTHON_VERSION}" ]]; then
+                uv python install "${MODKIT_PYTHON_VERSION}"
+                MODKIT_PYTHON_BIN="$(uv python find "${MODKIT_PYTHON_VERSION}")"
+            else
+                MODKIT_PYTHON_BIN="$(uv python find python3 2>/dev/null || uv python find)"
+            fi
+            ;;
+
+        auto)
+            if [[ -n "${MODKIT_PYTHON_VERSION}" && $(command_exists uv && echo yes || echo no) == "yes" ]]; then
+                MODKIT_PYTHON_PROVIDER_EFFECTIVE="uv"
+                uv python install "${MODKIT_PYTHON_VERSION}"
+                MODKIT_PYTHON_BIN="$(uv python find "${MODKIT_PYTHON_VERSION}")"
+            elif [[ -n "${MODKIT_PYTHON_VERSION}" && $(command_exists pyenv && echo yes || echo no) == "yes" ]]; then
+                MODKIT_PYTHON_PROVIDER_EFFECTIVE="pyenv"
+                pyenv install -s "${MODKIT_PYTHON_VERSION}"
+                local PYENV_PREFIX
+                PYENV_PREFIX="$(pyenv prefix "${MODKIT_PYTHON_VERSION}")"
+                MODKIT_PYTHON_BIN="${PYENV_PREFIX}/bin/python3"
+            else
+                MODKIT_PYTHON_PROVIDER_EFFECTIVE="system"
+                MODKIT_PYTHON_BIN="$(command -v python3 || true)"
+            fi
+            ;;
+    esac
+
+    if [[ -z "${MODKIT_PYTHON_BIN}" || ! -x "${MODKIT_PYTHON_BIN}" ]]; then
+        print_error "Could not resolve a usable Python executable"
+        exit 1
+    fi
+
+    case "${MODKIT_USE_UV}" in
+        1|true|yes)
+            ensure_command_or_brew_install uv
+            MODKIT_UV_ENABLED=1
+            ;;
+        0|false|no)
+            MODKIT_UV_ENABLED=0
+            ;;
+        auto)
+            if command_exists uv; then
+                MODKIT_UV_ENABLED=1
+            else
+                MODKIT_UV_ENABLED=0
+            fi
+            ;;
+        *)
+            print_error "Invalid MODKIT_USE_UV='${MODKIT_USE_UV}'. Use auto, 0, or 1."
+            exit 1
+            ;;
+    esac
+
+    echo "Python configuration:"
+    echo "  Provider requested: ${MODKIT_PYTHON_PROVIDER}"
+    echo "  Provider used:      ${MODKIT_PYTHON_PROVIDER_EFFECTIVE}"
+    echo "  Version requested:  ${MODKIT_PYTHON_VERSION:-default}"
+    echo "  Python executable:  ${MODKIT_PYTHON_BIN}"
+    echo "  Python version:     $("${MODKIT_PYTHON_BIN}" --version 2>&1)"
+    echo "  uv for venv/pip:    $([[ "${MODKIT_UV_ENABLED}" == "1" ]] && echo yes || echo no)"
 }
 
 ################################################################################
@@ -319,20 +489,25 @@ create_venv() {
     
     VENV_DIR="${INSTALL_DIR}/venv_modkit"
     
-    echo "Using Python: $(which python3) - $(python3 --version)"
+    echo "Using Python: ${MODKIT_PYTHON_BIN} - $("${MODKIT_PYTHON_BIN}" --version 2>&1)"
     
     if [[ -d "${VENV_DIR}" ]]; then
         print_warning "Virtual environment already exists at: ${VENV_DIR}"
         echo "Using existing virtual environment"
     else
         echo "Creating virtual environment at: ${VENV_DIR}"
-        python3 -m venv "${VENV_DIR}"
+        if [[ "${MODKIT_UV_ENABLED}" == "1" ]]; then
+            uv venv --python "${MODKIT_PYTHON_BIN}" "${VENV_DIR}"
+        else
+            "${MODKIT_PYTHON_BIN}" -m venv "${VENV_DIR}"
+        fi
         print_success "Virtual environment created"
     fi
     
     # Verify virtual environment
-    if [[ -f "${VENV_DIR}/bin/activate" ]]; then
+    if [[ -f "${VENV_DIR}/bin/activate" && -x "${VENV_DIR}/bin/python" ]]; then
         print_success "Verification: Virtual environment ready"
+        echo "  Venv Python: ${VENV_DIR}/bin/python - $("${VENV_DIR}/bin/python" --version 2>&1)"
     else
         print_error "Failed to create virtual environment"
         exit 1
@@ -346,12 +521,14 @@ create_venv() {
 install_pytorch() {
     print_step 7 "Installing PyTorch in Virtual Environment"
     
-    # Deactivate conda base environment if active, to avoid conflicts with pip
-    if command_exists conda; then
-        print_warning "Conda detected. Deactivating conda base environment to avoid conflicts..."
+    local VENV_PYTHON="${VENV_DIR}/bin/python"
+
+    # Deactivate conda only if an environment is actually active.
+    if [[ -n "${CONDA_DEFAULT_ENV:-}" ]] && command_exists conda; then
+        print_warning "Conda environment '${CONDA_DEFAULT_ENV}' is active. Deactivating to avoid conflicts..."
         eval "$(conda shell.bash hook)"
         conda deactivate 2>/dev/null || true
-        print_success "Conda base environment deactivated"
+        print_success "Conda environment deactivated"
     fi
     
     # Activate virtual environment
@@ -362,13 +539,18 @@ install_pytorch() {
     
     # Install PyTorch
     echo "Installing PyTorch and NumPy and dependencies (this may take a few minutes)..."
-    pip3 install torch numpy
+    if [[ "${MODKIT_UV_ENABLED}" == "1" ]]; then
+        uv pip install --python "${VENV_PYTHON}" torch numpy
+    else
+        "${VENV_PYTHON}" -m pip install --upgrade pip
+        "${VENV_PYTHON}" -m pip install torch numpy
+    fi
     
     print_success "PyTorch and NumPy installed successfully"
     
     # Verify PyTorch installation
     echo "Verifying PyTorch installation..."
-    python3 -c "import torch; print(f'PyTorch version: {torch.__version__}')" || {
+    "${VENV_PYTHON}" -c "import torch; print(f'PyTorch version: {torch.__version__}')" || {
         print_error "PyTorch verification failed"
         exit 1
     }
@@ -376,7 +558,7 @@ install_pytorch() {
     # Check MPS (Metal Performance Shaders) availability for Apple Silicon
     if [[ $(uname -m) == "arm64" ]]; then
         echo "Checking Metal Performance Shaders (GPU) support..."
-        python3 -c "import torch; print(f'MPS available: {torch.backends.mps.is_available()}')"
+        "${VENV_PYTHON}" -c "import torch; print(f'MPS available: {torch.backends.mps.is_available()}')"
     fi
     
     print_success "Verification: PyTorch is working correctly"
@@ -494,31 +676,19 @@ source "${MODKIT_VENV_DIR}/bin/activate"
 # Step 3: Detect Python version and set environment variables
 ################################################################################
 
-MODKIT_PYTHON_VER=$(python3 -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')")
+MODKIT_PYTHON_VER=$("${MODKIT_VENV_DIR}/bin/python" -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')")
 
 export LIBTORCH_USE_PYTORCH=1
 export LIBTORCH_BYPASS_VERSION_CHECK=1
 export LIBTORCH="${MODKIT_VENV_DIR}/lib/${MODKIT_PYTHON_VER}/site-packages/torch"
-export DYLD_LIBRARY_PATH="${LIBTORCH}/lib"
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${DYLD_LIBRARY_PATH}"
 
-################################################################################
-# Step 4: Add modkit binary to PATH
-################################################################################
+# ...existing code inside generated setup_modkit_env.sh heredoc...
 
-export PATH="${MODKIT_REPO_DIR}/target/release:${PATH}"
-
-################################################################################
-# Step 5: Verify setup
-################################################################################
-
-echo ""
-echo "Modkit environment configured:"
 echo "  LIBTORCH_USE_PYTORCH          = ${LIBTORCH_USE_PYTORCH}"
 echo "  LIBTORCH_BYPASS_VERSION_CHECK = ${LIBTORCH_BYPASS_VERSION_CHECK}"
 echo "  LIBTORCH                      = ${LIBTORCH}"
 echo "  DYLD_LIBRARY_PATH             = ${DYLD_LIBRARY_PATH}"
-echo "  Python                        = $(which python3) (${MODKIT_PYTHON_VER})"
+echo "  Python                        = ${MODKIT_VENV_DIR}/bin/python ($("${MODKIT_VENV_DIR}/bin/python" --version 2>&1), ${MODKIT_PYTHON_VER})"
 
 if [[ -d "${LIBTORCH}" ]]; then
     echo "  libtorch path                 = OK"
@@ -608,7 +778,7 @@ build_modkit() {
         echo ""
         echo "Troubleshooting tips:"
         echo "  1. Ensure all environment variables are set correctly"
-        echo "  2. Check that PyTorch is installed: pip3 list | grep torch"
+        echo "  2. Check that PyTorch is installed: \"${VENV_DIR}/bin/python\" -m pip list | grep torch"
         echo "  3. Try cleaning and rebuilding: cargo clean && cargo build --release --features accelerate,tch"
         exit 1
     fi
@@ -651,39 +821,67 @@ build_modkit() {
 save_installation_info() {
     INFO_FILE="${INSTALL_DIR}/installation_info.txt"
     SETUP_SCRIPT="${INSTALL_DIR}/setup_modkit_env.sh"
+    local UV_VERSION_INFO
+    local PYENV_VERSION_INFO
+    local VENV_PYTHON="${VENV_DIR}/bin/python"
+
+    UV_VERSION_INFO="$(command_exists uv && uv --version || echo "Not available")"
+    PYENV_VERSION_INFO="$(command_exists pyenv && pyenv --version || echo "Not available")"
     
     cat > "${INFO_FILE}" << EOF
-Modkit Installation Information
-================================
+ Modkit Installation Information
+ ================================
 
-Installation Date: $(date)
-macOS Version: $(sw_vers -productVersion)
-Architecture: $(uname -m)
-Hostname: $(hostname)
+ Installation Date: $(date)
+ macOS Version: $(sw_vers -productVersion)
+ Architecture: $(uname -m)
+ Hostname: $(hostname)
 
-Installation Paths:
--------------------
-Installation Directory: ${INSTALL_DIR}
-Modkit Repository: ${MODKIT_REPO_DIR}
-Modkit Binary: ${MODKIT_REPO_DIR}/target/release/modkit
-Virtual Environment: ${VENV_DIR}
-Environment Setup Script: ${SETUP_SCRIPT}
+ Installation Paths:
+ -------------------
+ Installation Directory: ${INSTALL_DIR}
+ Modkit Repository: ${MODKIT_REPO_DIR}
+ Modkit Binary: ${MODKIT_REPO_DIR}/target/release/modkit
+ Virtual Environment: ${VENV_DIR}
+ Environment Setup Script: ${SETUP_SCRIPT}
 
-Versions:
----------
-Modkit Version: ${MODKIT_VERSION}
-Rust Version: $(rustc --version)
-Cargo Version: $(cargo --version)
-Python Version: $(python3 --version)
-PyTorch Version: $(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "Unknown")
+ Versions:
+ ---------
+ Modkit Version: ${MODKIT_VERSION}
+ Rust Version: $(rustc --version)
+ Cargo Version: $(cargo --version)
+ Python Provider Requested: ${MODKIT_PYTHON_PROVIDER}
+ Python Provider Used: ${MODKIT_PYTHON_PROVIDER_EFFECTIVE}
+ Python Executable: ${MODKIT_PYTHON_BIN}
+ Python Version: $("${MODKIT_PYTHON_BIN}" --version 2>&1)
+ Virtual Environment Python: ${VENV_PYTHON}
+ Virtual Environment Python Version: $("${VENV_PYTHON}" --version 2>&1)
+ uv Enabled For Venv/Pip: $([[ "${MODKIT_UV_ENABLED}" == "1" ]] && echo "yes" || echo "no")
+ uv Version: ${UV_VERSION_INFO}
+ pyenv Version: ${PYENV_VERSION_INFO}
+ PyTorch Version: $("${VENV_PYTHON}" -c "import torch; print(torch.__version__)" 2>/dev/null || echo "Unknown")
 
-Quick Start:
------------
-source "${SETUP_SCRIPT}" "${INSTALL_DIR}"
-modkit --version
+ Quick Start:
+ -----------
+ source "${SETUP_SCRIPT}" "${INSTALL_DIR}"
+ modkit --version
 
-For detailed usage instructions, run:
-modkit --help
+ Python Run Examples:
+ --------------------
+ System Python:
+ MODKIT_PYTHON_PROVIDER=system bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
+
+ pyenv Python:
+ MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
+
+ uv Python:
+ MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
+
+ Disable uv venv/pip usage:
+ MODKIT_USE_UV=0 bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
+
+ For detailed usage instructions, run:
+ modkit --help
 EOF
     
     echo "Installation information saved to: ${INFO_FILE}"
@@ -705,10 +903,11 @@ main() {
     echo ""
     echo "Installation directory: ${INSTALL_DIR}"
     echo "Modkit version: ${MODKIT_VERSION}"
+    echo "Python provider: ${MODKIT_PYTHON_PROVIDER}"
+    echo "Python version request: ${MODKIT_PYTHON_VERSION:-default}"
+    echo "Use uv for venv/pip: ${MODKIT_USE_UV}"
     echo ""
-    echo "The installation process includes 9 steps and may take 15-30 minutes."
-    echo ""
-    
+
     # Confirm before proceeding
     read -p "Continue with installation? (y/n): " -n 1 -r
     echo ""
@@ -727,6 +926,7 @@ main() {
     install_rust_cargo
     clone_modkit_repo
     checkout_version
+    resolve_python_toolchain
     create_venv
     install_pytorch
     setup_environment_variables
