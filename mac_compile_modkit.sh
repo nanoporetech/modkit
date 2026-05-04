@@ -422,27 +422,28 @@ install_rust_cargo() {
 
 clone_modkit_repo() {
     print_step 4 "Cloning Modkit GitHub Repository"
-    
-    # Create installation directory
+
     mkdir -p "${INSTALL_DIR}"
     cd "${INSTALL_DIR}"
-    
+
     MODKIT_REPO_DIR="${INSTALL_DIR}/modkit"
-    
+
     if [[ -d "${MODKIT_REPO_DIR}/.git" ]]; then
         print_warning "Modkit repository already exists at: ${MODKIT_REPO_DIR}"
         echo "Updating existing repository..."
         cd "${MODKIT_REPO_DIR}"
         git fetch --all --tags
-        print_success "Repository updated"
+        # Reset any stale working tree changes so the subsequent checkout is clean
+        git reset --hard
+        git clean -fd
+        print_success "Repository updated and working tree cleaned"
     else
         echo "Cloning modkit repository..."
         git clone https://github.com/nanoporetech/modkit.git
         cd modkit
         print_success "Repository cloned successfully"
     fi
-    
-    # Verify clone
+
     if [[ -d "${MODKIT_REPO_DIR}/.git" ]]; then
         print_success "Verification: Repository available at ${MODKIT_REPO_DIR}"
     else
@@ -461,15 +462,13 @@ checkout_version() {
     cd "${MODKIT_REPO_DIR}"
 
     if [[ "${MODKIT_VERSION}" == "latest" ]]; then
-        # Get the latest release tag by semantic version (sorted by version, descending)
         echo "Fetching latest release version..."
         LATEST_TAG=$(git tag -l "v*" --sort=-v:refname 2>/dev/null | head -n1 || echo "")
-        
+
         if [[ -z "${LATEST_TAG}" ]]; then
-            # Fallback: try all tags if no v* tags exist
             LATEST_TAG=$(git tag --sort=-v:refname 2>/dev/null | head -n1 || echo "")
         fi
-        
+
         if [[ -z "${LATEST_TAG}" ]]; then
             print_warning "No release tags found, using main branch"
             git checkout main
@@ -484,13 +483,11 @@ checkout_version() {
         echo "Checking out version: ${MODKIT_VERSION}"
         git checkout "${MODKIT_VERSION}"
     fi
-    
+
     print_success "Using modkit version: ${MODKIT_VERSION}"
-    
-    # Show current commit
     echo "Current commit: $(git rev-parse --short HEAD)"
 
-    # Warn if the Cargo.toml crate version does not match the git tag
+    # Verify Cargo.toml version matches the git tag as a sanity check
     local CARGO_VERSION
     CARGO_VERSION=$(grep -m1 '^version' "${MODKIT_REPO_DIR}/modkit/Cargo.toml" 2>/dev/null \
         | sed 's/.*"\(.*\)".*/\1/' || echo "unknown")
@@ -499,9 +496,11 @@ checkout_version() {
     if [[ "${MODKIT_VERSION}" != "main" && \
           "${MODKIT_VERSION}" != "v${CARGO_VERSION}" && \
           "${MODKIT_VERSION}" != "${CARGO_VERSION}" ]]; then
-        print_warning "Git tag '${MODKIT_VERSION}' does not match the Cargo.toml crate version '${CARGO_VERSION}'."
-        print_warning "The compiled binary will report version ${CARGO_VERSION}, not ${MODKIT_VERSION}."
+        print_warning "Git tag '${MODKIT_VERSION}' does not match Cargo.toml version '${CARGO_VERSION}'."
+        print_warning "The compiled binary will report version ${CARGO_VERSION}."
         print_warning "This is an upstream discrepancy in the modkit repository."
+    else
+        print_success "Git tag matches Cargo.toml version: ${CARGO_VERSION}"
     fi
 }
 
@@ -1028,10 +1027,9 @@ if [[ "${MACOS_MAJOR}" -lt 12 ]] || \
     echo "Detected macOS version: ${MACOS_VERSION}"
     echo "On macOS < 12.3 torch.backends.mps.is_available() returns false and GPU acceleration"
     echo "cannot be used. Please upgrade macOS before running this script."
-    exit 1
 fi
 
-# Run main installation
-main
+# Run main installation  exit 1
+mainfi
 
-exit 0
+exit 0n main installation
