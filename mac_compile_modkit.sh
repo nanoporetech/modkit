@@ -457,9 +457,9 @@ clone_modkit_repo() {
 
 checkout_version() {
     print_step 5 "Checking Out Modkit Version"
-    
+
     cd "${MODKIT_REPO_DIR}"
-    
+
     if [[ "${MODKIT_VERSION}" == "latest" ]]; then
         # Get the latest release tag by semantic version (sorted by version, descending)
         echo "Fetching latest release version..."
@@ -489,6 +489,20 @@ checkout_version() {
     
     # Show current commit
     echo "Current commit: $(git rev-parse --short HEAD)"
+
+    # Warn if the Cargo.toml crate version does not match the git tag
+    local CARGO_VERSION
+    CARGO_VERSION=$(grep -m1 '^version' "${MODKIT_REPO_DIR}/modkit/Cargo.toml" 2>/dev/null \
+        | sed 's/.*"\(.*\)".*/\1/' || echo "unknown")
+    echo "Cargo crate version: ${CARGO_VERSION}"
+
+    if [[ "${MODKIT_VERSION}" != "main" && \
+          "${MODKIT_VERSION}" != "v${CARGO_VERSION}" && \
+          "${MODKIT_VERSION}" != "${CARGO_VERSION}" ]]; then
+        print_warning "Git tag '${MODKIT_VERSION}' does not match the Cargo.toml crate version '${CARGO_VERSION}'."
+        print_warning "The compiled binary will report version ${CARGO_VERSION}, not ${MODKIT_VERSION}."
+        print_warning "This is an upstream discrepancy in the modkit repository."
+    fi
 }
 
 ################################################################################
