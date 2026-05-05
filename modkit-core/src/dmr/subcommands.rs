@@ -885,7 +885,9 @@ impl MultiSampleDmr {
         }
 
         // Generate sample pairs based on whether a reference sample is specified
-        let sample_pairs: Vec<(&String, &String)> = if let Some(ref_name) = &self.ref_sample {
+        let sample_pairs: Vec<(&String, &String)> = if let Some(ref_name) =
+            &self.ref_sample
+        {
             // Validate that the reference sample exists
             if !names.contains_key(ref_name) {
                 return Err(anyhow::anyhow!(
@@ -897,22 +899,27 @@ impl MultiSampleDmr {
             info!("using reference sample: {}", ref_name);
 
             // Compare all samples against the reference
-            names.keys()
+            names
+                .keys()
                 .filter(|name| *name != ref_name)
                 .map(|name| (ref_name, name))
                 .collect()
         } else {
             // All pairwise comparisons
             let samples = names.keys().sorted().collect::<Vec<&String>>();
-            samples.into_iter()
+            samples
+                .into_iter()
                 .combinations(2)
                 .map(|pair| (pair[0], pair[1]))
                 .collect()
         };
 
-        let sample_pb = mpb.add(get_master_progress_bar(sample_pairs.len() as u64));
+        let sample_pb =
+            mpb.add(get_master_progress_bar(sample_pairs.len() as u64));
 
-        for (a_name, b_name) in sample_pairs.into_iter().progress_with(sample_pb.clone()) {
+        for (a_name, b_name) in
+            sample_pairs.into_iter().progress_with(sample_pb.clone())
+        {
             let a_idxs = names.get(a_name).unwrap();
             let b_idxs = names.get(b_name).unwrap();
 
