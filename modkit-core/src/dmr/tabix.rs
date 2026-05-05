@@ -140,6 +140,7 @@ impl MultiSampleIndex {
         Ok((a, b))
     }
 
+    #[allow(unused)]
     pub(super) fn num_combinations(&self) -> anyhow::Result<usize> {
         n_choose_2(self.index_handlers.len())
     }
