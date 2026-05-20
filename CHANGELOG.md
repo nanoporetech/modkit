@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.6.3]
+### Adds
+  - [dmr] Adds `dmr isoform` for comparing methylation across isoforms of genes
+  - [dmr] Adds `dmr compare-tx-sites` for comparing methylation between two conditions from a transcriptome-aligned bedMethyl
+  - [bedmethyl] Adds `map-to-genome` to map a transcriptome aligned bedMethyl to genomic coordinates using a GTF
+
 ## [v0.6.2]
 ### Fixes
   - [docs] Fixes transparent background making it difficult to view images thank you @SuhasSrinivasan
@@ -403,4 +409,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - First release.
     
 ### Fixes
-
