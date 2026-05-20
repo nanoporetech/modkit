@@ -55,6 +55,10 @@ pub enum MkError {
     DmrMissing,
     #[error("invalid-bedmethyl-data")]
     InvalidBedMethyl(String),
+    #[error("invalid-transcript-position")]
+    InvalidTranscriptPosition,
+    #[error("invalid-genomic-position")]
+    InvalidGenomicPosition,
 
     // Misc
     #[error("invalid-record-name")]
@@ -80,6 +84,8 @@ pub enum MkError {
     IOFail(#[from] std::io::Error),
     #[error("empty-input")]
     EmptyInput,
+    #[error("invalid-gtf-record")]
+    InvalidGtfRecord,
 
     // Entropy
     #[error("zero-reads")]

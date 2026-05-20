@@ -54,6 +54,7 @@ tokio = "1.42.0"
 tracing = "0.1.41"
 modkit-logging = { path = "../modkit-logging" }
 safe-record = { path = "../safe-record" }
+serde_json = "1.0.149"
 
 [dev-dependencies]
 assert_approx_eq = "1.1.0"

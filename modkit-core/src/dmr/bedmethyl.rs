@@ -23,7 +23,7 @@ use crate::position_filter::Iv;
 use crate::tabix::ParseBedLine;
 use crate::util::{Strand, StrandRule};
 
-#[derive(new, Debug, PartialEq, Eq)]
+#[derive(new, Debug, PartialEq, Eq, Clone)]
 pub struct BedMethylLine {
     pub chrom: String,
     pub interval: Iv,

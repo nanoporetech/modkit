@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{stdout, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context};
@@ -14,6 +14,7 @@ use itertools::Itertools;
 use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use rust_htslib::bam::{self, Read};
+use rust_htslib::tbx::{Read as TbxRead, Reader as TbxReader};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use modkit_logging::init_logging;
@@ -21,11 +22,15 @@ use modkit_logging::init_logging;
 use crate::bedmethyl_util::BedMethylStream;
 use crate::command_utils::calculate_chunk_size;
 use crate::dmr::bedmethyl::BedMethylLine;
+use crate::dmr::isoform::{
+    parse_gtf, transcript_pos0_to_genomic0, GtfId, GtfTranscript,
+};
 use crate::errs::MkError;
 use crate::interval_chunks::{
     ChromCoordinates, ReferenceIntervalBatchesFeeder, TotalLength,
 };
 use crate::mod_base_code::ModCodeRepr;
+use crate::position_filter::Iv;
 use crate::tabix::{HtsTabixHandler, ParseBedLine};
 use crate::util::{
     create_out_directory, get_guage, get_subroutine_progress_bar, get_ticker,
@@ -43,6 +48,10 @@ pub enum EntryBedMethyl {
     /// For details on the BigWig format see https://doi.org/10.1093/bioinformatics/btq351.
     #[command(name = "tobigwig")]
     ToBigWig(EntryToBigWig),
+    /// Map a transcriptome-aligned bedMethyl file to genome-coordinates based
+    /// on a GTF
+    #[command(name = "map-to-genome")]
+    MapToGenome(EntryMapToGenome),
 }
 
 impl EntryBedMethyl {
@@ -50,6 +59,7 @@ impl EntryBedMethyl {
         match self {
             EntryBedMethyl::MergeBedMethyl(x) => x.run(),
             EntryBedMethyl::ToBigWig(x) => x.run(),
+            EntryBedMethyl::MapToGenome(x) => x.run(),
         }
     }
 }
@@ -586,6 +596,117 @@ impl EntryToBigWig {
         } else {
             info!("{message}");
         }
+        Ok(())
+    }
+}
+
+#[derive(Args)]
+#[command(arg_required_else_help = true)]
+pub struct EntryMapToGenome {
+    input_bedmethyl: PathBuf,
+    output_bedmethyl: String,
+    #[arg(long, short = 't', alias = "tx")]
+    transcript_id: String,
+    #[arg(long)]
+    transcript_version: Option<u32>,
+    #[arg(long)]
+    gtf: PathBuf,
+    #[arg(long, default_value_t = false)]
+    header: bool,
+}
+
+impl EntryMapToGenome {
+    pub fn run(&self) -> anyhow::Result<()> {
+        let _ = init_logging(None);
+
+        let multi_progress = MultiProgress::new();
+        let tx_models = parse_gtf(&self.gtf, &multi_progress)?
+            .into_iter()
+            .collect::<FxHashMap<_, _>>();
+
+        let tx_id = if let Some(tx_version) = self.transcript_version {
+            GtfTranscript::new(self.transcript_id.clone(), tx_version)
+        } else {
+            GtfTranscript::from_str(&self.transcript_id)
+                .context("failed to parse transcript id")?
+        };
+        let Some(tm) = tx_models.get(&tx_id) else {
+            bail!("didn't find {} in GTF", &self.transcript_id)
+        };
+
+        let processed_records = multi_progress.add(get_ticker());
+        processed_records.set_message("processed records");
+        let errored = multi_progress.add(get_ticker());
+        errored.set_message("errored records");
+
+        let mut reader = TbxReader::from_path(&self.input_bedmethyl)
+            .context("failed to get tabix reader")?;
+        let Some(tid) = reader
+            .seqnames()
+            .iter()
+            .find(|x| x.starts_with(&self.transcript_id))
+            .and_then(|contig_name| {
+                multi_progress.suspend(|| {
+                    info!(
+                        "found contig {contig_name} for transcript-id {}",
+                        self.transcript_id
+                    );
+                });
+                reader.tid(contig_name.as_str()).ok()
+            })
+        else {
+            bail!("didn't find {} in tabix header", self.transcript_id)
+        };
+
+        let mut writer: Box<dyn Write> = match self.output_bedmethyl.as_str() {
+            "-" | "stdout" => Box::new(BufWriter::new(stdout().lock())),
+            p @ _ => Box::new(BufWriter::new(File::create(p)?)),
+        };
+        if self.header {
+            writer.write(bedmethyl_header().as_bytes())?;
+        }
+
+        reader.fetch(tid, 0, tm.transcript_len)?;
+        for res in reader.records() {
+            let Ok(mut bml) = res
+                .map_err(|e| MkError::HtsLibError(e))
+                .and_then(|bs| {
+                    String::from_utf8(bs)
+                        .map_err(|e| MkError::InvalidBedMethyl(e.to_string()))
+                })
+                .and_then(|raw| BedMethylLine::parse(&raw))
+            else {
+                errored.inc(1);
+                continue;
+            };
+            let Ok(genome_start) =
+                transcript_pos0_to_genomic0(&tm, bml.start())
+            else {
+                errored.inc(1);
+                continue;
+            };
+            let genome_stop = match bml.strand {
+                StrandRule::Positive | StrandRule::Both => {
+                    genome_start.saturating_add(1)
+                }
+                StrandRule::Negative => genome_start.saturating_sub(1),
+            };
+
+            bml.chrom = tm.chrom.clone();
+            bml.interval =
+                Iv { start: genome_start, stop: genome_stop, val: () };
+            writer.write(bml.to_line().as_bytes())?;
+            processed_records.inc(1);
+        }
+
+        multi_progress.suspend(|| {
+            info!(
+                "done, processed {} records, {} failed",
+                processed_records.position(),
+                errored.position()
+            );
+        });
+
         Ok(())
     }
 }
