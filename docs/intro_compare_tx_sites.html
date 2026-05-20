@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Removing modification calls at the ends of reads - Modkit</title>
+        <title>Compare methylation levels at transcriptome sites, summarized by gene - Modkit</title>
 
 
         <!-- Custom HTML head -->
@@ -177,47 +177,69 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="removing-modification-calls-at-the-ends-of-reads"><a class="header" href="#removing-modification-calls-at-the-ends-of-reads">Removing modification calls at the ends of reads</a></h1>
-<p>If you have reads where you know base modifications near the ends should not be used
-(for example, if they are in adapters), you can use the <code>--edge-filter &lt;n_basepairs&gt;</code> option.
-Two comma-separated values may be provided to asymmetrically filter out
-base modification calls from the start and end of reads. For example, 4,8 will
-filter out base modification calls in the first 4 and last 8 bases of the read. One value
-will filter symmetrically.</p>
-<ol>
-<li><code>pileup</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>adjust-mods</code>, will <strong>remove</strong> base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends
-from the resultant output modBAM.</li>
-<li><code>summary</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>sample-probs</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>call-mods</code>, will <strong>remove</strong> base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends from
-the resultant output modBAM.</li>
-<li><code>extract</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends, this also applies
-when making the read-calls table (see <a href="./intro_extract.html">intro to extract</a>).</li>
-</ol>
-<p>In <code>pileup</code>, <code>call-mods</code>, and <code>extract</code> the edge-filter is also respected when estimating the pass-thresholds.
-All commands have the flag <code>--invert-edge-filter</code> that will <em>keep</em> only base modification probabilities within
-<code>&lt;n_basepairs&gt;</code> of the ends of the reads.</p>
-<h2 id="example-usages"><a class="header" href="#example-usages">Example usages</a></h2>
-<h3 id="call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">Call mods with the estimated threshold and ignore modification calls within 100 base pairs of the ends of the reads</a></h3>
-<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --edge-filter 100
+                        <h1 id="compare-methylation-levels-at-transcriptome-sites-summarized-by-gene-with-dmr-compare-tx-sites"><a class="header" href="#compare-methylation-levels-at-transcriptome-sites-summarized-by-gene-with-dmr-compare-tx-sites">Compare methylation levels at transcriptome sites, summarized by gene, with <code>dmr compare-tx-sites</code></a></h1>
+<p>The <code>dmr compare-tx-sites</code> allows you to compare modifications between two conditions.
+This command uses a transcriptome-aligned bedMethyl table and maps the coordinates from each transcript to common gene coordinates.
+After which, the modification counts from each isoform are combined making a gene-level pileup.
+The gene-level modifications are then compared using the same method as <code>dmr isoform</code>.</p>
+<h2 id="example-command"><a class="header" href="#example-command">Example command:</a></h2>
+<p>This command uses two bedMethyl tables corresponding to two conditions to be compared.
+These bedMethyl tables are expected to be bgzipped and have tabix indices.</p>
+<pre><code class="language-bash">modkit dmr compare-tx-sites \
+  -a ${bedmethyl_a} \
+  -b ${bedmethyl_b} \
+  --out ${output.bed} \
+  --gtf ${gtf}
 </code></pre>
-<h3 id="perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">Perform pileup, ignoring base modification calls within 100 base pairs of the ends of the reads</a></h3>
-<pre><code>modkit pileup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 100
+<p>A volcano plot can be also made, using the following extra options.
+An example is below.</p>
+<pre><code class="language-bash">modkit dmr compare-tx-sites \
+  -a ${bedmethyl_a} \
+  -b ${bedmethyl_b} \
+  --out ${output.bed} \
+  --single-mod-code a \
+  --plot volcano.svg \
+  --gtf ${gtf} \
+  --log debug.log
 </code></pre>
-<p>Filter out base modification calls within the first 25 bases or the last 10 bases.</p>
-<pre><code>modkit pileup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 25,10
-</code></pre>
+<p>The volcano plot requires that <code>--single-mod-code</code> is used, since log2 fold-change is essentially a 2-class metric.</p>
+<p><img src="./images/volcano.png" title="Volcano plot comparing the most significant sites from two cell lines" alt="Volcano plot comparing the most significant sites from two cell lines"></p>
+<p>These data were downloaded from the reference <a href="https://www.biorxiv.org/content/10.1101/2025.09.11.675724v1">You et al., Benchmarking long-read RNA-sequencing technologies with LongBench: a cross-platform reference dataset profiling cancer cell lines with bulk and single-cell approaches</a></p>
+<h2 id="schema-of-output"><a class="header" href="#schema-of-output">Schema of output</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>column</th><th>name</th><th>description</th><th>type</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>chrom</td><td>name of contig from GTF</td><td>str</td></tr>
+<tr><td>2</td><td>chromStart</td><td>0-based start position</td><td>int</td></tr>
+<tr><td>3</td><td>chromEnd</td><td>0-based exclusive end position</td><td>int</td></tr>
+<tr><td>4</td><td>name</td><td>modification codes present at this position</td><td>str</td></tr>
+<tr><td>5</td><td>score</td><td>likelihood ration score</td><td>float</td></tr>
+<tr><td>6</td><td>strand</td><td>strand, ‘+’ or ‘-’</td><td>str</td></tr>
+<tr><td>7</td><td>p_value</td><td>p-value of alternative hypothesis</td><td>float</td></tr>
+<tr><td>8</td><td>gene_id</td><td>gene-id from the GTF</td><td>str</td></tr>
+<tr><td>9</td><td>gene_name</td><td>gene-name from the GTF or ‘-’ if not found</td><td>str</td></tr>
+<tr><td>10</td><td>log2_fold_change</td><td>log base 2 fold change</td><td>float</td></tr>
+<tr><td>11</td><td>cond_a_proportions</td><td>JSON formatted string of condition ‘A’ per-modification proprotions</td><td>str</td></tr>
+<tr><td>12</td><td>cond_b_proportions</td><td>JSON formatted string of condition ‘B’ per-modification proprotions</td><td>str</td></tr>
+<tr><td>13</td><td>cond_a_counts</td><td>JSON formatted string of condition ‘A’ per-modification counts</td><td>str</td></tr>
+<tr><td>14</td><td>cond_b_counts</td><td>JSON formatted string of condition ‘B’ per-modification counts</td><td>str</td></tr>
+</tbody>
+</table>
+</div>
+<p>Columns 11 through 14 are only present when the <code>--full</code> flag is passed.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="intro_call_mods.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="intro_dmr_isoform.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="intro_repair.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="intro_validate.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -227,11 +249,11 @@ All commands have the flag <code>--invert-edge-filter</code> that will <em>keep<
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="intro_call_mods.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="intro_dmr_isoform.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="intro_repair.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="intro_validate.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
