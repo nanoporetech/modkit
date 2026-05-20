@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Removing modification calls at the ends of reads - Modkit</title>
+        <title>Direct RNA Isoform DMR details - Modkit</title>
 
 
         <!-- Custom HTML head -->
@@ -177,47 +177,37 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="removing-modification-calls-at-the-ends-of-reads"><a class="header" href="#removing-modification-calls-at-the-ends-of-reads">Removing modification calls at the ends of reads</a></h1>
-<p>If you have reads where you know base modifications near the ends should not be used
-(for example, if they are in adapters), you can use the <code>--edge-filter &lt;n_basepairs&gt;</code> option.
-Two comma-separated values may be provided to asymmetrically filter out
-base modification calls from the start and end of reads. For example, 4,8 will
-filter out base modification calls in the first 4 and last 8 bases of the read. One value
-will filter symmetrically.</p>
-<ol>
-<li><code>pileup</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>adjust-mods</code>, will <strong>remove</strong> base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends
-from the resultant output modBAM.</li>
-<li><code>summary</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>sample-probs</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>call-mods</code>, will <strong>remove</strong> base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends from
-the resultant output modBAM.</li>
-<li><code>extract</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends, this also applies
-when making the read-calls table (see <a href="./intro_extract.html">intro to extract</a>).</li>
-</ol>
-<p>In <code>pileup</code>, <code>call-mods</code>, and <code>extract</code> the edge-filter is also respected when estimating the pass-thresholds.
-All commands have the flag <code>--invert-edge-filter</code> that will <em>keep</em> only base modification probabilities within
-<code>&lt;n_basepairs&gt;</code> of the ends of the reads.</p>
-<h2 id="example-usages"><a class="header" href="#example-usages">Example usages</a></h2>
-<h3 id="call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">Call mods with the estimated threshold and ignore modification calls within 100 base pairs of the ends of the reads</a></h3>
-<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --edge-filter 100
-</code></pre>
-<h3 id="perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">Perform pileup, ignoring base modification calls within 100 base pairs of the ends of the reads</a></h3>
-<pre><code>modkit pileup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 100
-</code></pre>
-<p>Filter out base modification calls within the first 25 bases or the last 10 bases.</p>
-<pre><code>modkit pileup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 25,10
-</code></pre>
+                        <h1 id="direct-rna-isoform-dmr-details"><a class="header" href="#direct-rna-isoform-dmr-details">Direct RNA Isoform DMR details</a></h1>
+<p>The RNA-specific DMR functions in Modkit use a Dirichlet-multinomial model.
+The model assumes that the underlying methylation-state proportions are drawn from a Dirichlet distribution:
+\[
+p_i \sim \text{Dirichlet}(\alpha_{1}, \alpha_{2}, \dots, \alpha_{K})
+\]</p>
+<p>Where \( K \) is the number of methylation states (m6A and Inosine, for example).
+The <code>score</code> is then calculated as the likelihood ratio statistic:
+\[
+\text{LRT} = 2\ (\text{log}\ L_{alt} - L_{null})
+\]</p>
+<p>Where the null model is one where all isoforms (or both conditions) share the same proportions and the alternative model is one where each isoform or condition has it’s own proportions.</p>
+<p>The degrees of freedom is then calculated as
+\[
+df = (M - 1)(K - 1)
+\]
+where \( M \) is the number of isoforms (or \( 2 \) in the case of <code>compare-tx-sites</code>).
+Finally, the p-value is calculated as
+\[
+p = P(\chi^2_{df}\ge\ LRT)
+\]</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="intro_call_mods.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="dmr_scoring_details.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="intro_repair.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="collapse.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -227,11 +217,11 @@ All commands have the flag <code>--invert-edge-filter</code> that will <em>keep<
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="intro_call_mods.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="dmr_scoring_details.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="intro_repair.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="collapse.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Removing modification calls at the ends of reads - Modkit</title>
+        <title>Find positions varying in modification across isoforms - Modkit</title>
 
 
         <!-- Custom HTML head -->
@@ -177,47 +177,70 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="removing-modification-calls-at-the-ends-of-reads"><a class="header" href="#removing-modification-calls-at-the-ends-of-reads">Removing modification calls at the ends of reads</a></h1>
-<p>If you have reads where you know base modifications near the ends should not be used
-(for example, if they are in adapters), you can use the <code>--edge-filter &lt;n_basepairs&gt;</code> option.
-Two comma-separated values may be provided to asymmetrically filter out
-base modification calls from the start and end of reads. For example, 4,8 will
-filter out base modification calls in the first 4 and last 8 bases of the read. One value
-will filter symmetrically.</p>
-<ol>
-<li><code>pileup</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>adjust-mods</code>, will <strong>remove</strong> base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends
-from the resultant output modBAM.</li>
-<li><code>summary</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>sample-probs</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends.</li>
-<li><code>call-mods</code>, will <strong>remove</strong> base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends from
-the resultant output modBAM.</li>
-<li><code>extract</code>, will ignore base modification calls that are <code>&lt;n_basepairs&gt;</code> from the ends, this also applies
-when making the read-calls table (see <a href="./intro_extract.html">intro to extract</a>).</li>
-</ol>
-<p>In <code>pileup</code>, <code>call-mods</code>, and <code>extract</code> the edge-filter is also respected when estimating the pass-thresholds.
-All commands have the flag <code>--invert-edge-filter</code> that will <em>keep</em> only base modification probabilities within
-<code>&lt;n_basepairs&gt;</code> of the ends of the reads.</p>
-<h2 id="example-usages"><a class="header" href="#example-usages">Example usages</a></h2>
-<h3 id="call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#call-mods-with-the-estimated-threshold-and-ignore-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">Call mods with the estimated threshold and ignore modification calls within 100 base pairs of the ends of the reads</a></h3>
-<pre><code>modkit call-mods &lt;in.bam&gt; &lt;out.bam&gt; --edge-filter 100
+                        <h1 id="find-positions-varying-in-modification-across-isoforms-with-dmr-isoform"><a class="header" href="#find-positions-varying-in-modification-across-isoforms-with-dmr-isoform">Find positions varying in modification across isoforms with <code>dmr isoform</code>.</a></h1>
+<p>This command will compare the modification levels at common exonic positions for all isoforms of a gene.</p>
+<p><img src="./images/isoform_plot.png" title="Plot showing marks where m6A is present at varying levels" alt="Example Isoform methylation plot"></p>
+<h2 id="example"><a class="header" href="#example">Example</a></h2>
+<p>The input to <code>dmr isoform</code> is a single bedMethyl table that has been generated from a modBAM of reads aligned to a reference transcriptome (or transcriptome assembly).
+This command also requires an accompanying GTF file with valid transcript models.</p>
+<p>Below is an example command:</p>
+<pre><code class="language-bash">$ modkit dmr isoform \
+  ${bedmethyl} \
+  isoform_dmr.bed \
+  --gtf ${gtf}
 </code></pre>
-<h3 id="perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads"><a class="header" href="#perform-pileup-ignoring-base-modification-calls-within-100-base-pairs-of-the-ends-of-the-reads">Perform pileup, ignoring base modification calls within 100 base pairs of the ends of the reads</a></h3>
-<pre><code>modkit pileup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 100
+<p>The bedMethyl table is expected to be bgzipped and have a tabix index.</p>
+<p>To generate an isoform SVG plot like the one above, add the following arguments:</p>
+<pre><code class="language-bash">modkit dmr isoform \
+  ${bedmethyl} \
+  isoform_dmr_${gene_name}.bed \
+  --plot path/to/plot/dir \ # &lt;-- add this option
+  --gene-name ${gene_name} \ # &lt;-- requires a gene name (or gene id to plot)
+  --gtf ${gtf}
 </code></pre>
-<p>Filter out base modification calls within the first 25 bases or the last 10 bases.</p>
-<pre><code>modkit pileup &lt;in.bam&gt; &lt;out.bed&gt; --edge-filter 25,10
-</code></pre>
+<p><em>Note</em> that exons without marks in certain transcripts indicates that there is no data in the input bedMethyl.
+The command <code>modkit bedmethyl map-to-genome</code> can map a transcript-aligned bedMethyl to genome coordinates.</p>
+<h2 id="schema-of-output"><a class="header" href="#schema-of-output">Schema of output</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>column</th><th>name</th><th>description</th><th>type</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>chrom</td><td>name of contig from GTF</td><td>str</td></tr>
+<tr><td>2</td><td>chromStart</td><td>0-based start position</td><td>int</td></tr>
+<tr><td>3</td><td>chromEnd</td><td>0-based exclusive end position</td><td>int</td></tr>
+<tr><td>4</td><td>name</td><td>modification codes present at this position</td><td>str</td></tr>
+<tr><td>5</td><td>score</td><td>likelihood ration score</td><td>float</td></tr>
+<tr><td>6</td><td>strand</td><td>strand, ‘+’ or ‘-’</td><td>str</td></tr>
+<tr><td>7</td><td>p_value</td><td>p-value of alternative hypothesis</td><td>float</td></tr>
+<tr><td>8</td><td>max_absolute_difference</td><td>largest effect size of all isoforms at this position</td><td>float</td></tr>
+<tr><td>9</td><td>n_transcripts</td><td>number of transcripts (isoforms) contributing to this position</td><td>int</td></tr>
+<tr><td>10</td><td>gene_id</td><td>gene-id from the GTF</td><td>str</td></tr>
+<tr><td>11</td><td>gene_name</td><td>gene-name from the GTF or ‘-’ if not found</td><td>str</td></tr>
+<tr><td>12</td><td>per_isoform_proportions</td><td>JSON formatted string of per-transcript, per-modification proprotions</td><td>str</td></tr>
+<tr><td>13</td><td>per_isoform_counts</td><td>JSON formatted string of per-transcript, per-modification counts</td><td>str</td></tr>
+</tbody>
+</table>
+</div>
+<p>Columns 12 and 13 are only present when the <code>--full</code> flag is passed.</p>
+<h2 id="background"><a class="header" href="#background">Background</a></h2>
+<p>Gene sequences alone don’t describe all of the diversity of mRNAs in vertebrate cells.
+Through alternative splicing gene exons can be combined in multiple permutations called isoforms.</p>
+<p><img src="./images/central_dogma.png" title="Cartoon of alternative splicing" alt="Central dogma of molecular biology and alternative splicing"></p>
+<h2 id="filtering-the-number-of-methylation-marks"><a class="header" href="#filtering-the-number-of-methylation-marks">Filtering the number of methylation marks</a></h2>
+<p>Some long genes may have many modified positions and drawing them all can get crowded.
+To only plot positions with a maximum p-value or minimum score use the <code>--max-pvalue</code> or <code>--min-score</code> arguments, respectively.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="intro_call_mods.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="intro_rna.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="intro_repair.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="intro_compare_tx_sites.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -227,11 +250,11 @@ All commands have the flag <code>--invert-edge-filter</code> that will <em>keep<
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="intro_call_mods.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="intro_rna.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="intro_repair.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="intro_compare_tx_sites.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
