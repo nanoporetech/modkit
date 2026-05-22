@@ -1,4 +1,4 @@
-# DMR model and scoring details
+# DMR model and scoring details (`dmr pair` and `dmr multi`)
 
 ## Likelihood ratio scoring details
 The aim of `modkit dmr` is to enable exploratory data analysis of methylation patterns. To that aim, the approach to 

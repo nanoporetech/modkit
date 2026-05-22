@@ -1,4 +1,4 @@
-#! /bin/bash 
+#! /bin/bash
 
 set -e
 
@@ -56,7 +56,7 @@ for subcommand in "bed" "search" "evaluate" "refine"; do
   echo "\`\`\`" >> ${doc_file}
 done
 
-for subcommand in "pair" "multi"
+for subcommand in "pair" "multi" "isoform" "compare-tx-sites"
 do
   echo "" >> ${doc_file}
   echo "## dmr ${subcommand}" >> ${doc_file}
@@ -65,7 +65,7 @@ do
   echo "\`\`\`" >> ${doc_file}
 done
 
-for subcommand in "merge" "tobigwig"; do
+for subcommand in "merge" "tobigwig" "map-to-genome"; do
   echo "" >> ${doc_file}
   echo "## bedmethyl ${subcommand}" >> ${doc_file}
   echo "\`\`\`text" >> ${doc_file}
@@ -90,5 +90,3 @@ for subcommand in "${modbam_subcommands[@]}"; do
   ./target/debug/modkit modbam $subcommand --help >> ${doc_file}
   echo "\`\`\`" >> ${doc_file}
 done
-
-
