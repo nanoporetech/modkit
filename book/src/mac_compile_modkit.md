@@ -1,24 +1,31 @@
 # Modkit Installation for macOS
 
-**Prerequisites:** Apple Silicon Mac, macOS 12.3+ (Monterey or later)
+**Prerequisites:** Apple Silicon Mac, macOS 11.0+
 
-> **Why 12.3?** PyTorch MPS (Metal GPU backend) requires macOS 12.3+. The script exits early on older systems.
+> **MPS GPU builds only:** macOS 12.3+ (Monterey or later) is required when `MODKIT_MPS_SUPPORT=1`. The script exits early on older systems for MPS builds only. Builds without MPS (`MODKIT_MPS_SUPPORT=0`, the default) run on macOS 11.0+.
 
 ## Quick Start
 
 ```bash
+# Without MPS GPU support (default)
 bash mac_compile_modkit.sh ~/tools
+
+# With MPS GPU support (requires Python + PyTorch)
+MODKIT_MPS_SUPPORT=1 bash mac_compile_modkit.sh ~/tools
 ```
 
-Installs the latest modkit to `~/tools` using system Python. Takes 10–15 minutes.
+The default (no-MPS) build installs modkit without Python or PyTorch. Takes 5–10 minutes. The MPS build adds Metal GPU acceleration and takes 10–15 minutes.
 
 ---
 
 ## What Gets Installed
 
+**Always installed:**
 - Xcode Command Line Tools, Homebrew, Rust & Cargo
-- Python virtual environment with PyTorch (GPU-enabled via Metal Performance Shaders)
 - Compiled modkit binary at `~/tools/modkit/target/release/modkit`
+
+**Additionally installed when `MODKIT_MPS_SUPPORT=1`:**
+- Python virtual environment with PyTorch (GPU-enabled via Metal Performance Shaders)
 
 ---
 
@@ -40,28 +47,22 @@ source ~/tools/setup_modkit_env.sh ~/tools --verbose
 ```
 
 `setup_modkit_env.sh` configures:
-- `LIBTORCH`, `DYLD_LIBRARY_PATH`, `LD_LIBRARY_PATH` — required for the modkit binary to find libtorch
 - `PATH` — so you can type `modkit` directly
-- `RAYON_NUM_THREADS` — automatically set to the number of **Performance cores** on your Mac
-
-### RAYON_NUM_THREADS
-
-Rayon is modkit's parallel processing library. On Apple Silicon, the script detects P-cores via:
-
-```bash
-sysctl -n hw.perflevel0.logicalcpu   # P-cores (used by default)
-sysctl -n hw.perflevel1.logicalcpu   # E-cores (for reference)
-```
-
-To override for a single run:
-
-```bash
-RAYON_NUM_THREADS=8 modkit pileup input.bam output.bed
-```
+- `LIBTORCH`, `DYLD_LIBRARY_PATH`, `LD_LIBRARY_PATH` — only set for MPS builds; required for the binary to find libtorch
 
 ---
 
+## MPS GPU Support
+
+`MODKIT_MPS_SUPPORT=1` enables Metal Performance Shaders GPU acceleration. This requires Python and PyTorch, which the script installs automatically.
+
+| Variable | Values | Default | Purpose |
+|----------|--------|---------|--------|
+| `MODKIT_MPS_SUPPORT` | `0`, `1` | `0` | Enable MPS GPU support |
+
 ## Python Version Control
+
+> These variables are only used when `MODKIT_MPS_SUPPORT=1`.
 
 Three environment variables control Python selection:
 
@@ -83,20 +84,26 @@ Three environment variables control Python selection:
 ### Examples
 
 ```bash
-# Default: system Python
+# No MPS (default): no Python or PyTorch needed
 bash mac_compile_modkit.sh ~/tools
 
-# Specific version via pyenv
-MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash mac_compile_modkit.sh ~/tools
+# MPS build with system Python
+MODKIT_MPS_SUPPORT=1 bash mac_compile_modkit.sh ~/tools
 
-# Specific version via uv (fastest)
-MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash mac_compile_modkit.sh ~/tools
+# MPS build, specific Python version via pyenv
+MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash mac_compile_modkit.sh ~/tools
 
-# Force standard pip (no uv)
-MODKIT_USE_UV=0 bash mac_compile_modkit.sh ~/tools
+# MPS build, specific Python version via uv (fastest)
+MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash mac_compile_modkit.sh ~/tools
 
-# Specific modkit version
+# MPS build, force standard pip (no uv)
+MODKIT_MPS_SUPPORT=1 MODKIT_USE_UV=0 bash mac_compile_modkit.sh ~/tools
+
+# Specific modkit version (no MPS)
 bash mac_compile_modkit.sh ~/tools v0.5.0
+
+# Specific modkit version (with MPS)
+MODKIT_MPS_SUPPORT=1 bash mac_compile_modkit.sh ~/tools v0.5.0
 ```
 
 ---
@@ -105,6 +112,8 @@ bash mac_compile_modkit.sh ~/tools v0.5.0
 
 ### "Could not resolve a usable Python executable"
 
+> Only relevant for `MODKIT_MPS_SUPPORT=1` builds.
+
 ```bash
 python3 --version           # check if Python is available
 brew install python@3.11    # install if missing
@@ -112,12 +121,24 @@ brew install python@3.11    # install if missing
 
 ### "PyTorch verification failed"
 
+> Only relevant for `MODKIT_MPS_SUPPORT=1` builds.
+
 ```bash
 source ~/tools/setup_modkit_env.sh ~/tools
 ~/tools/venv_modkit/bin/python -m pip install --upgrade pip torch numpy
 ```
 
 ### "Compilation failed"
+
+**No-MPS build:**
+
+```bash
+cd ~/tools/modkit
+cargo clean
+cargo build --release --features accelerate
+```
+
+**MPS build:**
 
 > Always source the environment before rebuilding. Without it, `LIBTORCH` is unset and the build will fail again.
 
@@ -130,6 +151,9 @@ cargo build --release --features accelerate,tch
 
 ### "MPS available: false"
 
+MPS support is opt-in (`MODKIT_MPS_SUPPORT=1`). If you built without MPS, this is expected — rebuild with `MODKIT_MPS_SUPPORT=1` to enable GPU acceleration.
+
+For an MPS build where GPU is still unavailable:
 - Confirm Apple Silicon: `uname -m` should print `arm64`
 - Confirm macOS 12.3+: `sw_vers -productVersion`
 - CPU-only fallback is used automatically if MPS is unavailable
