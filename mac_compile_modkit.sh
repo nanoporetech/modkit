@@ -6,7 +6,8 @@
 # This script automates the compilation of Oxford
 # Nanopore's modkit bioinformatics tool on macOS with GPU acceleration support.
 #
-# Prerequisites: Apple Silicon Mac running macOS 12.3 or later
+# Prerequisites: Apple Silicon Mac running macOS 11.0 or later
+#                macOS 12.3 or later is required only when MODKIT_MPS_SUPPORT=1
 #
 # What this script does:
 #   0. Installs Xcode Command Line Tools
