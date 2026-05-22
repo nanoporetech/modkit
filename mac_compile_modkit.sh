@@ -15,10 +15,10 @@
 #   3. Installs Rust compiler (rustc) and Cargo build tool
 #   4. Clones the modkit GitHub repository
 #   5. Checks out the latest release version
-#   6. Creates a Python virtual environment
-#   7. Installs PyTorch in the virtual environment
-#   8. Sets and verifies environment variables for libtorch
-#   9. Builds modkit with macOS GPU (MPS) support
+#   6. Creates a Python virtual environment        (only when MODKIT_MPS_SUPPORT=1)
+#   7. Installs PyTorch in the virtual environment  (only when MODKIT_MPS_SUPPORT=1)
+#   8. Generates environment setup script           (always; libtorch vars only when MODKIT_MPS_SUPPORT=1)
+#   9. Builds modkit                                (with MPS GPU support when MODKIT_MPS_SUPPORT=1)
 #
 # Usage:
 #   bash mac_compile_modkit.sh <installation_directory> [modkit_version]
@@ -28,16 +28,22 @@
 #   bash mac_compile_modkit.sh /path/to/install          # Install latest version to location
 #   bash mac_compile_modkit.sh ~/tools v0.5.0            # Install specific version to location
 #
-# Optional Python controls:
+# MPS (GPU) support control:
+#   MODKIT_MPS_SUPPORT=0|1   Default: 0 (disabled). Set to 1 to build with Metal GPU support.
+#
+# Optional Python controls (only used when MODKIT_MPS_SUPPORT=1):
 #   MODKIT_PYTHON_PROVIDER=auto|system|pyenv|uv
 #   MODKIT_PYTHON_VERSION=3.11.9
 #   MODKIT_USE_UV=auto|0|1
 #
 # Examples:
-#   MODKIT_PYTHON_PROVIDER=system bash mac_compile_modkit.sh ~/tools
-#   MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash mac_compile_modkit.sh ~/tools
-#   MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash mac_compile_modkit.sh ~/tools
-#   MODKIT_USE_UV=0 bash mac_compile_modkit.sh ~/tools
+#   bash mac_compile_modkit.sh ~/tools
+#   bash mac_compile_modkit.sh ~/tools v0.5.0
+#   MODKIT_MPS_SUPPORT=1 bash mac_compile_modkit.sh ~/tools
+#   MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=system bash mac_compile_modkit.sh ~/tools
+#   MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash mac_compile_modkit.sh ~/tools
+#   MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash mac_compile_modkit.sh ~/tools
+#   MODKIT_MPS_SUPPORT=1 MODKIT_USE_UV=0 bash mac_compile_modkit.sh ~/tools
 # ================================================================================
 
 set -euo pipefail  # Exit on error, undefined variables, and pipe failures
@@ -56,7 +62,13 @@ Arguments:
   installation_directory    Required. Path where modkit will be installed.
   modkit_version            Optional. Git tag to checkout. Default: latest.
 
-Optional Python environment controls:
+MPS (GPU) support:
+  MODKIT_MPS_SUPPORT        0 | 1
+                            Default: 0 (disabled). Set to 1 to compile with
+                            Metal Performance Shaders GPU support. Requires
+                            Python and PyTorch to be available.
+
+Optional Python controls (only used when MODKIT_MPS_SUPPORT=1):
   MODKIT_PYTHON_PROVIDER    auto | system | pyenv | uv
                             Default: auto
 
@@ -72,10 +84,11 @@ Optional Python environment controls:
 Examples:
   bash $0 ~/tools
   bash $0 ~/tools v0.5.0
-  MODKIT_PYTHON_PROVIDER=system bash $0 ~/tools
-  MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash $0 ~/tools
-  MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash $0 ~/tools
-  MODKIT_USE_UV=0 bash $0 ~/tools
+  MODKIT_MPS_SUPPORT=1 bash $0 ~/tools
+  MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=system bash $0 ~/tools
+  MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash $0 ~/tools
+  MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash $0 ~/tools
+  MODKIT_MPS_SUPPORT=1 MODKIT_USE_UV=0 bash $0 ~/tools
 EOF
 }
 
@@ -94,7 +107,10 @@ INSTALL_DIR="$1"
 # Modkit version to install default latest release
 MODKIT_VERSION="${2:-latest}"
 
-# Python toolchain controls
+# MPS (GPU) support: set to 1 to enable Metal Performance Shaders build
+MODKIT_MPS_SUPPORT="${MODKIT_MPS_SUPPORT:-0}"             # 0 | 1
+
+# Python toolchain controls (only used when MODKIT_MPS_SUPPORT=1)
 MODKIT_PYTHON_PROVIDER="${MODKIT_PYTHON_PROVIDER:-auto}"  # auto | system | pyenv | uv
 MODKIT_PYTHON_VERSION="${MODKIT_PYTHON_VERSION:-}"        # optional
 MODKIT_USE_UV="${MODKIT_USE_UV:-auto}"                    # auto | 0 | 1
@@ -619,19 +635,19 @@ install_pytorch() {
 }
 
 # ================================================================================
-# STEP 8: Set and Verify Environment Variables
+# STEP 8: Generate Environment Setup Script
 # ================================================================================
 
 setup_environment_variables() {
-    print_step 8 "Setting Up Environment Variables for libtorch"
-
     SETUP_SCRIPT="${INSTALL_DIR}/setup_modkit_env.sh"
 
-    echo "Generating environment setup script at: ${SETUP_SCRIPT}"
-    cat > "${SETUP_SCRIPT}" << 'SETUP_EOF'
+    if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+        print_step 8 "Setting Up Environment Variables for libtorch"
+        echo "Generating MPS environment setup script at: ${SETUP_SCRIPT}"
+        cat > "${SETUP_SCRIPT}" << 'SETUP_EOF'
 #!/bin/bash
 # ================================================================================
-# Modkit Environment Setup Script
+# Modkit Environment Setup Script (MPS build)
 # ================================================================================
 # IMPORTANT: This script must be SOURCED, not executed.
 #
@@ -711,10 +727,6 @@ export DYLD_LIBRARY_PATH="${LIBTORCH}/lib${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PA
 export LD_LIBRARY_PATH="${LIBTORCH}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export PATH="${MODKIT_REPO_DIR}/target/release:${PATH}"
 
-_PERF_CORES=$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
-export RAYON_NUM_THREADS="${_PERF_CORES}"
-unset _PERF_CORES
-
 if [[ "${_MODKIT_VERBOSE}" == "1" ]]; then
     echo ""
     echo "Modkit environment configured:"
@@ -724,7 +736,6 @@ if [[ "${_MODKIT_VERBOSE}" == "1" ]]; then
     echo "  DYLD_LIBRARY_PATH             = ${DYLD_LIBRARY_PATH}"
     echo "  LD_LIBRARY_PATH               = ${LD_LIBRARY_PATH}"
     echo "  PATH (prepended)              = ${MODKIT_REPO_DIR}/target/release"
-    echo "  RAYON_NUM_THREADS             = ${RAYON_NUM_THREADS}  (P-cores)"
     echo "  Python                        = ${MODKIT_VENV_DIR}/bin/python" \
          "($("${MODKIT_VENV_DIR}/bin/python" --version 2>&1), ${MODKIT_PYTHON_VER})"
 
@@ -746,41 +757,122 @@ fi
 unset MODKIT_INSTALL_DIR MODKIT_VENV_DIR MODKIT_REPO_DIR MODKIT_BINARY MODKIT_PYTHON_VER _MODKIT_VERBOSE
 SETUP_EOF
 
-    chmod +x "${SETUP_SCRIPT}"
-    print_success "Environment setup script generated at: ${SETUP_SCRIPT}"
+        chmod +x "${SETUP_SCRIPT}"
+        print_success "Environment setup script generated at: ${SETUP_SCRIPT}"
 
-    echo "Sourcing environment setup script..."
-    local SAVED_MODKIT_REPO_DIR="${MODKIT_REPO_DIR}"
-    local SAVED_VENV_DIR="${VENV_DIR}"
+        echo "Sourcing environment setup script..."
+        local SAVED_MODKIT_REPO_DIR="${MODKIT_REPO_DIR}"
+        local SAVED_VENV_DIR="${VENV_DIR}"
 
-    # When sourcing during install, use --verbose so the installer still shows full output
-    source "${SETUP_SCRIPT}" "${INSTALL_DIR}" --verbose
+        # When sourcing during install, use --verbose so the installer still shows full output
+        source "${SETUP_SCRIPT}" "${INSTALL_DIR}" --verbose
 
-    MODKIT_REPO_DIR="${SAVED_MODKIT_REPO_DIR}"
-    VENV_DIR="${SAVED_VENV_DIR}"
+        MODKIT_REPO_DIR="${SAVED_MODKIT_REPO_DIR}"
+        VENV_DIR="${SAVED_VENV_DIR}"
 
-    echo ""
-    echo "Verifying paths..."
+        echo ""
+        echo "Verifying paths..."
 
-    if [[ -d "${LIBTORCH}" ]]; then
-        print_success "LIBTORCH path exists: ${LIBTORCH}"
+        if [[ -d "${LIBTORCH}" ]]; then
+            print_success "LIBTORCH path exists: ${LIBTORCH}"
+        else
+            print_error "LIBTORCH path not found: ${LIBTORCH}"
+            exit 1
+        fi
+
+        if [[ -d "${LIBTORCH}/lib" ]]; then
+            print_success "libtorch libraries found"
+            echo "Sample libraries:"
+            ls "${LIBTORCH}/lib" | grep -E "\.dylib$" | head -5
+        else
+            print_error "libtorch lib directory not found"
+            exit 1
+        fi
+
+        echo ""
+        echo "To set up this environment in a new terminal session, run:"
+        echo "  source \"${SETUP_SCRIPT}\" \"${INSTALL_DIR}\""
     else
-        print_error "LIBTORCH path not found: ${LIBTORCH}"
-        exit 1
-    fi
+        print_step 8 "Generating Environment Setup Script"
+        echo "Generating environment setup script at: ${SETUP_SCRIPT}"
+        cat > "${SETUP_SCRIPT}" << 'SETUP_EOF'
+#!/bin/bash
+# ================================================================================
+# Modkit Environment Setup Script
+# ================================================================================
+# IMPORTANT: This script must be SOURCED, not executed.
+#
+# Usage:
+#   source setup_modkit_env.sh <installation_directory> [--verbose]
+#
+# Options:
+#   --verbose    Print environment configuration details. Omit for silent setup.
+#
+# After sourcing:
+#   modkit --version
+#   modkit pileup input.bam output.bed
+# ================================================================================
 
-    if [[ -d "${LIBTORCH}/lib" ]]; then
-        print_success "libtorch libraries found"
-        echo "Sample libraries:"
-        ls "${LIBTORCH}/lib" | grep -E "\.dylib$" | head -5
-    else
-        print_error "libtorch lib directory not found"
-        exit 1
-    fi
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "Error: This script must be sourced, not executed."
+    echo "Usage: source ${0} <installation_directory> [--verbose]"
+    exit 1
+fi
 
+# Parse arguments
+_MODKIT_VERBOSE=0
+_MODKIT_INSTALL_DIR=""
+for _arg in "$@"; do
+    case "${_arg}" in
+        --verbose|-v) _MODKIT_VERBOSE=1 ;;
+        *)            _MODKIT_INSTALL_DIR="${_arg}" ;;
+    esac
+done
+unset _arg
+
+if [[ -z "${_MODKIT_INSTALL_DIR}" ]]; then
+    echo "Usage: source setup_modkit_env.sh <installation_directory> [--verbose]"
+    unset _MODKIT_VERBOSE _MODKIT_INSTALL_DIR
+    return 1
+fi
+
+MODKIT_INSTALL_DIR="${_MODKIT_INSTALL_DIR}"
+unset _MODKIT_INSTALL_DIR
+
+if [[ ! -d "${MODKIT_INSTALL_DIR}" ]]; then
+    echo "Error: Installation directory not found: ${MODKIT_INSTALL_DIR}"
+    unset MODKIT_INSTALL_DIR _MODKIT_VERBOSE
+    return 1
+fi
+
+MODKIT_REPO_DIR="${MODKIT_INSTALL_DIR}/modkit"
+MODKIT_BINARY="${MODKIT_REPO_DIR}/target/release/modkit"
+
+export PATH="${MODKIT_REPO_DIR}/target/release:${PATH}"
+
+if [[ "${_MODKIT_VERBOSE}" == "1" ]]; then
     echo ""
-    echo "To set up this environment in a new terminal session, run:"
-    echo "  source \"${SETUP_SCRIPT}\" \"${INSTALL_DIR}\""
+    echo "Modkit environment configured:"
+    echo "  PATH (prepended) = ${MODKIT_REPO_DIR}/target/release"
+    if [[ -f "${MODKIT_BINARY}" ]]; then
+        echo "  modkit binary    = ${MODKIT_BINARY}"
+        echo ""
+        echo "Ready. Run 'modkit --version' to verify."
+    else
+        echo "  modkit binary    = NOT FOUND"
+    fi
+fi
+
+unset MODKIT_INSTALL_DIR MODKIT_REPO_DIR MODKIT_BINARY _MODKIT_VERBOSE
+SETUP_EOF
+
+        chmod +x "${SETUP_SCRIPT}"
+        print_success "Environment setup script generated at: ${SETUP_SCRIPT}"
+
+        echo ""
+        echo "To add modkit to PATH in a new terminal session, run:"
+        echo "  source \"${SETUP_SCRIPT}\" \"${INSTALL_DIR}\""
+    fi
 }
 
 # ================================================================================
@@ -788,22 +880,37 @@ SETUP_EOF
 # ================================================================================
 
 build_modkit() {
-    print_step 9 "Building Modkit with macOS GPU (MPS) Support"
-    
+    if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+        print_step 9 "Building Modkit with macOS GPU (MPS) Support"
+    else
+        print_step 9 "Building Modkit"
+    fi
+
     cd "${MODKIT_REPO_DIR}"
-    
+
+    local BUILD_FEATURES
+    if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+        BUILD_FEATURES="accelerate,tch"
+    else
+        BUILD_FEATURES="accelerate"
+    fi
+
     echo "Build configuration:"
-    echo "  Features: accelerate,tch"
-    echo "  Mode: release (optimized)"
-    echo "  GPU Support: Metal Performance Shaders (MPS)"
+    echo "  Features:     ${BUILD_FEATURES}"
+    echo "  Mode:         release (optimized)"
+    if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+        echo "  GPU Support:  Metal Performance Shaders (MPS)"
+    else
+        echo "  GPU Support:  none"
+    fi
     echo "  Architecture: $(uname -m)"
     echo ""
     echo "This will take several minutes (5-15 minutes depending on your Mac)..."
     echo "Please be patient while Cargo compiles modkit and its dependencies."
     echo ""
-    
+
     # Run cargo build
-    if cargo build --release --features accelerate,tch; then
+    if cargo build --release --features "${BUILD_FEATURES}"; then
         print_success "Modkit compiled successfully!"
     else
         print_error "Compilation failed"
@@ -811,10 +918,12 @@ build_modkit() {
         echo "Troubleshooting tips:"
         echo "  1. Set up the build environment first:"
         echo "       source \"${INSTALL_DIR}/setup_modkit_env.sh\" \"${INSTALL_DIR}\""
-        echo "  2. Check that PyTorch is installed:"
-        echo "       \"${VENV_DIR}/bin/python\" -m pip list | grep torch"
+        if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+            echo "  2. Check that PyTorch is installed:"
+            echo "       \"${VENV_DIR}/bin/python\" -m pip list | grep torch"
+        fi
         echo "  3. Clean and rebuild:"
-        echo "       cd \"${MODKIT_REPO_DIR}\" && cargo clean && cargo build --release --features accelerate,tch"
+        echo "       cd \"${MODKIT_REPO_DIR}\" && cargo clean && cargo build --release --features \"${BUILD_FEATURES}\""
         exit 1
     fi
     
@@ -856,13 +965,7 @@ build_modkit() {
 save_installation_info() {
     INFO_FILE="${INSTALL_DIR}/installation_info.txt"
     SETUP_SCRIPT="${INSTALL_DIR}/setup_modkit_env.sh"
-    local UV_VERSION_INFO
-    local PYENV_VERSION_INFO
-    local VENV_PYTHON="${VENV_DIR}/bin/python"
 
-    UV_VERSION_INFO="$(command_exists uv && uv --version || echo "Not available")"
-    PYENV_VERSION_INFO="$(command_exists pyenv && pyenv --version || echo "Not available")"
-    
     cat > "${INFO_FILE}" << EOF
  Modkit Installation Information
  ================================
@@ -877,7 +980,6 @@ save_installation_info() {
  Installation Directory: ${INSTALL_DIR}
  Modkit Repository: ${MODKIT_REPO_DIR}
  Modkit Binary: ${MODKIT_REPO_DIR}/target/release/modkit
- Virtual Environment: ${VENV_DIR}
  Environment Setup Script: ${SETUP_SCRIPT}
 
  Versions:
@@ -885,6 +987,16 @@ save_installation_info() {
  Modkit Version: ${MODKIT_VERSION}
  Rust Version: $(rustc --version)
  Cargo Version: $(cargo --version)
+ MPS Support Enabled: $([[ "${MODKIT_MPS_SUPPORT}" == "1" ]] && echo "yes" || echo "no")
+EOF
+
+    if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+        local UV_VERSION_INFO PYENV_VERSION_INFO VENV_PYTHON
+        VENV_PYTHON="${VENV_DIR}/bin/python"
+        UV_VERSION_INFO="$(command_exists uv && uv --version || echo "Not available")"
+        PYENV_VERSION_INFO="$(command_exists pyenv && pyenv --version || echo "Not available")"
+        cat >> "${INFO_FILE}" << EOF
+ Virtual Environment: ${VENV_DIR}
  Python Provider Requested: ${MODKIT_PYTHON_PROVIDER}
  Python Provider Used: ${MODKIT_PYTHON_PROVIDER_EFFECTIVE}
  Python Executable: ${MODKIT_PYTHON_BIN}
@@ -895,39 +1007,39 @@ save_installation_info() {
  uv Version: ${UV_VERSION_INFO}
  pyenv Version: ${PYENV_VERSION_INFO}
  PyTorch Version: $("${VENV_PYTHON}" -c "import torch; print(torch.__version__)" 2>/dev/null || echo "Unknown")
+EOF
+    fi
+
+    cat >> "${INFO_FILE}" << EOF
 
  Quick Start:
  -----------
  source "${SETUP_SCRIPT}" "${INSTALL_DIR}"
  modkit --version
 
- Python Run Examples:
- --------------------
- System Python:
- MODKIT_PYTHON_PROVIDER=system bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
-
- pyenv Python:
- MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
-
- uv Python:
- MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
-
- Disable uv venv/pip usage:
- MODKIT_USE_UV=0 bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
-
  For detailed usage instructions, run:
  modkit --help
-
- Runtime Threading:
- ------------------
- RAYON_NUM_THREADS is set automatically to the number of Performance cores
- detected on your Mac (hw.perflevel0.logicalcpu). This is exported by
- setup_modkit_env.sh each time it is sourced.
-
- To override for a single run:
-   RAYON_NUM_THREADS=8 modkit pileup input.bam output.bed
 EOF
-    
+
+    if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+        cat >> "${INFO_FILE}" << EOF
+
+ Python Run Examples (MPS build):
+ ---------------------------------
+ System Python:
+ MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=system bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
+
+ pyenv Python:
+ MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
+
+ uv Python:
+ MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
+
+ Disable uv venv/pip usage:
+ MODKIT_MPS_SUPPORT=1 MODKIT_USE_UV=0 bash mac_compile_modkit.sh "${INSTALL_DIR}" "${MODKIT_VERSION}"
+EOF
+    fi
+
     echo "Installation information saved to: ${INFO_FILE}"
 }
 
@@ -943,13 +1055,20 @@ main() {
     echo -e "${BLUE}#                                                                 #${NC}"
     echo -e "${BLUE}###################################################################${NC}"
     echo ""
-    echo "This script will install and compile modkit with GPU support."
+    if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+        echo "This script will install and compile modkit with Metal GPU (MPS) support."
+    else
+        echo "This script will install and compile modkit (no MPS GPU support)."
+    fi
     echo ""
     echo "Installation directory: ${INSTALL_DIR}"
-    echo "Modkit version: ${MODKIT_VERSION}"
-    echo "Python provider: ${MODKIT_PYTHON_PROVIDER}"
-    echo "Python version request: ${MODKIT_PYTHON_VERSION:-default}"
-    echo "Use uv for venv/pip: ${MODKIT_USE_UV}"
+    echo "Modkit version:         ${MODKIT_VERSION}"
+    echo "MPS support:            $([[ "${MODKIT_MPS_SUPPORT}" == "1" ]] && echo "enabled" || echo "disabled")"
+    if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+        echo "Python provider:        ${MODKIT_PYTHON_PROVIDER}"
+        echo "Python version request: ${MODKIT_PYTHON_VERSION:-default}"
+        echo "Use uv for venv/pip:    ${MODKIT_USE_UV}"
+    fi
     echo ""
 
     # Confirm before proceeding
@@ -963,6 +1082,15 @@ main() {
     # Record start time
     START_TIME=$(date +%s)
     
+    # Validate MODKIT_MPS_SUPPORT
+    case "${MODKIT_MPS_SUPPORT}" in
+        0|1) ;;
+        *)
+            print_error "Invalid MODKIT_MPS_SUPPORT='${MODKIT_MPS_SUPPORT}'. Use 0 or 1."
+            exit 1
+            ;;
+    esac
+
     # Execute installation steps
     install_xcode_tools
     install_homebrew
@@ -970,9 +1098,11 @@ main() {
     install_rust_cargo
     clone_modkit_repo
     checkout_version
-    resolve_python_toolchain
-    create_venv
-    install_pytorch
+    if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+        resolve_python_toolchain
+        create_venv
+        install_pytorch
+    fi
     setup_environment_variables
     build_modkit
     
@@ -1020,13 +1150,15 @@ echo "Detected macOS version: ${MACOS_VERSION}"
 MACOS_MAJOR=$(echo "${MACOS_VERSION}" | cut -d. -f1)
 MACOS_MINOR=$(echo "${MACOS_VERSION}" | cut -d. -f2)
 
-if [[ "${MACOS_MAJOR}" -lt 12 ]] || \
-   [[ "${MACOS_MAJOR}" -eq 12 && "${MACOS_MINOR}" -lt 3 ]]; then
-    print_error "macOS 12.3 (Monterey) or later is required for PyTorch Metal (MPS) GPU support."
-    echo "Detected macOS version: ${MACOS_VERSION}"
-    echo "On macOS < 12.3 torch.backends.mps.is_available() returns false and GPU acceleration"
-    echo "cannot be used. Please upgrade macOS before running this script."
-    exit 1
+if [[ "${MODKIT_MPS_SUPPORT}" == "1" ]]; then
+    if [[ "${MACOS_MAJOR}" -lt 12 ]] || \
+       [[ "${MACOS_MAJOR}" -eq 12 && "${MACOS_MINOR}" -lt 3 ]]; then
+        print_error "macOS 12.3 (Monterey) or later is required for PyTorch Metal (MPS) GPU support."
+        echo "Detected macOS version: ${MACOS_VERSION}"
+        echo "On macOS < 12.3 torch.backends.mps.is_available() returns false and GPU acceleration"
+        echo "cannot be used. Please upgrade macOS before running this script."
+        exit 1
+    fi
 fi
 
 # Run main installation
