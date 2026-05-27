@@ -25,10 +25,14 @@ To generate an isoform SVG plot like the one above, add the following arguments:
 modkit dmr isoform \
   ${bedmethyl} \
   isoform_dmr_${gene_name}.bed \
-  --plot path/to/plot/dir \ # <-- add this option
-  --gene-name ${gene_name} \ # <-- requires a gene name (or gene id to plot)
+  --plot path/to/plot/dir \
+  --gene-name ${gene_name} \
   --gtf ${gtf}
 ```
+
+> **Important:** `--plot` requires either `--gene-name` or `--gene-id` and **cannot** be used
+> in whole-transcriptome mode (i.e. without one of those arguments). Attempting to use `--plot`
+> without a gene specifier will result in an error.
 
 *Note* that exons without marks in certain transcripts indicates that there is no data in the input bedMethyl. 
 The command `modkit bedmethyl map-to-genome` can map a transcript-aligned bedMethyl to genome coordinates.
@@ -48,10 +52,11 @@ The command `modkit bedmethyl map-to-genome` can map a transcript-aligned bedMet
 | 9      | n_transcripts | number of transcripts (isoforms) contributing to this position                                                  | int |
 | 10      | gene_id | gene-id from the GTF                                                  | str |
 | 11      | gene_name | gene-name from the GTF or '-' if not found                                                  | str |
-| 12      | per_isoform_proportions | JSON formatted string of per-transcript, per-modification proprotions                                                  | str |
-| 13      | per_isoform_counts | JSON formatted string of per-transcript, per-modification counts                                                  | str |
+| 12      | pooled_proportions | gene-level aggregate modification rate | str | 
+| 13      | per_isoform_proportions | JSON formatted string of per-transcript, per-modification proprotions                                                  | str |
+| 14      | per_isoform_counts | JSON formatted string of per-transcript, per-modification counts                                                  | str |
 
-Columns 12 and 13 are only present when the `--full` flag is passed.
+Columns 12 and 14 are only present when the `--full` flag is passed.
 
 ## Background 
 Gene sequences alone don't describe all of the diversity of mRNAs in vertebrate cells.
@@ -63,6 +68,11 @@ Through alternative splicing gene exons can be combined in multiple permutations
 
 ## Filtering the number of methylation marks
 Some long genes may have many modified positions and drawing them all can get crowded.
-To only plot positions with a maximum p-value or minimum score use the `--max-pvalue` or `--min-score` arguments, respectively.
+To only plot positions with a maximum p-value or minimum score use the `--max-pval` or
+`--min-score` arguments, respectively.
+
+> **Note:** `--max-pval` and `--min-score` are **plot-only** options. They require `--plot`
+> (and therefore also `--gene-name` or `--gene-id`) and have no effect outside of single-gene
+> mode. These two flags are **mutually exclusive** — only one may be provided at a time.
 
 
