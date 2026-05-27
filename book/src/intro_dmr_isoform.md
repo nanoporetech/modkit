@@ -52,10 +52,11 @@ The command `modkit bedmethyl map-to-genome` can map a transcript-aligned bedMet
 | 9      | n_transcripts | number of transcripts (isoforms) contributing to this position                                                  | int |
 | 10      | gene_id | gene-id from the GTF                                                  | str |
 | 11      | gene_name | gene-name from the GTF or '-' if not found                                                  | str |
-| 12      | per_isoform_proportions | JSON formatted string of per-transcript, per-modification proprotions                                                  | str |
-| 13      | per_isoform_counts | JSON formatted string of per-transcript, per-modification counts                                                  | str |
+| 12      | pooled_proportions | gene-level aggregate modification rate | str | 
+| 13      | per_isoform_proportions | JSON formatted string of per-transcript, per-modification proprotions                                                  | str |
+| 14      | per_isoform_counts | JSON formatted string of per-transcript, per-modification counts                                                  | str |
 
-Columns 12 and 13 are only present when the `--full` flag is passed.
+Columns 12 and 14 are only present when the `--full` flag is passed.
 
 ## Background 
 Gene sequences alone don't describe all of the diversity of mRNAs in vertebrate cells.
