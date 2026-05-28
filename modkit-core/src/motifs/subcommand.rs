@@ -761,7 +761,7 @@ pub struct EntryRefineMotifs {
     out_table: Option<PathBuf>,
     /// Minimum fraction of sites in the genome to be "high-modification"
     /// for a motif to be further refined, otherwise it will be discarded.
-    #[arg(long = "min_refine_frac_mod", default_value_t = 0.6)]
+    #[arg(long = "min-refine-frac-mod", default_value_t = 0.6)]
     min_refine_frac_modified: f32,
     /// Minimum number of total sites in the genome required for a motif to be
     /// further refined, otherwise it will be discarded.
