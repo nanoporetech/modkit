@@ -75,11 +75,16 @@ pub(crate) struct GtfGene {
 }
 
 fn parse_gtf_id(raw: &str) -> MkResult<(String, u32)> {
-    let Some((id, v)) = raw.split_once(".") else {
-        return Err(MkError::InvalidGtfRecord);
-    };
-    let version = v.parse::<u32>().map_err(|_| MkError::InvalidGtfRecord)?;
-    Ok((id.to_string(), version))
+    if raw.contains(".") {
+        let Some((id, v)) = raw.split_once(".") else {
+            return Err(MkError::InvalidGtfRecord);
+        };
+        let version =
+            v.parse::<u32>().map_err(|_| MkError::InvalidGtfRecord)?;
+        Ok((id.to_string(), version))
+    } else {
+        Ok((raw.to_string(), 0u32))
+    }
 }
 
 impl GtfId for GtfTranscript {
@@ -265,6 +270,7 @@ pub(crate) fn parse_gtf<P: AsRef<Path>>(
         } else {
             let Ok(transcript_id) = GtfTranscript::from_str(transcript_id)
             else {
+                debug!("failed to parse transcript_id: {transcript_id}");
                 errs.inc(1);
                 continue;
             };
@@ -280,6 +286,7 @@ pub(crate) fn parse_gtf<P: AsRef<Path>>(
             GtfGene { gene_id: (*gene_id).clone(), version: gene_version }
         } else {
             let Ok(gene_id) = GtfGene::from_str(gene_id) else {
+                debug!("failed to parse gene_id: {gene_id}");
                 errs.inc(1);
                 continue;
             };
