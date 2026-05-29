@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Adds
+  - [bedmethyl] Adds `--min-samples` and `--min-sample-coverage` to `bedmethyl merge` to require a position to be present in (and optionally covered to a minimum valid depth in) multiple inputs, enabling an inner join across replicates. The defaults preserve the original outer-join behaviour.
+
 ## [v0.6.3]
 ### Adds
   - [dmr] Adds `dmr isoform` for comparing methylation across isoforms of genes
