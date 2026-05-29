@@ -2371,8 +2371,8 @@ impl GeneDmrScore {
         mod_codes: Vec<ModCodeRepr>,
     ) -> Self {
         assert_eq!(res.isoform_counts.len(), 2);
-        let cond_a_counts = res.isoform_counts.pop().unwrap();
         let cond_b_counts = res.isoform_counts.pop().unwrap();
+        let cond_a_counts = res.isoform_counts.pop().unwrap();
         let cond_a_proportions =
             scoring::proportions_from_counts(&cond_a_counts, 0f64);
         let cond_b_proportions =
