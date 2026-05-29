@@ -75,3 +75,105 @@ fn test_bedmethyl_merge() {
         assert_eq!(x.count_nocall * 2, y.count_nocall);
     }
 }
+
+// Shared setup helpers for the --min-samples / --min-sample-coverage tests.
+// The committed chr20 pileup resource is passed as multiple inputs: passing it
+// N times makes every position present in exactly N inputs, which lets us
+// exercise the inner-join threshold without building new fixtures.
+fn min_samples_test_sizes() -> std::path::PathBuf {
+    let sizes = "chr20\t64444167\n";
+    let sizes_fp =
+        std::env::temp_dir().join("test_merge_min_samples_sizes.tsv");
+    let mut w = BufWriter::new(File::create(&sizes_fp).unwrap());
+    w.write(sizes.as_bytes()).unwrap();
+    drop(w);
+    sizes_fp
+}
+
+const MIN_SAMPLES_BED_FP: &str = "../tests/resources/\
+    lung_00733-m_adjacent-normal_5mc-5hmc_chr20_cpg_pileup.bed.gz";
+
+fn count_bed_records(fp: &std::path::Path) -> usize {
+    BufReader::new(File::open(fp).unwrap())
+        .lines()
+        .map(|line| BedMethylLine::parse(&line.unwrap()).unwrap())
+        .count()
+}
+
+#[test]
+fn test_bedmethyl_merge_min_samples() {
+    let sizes_fp = min_samples_test_sizes();
+
+    // Decode the input once to know how many positions it has.
+    let mut buff = vec![];
+    let _ = rust_htslib::bgzf::Reader::from_path(MIN_SAMPLES_BED_FP)
+        .unwrap()
+        .read_to_end(&mut buff);
+    let n_positions = buff
+        .lines()
+        .map(|line| BedMethylLine::parse(&line.unwrap()).unwrap())
+        .count();
+
+    // --min-samples 2 with the file passed twice: every position is present in
+    // both inputs, so all positions are kept (an inner join that retains all).
+    let out_keep = std::env::temp_dir().join("test_merge_min_samples_keep.bed");
+    run_modkit(&[
+        "bedmethyl",
+        "merge",
+        MIN_SAMPLES_BED_FP,
+        MIN_SAMPLES_BED_FP,
+        "-g",
+        sizes_fp.to_str().unwrap(),
+        "-o",
+        out_keep.to_str().unwrap(),
+        "--force",
+        "--min-samples",
+        "2",
+    ])
+    .unwrap();
+    assert_eq!(count_bed_records(&out_keep), n_positions);
+
+    // --min-samples 3 with the file passed only twice: every position is
+    // present in just 2 inputs (< 3), so nothing is output.
+    let out_drop = std::env::temp_dir().join("test_merge_min_samples_drop.bed");
+    run_modkit(&[
+        "bedmethyl",
+        "merge",
+        MIN_SAMPLES_BED_FP,
+        MIN_SAMPLES_BED_FP,
+        "-g",
+        sizes_fp.to_str().unwrap(),
+        "-o",
+        out_drop.to_str().unwrap(),
+        "--force",
+        "--min-samples",
+        "3",
+    ])
+    .unwrap();
+    assert_eq!(count_bed_records(&out_drop), 0);
+}
+
+#[test]
+fn test_bedmethyl_merge_min_sample_coverage() {
+    let sizes_fp = min_samples_test_sizes();
+
+    // A very high per-sample valid-coverage floor excludes every record, so no
+    // input contributes to any position and the output is empty.
+    let out_bed =
+        std::env::temp_dir().join("test_merge_min_sample_coverage.bed");
+    run_modkit(&[
+        "bedmethyl",
+        "merge",
+        MIN_SAMPLES_BED_FP,
+        MIN_SAMPLES_BED_FP,
+        "-g",
+        sizes_fp.to_str().unwrap(),
+        "-o",
+        out_bed.to_str().unwrap(),
+        "--force",
+        "--min-sample-coverage",
+        "1000000000",
+    ])
+    .unwrap();
+    assert_eq!(count_bed_records(&out_bed), 0);
+}
