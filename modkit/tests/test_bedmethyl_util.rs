@@ -106,9 +106,10 @@ fn test_bedmethyl_merge_min_samples() {
 
     // Decode the input once to know how many positions it has.
     let mut buff = vec![];
-    let _ = rust_htslib::bgzf::Reader::from_path(MIN_SAMPLES_BED_FP)
+    rust_htslib::bgzf::Reader::from_path(MIN_SAMPLES_BED_FP)
         .unwrap()
-        .read_to_end(&mut buff);
+        .read_to_end(&mut buff)
+        .expect("failed to read MIN_SAMPLES_BED_FP fixture");
     let n_positions = buff
         .lines()
         .map(|line| BedMethylLine::parse(&line.unwrap()).unwrap())
