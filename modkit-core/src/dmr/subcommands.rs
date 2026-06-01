@@ -717,10 +717,7 @@ pub struct MultiSampleDmr {
     #[clap(help_heading = "Sample Options")]
     #[arg(long, alias = "min-coverage", default_value_t = 0)]
     min_valid_coverage: u64,
-    /// Reference sample name to compare all other samples against. When
-    /// provided, only performs comparisons between this reference and all
-    /// other samples, instead of all pairwise comparisons. The reference
-    /// sample must match one of the sample names provided via --sample.
+    /// Only performs comparisons between this sample and all other samples.
     #[clap(help_heading = "Sample Options")]
     #[arg(long)]
     ref_sample: Option<String>,
