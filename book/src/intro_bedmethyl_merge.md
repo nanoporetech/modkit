@@ -63,7 +63,7 @@ modkit bedmethyl merge rep1.bed.gz rep2.bed.gz rep3.bed.gz \
   --min-sample-coverage 5
 ```
 
-Omitting both options reproduces the original outer-join behaviour.
+Omitting both options performs an outer-join.
 
 # Convert bedMethyl to bigWig
 

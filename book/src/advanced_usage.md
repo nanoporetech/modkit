@@ -2970,8 +2970,7 @@ Options:
 ## bedmethyl merge
 ```text
 Perform an outer join on two or more bedMethyl files, summing their counts for
-records that overlap. Use --min-samples to instead require a position to be
-present in multiple inputs (e.g. an inner join across replicates)
+records that overlap
 
 Usage: modkit bedmethyl merge [OPTIONS] --out-bed <OUT_BED> --genome-sizes <GENOME_SIZES> [IN_BEDMETHYL] [IN_BEDMETHYL]...
 
@@ -3039,22 +3038,13 @@ Logging Options:
 
 Filtering Options:
       --min-samples <MIN_SAMPLES>
-          Only output a position if it is present in at least this many input
-          bedMethyl files. The default of 1 performs an outer join (a position
-          is kept if any input has it). Set this to the number of inputs to
-          perform an inner join (a position is kept only if every input has it),
-          which is useful for retaining reproducible positions across replicates
-          
-          [default: 1]
+          Only output a position present in at least this many input bedMethyl
+          files. Accepts an integer greater than 1, or "all" to require the
+          position in every input (an inner join across replicates)
 
       --min-sample-coverage <MIN_SAMPLE_COVERAGE>
           Minimum valid coverage for an input's record to count towards a
-          position. An input only contributes to a position (both for the
-          --min-samples tally and for the summed counts) when that input's
-          record has at least this valid coverage. The default of 0 counts any
-          record that is present
-          
-          [default: 0]
+          position, for both the --min-samples tally and the summed counts
 ```
 
 ## bedmethyl tobigwig

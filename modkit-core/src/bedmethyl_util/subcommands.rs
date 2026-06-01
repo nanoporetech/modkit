@@ -75,11 +75,13 @@ fn parse_min_samples(s: &str) -> Result<MinSamples, String> {
     if s.eq_ignore_ascii_case("all") {
         return Ok(MinSamples::All);
     }
+    // A value of 1 is rejected: it would keep every position (an outer join),
+    // which is the behaviour when the option is omitted, so it does nothing.
     match s.parse::<usize>() {
-        Ok(n) if n >= 1 => Ok(MinSamples::AtLeast(n)),
-        Ok(_) => Err("must be a positive integer or \"all\"".to_string()),
+        Ok(n) if n > 1 => Ok(MinSamples::AtLeast(n)),
+        Ok(_) => Err("must be an integer greater than 1, or \"all\"".to_string()),
         Err(_) => Err(format!(
-            "invalid value '{s}': expected a positive integer or \"all\""
+            "invalid value '{s}': expected an integer greater than 1 or \"all\""
         )),
     }
 }
@@ -165,8 +167,8 @@ pub struct EntryMergeBedMethyl {
     io_threads: usize,
 
     /// Only output a position present in at least this many input bedMethyl
-    /// files. Accepts an integer, or "all" to require the position in every
-    /// input (an inner join across replicates).
+    /// files. Accepts an integer greater than 1, or "all" to require the
+    /// position in every input (an inner join across replicates).
     #[clap(help_heading = "Filtering Options")]
     #[arg(long, value_parser = parse_min_samples)]
     min_samples: Option<MinSamples>,
