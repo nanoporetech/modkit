@@ -36,16 +36,17 @@ chr2    243199373
 
 By default `merge` performs an outer join: a position is kept if it appears in
 any input. To instead keep only positions shared across inputs, use
-`--min-samples`. A position is output only when it appears in at least that many
-input files. Setting `--min-samples` to the number of inputs performs an inner
-join, which is useful for retaining positions that reproduce across replicates.
+`--min-samples`, which outputs a position only when it appears in at least that
+many input files. Pass `--min-samples all` to require the position in every
+input (an inner join), which is useful for retaining positions that reproduce
+across replicates; `all` avoids hard-coding the input count in scripts.
 
 ```bash
 # keep only positions present in all three replicates (inner join)
 modkit bedmethyl merge rep1.bed.gz rep2.bed.gz rep3.bed.gz \
   -o replicates_inner.bed \
   -g genome_sizes.tsv \
-  --min-samples 3
+  --min-samples all
 ```
 
 `--min-sample-coverage` adds a per-input confidence floor: an input only counts
@@ -58,12 +59,11 @@ replicates:
 modkit bedmethyl merge rep1.bed.gz rep2.bed.gz rep3.bed.gz \
   -o replicates_inner_cov5.bed \
   -g genome_sizes.tsv \
-  --min-samples 3 \
+  --min-samples all \
   --min-sample-coverage 5
 ```
 
-The defaults (`--min-samples 1`, `--min-sample-coverage 0`) reproduce the
-original outer-join behaviour.
+Omitting both options reproduces the original outer-join behaviour.
 
 # Convert bedMethyl to bigWig
 

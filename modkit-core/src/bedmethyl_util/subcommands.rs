@@ -41,9 +41,7 @@ use crate::writers::bedmethyl_header;
 #[derive(Subcommand)]
 pub enum EntryBedMethyl {
     /// Perform an outer join on two or more bedMethyl files, summing their
-    /// counts for records that overlap. Use --min-samples to instead require a
-    /// position to be present in multiple inputs (e.g. an inner join across
-    /// replicates).
+    /// counts for records that overlap
     #[command(name = "merge")]
     MergeBedMethyl(EntryMergeBedMethyl),
     /// Make a BigWig track from a bedMethyl file or stream.
@@ -63,6 +61,26 @@ impl EntryBedMethyl {
             EntryBedMethyl::ToBigWig(x) => x.run(),
             EntryBedMethyl::MapToGenome(x) => x.run(),
         }
+    }
+}
+
+/// Value of `--min-samples`: either an explicit count or every input ("all").
+#[derive(Clone, Debug)]
+enum MinSamples {
+    All,
+    AtLeast(usize),
+}
+
+fn parse_min_samples(s: &str) -> Result<MinSamples, String> {
+    if s.eq_ignore_ascii_case("all") {
+        return Ok(MinSamples::All);
+    }
+    match s.parse::<usize>() {
+        Ok(n) if n >= 1 => Ok(MinSamples::AtLeast(n)),
+        Ok(_) => Err("must be a positive integer or \"all\"".to_string()),
+        Err(_) => Err(format!(
+            "invalid value '{s}': expected a positive integer or \"all\""
+        )),
     }
 }
 
@@ -146,21 +164,17 @@ pub struct EntryMergeBedMethyl {
     #[arg(long, default_value_t = 2)]
     io_threads: usize,
 
-    /// Only output a position if it is present in at least this many input
-    /// bedMethyl files. The default of 1 performs an outer join (a position is
-    /// kept if any input has it). Set this to the number of inputs to perform an
-    /// inner join (a position is kept only if every input has it), which is
-    /// useful for retaining reproducible positions across replicates.
+    /// Only output a position present in at least this many input bedMethyl
+    /// files. Accepts an integer, or "all" to require the position in every
+    /// input (an inner join across replicates).
     #[clap(help_heading = "Filtering Options")]
-    #[arg(long, default_value_t = 1)]
-    min_samples: usize,
-    /// Minimum valid coverage for an input's record to count towards a position.
-    /// An input only contributes to a position (both for the --min-samples tally
-    /// and for the summed counts) when that input's record has at least this
-    /// valid coverage. The default of 0 counts any record that is present.
+    #[arg(long, value_parser = parse_min_samples)]
+    min_samples: Option<MinSamples>,
+    /// Minimum valid coverage for an input's record to count towards a position,
+    /// for both the --min-samples tally and the summed counts.
     #[clap(help_heading = "Filtering Options")]
-    #[arg(long, default_value_t = 0)]
-    min_sample_coverage: u64,
+    #[arg(long)]
+    min_sample_coverage: Option<u64>,
 }
 
 type BedMethylChunk = Vec<BedMethylLine>;
@@ -245,17 +259,22 @@ impl EntryMergeBedMethyl {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
 
-        if self.min_samples < 1 {
-            bail!("--min-samples must be at least 1");
-        }
-        if self.min_samples > self.in_bedmethyl.len() {
-            warn!(
+        // Resolve --min-samples ("all" -> number of inputs; omitted -> 1 = outer join).
+        let n_inputs = self.in_bedmethyl.len();
+        let min_samples: usize = match &self.min_samples {
+            None => 1,
+            Some(MinSamples::All) => n_inputs,
+            Some(MinSamples::AtLeast(n)) => *n,
+        };
+        if min_samples > n_inputs {
+            bail!(
                 "--min-samples ({}) is greater than the number of input \
-                 bedMethyl files ({}); no positions will be output",
-                self.min_samples,
-                self.in_bedmethyl.len()
+                 bedMethyl files ({})",
+                min_samples,
+                n_inputs
             );
         }
+        let min_sample_coverage: u64 = self.min_sample_coverage.unwrap_or(0);
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -367,8 +386,6 @@ impl EntryMergeBedMethyl {
         gauge.set_position(snd.len() as u64);
 
         let io_threads = self.io_threads;
-        let min_samples = self.min_samples;
-        let min_sample_coverage = self.min_sample_coverage;
         pool.spawn(move || {
             feeder
                 .into_iter()
