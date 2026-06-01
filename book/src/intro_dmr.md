@@ -113,6 +113,23 @@ For example the samples could be haplotype-partitioned bedMethyl tables or biolo
 Unlike for `modkit dmr pair` a sample name (e.g. `norm1` and `tumor1` above) must be provided for each input
 sample.
 
+If you have many samples but a single reference sample you can use the `--ref-sample` option to specify the reference sample to be used for all comparisons. This is useful for large datasets with many samples where you are not interested in all pairwise comparisons to reduce computation.
+
+```bash
+modkit dmr multi \
+  -s ${norm_pileup_1}.gz norm1 \
+  -s ${tumor_pileup_1}.gz tumor1 \
+  -s ${tumor_pileup_2}.gz tumor2 \
+  -o ${dmr_dir} \ # required for multi
+  -r ${cpg_islands} \ # skip this option to perform base-level DMR
+  --ref ${ref} \
+  --ref-sample norm1 \ # use norm1 as the reference for all comparisons
+  --base C \
+  -t 10 \
+  -f \
+  --log-filepath dmr_multi.log
+```
+
 ## 3. Detecting differential modification at single base positions
 The `modkit dmr pair` command has the ability to score individual bases (e.g. differentially methylated CpGs).
 To run single-base analysis on one or more paired samples, simply omit the `--regions` (`-r`) option when running `modkit dmr pair`.
@@ -314,4 +331,3 @@ The output schema for the segments is:
 | 14     | cohen_h                              | Cohen's h [statistic](https://en.wikipedia.org/wiki/Cohen%27s_h) (useful with regions and high-depth runs) | float |
 | 15     | cohen_h_low                          | 95% confidence interval lower bound                                                                   | float |
 | 16     | cohen_h_high                         | 95% confidence interval upper bound                                                                   | float |
-
