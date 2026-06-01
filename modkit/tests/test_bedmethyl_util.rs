@@ -134,9 +134,9 @@ fn test_bedmethyl_merge_min_samples() {
     .unwrap();
     assert_eq!(count_bed_records(&out_keep), n_positions);
 
-    // --min-samples 3 with the file passed only twice: every position is
-    // present in just 2 inputs (< 3), so nothing is output.
-    let out_drop = std::env::temp_dir().join("test_merge_min_samples_drop.bed");
+    // --min-samples all resolves to the number of inputs (2 here), so it is
+    // equivalent to --min-samples 2 and keeps every shared position.
+    let out_all = std::env::temp_dir().join("test_merge_min_samples_all.bed");
     run_modkit(&[
         "bedmethyl",
         "merge",
@@ -145,13 +145,30 @@ fn test_bedmethyl_merge_min_samples() {
         "-g",
         sizes_fp.to_str().unwrap(),
         "-o",
-        out_drop.to_str().unwrap(),
+        out_all.to_str().unwrap(),
+        "--force",
+        "--min-samples",
+        "all",
+    ])
+    .unwrap();
+    assert_eq!(count_bed_records(&out_all), n_positions);
+
+    // --min-samples greater than the number of inputs is an error.
+    let out_err = std::env::temp_dir().join("test_merge_min_samples_err.bed");
+    assert!(run_modkit(&[
+        "bedmethyl",
+        "merge",
+        MIN_SAMPLES_BED_FP,
+        MIN_SAMPLES_BED_FP,
+        "-g",
+        sizes_fp.to_str().unwrap(),
+        "-o",
+        out_err.to_str().unwrap(),
         "--force",
         "--min-samples",
         "3",
     ])
-    .unwrap();
-    assert_eq!(count_bed_records(&out_drop), 0);
+    .is_err());
 }
 
 #[test]

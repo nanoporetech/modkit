@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Adds
-  - [bedmethyl] Adds `--min-samples` and `--min-sample-coverage` to `bedmethyl merge` to require a position to be present in (and optionally covered to a minimum valid depth in) multiple inputs, enabling an inner join across replicates. The defaults preserve the original outer-join behaviour.
+  - [bedmethyl] Adds `--min-samples` (an integer or `all`) and `--min-sample-coverage` to `bedmethyl merge` to require a position to be present in (and optionally covered to a minimum valid depth in) multiple inputs, enabling an inner join across replicates. Omitting them preserves the original outer-join behaviour.
 
 ## [v0.6.3]
 ### Adds
