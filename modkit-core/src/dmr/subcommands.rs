@@ -855,11 +855,11 @@ impl MultiSampleDmr {
         {
             // Validate that the reference sample exists
             if !names.contains_key(ref_name) {
-                return Err(anyhow::anyhow!(
+                bail!(
                     "reference sample '{}' not found in provided samples. Available samples: {}",
                     ref_name,
                     names.keys().sorted().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
-                ));
+                );
             }
             info!("using reference sample: {}", ref_name);
 
