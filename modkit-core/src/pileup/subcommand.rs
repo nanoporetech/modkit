@@ -1253,9 +1253,20 @@ impl ModBamPileup {
             };
         let in_bam_fp = self.in_bam.clone();
         let per_mod_thresholds = per_mod_thresholds
-            .map(|x| x.into_iter().collect::<Vec<_>>())
+            .map(|x| {
+                x.into_iter()
+                    .sorted_by_key(|(x, _)| {
+                        if x.is_any() {
+                            std::cmp::Ordering::Greater
+                        } else {
+                            std::cmp::Ordering::Less
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_else(Vec::new);
 
+        debug!("per_mod_thresholds={per_mod_thresholds:?}");
         let mut workers: Vec<Box<dyn PileupWorker>> = Vec::new();
         match preset {
             Some(Presets::DnaCpGCombineStrands { cytosine_other_mod }) => {

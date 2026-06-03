@@ -150,6 +150,13 @@ impl ModCodeRepr {
     pub(crate) fn any_mod_code(dna_base: &DnaBase) -> Self {
         Self::Code(dna_base.char())
     }
+
+    pub(crate) fn matches_any(&self, dna_base: &DnaBase) -> bool {
+        match self {
+            ModCodeRepr::Code(c) => *c == dna_base.char(),
+            ModCodeRepr::ChEbi(_) => false,
+        }
+    }
 }
 
 impl PartialOrd for ModCodeRepr {
