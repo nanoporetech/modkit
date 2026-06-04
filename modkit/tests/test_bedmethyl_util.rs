@@ -90,8 +90,9 @@ fn min_samples_test_sizes() -> std::path::PathBuf {
     sizes_fp
 }
 
-const MIN_SAMPLES_BED_FP: &str = "../tests/resources/\
-    lung_00733-m_adjacent-normal_5mc-5hmc_chr20_cpg_pileup.bed.gz";
+const MIN_SAMPLES_BED_FP: &str =
+    "../tests/resources/\
+     lung_00733-m_adjacent-normal_5mc-5hmc_chr20_cpg_pileup.bed.gz";
 
 fn count_bed_records(fp: &std::path::Path) -> usize {
     BufReader::new(File::open(fp).unwrap())
