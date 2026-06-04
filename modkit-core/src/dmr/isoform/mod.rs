@@ -2111,6 +2111,7 @@ impl GeneTxDmr {
         top_k: usize,
         min_effect_size: f64,
         labels: &HashSet<String>,
+        sort_by_effect_size: bool,
     ) -> Vec<PooledMethylationGenomePosition> {
         assert!(top_k > 0);
         if let Some(records) = self.records.as_mut() {
@@ -2119,9 +2120,16 @@ impl GeneTxDmr {
             let label_point =
                 gene_name.as_ref().is_some_and(|x| labels.contains(x));
             records.sort_by(|x, y| {
-                let sx = x.score.p_value.ln().neg();
-                let sy = y.score.p_value.ln().neg();
-                sx.partial_cmp(&sy).unwrap_or(std::cmp::Ordering::Equal)
+                if sort_by_effect_size {
+                    y.effect_size()
+                        .partial_cmp(&x.effect_size())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                } else {
+                    x.score
+                        .p_value
+                        .partial_cmp(&y.score.p_value)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                }
             });
             records
                 .into_iter()
@@ -2389,14 +2397,15 @@ impl GeneDmrScore {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct PooledMethylationGenomePosition {
-    genome_start: u64,
-    gene: String,
-    gene_name: Option<String>,
-    log_fold_change: f64,
-    neg_log_pvalue: f64,
-    effect_size: f64,
-    label_point: bool,
+    pub genome_start: u64,
+    pub gene: String,
+    pub gene_name: Option<String>,
+    pub log_fold_change: f64,
+    pub neg_log_pvalue: f64,
+    pub effect_size: f64,
+    pub label_point: bool,
 }
 
 #[rustfmt::skip]
@@ -2552,7 +2561,13 @@ pub(super) fn volcano_svg(points: &[PooledMethylationGenomePosition], title: Opt
     }
 
     // Points and optional labels
+    let mut labeled_points = Vec::new();
     for p in valid_points {
+        if p.label_point {
+            labeled_points.push(p);
+            continue;
+        }
+
         let x = x_scale(p.log_fold_change);
         let y = y_scale(p.neg_log_pvalue);
 
@@ -2576,21 +2591,45 @@ pub(super) fn volcano_svg(points: &[PooledMethylationGenomePosition], title: Opt
             effect_size = p.effect_size
         ));
 
-        if p.label_point {
-            svg.push_str(&format!(
-                r##"
-      <line x1="{x:.2}" y1="{y:.2}" x2="{lx:.2}" y2="{ly:.2}" stroke="#666" stroke-width="1"/>
-      <text x="{tx:.2}" y="{ty:.2}" font-family="sans-serif" font-size="12" fill="black">
-        {gene}
-      </text>
-    "##,
-                lx = x + 8.0,
-                ly = y - 8.0,
-                tx = x + 10.0,
-                ty = y - 10.0,
-                gene = escape_xml(p.gene_name.as_ref().unwrap_or(&"-".to_string()))
-            ));
-        }
+    }
+
+    for p in labeled_points {
+        let x = x_scale(p.log_fold_change);
+        let y = y_scale(p.neg_log_pvalue);
+
+        let color = if p.log_fold_change.abs() >= 1.0 && p.neg_log_pvalue >= 2.0 {
+            "#d62728"
+        } else {
+            "#4a90e2"
+        };
+
+        svg.push_str(&format!(
+            r#"
+      <circle cx="{x:.2}" cy="{y:.2}" r="4" fill="{color}" fill-opacity="0.75">
+        <title>{gene} | {gene_name}genome_start={genome_start} | logFC={logfc:.4} | effect_size={effect_size} | -logP={neglogp:.4}</title>
+      </circle>
+    "#,
+            gene = escape_xml(&p.gene),
+            genome_start = p.genome_start,
+            gene_name = p.gene_name.as_ref().map(|x| format!("{x} | ")).unwrap_or("".to_string()),
+            logfc = p.log_fold_change,
+            neglogp = p.neg_log_pvalue,
+            effect_size = p.effect_size
+        ));
+
+        svg.push_str(&format!(
+            r##"
+  <line x1="{x:.2}" y1="{y:.2}" x2="{lx:.2}" y2="{ly:.2}" stroke="#666" stroke-width="1"/>
+  <text x="{tx:.2}" y="{ty:.2}" font-family="sans-serif" font-size="12" fill="black">
+    {gene}
+  </text>
+"##,
+            lx = x + 8.0,
+            ly = y - 8.0,
+            tx = x + 10.0,
+            ty = y - 10.0,
+            gene = escape_xml(p.gene_name.as_ref().unwrap_or(&"-".to_string()))
+        ));
     }
 
     svg.push_str("</svg>\n");

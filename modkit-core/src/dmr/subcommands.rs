@@ -1518,11 +1518,15 @@ pub struct EntryGeneTx {
     /// documentation for and example.
     #[arg(long, requires = "single_modification_code")]
     plot: Option<PathBuf>,
-    /// For each gene, sort the positions in decreasing negative log p-value
+    /// For each gene, sort the positions in increasing p-value
     /// and take this many for plotting. Setting a large number will
     /// increase the size of the SVG plot.
     #[arg(long, requires = "plot", default_value_t = 1)]
     top_k: usize,
+    /// Sort the points to be plotted by increasing p-value, then label the
+    /// points from the top-k genes.
+    #[arg(long, requires = "plot", conflicts_with = "gene_labels")]
+    label_top_k_genes: Option<usize>,
     /// Discard positions with an effect size less than this before considering
     /// them for plotting.
     #[arg(long, requires = "plot", default_value_t = 0.1f64)]
@@ -1534,6 +1538,10 @@ pub struct EntryGeneTx {
     /// in the volcano plot.
     #[arg(long, requires = "plot")]
     gene_labels: Option<PathBuf>,
+    /// Determine which points to plot by sorting to decreasing effect size
+    /// instead of increasing p-value.
+    #[arg(long, requires = "plot", default_value_t = false)]
+    sort_by_effect_size: bool,
 }
 
 impl EntryGeneTx {
@@ -1684,7 +1692,7 @@ impl EntryGeneTx {
 
         let mut errs = FxHashMap::default();
         let mut plot_points = Vec::with_capacity(n_genes * self.top_k);
-        let gene_labels = self.get_gene_labels(&multi_progress)?;
+        let mut gene_labels = self.get_gene_labels(&multi_progress)?;
         for result in records_rx {
             match result {
                 Ok(mut gene_tx_dmr) => {
@@ -1698,6 +1706,7 @@ impl EntryGeneTx {
                             self.top_k,
                             self.min_effect_size,
                             &gene_labels,
+                            self.sort_by_effect_size,
                         );
                         plot_points.extend(points);
                     }
@@ -1716,6 +1725,40 @@ impl EntryGeneTx {
         if let Some(fp) = self.plot.as_ref() {
             multi_progress.suspend(|| {
                 info!("plotting {} points to {fp:?}", plot_points.len())
+            });
+            if let Some(label_top_k_genes) = self.label_top_k_genes {
+                plot_points.sort_by(|a, b| {
+                    b.neg_log_pvalue
+                        .partial_cmp(&a.neg_log_pvalue)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                for pp in plot_points.iter() {
+                    let gene_label =
+                        pp.gene_name.clone().unwrap_or_else(|| pp.gene.clone());
+                    gene_labels.insert(gene_label);
+                    if gene_labels.len() >= label_top_k_genes {
+                        break;
+                    }
+                }
+                for pp in plot_points.iter_mut() {
+                    let gene_label = pp.gene_name.as_ref().unwrap_or(&pp.gene);
+                    if gene_labels.contains(gene_label) {
+                        pp.label_point = true;
+                    }
+                }
+            }
+
+            multi_progress.suspend(|| {
+                let sorted_by = if self.sort_by_effect_size {
+                    "effect size"
+                } else {
+                    "p-value"
+                };
+                info!(
+                    "plotting the top {} points from each gene, sorted by \
+                     {sorted_by}",
+                    self.top_k
+                );
             });
             let svg = volcano_svg(&plot_points, self.plot_title.as_ref());
             std::fs::write(fp, svg)?;
