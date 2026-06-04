@@ -205,8 +205,10 @@ pub(super) fn run_gene_dmr<const NMODS: usize>(
             valid_pos.set(common_start, true);
             genomic_positions[common_start] = genomic_start
         }
-        unmodified_a[common_start] = first_a.count_canonical as u32;
-        unmodified_b[common_start] = first_b.count_canonical as u32;
+        unmodified_a[common_start] = unmodified_a[common_start]
+            .saturating_add(first_a.count_canonical as u32);
+        unmodified_b[common_start] = unmodified_b[common_start]
+            .saturating_add(first_b.count_canonical as u32);
 
         for (a, b) in joined {
             assert_eq!(a.start(), b.start());
@@ -217,8 +219,10 @@ pub(super) fn run_gene_dmr<const NMODS: usize>(
                     genomic0_to_gene_common0(gene, genomic_start)? as usize;
                 valid_pos.set(common_start, true);
                 genomic_positions[common_start] = genomic_start;
-                unmodified_a[common_start] = a.count_canonical as u32;
-                unmodified_b[common_start] = b.count_canonical as u32;
+                unmodified_a[common_start] = unmodified_a[common_start]
+                    .saturating_add(a.count_canonical as u32);
+                unmodified_b[common_start] = unmodified_b[common_start]
+                    .saturating_add(b.count_canonical as u32);
             }
 
             let mod_counts_a = &mut modified_counts_a[common_start];
