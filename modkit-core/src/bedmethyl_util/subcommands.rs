@@ -79,9 +79,12 @@ fn parse_min_samples(s: &str) -> Result<MinSamples, String> {
     // which is the behaviour when the option is omitted, so it does nothing.
     match s.parse::<usize>() {
         Ok(n) if n > 1 => Ok(MinSamples::AtLeast(n)),
-        Ok(_) => Err("must be an integer greater than 1, or \"all\"".to_string()),
+        Ok(_) => {
+            Err("must be an integer greater than 1, or \"all\"".to_string())
+        }
         Err(_) => Err(format!(
-            "invalid value '{s}': expected an integer greater than 1 or \"all\""
+            "invalid value '{s}': expected an integer greater than 1 or \
+             \"all\""
         )),
     }
 }
@@ -172,8 +175,8 @@ pub struct EntryMergeBedMethyl {
     #[clap(help_heading = "Filtering Options")]
     #[arg(long, value_parser = parse_min_samples)]
     min_samples: Option<MinSamples>,
-    /// Minimum valid coverage for an input's record to count towards a position,
-    /// for both the --min-samples tally and the summed counts.
+    /// Minimum valid coverage for an input's record to count towards a
+    /// position, for both the --min-samples tally and the summed counts.
     #[clap(help_heading = "Filtering Options")]
     #[arg(long)]
     min_sample_coverage: Option<u64>,
@@ -195,8 +198,8 @@ fn merge_data(
     let range = (chrom_coordinates.start_pos as u64)
         ..(chrom_coordinates.end_pos as u64);
     // value is the merged record plus a tally of how many inputs contributed to
-    // it (each input has at most one record per key), used for the --min-samples
-    // (inner-join) filter below.
+    // it (each input has at most one record per key), used for the
+    // --min-samples (inner-join) filter below.
     let mut merged_data = FxHashMap::<Key, (BedMethylLine, usize)>::default();
 
     // rationale:
@@ -236,8 +239,8 @@ fn merge_data(
         }
     }
 
-    // get just the bedmethyllines for writing, keeping only positions present in
-    // at least --min-samples inputs (default 1 == outer join, unchanged)
+    // get just the bedmethyllines for writing, keeping only positions present
+    // in at least --min-samples inputs (default 1 == outer join, unchanged)
     let merged_data = merged_data
         .into_values()
         .filter(|(_, n_samples)| *n_samples >= min_samples)
@@ -261,7 +264,8 @@ impl EntryMergeBedMethyl {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
 
-        // Resolve --min-samples ("all" -> number of inputs; omitted -> 1 = outer join).
+        // Resolve --min-samples ("all" -> number of inputs; omitted -> 1 =
+        // outer join).
         let n_inputs = self.in_bedmethyl.len();
         let min_samples: usize = match &self.min_samples {
             None => 1,

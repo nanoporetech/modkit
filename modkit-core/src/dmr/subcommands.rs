@@ -881,35 +881,41 @@ impl MultiSampleDmr {
             info!("calculating differntial methylation for {code} in isolation")
         }
 
-        // Generate sample pairs based on whether a reference sample is specified
-        let sample_pairs: Vec<(&String, &String)> = if let Some(ref_name) =
-            &self.ref_sample
-        {
-            // Validate that the reference sample exists
-            if !names.contains_key(ref_name) {
-                bail!(
-                    "reference sample '{}' not found in provided samples. Available samples: {}",
-                    ref_name,
-                    names.keys().sorted().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
-                );
-            }
-            info!("using reference sample: {}", ref_name);
+        // Generate sample pairs based on whether a reference sample is
+        // specified
+        let sample_pairs: Vec<(&String, &String)> =
+            if let Some(ref_name) = &self.ref_sample {
+                // Validate that the reference sample exists
+                if !names.contains_key(ref_name) {
+                    bail!(
+                        "reference sample '{}' not found in provided samples. \
+                         Available samples: {}",
+                        ref_name,
+                        names
+                            .keys()
+                            .sorted()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                info!("using reference sample: {}", ref_name);
 
-            // Compare all samples against the reference
-            names
-                .keys()
-                .filter(|name| *name != ref_name)
-                .map(|name| (ref_name, name))
-                .collect()
-        } else {
-            // All pairwise comparisons
-            let samples = names.keys().sorted().collect::<Vec<&String>>();
-            samples
-                .into_iter()
-                .combinations(2)
-                .map(|pair| (pair[0], pair[1]))
-                .collect()
-        };
+                // Compare all samples against the reference
+                names
+                    .keys()
+                    .filter(|name| *name != ref_name)
+                    .map(|name| (ref_name, name))
+                    .collect()
+            } else {
+                // All pairwise comparisons
+                let samples = names.keys().sorted().collect::<Vec<&String>>();
+                samples
+                    .into_iter()
+                    .combinations(2)
+                    .map(|pair| (pair[0], pair[1]))
+                    .collect()
+            };
 
         let sample_pb =
             mpb.add(get_master_progress_bar(sample_pairs.len() as u64));
