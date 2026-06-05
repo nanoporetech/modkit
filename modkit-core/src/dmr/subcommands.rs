@@ -1034,6 +1034,11 @@ pub struct EntryDmrIsoform {
     /// output file substantially larger.
     #[arg(long = "full", default_value_t = false)]
     emit_full_results: bool,
+    /// Ignore gene ID version and transcript ID version in GTF, if there are
+    /// multiple identical transcript IDs or gene IDs with different versions
+    /// the last one will be kept
+    #[arg(long, default_value_t = false)]
+    ignore_version: bool,
     /// Path to optional debug log (recommended).
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
@@ -1092,8 +1097,9 @@ impl EntryDmrIsoform {
             .map(|x| ModCodeRepr::parse(x))
             .transpose()?;
 
-        let sorted_transcript_models = parse_gtf(&self.gtf, &multi_progress)
-            .context("failed to read GTF")?;
+        let sorted_transcript_models =
+            parse_gtf(&self.gtf, self.ignore_version, &multi_progress)
+                .context("failed to read GTF")?;
         multi_progress.suspend(|| {
             info!(
                 "parsed {} transcript models",
@@ -1494,6 +1500,16 @@ pub struct EntryGeneTx {
     /// Path to GTF file to use for transcript models. Can be compressed.
     #[arg(long)]
     gtf: PathBuf,
+    /// Ignore gene ID version and transcript ID version in GTF, if there are
+    /// multiple identical transcript IDs or gene IDs with different versions
+    /// the last one will be kept
+    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        conflicts_with = "transcript_version",
+        default_value_t = false
+    )]
+    ignore_version: bool,
     /// Minimum valid coverage required to use an entry from a bedMethyl. See
     /// the help for pileup for the specification and description of valid
     /// coverage.
@@ -1562,8 +1578,9 @@ impl EntryGeneTx {
             .map(|x| ModCodeRepr::parse(x))
             .transpose()?;
 
-        let sorted_transcript_models = parse_gtf(&self.gtf, &multi_progress)
-            .context("failed to read GTF")?;
+        let sorted_transcript_models =
+            parse_gtf(&self.gtf, self.ignore_version, &multi_progress)
+                .context("failed to read GTF")?;
         multi_progress.suspend(|| {
             info!(
                 "parsed {} transcript models",

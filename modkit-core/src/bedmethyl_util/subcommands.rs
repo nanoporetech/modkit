@@ -681,6 +681,15 @@ pub struct EntryMapToGenome {
     transcript_id: String,
     #[arg(long)]
     transcript_version: Option<u32>,
+    /// Ignore gene ID version and transcript ID version in GTF, if there are
+    /// multiple identical transcript IDs or gene IDs with different versions
+    /// the last one will be kept
+    #[arg(
+        long,
+        conflicts_with = "transcript_version",
+        default_value_t = false
+    )]
+    ignore_version: bool,
     #[arg(long)]
     gtf: PathBuf,
     #[arg(long, default_value_t = false)]
@@ -692,9 +701,10 @@ impl EntryMapToGenome {
         let _ = init_logging(None);
 
         let multi_progress = MultiProgress::new();
-        let tx_models = parse_gtf(&self.gtf, &multi_progress)?
-            .into_iter()
-            .collect::<FxHashMap<_, _>>();
+        let tx_models =
+            parse_gtf(&self.gtf, self.ignore_version, &multi_progress)?
+                .into_iter()
+                .collect::<FxHashMap<_, _>>();
 
         let tx_id = if let Some(tx_version) = self.transcript_version {
             GtfTranscript::new(self.transcript_id.clone(), tx_version)

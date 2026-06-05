@@ -202,6 +202,7 @@ fn parse_gtf_attributes(attr: &str) -> HashMap<String, String> {
 
 pub(crate) fn parse_gtf<P: AsRef<Path>>(
     gtf_path: P,
+    ignore_version: bool,
     multi_progress: &MultiProgress,
 ) -> anyhow::Result<IndexMap<GtfTranscript, TranscriptModel>> {
     let reader = open_gtf_reader(gtf_path)?;
@@ -260,37 +261,47 @@ pub(crate) fn parse_gtf<P: AsRef<Path>>(
             .get("transcript_id")
             .ok_or(anyhow!("Missing transcript_id in GTF exon record"))?;
 
-        let transcript_id = if let Some(transcript_version) =
-            attrs.get("transcript_version").and_then(|x| x.parse::<u32>().ok())
-        {
-            GtfTranscript {
-                tx_id: (*transcript_id).clone(),
-                version: transcript_version,
-            }
+        let transcript_id = if ignore_version {
+            GtfTranscript { tx_id: (*transcript_id).clone(), version: 0 }
         } else {
-            let Ok(transcript_id) = GtfTranscript::from_str(transcript_id)
-            else {
-                debug!("failed to parse transcript_id: {transcript_id}");
-                errs.inc(1);
-                continue;
-            };
-            transcript_id
+            if let Some(transcript_version) = attrs
+                .get("transcript_version")
+                .and_then(|x| x.parse::<u32>().ok())
+            {
+                GtfTranscript {
+                    tx_id: (*transcript_id).clone(),
+                    version: transcript_version,
+                }
+            } else {
+                let Ok(transcript_id) = GtfTranscript::from_str(transcript_id)
+                else {
+                    debug!("failed to parse transcript_id: {transcript_id}");
+                    errs.inc(1);
+                    continue;
+                };
+                transcript_id
+            }
         };
+
         let gene_id = attrs
             .get("gene_id")
             .ok_or(anyhow!("Missing gene_id in GTF exon record"))?;
 
-        let gene_id = if let Some(gene_version) =
-            attrs.get("gene_version").and_then(|x| x.parse::<u32>().ok())
-        {
-            GtfGene { gene_id: (*gene_id).clone(), version: gene_version }
+        let gene_id = if ignore_version {
+            GtfGene { gene_id: (*gene_id).clone(), version: 0 }
         } else {
-            let Ok(gene_id) = GtfGene::from_str(gene_id) else {
-                debug!("failed to parse gene_id: {gene_id}");
-                errs.inc(1);
-                continue;
-            };
-            gene_id
+            if let Some(gene_version) =
+                attrs.get("gene_version").and_then(|x| x.parse::<u32>().ok())
+            {
+                GtfGene { gene_id: (*gene_id).clone(), version: gene_version }
+            } else {
+                let Ok(gene_id) = GtfGene::from_str(gene_id) else {
+                    debug!("failed to parse gene_id: {gene_id}");
+                    errs.inc(1);
+                    continue;
+                };
+                gene_id
+            }
         };
         let gene_name = attrs.get("gene_name").map(|x| x.to_owned());
 
