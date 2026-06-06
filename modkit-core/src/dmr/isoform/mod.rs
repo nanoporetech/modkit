@@ -2150,7 +2150,7 @@ impl GeneTxDmr {
                     genome_start: x.start,
                     gene: gene_string.clone(),
                     gene_name: gene_name.clone(),
-                    log_fold_change: x.log_fc(),
+                    log_fold_change: x.log2_fc(),
                     neg_log_pvalue: x.score.p_value.ln().neg(),
                     effect_size: x.effect_size(),
                     label_point,
@@ -2228,7 +2228,7 @@ impl GeneIsoformDmrRecord<GeneDmrScore> {
             gene_name.unwrap_or(&"-".to_string())
         );
         let log2_fc_field = if single_mod_code.is_some() {
-            let log2_fc = self.log_fc();
+            let log2_fc = self.log2_fc();
             let effect_size = self.effect_size();
             format!("{TAB}{log2_fc}{TAB}{effect_size}")
         } else {
@@ -2347,7 +2347,7 @@ impl GeneIsoformDmrRecord<GeneDmrScore> {
         (m_a / (m_a + u_a)) - (m_b / (m_b + u_b))
     }
 
-    fn log_fc(&self) -> f64 {
+    fn log2_fc(&self) -> f64 {
         assert_eq!(self.score.cond_a_proportions.len(), 2);
         assert_eq!(self.score.cond_b_proportions.len(), 2);
 
