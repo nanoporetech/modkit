@@ -489,10 +489,12 @@ fn calc_cohen_h(p1: f64, p2: f64, n1: usize, n2: usize) -> CohenHResult {
     let es = es.abs();
     let se = (0.25f64 * (1f64 / n1 as f64 + 1f64 / n2 as f64)).sqrt();
     let ci_diff = Q * se;
+    let h_low = (es - ci_diff) * 2f64;
+    let h_high = (es + ci_diff) * 2f64;
     CohenHResult {
         h,
-        h_low: (es - ci_diff) * 2f64,
-        h_high: (es + ci_diff) * 2f64,
+        h_low: if h_low < 0f64 { 0f64 } else { h_low },
+        h_high: if h_high < 0f64 { 0f64 } else { h_high },
     }
 }
 
@@ -634,5 +636,11 @@ mod dmr_util_tests {
         assert_eq!(res1.h, res2.h.neg());
         assert_eq!(res1.h_low, res2.h_low);
         assert_eq!(res1.h_high, res2.h_high);
+    }
+
+    #[test]
+    fn test_cohen_h_confidence_intervals() {
+        let res1 = calc_cohen_h(0.866, 0.636, 15, 33);
+        assert!(res1.h_low == 0f64);
     }
 }
