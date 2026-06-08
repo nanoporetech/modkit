@@ -1,4 +1,4 @@
-![Oxford Nanopore Technologies logo](ONT_logo_590x106.png)
+![Oxford Nanopore Technologies logo](ONT_2Line_Black_RGB.png)
 
 # Modkit
 
@@ -22,10 +22,11 @@ cargo install --path modkit
 cargo install --git https://github.com/nanoporetech/modkit.git
 ```
 
-### macOS (Apple Silicon)
+### macOS (Apple Silicon) with acceleration for `open-chromatin predict`
 
 A script is provided to compile modkit on Apple Silicon Macs with Metal GPU (MPS) acceleration.
-Just download the script and run it with the desired installation directory, modkit version, and Python provider (system, conda, pyenv, or uv).
+This is only necessary if you plan to use `modkit open-chromatin predict`, otherwise a normal `cargo` installation is recommended.
+Download the script and run it with the desired installation directory, modkit version, and Python provider (system, conda, pyenv, or uv).
 
 ```bash
 bash mac_compile_modkit.sh ~/tools
