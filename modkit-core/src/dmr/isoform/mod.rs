@@ -70,11 +70,29 @@ pub(crate) struct GtfTranscript {
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd)]
 pub(crate) struct GtfGene {
-    gene_id: GeneId,
-    version: u32,
+    pub gene_id: GeneId,
+    pub version: u32,
+    pub chrom: String,
+    pub strand: Strand,
 }
 
-fn parse_gtf_id(raw: &str) -> MkResult<(String, u32)> {
+impl GtfGene {
+    pub(super) fn parse_raw_id(
+        raw: &str,
+        raw_strand: char,
+        chrom: &str,
+    ) -> MkResult<Self> {
+        let (gene_id, version) = parse_gtf_id(raw)?;
+        let strand = match raw_strand {
+            '+' => Strand::Positive,
+            '-' => Strand::Negative,
+            _ => return Err(MkError::InvalidStrand),
+        };
+        Ok(Self { gene_id, version, strand, chrom: chrom.to_owned() })
+    }
+}
+
+pub(super) fn parse_gtf_id(raw: &str) -> MkResult<(String, u32)> {
     if raw.contains(".") {
         let Some((id, v)) = raw.split_once(".") else {
             return Err(MkError::InvalidGtfRecord);
@@ -94,12 +112,12 @@ impl GtfId for GtfTranscript {
     }
 }
 
-impl GtfId for GtfGene {
-    fn from_str(raw: &str) -> MkResult<Self> {
-        let (gene_id, version) = parse_gtf_id(raw)?;
-        Ok(Self { gene_id, version })
-    }
-}
+// impl GtfId for GtfGene {
+//     fn from_str(raw: &str) -> MkResult<Self> {
+//         let (gene_id, version) = parse_gtf_id(raw)?;
+//         Ok(Self { gene_id, version })
+//     }
+// }
 
 impl std::fmt::Display for GtfTranscript {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -141,7 +159,7 @@ pub(super) struct GeneCommonCoord {
     pub gene_id: GtfGene,
     pub gene_name: Option<String>,
     pub chrom: String,
-    strand: char,
+    pub strand: char,
     segments_tx_order: Vec<Segment>, // union-of-exons, ordered 5'->3'
     cumulative0: Vec<u64>,           /* 0-based start of each segment in
                                       * common coord */
@@ -151,8 +169,14 @@ pub(super) struct GeneCommonCoord {
 impl GeneCommonCoord {
     pub(super) fn empty() -> Self {
         Self {
-            gene_id: GtfGene { gene_id: "".to_string(), version: 0u32 },
+            gene_id: GtfGene {
+                gene_id: "".to_string(),
+                version: 0u32,
+                chrom: "".to_string(),
+                strand: Strand::Positive,
+            },
             gene_name: None,
+            // todo remove
             chrom: "".to_string(),
             strand: '+',
             segments_tx_order: Vec::new(),
@@ -172,17 +196,6 @@ pub(super) struct GeneModel {
     start0: u64,
     end0: u64,
 }
-
-// pub(super) struct GeneCommonCoord<'a> {
-//     pub gene_id: &'a GeneId,
-//     pub gene_name: &'a Option<String>,
-//     pub chrom: &'a str,
-//     strand: Strand,
-//     segments_tx_order: Vec<Segment>, /* union of exonic intervals in
-//                                          * transcript order */
-//     cumulative: Vec<u64>, // 0-based segment starts in common coord
-//     total_len: u64,
-// }
 
 fn parse_gtf_attributes(attr: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
@@ -275,7 +288,7 @@ pub(crate) fn parse_gtf<P: AsRef<Path>>(
             } else {
                 let Ok(transcript_id) = GtfTranscript::from_str(transcript_id)
                 else {
-                    debug!("failed to parse transcript_id: {transcript_id}");
+                    // debug!("failed to parse transcript_id: {transcript_id}");
                     errs.inc(1);
                     continue;
                 };
@@ -288,14 +301,26 @@ pub(crate) fn parse_gtf<P: AsRef<Path>>(
             .ok_or(anyhow!("Missing gene_id in GTF exon record"))?;
 
         let gene_id = if ignore_version {
-            GtfGene { gene_id: (*gene_id).clone(), version: 0 }
+            GtfGene {
+                gene_id: (*gene_id).clone(),
+                version: 0,
+                chrom: chrom.to_owned(),
+                strand: Strand::parse_char(strand)?,
+            }
         } else {
             if let Some(gene_version) =
                 attrs.get("gene_version").and_then(|x| x.parse::<u32>().ok())
             {
-                GtfGene { gene_id: (*gene_id).clone(), version: gene_version }
+                GtfGene {
+                    gene_id: (*gene_id).clone(),
+                    version: gene_version,
+                    chrom: chrom.to_owned(),
+                    strand: Strand::parse_char(strand)?,
+                }
             } else {
-                let Ok(gene_id) = GtfGene::from_str(gene_id) else {
+                let Ok(gene_id) =
+                    GtfGene::parse_raw_id(gene_id, strand, &chrom)
+                else {
                     debug!("failed to parse gene_id: {gene_id}");
                     errs.inc(1);
                     continue;

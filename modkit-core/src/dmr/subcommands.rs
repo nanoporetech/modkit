@@ -17,12 +17,11 @@ use rustc_hash::FxHashMap;
 use crate::dmr::bedmethyl::BedMethylLine;
 use crate::dmr::isoform::{
     build_gene_common_coords, build_gene_models, group_bedmethyl_records_by_tx,
-    parse_gtf, plot_isoform_metrics, run_isoform_dmr_on_gene, volcano_svg,
-    DmrMetric, GeneCommonCoord, GeneDmrScore, GeneIsoformDmr,
+    parse_gtf, parse_gtf_id, plot_isoform_metrics, run_isoform_dmr_on_gene,
+    volcano_svg, DmrMetric, GeneCommonCoord, GeneDmrScore, GeneIsoformDmr,
     GeneIsoformDmrRecord, GeneIsoformDmrScore, GeneIsoformDmrWorker, GeneTxDmr,
-    GeneTxDmrWorker, GtfGene, GtfId, GtfTranscript,
-    PairTranscriptomeBedmethylHandler, PlottingArgs,
-    TranscriptBedmethylHandler, TranscriptModel,
+    GeneTxDmrWorker, GtfGene, GtfTranscript, PairTranscriptomeBedmethylHandler,
+    PlottingArgs, TranscriptBedmethylHandler, TranscriptModel,
 };
 use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::single_site::SingleSiteDmrAnalysis;
@@ -1048,6 +1047,14 @@ pub struct EntryDmrIsoform {
     /// Only process this Gene Name
     #[arg(long, short = 'n', conflicts_with = "gene_id")]
     gene_name: Option<String>,
+    /// Specify a strand for the Gene Name (or GeneID) if there are multiple
+    /// chromosomes with this gene
+    #[arg(long)]
+    gene_strand: Option<char>,
+    /// Specify a chromosome for the Gene Name (or GeneID) if there are
+    /// multiple chromosomes with this gene
+    #[arg(long)]
+    gene_chrom: Option<String>,
     /// Don't show the progress bar.
     #[arg(long, default_value_t = false)]
     suppress_progress: bool,
@@ -1108,6 +1115,10 @@ impl EntryDmrIsoform {
         });
         let sorted_by_gene_common_coordinates =
             build_gene_common_coords(&sorted_transcript_models)?;
+        let requested_gene_id = self.get_requested_gene_id(
+            &sorted_by_gene_common_coordinates,
+            &multi_progress,
+        )?;
         let transcript_models =
             sorted_transcript_models.into_iter().collect::<FxHashMap<_, _>>();
         let bedmethyl_handler = TranscriptBedmethylHandler::from_path(
@@ -1142,32 +1153,6 @@ impl EntryDmrIsoform {
                     * 100f32
             );
         });
-
-        let requested_gene_id =
-            match (self.gene_id.as_ref(), self.gene_name.as_ref()) {
-                (None, None) => None,
-                (None, Some(name)) => {
-                    multi_progress
-                        .suspend(|| info!("searching for gene name {name}"));
-                    sorted_by_gene_common_coordinates.values().find_map(|gc| {
-                        if let Some(gn) = &gc.gene_name {
-                            if gn == name {
-                                Some(gc.gene_id.to_owned())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                }
-                (Some(gene_id), None) => Some(GtfGene::from_str(gene_id)?),
-                (Some(_), Some(_)) => unreachable!(),
-            };
-
-        if self.gene_name.is_some() && requested_gene_id.is_none() {
-            bail!("failed to find requested gene name in GTF");
-        }
 
         if let Some(requested_gene_id) = requested_gene_id.as_ref() {
             let Some(gene) =
@@ -1473,6 +1458,112 @@ impl EntryDmrIsoform {
             .as_bytes(),
         )?;
         Ok(writer)
+    }
+
+    fn get_requested_gene_id(
+        &self,
+        sorted_by_gene_common_coordinates: &IndexMap<GtfGene, GeneCommonCoord>,
+        multi_progress: &MultiProgress,
+    ) -> anyhow::Result<Option<GtfGene>> {
+        match (self.gene_id.as_ref(), self.gene_name.as_ref()) {
+            (None, None) => Ok(None),
+            (None, Some(name)) => {
+                multi_progress
+                    .suspend(|| info!("searching for gene name {name}"));
+
+                let hits = sorted_by_gene_common_coordinates
+                    .iter()
+                    .filter(|(_, gc)| {
+                        gc.gene_name
+                            .as_ref()
+                            .map(|x| x == name)
+                            .unwrap_or(false)
+                    })
+                    .filter(|(_, gc)| {
+                        match (self.gene_strand, self.gene_chrom.as_ref()) {
+                            (Some(strand), Some(chrom)) => {
+                                gc.gene_id.strand.to_char() == strand
+                                    && &gc.gene_id.chrom == chrom
+                            }
+                            (Some(strand), None) => {
+                                gc.gene_id.strand.to_char() == strand
+                            }
+                            (None, Some(chrom)) => &gc.gene_id.chrom == chrom,
+                            (None, None) => true,
+                        }
+                    })
+                    .collect::<Vec<(&GtfGene, &GeneCommonCoord)>>();
+                match hits.len() {
+                    0 => {
+                        bail!("failed to find {name} in GTF")
+                    }
+                    1 => Ok(Some(hits[0].0.to_owned())),
+                    _ => {
+                        let gene_ids = hits
+                            .iter()
+                            .map(|(_, gc)| {
+                                format!(
+                                    "({},{},{})",
+                                    gc.gene_id.gene_id, gc.chrom, gc.strand
+                                )
+                            })
+                            .join(",");
+                        bail!(
+                            "ambiguous, cannot determine a GeneID, got \
+                             {gene_ids}, specify which strand and/or which \
+                             chromosome with --gene-strand and --gene-chrom"
+                        )
+                    }
+                }
+            }
+            (Some(gene_id), None) => {
+                let (gene_id, version) = parse_gtf_id(gene_id.as_str())?;
+                multi_progress.suspend(|| {
+                    info!("searching for gene ID {gene_id}, version {version}")
+                });
+
+                let hits = sorted_by_gene_common_coordinates
+                    .iter()
+                    .filter(|(_, gc)| {
+                        &gc.gene_id.gene_id == &gene_id
+                            && gc.gene_id.version == version
+                    })
+                    .filter(|(_, gc)| {
+                        match (self.gene_strand, self.gene_chrom.as_ref()) {
+                            (Some(strand), Some(chrom)) => {
+                                gc.gene_id.strand.to_char() == strand
+                                    && &gc.gene_id.chrom == chrom
+                            }
+                            (Some(strand), None) => {
+                                gc.gene_id.strand.to_char() == strand
+                            }
+                            (None, Some(chrom)) => &gc.gene_id.chrom == chrom,
+                            (None, None) => true,
+                        }
+                    })
+                    .collect::<Vec<(&GtfGene, &GeneCommonCoord)>>();
+                match hits.len() {
+                    0 => {
+                        bail!(
+                            "failed to find {gene_id} (version: {version}) in \
+                             GTF"
+                        )
+                    }
+                    1 => Ok(Some(hits[0].0.to_owned())),
+                    _ => {
+                        let gene_ids = hits
+                            .iter()
+                            .map(|(_, gc)| gc.gene_id.to_string())
+                            .join(",");
+                        bail!(
+                            "ambiguous, cannot determine a GeneID, got \
+                             {gene_ids}"
+                        )
+                    }
+                }
+            }
+            (Some(_), Some(_)) => unreachable!(),
+        }
     }
 }
 
