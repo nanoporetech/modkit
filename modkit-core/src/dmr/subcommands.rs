@@ -17,12 +17,11 @@ use rustc_hash::FxHashMap;
 use crate::dmr::bedmethyl::BedMethylLine;
 use crate::dmr::isoform::{
     build_gene_common_coords, build_gene_models, group_bedmethyl_records_by_tx,
-    parse_gtf, plot_isoform_metrics, run_isoform_dmr_on_gene, volcano_svg,
-    DmrMetric, GeneCommonCoord, GeneDmrScore, GeneIsoformDmr,
+    parse_gtf, parse_gtf_id, plot_isoform_metrics, run_isoform_dmr_on_gene,
+    volcano_svg, DmrMetric, GeneCommonCoord, GeneDmrScore, GeneIsoformDmr,
     GeneIsoformDmrRecord, GeneIsoformDmrScore, GeneIsoformDmrWorker, GeneTxDmr,
-    GeneTxDmrWorker, GtfGene, GtfId, GtfTranscript,
-    PairTranscriptomeBedmethylHandler, PlottingArgs,
-    TranscriptBedmethylHandler, TranscriptModel,
+    GeneTxDmrWorker, GtfGene, GtfTranscript, PairTranscriptomeBedmethylHandler,
+    PlottingArgs, TranscriptBedmethylHandler, TranscriptModel,
 };
 use crate::dmr::pairwise::run_pairwise_dmr;
 use crate::dmr::single_site::SingleSiteDmrAnalysis;
@@ -1034,6 +1033,11 @@ pub struct EntryDmrIsoform {
     /// output file substantially larger.
     #[arg(long = "full", default_value_t = false)]
     emit_full_results: bool,
+    /// Ignore gene ID version and transcript ID version in GTF, if there are
+    /// multiple identical transcript IDs or gene IDs with different versions
+    /// the last one will be kept
+    #[arg(long, default_value_t = false)]
+    ignore_version: bool,
     /// Path to optional debug log (recommended).
     #[arg(long, alias = "log")]
     log_filepath: Option<PathBuf>,
@@ -1043,6 +1047,14 @@ pub struct EntryDmrIsoform {
     /// Only process this Gene Name
     #[arg(long, short = 'n', conflicts_with = "gene_id")]
     gene_name: Option<String>,
+    /// Specify a strand for the Gene Name (or GeneID) if there are multiple
+    /// chromosomes with this gene
+    #[arg(long)]
+    gene_strand: Option<char>,
+    /// Specify a chromosome for the Gene Name (or GeneID) if there are
+    /// multiple chromosomes with this gene
+    #[arg(long)]
+    gene_chrom: Option<String>,
     /// Don't show the progress bar.
     #[arg(long, default_value_t = false)]
     suppress_progress: bool,
@@ -1092,8 +1104,9 @@ impl EntryDmrIsoform {
             .map(|x| ModCodeRepr::parse(x))
             .transpose()?;
 
-        let sorted_transcript_models = parse_gtf(&self.gtf, &multi_progress)
-            .context("failed to read GTF")?;
+        let sorted_transcript_models =
+            parse_gtf(&self.gtf, self.ignore_version, &multi_progress)
+                .context("failed to read GTF")?;
         multi_progress.suspend(|| {
             info!(
                 "parsed {} transcript models",
@@ -1102,6 +1115,10 @@ impl EntryDmrIsoform {
         });
         let sorted_by_gene_common_coordinates =
             build_gene_common_coords(&sorted_transcript_models)?;
+        let requested_gene_id = self.get_requested_gene_id(
+            &sorted_by_gene_common_coordinates,
+            &multi_progress,
+        )?;
         let transcript_models =
             sorted_transcript_models.into_iter().collect::<FxHashMap<_, _>>();
         let bedmethyl_handler = TranscriptBedmethylHandler::from_path(
@@ -1136,32 +1153,6 @@ impl EntryDmrIsoform {
                     * 100f32
             );
         });
-
-        let requested_gene_id =
-            match (self.gene_id.as_ref(), self.gene_name.as_ref()) {
-                (None, None) => None,
-                (None, Some(name)) => {
-                    multi_progress
-                        .suspend(|| info!("searching for gene name {name}"));
-                    sorted_by_gene_common_coordinates.values().find_map(|gc| {
-                        if let Some(gn) = &gc.gene_name {
-                            if gn == name {
-                                Some(gc.gene_id.to_owned())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                }
-                (Some(gene_id), None) => Some(GtfGene::from_str(gene_id)?),
-                (Some(_), Some(_)) => unreachable!(),
-            };
-
-        if self.gene_name.is_some() && requested_gene_id.is_none() {
-            bail!("failed to find requested gene name in GTF");
-        }
 
         if let Some(requested_gene_id) = requested_gene_id.as_ref() {
             let Some(gene) =
@@ -1468,6 +1459,112 @@ impl EntryDmrIsoform {
         )?;
         Ok(writer)
     }
+
+    fn get_requested_gene_id(
+        &self,
+        sorted_by_gene_common_coordinates: &IndexMap<GtfGene, GeneCommonCoord>,
+        multi_progress: &MultiProgress,
+    ) -> anyhow::Result<Option<GtfGene>> {
+        match (self.gene_id.as_ref(), self.gene_name.as_ref()) {
+            (None, None) => Ok(None),
+            (None, Some(name)) => {
+                multi_progress
+                    .suspend(|| info!("searching for gene name {name}"));
+
+                let hits = sorted_by_gene_common_coordinates
+                    .iter()
+                    .filter(|(_, gc)| {
+                        gc.gene_name
+                            .as_ref()
+                            .map(|x| x == name)
+                            .unwrap_or(false)
+                    })
+                    .filter(|(_, gc)| {
+                        match (self.gene_strand, self.gene_chrom.as_ref()) {
+                            (Some(strand), Some(chrom)) => {
+                                gc.gene_id.strand.to_char() == strand
+                                    && &gc.gene_id.chrom == chrom
+                            }
+                            (Some(strand), None) => {
+                                gc.gene_id.strand.to_char() == strand
+                            }
+                            (None, Some(chrom)) => &gc.gene_id.chrom == chrom,
+                            (None, None) => true,
+                        }
+                    })
+                    .collect::<Vec<(&GtfGene, &GeneCommonCoord)>>();
+                match hits.len() {
+                    0 => {
+                        bail!("failed to find {name} in GTF")
+                    }
+                    1 => Ok(Some(hits[0].0.to_owned())),
+                    _ => {
+                        let gene_ids = hits
+                            .iter()
+                            .map(|(_, gc)| {
+                                format!(
+                                    "({},{},{})",
+                                    gc.gene_id.gene_id, gc.chrom, gc.strand
+                                )
+                            })
+                            .join(",");
+                        bail!(
+                            "ambiguous, cannot determine a GeneID, got \
+                             {gene_ids}, specify which strand and/or which \
+                             chromosome with --gene-strand and --gene-chrom"
+                        )
+                    }
+                }
+            }
+            (Some(gene_id), None) => {
+                let (gene_id, version) = parse_gtf_id(gene_id.as_str())?;
+                multi_progress.suspend(|| {
+                    info!("searching for gene ID {gene_id}, version {version}")
+                });
+
+                let hits = sorted_by_gene_common_coordinates
+                    .iter()
+                    .filter(|(_, gc)| {
+                        &gc.gene_id.gene_id == &gene_id
+                            && gc.gene_id.version == version
+                    })
+                    .filter(|(_, gc)| {
+                        match (self.gene_strand, self.gene_chrom.as_ref()) {
+                            (Some(strand), Some(chrom)) => {
+                                gc.gene_id.strand.to_char() == strand
+                                    && &gc.gene_id.chrom == chrom
+                            }
+                            (Some(strand), None) => {
+                                gc.gene_id.strand.to_char() == strand
+                            }
+                            (None, Some(chrom)) => &gc.gene_id.chrom == chrom,
+                            (None, None) => true,
+                        }
+                    })
+                    .collect::<Vec<(&GtfGene, &GeneCommonCoord)>>();
+                match hits.len() {
+                    0 => {
+                        bail!(
+                            "failed to find {gene_id} (version: {version}) in \
+                             GTF"
+                        )
+                    }
+                    1 => Ok(Some(hits[0].0.to_owned())),
+                    _ => {
+                        let gene_ids = hits
+                            .iter()
+                            .map(|(_, gc)| gc.gene_id.to_string())
+                            .join(",");
+                        bail!(
+                            "ambiguous, cannot determine a GeneID, got \
+                             {gene_ids}"
+                        )
+                    }
+                }
+            }
+            (Some(_), Some(_)) => unreachable!(),
+        }
+    }
 }
 
 #[derive(Args)]
@@ -1494,6 +1591,12 @@ pub struct EntryGeneTx {
     /// Path to GTF file to use for transcript models. Can be compressed.
     #[arg(long)]
     gtf: PathBuf,
+    /// Ignore gene ID version and transcript ID version in GTF, if there are
+    /// multiple identical transcript IDs or gene IDs with different versions
+    /// the last one will be kept
+    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
+    ignore_version: bool,
     /// Minimum valid coverage required to use an entry from a bedMethyl. See
     /// the help for pileup for the specification and description of valid
     /// coverage.
@@ -1518,11 +1621,15 @@ pub struct EntryGeneTx {
     /// documentation for and example.
     #[arg(long, requires = "single_modification_code")]
     plot: Option<PathBuf>,
-    /// For each gene, sort the positions in decreasing negative log p-value
+    /// For each gene, sort the positions in increasing p-value
     /// and take this many for plotting. Setting a large number will
     /// increase the size of the SVG plot.
     #[arg(long, requires = "plot", default_value_t = 1)]
     top_k: usize,
+    /// Sort the points to be plotted by increasing p-value, then label the
+    /// points from the top-k genes.
+    #[arg(long, requires = "plot", conflicts_with = "gene_labels")]
+    label_top_k_genes: Option<usize>,
     /// Discard positions with an effect size less than this before considering
     /// them for plotting.
     #[arg(long, requires = "plot", default_value_t = 0.1f64)]
@@ -1534,6 +1641,10 @@ pub struct EntryGeneTx {
     /// in the volcano plot.
     #[arg(long, requires = "plot")]
     gene_labels: Option<PathBuf>,
+    /// Determine which points to plot by sorting to decreasing effect size
+    /// instead of increasing p-value.
+    #[arg(long, requires = "plot", default_value_t = false)]
+    sort_by_effect_size: bool,
 }
 
 impl EntryGeneTx {
@@ -1554,8 +1665,9 @@ impl EntryGeneTx {
             .map(|x| ModCodeRepr::parse(x))
             .transpose()?;
 
-        let sorted_transcript_models = parse_gtf(&self.gtf, &multi_progress)
-            .context("failed to read GTF")?;
+        let sorted_transcript_models =
+            parse_gtf(&self.gtf, self.ignore_version, &multi_progress)
+                .context("failed to read GTF")?;
         multi_progress.suspend(|| {
             info!(
                 "parsed {} transcript models",
@@ -1684,7 +1796,7 @@ impl EntryGeneTx {
 
         let mut errs = FxHashMap::default();
         let mut plot_points = Vec::with_capacity(n_genes * self.top_k);
-        let gene_labels = self.get_gene_labels(&multi_progress)?;
+        let mut gene_labels = self.get_gene_labels(&multi_progress)?;
         for result in records_rx {
             match result {
                 Ok(mut gene_tx_dmr) => {
@@ -1698,6 +1810,7 @@ impl EntryGeneTx {
                             self.top_k,
                             self.min_effect_size,
                             &gene_labels,
+                            self.sort_by_effect_size,
                         );
                         plot_points.extend(points);
                     }
@@ -1716,6 +1829,40 @@ impl EntryGeneTx {
         if let Some(fp) = self.plot.as_ref() {
             multi_progress.suspend(|| {
                 info!("plotting {} points to {fp:?}", plot_points.len())
+            });
+            if let Some(label_top_k_genes) = self.label_top_k_genes {
+                plot_points.sort_by(|a, b| {
+                    b.neg_log_pvalue
+                        .partial_cmp(&a.neg_log_pvalue)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                for pp in plot_points.iter() {
+                    let gene_label =
+                        pp.gene_name.clone().unwrap_or_else(|| pp.gene.clone());
+                    gene_labels.insert(gene_label);
+                    if gene_labels.len() >= label_top_k_genes {
+                        break;
+                    }
+                }
+                for pp in plot_points.iter_mut() {
+                    let gene_label = pp.gene_name.as_ref().unwrap_or(&pp.gene);
+                    if gene_labels.contains(gene_label) {
+                        pp.label_point = true;
+                    }
+                }
+            }
+
+            multi_progress.suspend(|| {
+                let sorted_by = if self.sort_by_effect_size {
+                    "effect size"
+                } else {
+                    "p-value"
+                };
+                info!(
+                    "plotting the top {} points from each gene, sorted by \
+                     {sorted_by}",
+                    self.top_k
+                );
             });
             let svg = volcano_svg(&plot_points, self.plot_title.as_ref());
             std::fs::write(fp, svg)?;

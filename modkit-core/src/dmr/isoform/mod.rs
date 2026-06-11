@@ -70,16 +70,39 @@ pub(crate) struct GtfTranscript {
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd)]
 pub(crate) struct GtfGene {
-    gene_id: GeneId,
-    version: u32,
+    pub gene_id: GeneId,
+    pub version: u32,
+    pub chrom: String,
+    pub strand: Strand,
 }
 
-fn parse_gtf_id(raw: &str) -> MkResult<(String, u32)> {
-    let Some((id, v)) = raw.split_once(".") else {
-        return Err(MkError::InvalidGtfRecord);
-    };
-    let version = v.parse::<u32>().map_err(|_| MkError::InvalidGtfRecord)?;
-    Ok((id.to_string(), version))
+impl GtfGene {
+    pub(super) fn parse_raw_id(
+        raw: &str,
+        raw_strand: char,
+        chrom: &str,
+    ) -> MkResult<Self> {
+        let (gene_id, version) = parse_gtf_id(raw)?;
+        let strand = match raw_strand {
+            '+' => Strand::Positive,
+            '-' => Strand::Negative,
+            _ => return Err(MkError::InvalidStrand),
+        };
+        Ok(Self { gene_id, version, strand, chrom: chrom.to_owned() })
+    }
+}
+
+pub(super) fn parse_gtf_id(raw: &str) -> MkResult<(String, u32)> {
+    if raw.contains(".") {
+        let Some((id, v)) = raw.split_once(".") else {
+            return Err(MkError::InvalidGtfRecord);
+        };
+        let version =
+            v.parse::<u32>().map_err(|_| MkError::InvalidGtfRecord)?;
+        Ok((id.to_string(), version))
+    } else {
+        Ok((raw.to_string(), 0u32))
+    }
 }
 
 impl GtfId for GtfTranscript {
@@ -89,12 +112,12 @@ impl GtfId for GtfTranscript {
     }
 }
 
-impl GtfId for GtfGene {
-    fn from_str(raw: &str) -> MkResult<Self> {
-        let (gene_id, version) = parse_gtf_id(raw)?;
-        Ok(Self { gene_id, version })
-    }
-}
+// impl GtfId for GtfGene {
+//     fn from_str(raw: &str) -> MkResult<Self> {
+//         let (gene_id, version) = parse_gtf_id(raw)?;
+//         Ok(Self { gene_id, version })
+//     }
+// }
 
 impl std::fmt::Display for GtfTranscript {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -136,7 +159,7 @@ pub(super) struct GeneCommonCoord {
     pub gene_id: GtfGene,
     pub gene_name: Option<String>,
     pub chrom: String,
-    strand: char,
+    pub strand: char,
     segments_tx_order: Vec<Segment>, // union-of-exons, ordered 5'->3'
     cumulative0: Vec<u64>,           /* 0-based start of each segment in
                                       * common coord */
@@ -146,8 +169,14 @@ pub(super) struct GeneCommonCoord {
 impl GeneCommonCoord {
     pub(super) fn empty() -> Self {
         Self {
-            gene_id: GtfGene { gene_id: "".to_string(), version: 0u32 },
+            gene_id: GtfGene {
+                gene_id: "".to_string(),
+                version: 0u32,
+                chrom: "".to_string(),
+                strand: Strand::Positive,
+            },
             gene_name: None,
+            // todo remove
             chrom: "".to_string(),
             strand: '+',
             segments_tx_order: Vec::new(),
@@ -168,17 +197,6 @@ pub(super) struct GeneModel {
     end0: u64,
 }
 
-// pub(super) struct GeneCommonCoord<'a> {
-//     pub gene_id: &'a GeneId,
-//     pub gene_name: &'a Option<String>,
-//     pub chrom: &'a str,
-//     strand: Strand,
-//     segments_tx_order: Vec<Segment>, /* union of exonic intervals in
-//                                          * transcript order */
-//     cumulative: Vec<u64>, // 0-based segment starts in common coord
-//     total_len: u64,
-// }
-
 fn parse_gtf_attributes(attr: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for part in attr.split(';') {
@@ -197,6 +215,7 @@ fn parse_gtf_attributes(attr: &str) -> HashMap<String, String> {
 
 pub(crate) fn parse_gtf<P: AsRef<Path>>(
     gtf_path: P,
+    ignore_version: bool,
     multi_progress: &MultiProgress,
 ) -> anyhow::Result<IndexMap<GtfTranscript, TranscriptModel>> {
     let reader = open_gtf_reader(gtf_path)?;
@@ -255,35 +274,59 @@ pub(crate) fn parse_gtf<P: AsRef<Path>>(
             .get("transcript_id")
             .ok_or(anyhow!("Missing transcript_id in GTF exon record"))?;
 
-        let transcript_id = if let Some(transcript_version) =
-            attrs.get("transcript_version").and_then(|x| x.parse::<u32>().ok())
-        {
-            GtfTranscript {
-                tx_id: (*transcript_id).clone(),
-                version: transcript_version,
-            }
+        let transcript_id = if ignore_version {
+            GtfTranscript { tx_id: (*transcript_id).clone(), version: 0 }
         } else {
-            let Ok(transcript_id) = GtfTranscript::from_str(transcript_id)
-            else {
-                errs.inc(1);
-                continue;
-            };
-            transcript_id
+            if let Some(transcript_version) = attrs
+                .get("transcript_version")
+                .and_then(|x| x.parse::<u32>().ok())
+            {
+                GtfTranscript {
+                    tx_id: (*transcript_id).clone(),
+                    version: transcript_version,
+                }
+            } else {
+                let Ok(transcript_id) = GtfTranscript::from_str(transcript_id)
+                else {
+                    // debug!("failed to parse transcript_id: {transcript_id}");
+                    errs.inc(1);
+                    continue;
+                };
+                transcript_id
+            }
         };
+
         let gene_id = attrs
             .get("gene_id")
             .ok_or(anyhow!("Missing gene_id in GTF exon record"))?;
 
-        let gene_id = if let Some(gene_version) =
-            attrs.get("gene_version").and_then(|x| x.parse::<u32>().ok())
-        {
-            GtfGene { gene_id: (*gene_id).clone(), version: gene_version }
+        let gene_id = if ignore_version {
+            GtfGene {
+                gene_id: (*gene_id).clone(),
+                version: 0,
+                chrom: chrom.to_owned(),
+                strand: Strand::parse_char(strand)?,
+            }
         } else {
-            let Ok(gene_id) = GtfGene::from_str(gene_id) else {
-                errs.inc(1);
-                continue;
-            };
-            gene_id
+            if let Some(gene_version) =
+                attrs.get("gene_version").and_then(|x| x.parse::<u32>().ok())
+            {
+                GtfGene {
+                    gene_id: (*gene_id).clone(),
+                    version: gene_version,
+                    chrom: chrom.to_owned(),
+                    strand: Strand::parse_char(strand)?,
+                }
+            } else {
+                let Ok(gene_id) =
+                    GtfGene::parse_raw_id(gene_id, strand, &chrom)
+                else {
+                    debug!("failed to parse gene_id: {gene_id}");
+                    errs.inc(1);
+                    continue;
+                };
+                gene_id
+            }
         };
         let gene_name = attrs.get("gene_name").map(|x| x.to_owned());
 
@@ -1664,28 +1707,26 @@ fn render_gene_svg(
             let bar_w = 2.0;
             let bar_x = px - bar_w / 2.0;
 
-            writeln!(
-                svg,
-                r##"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}" stroke="none"/>"##,
+            svg.push_str(&format!(
+                r##"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}" stroke="none">"
+                <title>{}:{}-{} value={:.4}</title>
+                </rect>
+                "##,
                 bar_x,
                 bar_y,
                 bar_w,
                 bar_h.max(1.0),
-                color
-            )?;
-
-            writeln!(
-                svg,
-                r##"<title>{}:{} value={:.4}</title>"##,
+                color,
                 escape_xml(&gene.chrom),
                 r.start,
+                r.start.saturating_add(1),
                 r.value
-            )?;
+            ));
+
         }
     }
 
     let exon_h = (args.track_height as f64 * 0.55).max(8.0);
-    // let heat_h = (args.track_height as f64 * 0.42).max(6.0);
 
     if let Some(gene_name) = gene.gene_name.as_ref() {
         writeln!(
@@ -1749,70 +1790,6 @@ fn render_gene_svg(
             format_u64_with_commas(*pos0 + 1)
         )?;
     }
-    // for (i, block) in layout.blocks.iter().enumerate() {
-    //     let bx1 = map_genomic_boundary_to_x(&layout, block.start0);
-    //     let bx2 = map_genomic_boundary_to_x(&layout, block.end0);
-    //     let fill = if i % 2 == 0 { "#fafafa" } else { "#f4f4f4" };
-    //     writeln!(
-    //         svg,
-    //         r##"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}" stroke="none"/>"##,
-    //         bx1,
-    //         plot_top,
-    //         (bx2 - bx1).max(1.0),
-    //         plot_bottom - plot_top,
-    //         fill
-    //     )?;
-    // }
-
-    // Vertical guide lines at merged exon boundaries
-    // for block in &layout.blocks {
-    //     let bx1 = map_genomic_boundary_to_x(&layout, block.start0);
-    //     let bx2 = map_genomic_boundary_to_x(&layout, block.end0);
-    //     writeln!(
-    //         svg,
-    //         r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="#c9a5a5" stroke-width="1"/>"##,
-    //         bx1, plot_top, bx1, plot_bottom
-    //     )?;
-    //     writeln!(
-    //         svg,
-    //         r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="#c9a5a5" stroke-width="1"/>"##,
-    //         bx2, plot_top, bx2, plot_bottom
-    //     )?;
-    // }
-    // // Exon block genomic labels
-    // if args.label_exons {
-    //     for (i, block) in layout.blocks.iter().enumerate() {
-    //         let bx1 = map_genomic_boundary_to_x(&layout, block.start0);
-    //         let bx2 = map_genomic_boundary_to_x(&layout, block.end0);
-    //         let bx_mid = (bx1 + bx2) / 2.0;
-
-    //         let label = format_genomic_interval_label(&gene.chrom, block.start0, block.end0);
-
-    //         // If the exon is very narrow, rotate the label to avoid overlap.
-    //         let exon_px_width = bx2 - bx1;
-    //         if exon_px_width >= 90.0 {
-    //             writeln!(
-    //                 svg,
-    //                 r##"<text x="{:.2}" y="{:.2}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" fill="#555">exon block {}: {}</text>"##,
-    //                 bx_mid,
-    //                 plot_top - 8.0,
-    //                 i + 1,
-    //                 escape_xml(&label)
-    //             )?;
-    //         } else {
-    //             writeln!(
-    //                 svg,
-    //                 r##"<text x="{:.2}" y="{:.2}" transform="rotate(-45 {:.2} {:.2})" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="9" fill="#555">E{} {}</text>"##,
-    //                 bx_mid,
-    //                 plot_top - 8.0,
-    //                 bx_mid,
-    //                 plot_top - 8.0,
-    //                 i + 1,
-    //                 escape_xml(&label)
-    //             )?;
-    //         }
-    //     }
-    // }
 
     // Top axis
     writeln!(
@@ -1823,12 +1800,6 @@ fn render_gene_svg(
 
     // Tick labels: gene start/end + merged exon block boundaries if not too many
     let mut tick_positions: Vec<u64> = vec![gene.start0, gene.end0];
-    // if layout.blocks.len() <= 6 {
-    //     for b in &layout.blocks {
-    //         tick_positions.push(b.start0);
-    //         tick_positions.push(b.end0);
-    //     }
-    // }
     tick_positions.sort_unstable();
     tick_positions.dedup();
 
@@ -1989,25 +1960,21 @@ fn render_gene_svg(
                 let tick_w = 2.0_f64;
                 let tick_x = px - tick_w / 2.0;
 
-                writeln!(
-                    svg,
-                    r##"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}" stroke="#222" stroke-width="0.25"/>"##,
-                    tick_x,
-                    exon_y,
-                    tick_w,
-                    exon_h,
-                    color
-                )?;
-
-                // Tooltip in SVG viewers/browsers
-                writeln!(
-                    svg,
-                    r##"<title>{}:{}-{} {}% methylation</title>"##,
-                    escape_xml(&gene.chrom),
-                    r.start()+ 1,
-                    r.stop(),
-                    r.frac_modified() * 100f32
-                )?;
+                svg.push_str(&format!(
+                   r##"<rect  x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}" stroke="#222" stroke-width="0.25">
+                  <title>{}:{}-{} {:.2}% methylation</title>
+                   </rect>
+                   "##,
+                   tick_x,
+                   exon_y,
+                   tick_w,
+                   exon_h,
+                   color,
+                   escape_xml(&gene.chrom),
+                   r.start(),
+                   r.start().saturating_add(1),
+                   r.frac_modified() * 100f32
+                ));
             }
         }
         // Strand hint
@@ -2104,6 +2071,7 @@ impl GeneTxDmr {
         top_k: usize,
         min_effect_size: f64,
         labels: &HashSet<String>,
+        sort_by_effect_size: bool,
     ) -> Vec<PooledMethylationGenomePosition> {
         assert!(top_k > 0);
         if let Some(records) = self.records.as_mut() {
@@ -2112,9 +2080,16 @@ impl GeneTxDmr {
             let label_point =
                 gene_name.as_ref().is_some_and(|x| labels.contains(x));
             records.sort_by(|x, y| {
-                let sx = x.score.p_value.ln().neg();
-                let sy = y.score.p_value.ln().neg();
-                sx.partial_cmp(&sy).unwrap_or(std::cmp::Ordering::Equal)
+                if sort_by_effect_size {
+                    y.effect_size()
+                        .partial_cmp(&x.effect_size())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                } else {
+                    x.score
+                        .p_value
+                        .partial_cmp(&y.score.p_value)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                }
             });
             records
                 .into_iter()
@@ -2124,7 +2099,7 @@ impl GeneTxDmr {
                     genome_start: x.start,
                     gene: gene_string.clone(),
                     gene_name: gene_name.clone(),
-                    log_fold_change: x.log_fc(),
+                    log_fold_change: x.log2_fc(),
                     neg_log_pvalue: x.score.p_value.ln().neg(),
                     effect_size: x.effect_size(),
                     label_point,
@@ -2202,7 +2177,7 @@ impl GeneIsoformDmrRecord<GeneDmrScore> {
             gene_name.unwrap_or(&"-".to_string())
         );
         let log2_fc_field = if single_mod_code.is_some() {
-            let log2_fc = self.log_fc();
+            let log2_fc = self.log2_fc();
             let effect_size = self.effect_size();
             format!("{TAB}{log2_fc}{TAB}{effect_size}")
         } else {
@@ -2321,7 +2296,7 @@ impl GeneIsoformDmrRecord<GeneDmrScore> {
         (m_a / (m_a + u_a)) - (m_b / (m_b + u_b))
     }
 
-    fn log_fc(&self) -> f64 {
+    fn log2_fc(&self) -> f64 {
         assert_eq!(self.score.cond_a_proportions.len(), 2);
         assert_eq!(self.score.cond_b_proportions.len(), 2);
 
@@ -2364,8 +2339,8 @@ impl GeneDmrScore {
         mod_codes: Vec<ModCodeRepr>,
     ) -> Self {
         assert_eq!(res.isoform_counts.len(), 2);
-        let cond_a_counts = res.isoform_counts.pop().unwrap();
         let cond_b_counts = res.isoform_counts.pop().unwrap();
+        let cond_a_counts = res.isoform_counts.pop().unwrap();
         let cond_a_proportions =
             scoring::proportions_from_counts(&cond_a_counts, 0f64);
         let cond_b_proportions =
@@ -2382,14 +2357,15 @@ impl GeneDmrScore {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct PooledMethylationGenomePosition {
-    genome_start: u64,
-    gene: String,
-    gene_name: Option<String>,
-    log_fold_change: f64,
-    neg_log_pvalue: f64,
-    effect_size: f64,
-    label_point: bool,
+    pub genome_start: u64,
+    pub gene: String,
+    pub gene_name: Option<String>,
+    pub log_fold_change: f64,
+    pub neg_log_pvalue: f64,
+    pub effect_size: f64,
+    pub label_point: bool,
 }
 
 #[rustfmt::skip]
@@ -2545,7 +2521,13 @@ pub(super) fn volcano_svg(points: &[PooledMethylationGenomePosition], title: Opt
     }
 
     // Points and optional labels
+    let mut labeled_points = Vec::new();
     for p in valid_points {
+        if p.label_point {
+            labeled_points.push(p);
+            continue;
+        }
+
         let x = x_scale(p.log_fold_change);
         let y = y_scale(p.neg_log_pvalue);
 
@@ -2569,21 +2551,45 @@ pub(super) fn volcano_svg(points: &[PooledMethylationGenomePosition], title: Opt
             effect_size = p.effect_size
         ));
 
-        if p.label_point {
-            svg.push_str(&format!(
-                r##"
-      <line x1="{x:.2}" y1="{y:.2}" x2="{lx:.2}" y2="{ly:.2}" stroke="#666" stroke-width="1"/>
-      <text x="{tx:.2}" y="{ty:.2}" font-family="sans-serif" font-size="12" fill="black">
-        {gene}
-      </text>
-    "##,
-                lx = x + 8.0,
-                ly = y - 8.0,
-                tx = x + 10.0,
-                ty = y - 10.0,
-                gene = escape_xml(p.gene_name.as_ref().unwrap_or(&"-".to_string()))
-            ));
-        }
+    }
+
+    for p in labeled_points {
+        let x = x_scale(p.log_fold_change);
+        let y = y_scale(p.neg_log_pvalue);
+
+        let color = if p.log_fold_change.abs() >= 1.0 && p.neg_log_pvalue >= 2.0 {
+            "#d62728"
+        } else {
+            "#4a90e2"
+        };
+
+        svg.push_str(&format!(
+            r#"
+      <circle cx="{x:.2}" cy="{y:.2}" r="4" fill="{color}" fill-opacity="0.75">
+        <title>{gene} | {gene_name}genome_start={genome_start} | logFC={logfc:.4} | effect_size={effect_size} | -logP={neglogp:.4}</title>
+      </circle>
+    "#,
+            gene = escape_xml(&p.gene),
+            genome_start = p.genome_start,
+            gene_name = p.gene_name.as_ref().map(|x| format!("{x} | ")).unwrap_or("".to_string()),
+            logfc = p.log_fold_change,
+            neglogp = p.neg_log_pvalue,
+            effect_size = p.effect_size
+        ));
+
+        svg.push_str(&format!(
+            r##"
+  <line x1="{x:.2}" y1="{y:.2}" x2="{lx:.2}" y2="{ly:.2}" stroke="#666" stroke-width="1"/>
+  <text x="{tx:.2}" y="{ty:.2}" font-family="sans-serif" font-size="12" fill="black">
+    {gene}
+  </text>
+"##,
+            lx = x + 8.0,
+            ly = y - 8.0,
+            tx = x + 10.0,
+            ty = y - 10.0,
+            gene = escape_xml(p.gene_name.as_ref().unwrap_or(&"-".to_string()))
+        ));
     }
 
     svg.push_str("</svg>\n");
