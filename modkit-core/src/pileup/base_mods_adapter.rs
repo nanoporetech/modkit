@@ -297,17 +297,17 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                     canonical_qual,
                 ))
             } else {
-                let mod_threshold =
-                    mod_thresholds
-                        .iter()
-                        .find_map(|(code, p)| {
-                            if code == &mod_code {
-                                Some(*p)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(threshold);
+                let mod_threshold = mod_thresholds
+                    .iter()
+                    .find_map(|(code, p)| {
+                        if code == &mod_code || code.matches_any(&primary_base)
+                        {
+                            Some(*p)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(threshold);
                 Some(ModState::new(
                     mod_pos,
                     true,
