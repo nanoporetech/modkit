@@ -2411,7 +2411,7 @@ bedMethyl table
 Usage: modkit motif refine [OPTIONS] --in-bedmethyl <IN_BEDMETHYL> --ref <REFERENCE_FASTA>
 
 Options:
-      --min_refine_frac_mod <MIN_REFINE_FRAC_MODIFIED>
+      --min-refine-frac-mod <MIN_REFINE_FRAC_MODIFIED>
           Minimum fraction of sites in the genome to be "high-modification" for
           a motif to be further refined, otherwise it will be discarded
           
@@ -2757,6 +2757,8 @@ Sample Options:
           Minimum valid coverage required to use an entry from a bedMethyl. See
           the help for pileup for the specification and description of valid
           coverage [default: 0]
+      --ref-sample <REF_SAMPLE>
+          Only performs comparisons between this sample and all other samples
 
 Output Options:
       --header             Include header in output
@@ -2822,6 +2824,11 @@ Options:
           per-isoform proportions in output. Adding this flag will make the
           output file substantially larger
 
+      --ignore-version
+          Ignore gene ID version and transcript ID version in GTF, if there are
+          multiple identical transcript IDs or gene IDs with different versions
+          the last one will be kept
+
       --log-filepath <LOG_FILEPATH>
           Path to optional debug log (recommended)
 
@@ -2830,6 +2837,14 @@ Options:
 
   -n, --gene-name <GENE_NAME>
           Only process this Gene Name
+
+      --gene-strand <GENE_STRAND>
+          Specify a strand for the Gene Name (or GeneID) if there are multiple
+          chromosomes with this gene
+
+      --gene-chrom <GENE_CHROM>
+          Specify a chromosome for the Gene Name (or GeneID) if there are
+          multiple chromosomes with this gene
 
       --suppress-progress
           Don't show the progress bar
@@ -2934,6 +2949,10 @@ Options:
           increase the size of the output file
       --gtf <GTF>
           Path to GTF file to use for transcript models. Can be compressed
+      --ignore-version
+          Ignore gene ID version and transcript ID version in GTF, if there are
+          multiple identical transcript IDs or gene IDs with different versions
+          the last one will be kept
       --min-valid-coverage <MIN_VALID_COVERAGE>
           Minimum valid coverage required to use an entry from a bedMethyl. See
           the help for pileup for the specification and description of valid
@@ -2952,9 +2971,12 @@ Options:
           fold change and the y-axis is negative log p-value. See the online
           documentation for and example
       --top-k <TOP_K>
-          For each gene, sort the positions in decreasing negative log p-value
-          and take this many for plotting. Setting a large number will increase
-          the size of the SVG plot [default: 1]
+          For each gene, sort the positions in increasing p-value and take this
+          many for plotting. Setting a large number will increase the size of
+          the SVG plot [default: 1]
+      --label-top-k-genes <LABEL_TOP_K_GENES>
+          Sort the points to be plotted by increasing p-value, then label the
+          points from the top-k genes
       --min-effect-size <MIN_EFFECT_SIZE>
           Discard positions with an effect size less than this before
           considering them for plotting [default: 0.1]
@@ -2963,6 +2985,9 @@ Options:
       --gene-labels <GENE_LABELS>
           Path to plain text file of a list of gene names, one per line, to mark
           in the volcano plot
+      --sort-by-effect-size
+          Determine which points to plot by sorting to decreasing effect size
+          instead of increasing p-value
   -h, --help
           Print help
 ```
@@ -3143,11 +3168,20 @@ Arguments:
   <OUTPUT_BEDMETHYL>  
 
 Options:
-  -t, --transcript-id <TRANSCRIPT_ID>            
-      --transcript-version <TRANSCRIPT_VERSION>  
-      --gtf <GTF>                                
-      --header                                   
-  -h, --help                                     Print help
+  -t, --transcript-id <TRANSCRIPT_ID>
+          
+      --transcript-version <TRANSCRIPT_VERSION>
+          
+      --ignore-version
+          Ignore gene ID version and transcript ID version in GTF, if there are
+          multiple identical transcript IDs or gene IDs with different versions
+          the last one will be kept
+      --gtf <GTF>
+          
+      --header
+          
+  -h, --help
+          Print help
 ```
 
 ## modbam adjust-mods

@@ -166,5 +166,6 @@ A similar problem is encountered when comparing regions of CpG or transcripts of
 To provide another metric that is more robust to high counts, Modkit DMR will output [Cohen's h statistic](https://en.wikipedia.org/wiki/Cohen%27s_h).
 **Importantly** this is a measure of changes in the proportion of modification of any type between the two conditions, similar to the MAP-based p-value, not a change in modification proportions (although it could be extended to measure this).
 In addition to the statistic, the high and low bound of the 95% confidence interval are reported.
+A CI value (high or low) of zero indicates that there is little certainty about there being a difference between the two conditions.
 Generally speaking, filtering or sorting on the lower bound is a good test for finding important changes.
 

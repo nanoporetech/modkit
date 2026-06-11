@@ -39,10 +39,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec6434a5.js";
+            window.path_to_searchindex_js = "searchindex-b348220b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4ae5f900.js"></script>
+        <script src="toc-869b6773.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -801,7 +801,7 @@ modkit stats ${sample} --regions ${cpgs} -o ./stats.tsv [--mod-codes "h,m"]
 <tr><td>5</td><td>strand</td><td>Strand (<code>+</code>, <code>-</code>, <code>.</code>) from the input BED (<code>.</code> assumed for when not provided)</td><td>str</td></tr>
 <tr><td>6+</td><td>count_x</td><td>total number of <code>x</code> base modification codes in the region</td><td>int</td></tr>
 <tr><td>7+</td><td>count_valid_x</td><td>total valid calls for the primary base modified by code <code>x</code></td><td>int</td></tr>
-<tr><td>8+</td><td>percent_x</td><td><code>count_x</code> / <code>count_vali_x</code> * 100</td><td>float</td></tr>
+<tr><td>8+</td><td>percent_x</td><td><code>count_x</code> / <code>count_valid_x</code> * 100</td><td>float</td></tr>
 </tbody>
 </table>
 </div>
@@ -1517,6 +1517,20 @@ The preparation of the data is identical to that for the <a href="#preparing-the
 <p>For example the samples could be haplotype-partitioned bedMethyl tables or biological replicates.
 Unlike for <code>modkit dmr pair</code> a sample name (e.g. <code>norm1</code> and <code>tumor1</code> above) must be provided for each input
 sample.</p>
+<p>If you have many samples but a single reference sample you can use the <code>--ref-sample</code> option to specify the reference sample to be used for all comparisons. This is useful for large datasets with many samples where you are not interested in all pairwise comparisons to reduce computation.</p>
+<pre><code class="language-bash">modkit dmr multi \
+  -s ${norm_pileup_1}.gz norm1 \
+  -s ${tumor_pileup_1}.gz tumor1 \
+  -s ${tumor_pileup_2}.gz tumor2 \
+  -o ${dmr_dir} \ # required for multi
+  -r ${cpg_islands} \ # skip this option to perform base-level DMR
+  --ref ${ref} \
+  --ref-sample norm1 \ # use norm1 as the reference for all comparisons
+  --base C \
+  -t 10 \
+  -f \
+  --log-filepath dmr_multi.log
+</code></pre>
 <h2 id="3-detecting-differential-modification-at-single-base-positions"><a class="header" href="#3-detecting-differential-modification-at-single-base-positions">3. Detecting differential modification at single base positions</a></h2>
 <p>The <code>modkit dmr pair</code> command has the ability to score individual bases (e.g. differentially methylated CpGs).
 To run single-base analysis on one or more paired samples, simply omit the <code>--regions</code> (<code>-r</code>) option when running <code>modkit dmr pair</code>.
@@ -1744,10 +1758,15 @@ This command also requires an accompanying GTF file with valid transcript models
 <pre><code class="language-bash">modkit dmr isoform \
   ${bedmethyl} \
   isoform_dmr_${gene_name}.bed \
-  --plot path/to/plot/dir \ # &lt;-- add this option
-  --gene-name ${gene_name} \ # &lt;-- requires a gene name (or gene id to plot)
+  --plot path/to/plot/dir \
+  --gene-name ${gene_name} \
   --gtf ${gtf}
 </code></pre>
+<blockquote>
+<p><strong>Important:</strong> <code>--plot</code> requires either <code>--gene-name</code> or <code>--gene-id</code> and <strong>cannot</strong> be used
+in whole-transcriptome mode (i.e. without one of those arguments). Attempting to use <code>--plot</code>
+without a gene specifier will result in an error.</p>
+</blockquote>
 <p><em>Note</em> that exons without marks in certain transcripts indicates that there is no data in the input bedMethyl.
 The command <code>modkit bedmethyl map-to-genome</code> can map a transcript-aligned bedMethyl to genome coordinates.</p>
 <h2 id="schema-of-output"><a class="header" href="#schema-of-output">Schema of output</a></h2>
@@ -1768,19 +1787,26 @@ The command <code>modkit bedmethyl map-to-genome</code> can map a transcript-ali
 <tr><td>9</td><td>n_transcripts</td><td>number of transcripts (isoforms) contributing to this position</td><td>int</td></tr>
 <tr><td>10</td><td>gene_id</td><td>gene-id from the GTF</td><td>str</td></tr>
 <tr><td>11</td><td>gene_name</td><td>gene-name from the GTF or ‘-’ if not found</td><td>str</td></tr>
-<tr><td>12</td><td>per_isoform_proportions</td><td>JSON formatted string of per-transcript, per-modification proprotions</td><td>str</td></tr>
-<tr><td>13</td><td>per_isoform_counts</td><td>JSON formatted string of per-transcript, per-modification counts</td><td>str</td></tr>
+<tr><td>12</td><td>pooled_proportions</td><td>gene-level aggregate modification rate</td><td>str</td></tr>
+<tr><td>13</td><td>per_isoform_proportions</td><td>JSON formatted string of per-transcript, per-modification proprotions</td><td>str</td></tr>
+<tr><td>14</td><td>per_isoform_counts</td><td>JSON formatted string of per-transcript, per-modification counts</td><td>str</td></tr>
 </tbody>
 </table>
 </div>
-<p>Columns 12 and 13 are only present when the <code>--full</code> flag is passed.</p>
+<p>Columns 12 and 14 are only present when the <code>--full</code> flag is passed.</p>
 <h2 id="background"><a class="header" href="#background">Background</a></h2>
 <p>Gene sequences alone don’t describe all of the diversity of mRNAs in vertebrate cells.
 Through alternative splicing gene exons can be combined in multiple permutations called isoforms.</p>
 <p><img src="images/central_dogma.png" title="Cartoon of alternative splicing" alt="Central dogma of molecular biology and alternative splicing"></p>
 <h2 id="filtering-the-number-of-methylation-marks"><a class="header" href="#filtering-the-number-of-methylation-marks">Filtering the number of methylation marks</a></h2>
 <p>Some long genes may have many modified positions and drawing them all can get crowded.
-To only plot positions with a maximum p-value or minimum score use the <code>--max-pvalue</code> or <code>--min-score</code> arguments, respectively.</p>
+To only plot positions with a maximum p-value or minimum score use the <code>--max-pval</code> or
+<code>--min-score</code> arguments, respectively.</p>
+<blockquote>
+<p><strong>Note:</strong> <code>--max-pval</code> and <code>--min-score</code> are <strong>plot-only</strong> options. They require <code>--plot</code>
+(and therefore also <code>--gene-name</code> or <code>--gene-id</code>) and have no effect outside of single-gene
+mode. These two flags are <strong>mutually exclusive</strong> — only one may be provided at a time.</p>
+</blockquote>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="compare-methylation-levels-at-transcriptome-sites-summarized-by-gene-with-dmr-compare-tx-sites"><a class="header" href="#compare-methylation-levels-at-transcriptome-sites-summarized-by-gene-with-dmr-compare-tx-sites">Compare methylation levels at transcriptome sites, summarized by gene, with <code>dmr compare-tx-sites</code></a></h1>
 <p>The <code>dmr compare-tx-sites</code> allows you to compare modifications between two conditions.
@@ -1802,7 +1828,7 @@ An example is below.</p>
   -a ${bedmethyl_a} \
   -b ${bedmethyl_b} \
   --out ${output.bed} \
-  --single-mod-code a \
+  --single-code a \
   --plot volcano.svg \
   --gtf ${gtf} \
   --log debug.log
@@ -1827,14 +1853,15 @@ An example is below.</p>
 <tr><td>8</td><td>gene_id</td><td>gene-id from the GTF</td><td>str</td></tr>
 <tr><td>9</td><td>gene_name</td><td>gene-name from the GTF or ‘-’ if not found</td><td>str</td></tr>
 <tr><td>10</td><td>log2_fold_change</td><td>log base 2 fold change</td><td>float</td></tr>
-<tr><td>11</td><td>cond_a_proportions</td><td>JSON formatted string of condition ‘A’ per-modification proprotions</td><td>str</td></tr>
-<tr><td>12</td><td>cond_b_proportions</td><td>JSON formatted string of condition ‘B’ per-modification proprotions</td><td>str</td></tr>
-<tr><td>13</td><td>cond_a_counts</td><td>JSON formatted string of condition ‘A’ per-modification counts</td><td>str</td></tr>
-<tr><td>14</td><td>cond_b_counts</td><td>JSON formatted string of condition ‘B’ per-modification counts</td><td>str</td></tr>
+<tr><td>11</td><td>effect_size</td><td>difference in modification proportions between conditions</td><td>float</td></tr>
+<tr><td>12</td><td>cond_a_proportions</td><td>JSON formatted string of condition ‘A’ per-modification proprotions</td><td>str</td></tr>
+<tr><td>13</td><td>cond_b_proportions</td><td>JSON formatted string of condition ‘B’ per-modification proprotions</td><td>str</td></tr>
+<tr><td>14</td><td>cond_a_counts</td><td>JSON formatted string of condition ‘A’ per-modification counts</td><td>str</td></tr>
+<tr><td>15</td><td>cond_b_counts</td><td>JSON formatted string of condition ‘B’ per-modification counts</td><td>str</td></tr>
 </tbody>
 </table>
 </div>
-<p>Columns 11 through 14 are only present when the <code>--full</code> flag is passed.</p>
+<p>Columns 11 through 15 are only present when the <code>--full</code> flag is passed.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="validating-ground-truth-results"><a class="header" href="#validating-ground-truth-results">Validating ground truth results.</a></h1>
 <p>The <code>modkit validate</code> sub-command is intended for validating results in a uniform manner from samples with known modified base content. Specifically the modified base status at any annotated reference location should be known.</p>
@@ -2044,6 +2071,31 @@ tabix sample_b.bed.gz
 <pre><code class="language-text">chr1    249250621
 chr2    243199373
 </code></pre>
+<h2 id="requiring-positions-in-multiple-samples-inner-join"><a class="header" href="#requiring-positions-in-multiple-samples-inner-join">Requiring positions in multiple samples (inner join)</a></h2>
+<p>By default <code>merge</code> performs an outer join: a position is kept if it appears in
+any input. To instead keep only positions shared across inputs, use
+<code>--min-samples</code>, which outputs a position only when it appears in at least that
+many input files. Pass <code>--min-samples all</code> to require the position in every
+input (an inner join), which is useful for retaining positions that reproduce
+across replicates; <code>all</code> avoids hard-coding the input count in scripts.</p>
+<pre><code class="language-bash"># keep only positions present in all three replicates (inner join)
+modkit bedmethyl merge rep1.bed.gz rep2.bed.gz rep3.bed.gz \
+  -o replicates_inner.bed \
+  -g genome_sizes.tsv \
+  --min-samples all
+</code></pre>
+<p><code>--min-sample-coverage</code> adds a per-input confidence floor: an input only counts
+towards a position (both for the <code>--min-samples</code> tally and for the summed counts)
+when that input’s record has at least the given valid coverage. For example, to
+require a position to be covered by at least 5 valid reads in all three
+replicates:</p>
+<pre><code class="language-bash">modkit bedmethyl merge rep1.bed.gz rep2.bed.gz rep3.bed.gz \
+  -o replicates_inner_cov5.bed \
+  -g genome_sizes.tsv \
+  --min-samples all \
+  --min-sample-coverage 5
+</code></pre>
+<p>Omitting both options performs an outer-join.</p>
 <h1 id="convert-bedmethyl-to-bigwig"><a class="header" href="#convert-bedmethyl-to-bigwig">Convert bedMethyl to bigWig</a></h1>
 <p>You may want to convert a bedMethyl to bigWig for easier visualization on a genome browser.
 Modkit provides a <code>bedmethyl tobigwig</code> function that can extract a bigWig track from a bedMethyl.
@@ -4582,7 +4634,7 @@ bedMethyl table
 Usage: modkit motif refine [OPTIONS] --in-bedmethyl &lt;IN_BEDMETHYL&gt; --ref &lt;REFERENCE_FASTA&gt;
 
 Options:
-      --min_refine_frac_mod &lt;MIN_REFINE_FRAC_MODIFIED&gt;
+      --min-refine-frac-mod &lt;MIN_REFINE_FRAC_MODIFIED&gt;
           Minimum fraction of sites in the genome to be "high-modification" for
           a motif to be further refined, otherwise it will be discarded
           
@@ -4924,6 +4976,8 @@ Sample Options:
           Minimum valid coverage required to use an entry from a bedMethyl. See
           the help for pileup for the specification and description of valid
           coverage [default: 0]
+      --ref-sample &lt;REF_SAMPLE&gt;
+          Only performs comparisons between this sample and all other samples
 
 Output Options:
       --header             Include header in output
@@ -4987,6 +5041,11 @@ Options:
           per-isoform proportions in output. Adding this flag will make the
           output file substantially larger
 
+      --ignore-version
+          Ignore gene ID version and transcript ID version in GTF, if there are
+          multiple identical transcript IDs or gene IDs with different versions
+          the last one will be kept
+
       --log-filepath &lt;LOG_FILEPATH&gt;
           Path to optional debug log (recommended)
 
@@ -4995,6 +5054,14 @@ Options:
 
   -n, --gene-name &lt;GENE_NAME&gt;
           Only process this Gene Name
+
+      --gene-strand &lt;GENE_STRAND&gt;
+          Specify a strand for the Gene Name (or GeneID) if there are multiple
+          chromosomes with this gene
+
+      --gene-chrom &lt;GENE_CHROM&gt;
+          Specify a chromosome for the Gene Name (or GeneID) if there are
+          multiple chromosomes with this gene
 
       --suppress-progress
           Don't show the progress bar
@@ -5097,6 +5164,10 @@ Options:
           increase the size of the output file
       --gtf &lt;GTF&gt;
           Path to GTF file to use for transcript models. Can be compressed
+      --ignore-version
+          Ignore gene ID version and transcript ID version in GTF, if there are
+          multiple identical transcript IDs or gene IDs with different versions
+          the last one will be kept
       --min-valid-coverage &lt;MIN_VALID_COVERAGE&gt;
           Minimum valid coverage required to use an entry from a bedMethyl. See
           the help for pileup for the specification and description of valid
@@ -5115,9 +5186,12 @@ Options:
           fold change and the y-axis is negative log p-value. See the online
           documentation for and example
       --top-k &lt;TOP_K&gt;
-          For each gene, sort the positions in decreasing negative log p-value
-          and take this many for plotting. Setting a large number will increase
-          the size of the SVG plot [default: 1]
+          For each gene, sort the positions in increasing p-value and take this
+          many for plotting. Setting a large number will increase the size of
+          the SVG plot [default: 1]
+      --label-top-k-genes &lt;LABEL_TOP_K_GENES&gt;
+          Sort the points to be plotted by increasing p-value, then label the
+          points from the top-k genes
       --min-effect-size &lt;MIN_EFFECT_SIZE&gt;
           Discard positions with an effect size less than this before
           considering them for plotting [default: 0.1]
@@ -5126,6 +5200,9 @@ Options:
       --gene-labels &lt;GENE_LABELS&gt;
           Path to plain text file of a list of gene names, one per line, to mark
           in the volcano plot
+      --sort-by-effect-size
+          Determine which points to plot by sorting to decreasing effect size
+          instead of increasing p-value
   -h, --help
           Print help
 </code></pre>
@@ -5196,6 +5273,16 @@ Compute Options:
 Logging Options:
       --log-filepath &lt;LOG_FILEPATH&gt;
           Specify a file to write debug logs to
+
+Filtering Options:
+      --min-samples &lt;MIN_SAMPLES&gt;
+          Only output a position present in at least this many input bedMethyl
+          files. Accepts an integer greater than 1, or "all" to require the
+          position in every input (an inner join across replicates)
+
+      --min-sample-coverage &lt;MIN_SAMPLE_COVERAGE&gt;
+          Minimum valid coverage for an input's record to count towards a
+          position, for both the --min-samples tally and the summed counts
 </code></pre>
 <h2 id="bedmethyl-tobigwig"><a class="header" href="#bedmethyl-tobigwig">bedmethyl tobigwig</a></h2>
 <pre><code class="language-text">Make a BigWig track from a bedMethyl file or stream. For details on the BigWig
@@ -5290,11 +5377,20 @@ Arguments:
   &lt;OUTPUT_BEDMETHYL&gt;  
 
 Options:
-  -t, --transcript-id &lt;TRANSCRIPT_ID&gt;            
-      --transcript-version &lt;TRANSCRIPT_VERSION&gt;  
-      --gtf &lt;GTF&gt;                                
-      --header                                   
-  -h, --help                                     Print help
+  -t, --transcript-id &lt;TRANSCRIPT_ID&gt;
+          
+      --transcript-version &lt;TRANSCRIPT_VERSION&gt;
+          
+      --ignore-version
+          Ignore gene ID version and transcript ID version in GTF, if there are
+          multiple identical transcript IDs or gene IDs with different versions
+          the last one will be kept
+      --gtf &lt;GTF&gt;
+          
+      --header
+          
+  -h, --help
+          Print help
 </code></pre>
 <h2 id="modbam-adjust-mods"><a class="header" href="#modbam-adjust-mods">modbam adjust-mods</a></h2>
 <pre><code class="language-text">Performs various operations on BAM files containing base modification
@@ -6028,6 +6124,151 @@ Selection Options:
           --num-reads N
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="modkit-installation-for-macos"><a class="header" href="#modkit-installation-for-macos">Modkit Installation for macOS</a></h1>
+<p><strong>Prerequisites:</strong> Apple Silicon Mac, macOS 11.0+</p>
+<blockquote>
+<p><strong>MPS GPU builds only:</strong> macOS 12.3+ (Monterey or later) is required when <code>MODKIT_MPS_SUPPORT=1</code>. The script exits early on older systems for MPS builds only. Builds without MPS (<code>MODKIT_MPS_SUPPORT=0</code>, the default) run on macOS 11.0+.</p>
+</blockquote>
+<h2 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h2>
+<pre><code class="language-bash"># Without MPS GPU support (default)
+bash mac_compile_modkit.sh ~/tools
+
+# With MPS GPU support (requires Python + PyTorch)
+MODKIT_MPS_SUPPORT=1 bash mac_compile_modkit.sh ~/tools
+</code></pre>
+<p>The default (no-MPS) build installs modkit without Python or PyTorch. Takes 5–10 minutes. The MPS build adds Metal GPU acceleration and takes 10–15 minutes.</p>
+<hr>
+<h2 id="what-gets-installed"><a class="header" href="#what-gets-installed">What Gets Installed</a></h2>
+<p><strong>Always installed:</strong></p>
+<ul>
+<li>Xcode Command Line Tools, Homebrew, Rust &amp; Cargo</li>
+<li>Compiled modkit binary at <code>~/tools/modkit/target/release/modkit</code></li>
+</ul>
+<p><strong>Additionally installed when <code>MODKIT_MPS_SUPPORT=1</code>:</strong></p>
+<ul>
+<li>Python virtual environment with PyTorch (GPU-enabled via Metal Performance Shaders)</li>
+</ul>
+<hr>
+<h2 id="after-installation"><a class="header" href="#after-installation">After Installation</a></h2>
+<p>The installer automatically adds the environment setup to <code>~/.zprofile</code>, so modkit is available in every new terminal session <strong>silently</strong> — no output is printed on shell startup.</p>
+<p>To activate in the <strong>current</strong> session immediately after install:</p>
+<pre><code class="language-bash">source ~/tools/setup_modkit_env.sh ~/tools
+modkit --version
+</code></pre>
+<p>To see full environment details:</p>
+<pre><code class="language-bash">source ~/tools/setup_modkit_env.sh ~/tools --verbose
+</code></pre>
+<p><code>setup_modkit_env.sh</code> configures:</p>
+<ul>
+<li><code>PATH</code> — so you can type <code>modkit</code> directly</li>
+<li><code>LIBTORCH</code>, <code>DYLD_LIBRARY_PATH</code>, <code>LD_LIBRARY_PATH</code> — only set for MPS builds; required for the binary to find libtorch</li>
+</ul>
+<hr>
+<h2 id="mps-gpu-support"><a class="header" href="#mps-gpu-support">MPS GPU Support</a></h2>
+<p><code>MODKIT_MPS_SUPPORT=1</code> enables Metal Performance Shaders GPU acceleration. This requires Python and PyTorch, which the script installs automatically.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Values</th><th>Default</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>MODKIT_MPS_SUPPORT</code></td><td><code>0</code>, <code>1</code></td><td><code>0</code></td><td>Enable MPS GPU support</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="python-version-control"><a class="header" href="#python-version-control">Python Version Control</a></h2>
+<blockquote>
+<p>These variables are only used when <code>MODKIT_MPS_SUPPORT=1</code>.</p>
+</blockquote>
+<p>Three environment variables control Python selection:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Values</th><th>Default</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>MODKIT_PYTHON_PROVIDER</code></td><td><code>auto</code>, <code>system</code>, <code>pyenv</code>, <code>uv</code></td><td><code>auto</code></td><td>Which Python manager to use</td></tr>
+<tr><td><code>MODKIT_PYTHON_VERSION</code></td><td>e.g. <code>3.11.9</code>, <code>3.12</code></td><td><em>(empty)</em></td><td>Request a specific Python version</td></tr>
+<tr><td><code>MODKIT_USE_UV</code></td><td><code>auto</code>, <code>0</code>, <code>1</code></td><td><code>auto</code></td><td>Use <code>uv</code> for venv and pip operations</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="provider-notes"><a class="header" href="#provider-notes">Provider Notes</a></h3>
+<ul>
+<li><strong><code>auto</code></strong>: Uses <code>uv</code> or <code>pyenv</code> if <code>MODKIT_PYTHON_VERSION</code> is set and they are available; otherwise falls back to system <code>python3</code>. If a version is requested but neither tool is available, the script warns and prompts before falling back.</li>
+<li><strong><code>system</code></strong>: Uses <code>python3</code> from <code>$PATH</code>. Version cannot be controlled.</li>
+<li><strong><code>pyenv</code></strong>: Installs the requested version if needed. Does not change your global pyenv version.</li>
+<li><strong><code>uv</code></strong>: Fastest option. Installs Python and manages the venv/pip. Auto-installed via Homebrew if needed.</li>
+</ul>
+<p><strong>Venv reuse:</strong> If a virtual environment already exists from a different Python configuration, the script detects the mismatch and prompts you to recreate it.</p>
+<h3 id="examples-1"><a class="header" href="#examples-1">Examples</a></h3>
+<pre><code class="language-bash"># No MPS (default): no Python or PyTorch needed
+bash mac_compile_modkit.sh ~/tools
+
+# MPS build with system Python
+MODKIT_MPS_SUPPORT=1 bash mac_compile_modkit.sh ~/tools
+
+# MPS build, specific Python version via pyenv
+MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=pyenv MODKIT_PYTHON_VERSION=3.11.9 bash mac_compile_modkit.sh ~/tools
+
+# MPS build, specific Python version via uv (fastest)
+MODKIT_MPS_SUPPORT=1 MODKIT_PYTHON_PROVIDER=uv MODKIT_PYTHON_VERSION=3.12 bash mac_compile_modkit.sh ~/tools
+
+# MPS build, force standard pip (no uv)
+MODKIT_MPS_SUPPORT=1 MODKIT_USE_UV=0 bash mac_compile_modkit.sh ~/tools
+
+# Specific modkit version (no MPS)
+bash mac_compile_modkit.sh ~/tools v0.5.0
+
+# Specific modkit version (with MPS)
+MODKIT_MPS_SUPPORT=1 bash mac_compile_modkit.sh ~/tools v0.5.0
+</code></pre>
+<hr>
+<h2 id="common-issues--fixes"><a class="header" href="#common-issues--fixes">Common Issues &amp; Fixes</a></h2>
+<h3 id="could-not-resolve-a-usable-python-executable"><a class="header" href="#could-not-resolve-a-usable-python-executable">“Could not resolve a usable Python executable”</a></h3>
+<blockquote>
+<p>Only relevant for <code>MODKIT_MPS_SUPPORT=1</code> builds.</p>
+</blockquote>
+<pre><code class="language-bash">python3 --version           # check if Python is available
+brew install python@3.11    # install if missing
+</code></pre>
+<h3 id="pytorch-verification-failed"><a class="header" href="#pytorch-verification-failed">“PyTorch verification failed”</a></h3>
+<blockquote>
+<p>Only relevant for <code>MODKIT_MPS_SUPPORT=1</code> builds.</p>
+</blockquote>
+<pre><code class="language-bash">source ~/tools/setup_modkit_env.sh ~/tools
+~/tools/venv_modkit/bin/python -m pip install --upgrade pip torch numpy
+</code></pre>
+<h3 id="compilation-failed"><a class="header" href="#compilation-failed">“Compilation failed”</a></h3>
+<p><strong>No-MPS build:</strong></p>
+<pre><code class="language-bash">cd ~/tools/modkit
+cargo clean
+cargo build --release --features accelerate
+</code></pre>
+<p><strong>MPS build:</strong></p>
+<blockquote>
+<p>Always source the environment before rebuilding. Without it, <code>LIBTORCH</code> is unset and the build will fail again.</p>
+</blockquote>
+<pre><code class="language-bash">source ~/tools/setup_modkit_env.sh ~/tools
+cd ~/tools/modkit
+cargo clean
+cargo build --release --features accelerate,tch
+</code></pre>
+<h3 id="mps-available-false"><a class="header" href="#mps-available-false">“MPS available: false”</a></h3>
+<p>MPS support is opt-in (<code>MODKIT_MPS_SUPPORT=1</code>). If you built without MPS, this is expected — rebuild with <code>MODKIT_MPS_SUPPORT=1</code> to enable GPU acceleration.</p>
+<p>For an MPS build where GPU is still unavailable:</p>
+<ul>
+<li>Confirm Apple Silicon: <code>uname -m</code> should print <code>arm64</code></li>
+<li>Confirm macOS 12.3+: <code>sw_vers -productVersion</code></li>
+<li>CPU-only fallback is used automatically if MPS is unavailable</li>
+</ul>
+<hr>
+<h2 id="help--details"><a class="header" href="#help--details">Help &amp; Details</a></h2>
+<pre><code class="language-bash">bash mac_compile_modkit.sh --help   # all options
+cat ~/tools/installation_info.txt   # paths, versions, reproducible commands
+modkit --help                       # modkit usage
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h1>
 <p>It’s recommended to run all <code>modkit</code> commands with the <code>--log-filepath &lt;path-to-file&gt;</code>
 option set. When unexpected outputs are produced inspecting this file will often indicate
@@ -6390,6 +6631,7 @@ A similar problem is encountered when comparing regions of CpG or transcripts of
 To provide another metric that is more robust to high counts, Modkit DMR will output <a href="https://en.wikipedia.org/wiki/Cohen%27s_h">Cohen’s h statistic</a>.
 <strong>Importantly</strong> this is a measure of changes in the proportion of modification of any type between the two conditions, similar to the MAP-based p-value, not a change in modification proportions (although it could be extended to measure this).
 In addition to the statistic, the high and low bound of the 95% confidence interval are reported.
+A CI value (high or low) of zero indicates that there is little certainty about there being a difference between the two conditions.
 Generally speaking, filtering or sorting on the lower bound is a good test for finding important changes.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="direct-rna-isoform-dmr-details"><a class="header" href="#direct-rna-isoform-dmr-details">Direct RNA Isoform DMR details</a></h1>
@@ -6505,6 +6747,22 @@ Deterministic unless the <code>--threads</code> or <code>--interval-size</code> 
         <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
         <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
         <script>

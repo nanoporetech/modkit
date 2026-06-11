@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec6434a5.js";
+            window.path_to_searchindex_js = "searchindex-b348220b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4ae5f900.js"></script>
+        <script src="toc-869b6773.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -2547,7 +2547,7 @@ bedMethyl table
 Usage: modkit motif refine [OPTIONS] --in-bedmethyl &lt;IN_BEDMETHYL&gt; --ref &lt;REFERENCE_FASTA&gt;
 
 Options:
-      --min_refine_frac_mod &lt;MIN_REFINE_FRAC_MODIFIED&gt;
+      --min-refine-frac-mod &lt;MIN_REFINE_FRAC_MODIFIED&gt;
           Minimum fraction of sites in the genome to be "high-modification" for
           a motif to be further refined, otherwise it will be discarded
           
@@ -2889,6 +2889,8 @@ Sample Options:
           Minimum valid coverage required to use an entry from a bedMethyl. See
           the help for pileup for the specification and description of valid
           coverage [default: 0]
+      --ref-sample &lt;REF_SAMPLE&gt;
+          Only performs comparisons between this sample and all other samples
 
 Output Options:
       --header             Include header in output
@@ -2952,6 +2954,11 @@ Options:
           per-isoform proportions in output. Adding this flag will make the
           output file substantially larger
 
+      --ignore-version
+          Ignore gene ID version and transcript ID version in GTF, if there are
+          multiple identical transcript IDs or gene IDs with different versions
+          the last one will be kept
+
       --log-filepath &lt;LOG_FILEPATH&gt;
           Path to optional debug log (recommended)
 
@@ -2960,6 +2967,14 @@ Options:
 
   -n, --gene-name &lt;GENE_NAME&gt;
           Only process this Gene Name
+
+      --gene-strand &lt;GENE_STRAND&gt;
+          Specify a strand for the Gene Name (or GeneID) if there are multiple
+          chromosomes with this gene
+
+      --gene-chrom &lt;GENE_CHROM&gt;
+          Specify a chromosome for the Gene Name (or GeneID) if there are
+          multiple chromosomes with this gene
 
       --suppress-progress
           Don't show the progress bar
@@ -3062,6 +3077,10 @@ Options:
           increase the size of the output file
       --gtf &lt;GTF&gt;
           Path to GTF file to use for transcript models. Can be compressed
+      --ignore-version
+          Ignore gene ID version and transcript ID version in GTF, if there are
+          multiple identical transcript IDs or gene IDs with different versions
+          the last one will be kept
       --min-valid-coverage &lt;MIN_VALID_COVERAGE&gt;
           Minimum valid coverage required to use an entry from a bedMethyl. See
           the help for pileup for the specification and description of valid
@@ -3080,9 +3099,12 @@ Options:
           fold change and the y-axis is negative log p-value. See the online
           documentation for and example
       --top-k &lt;TOP_K&gt;
-          For each gene, sort the positions in decreasing negative log p-value
-          and take this many for plotting. Setting a large number will increase
-          the size of the SVG plot [default: 1]
+          For each gene, sort the positions in increasing p-value and take this
+          many for plotting. Setting a large number will increase the size of
+          the SVG plot [default: 1]
+      --label-top-k-genes &lt;LABEL_TOP_K_GENES&gt;
+          Sort the points to be plotted by increasing p-value, then label the
+          points from the top-k genes
       --min-effect-size &lt;MIN_EFFECT_SIZE&gt;
           Discard positions with an effect size less than this before
           considering them for plotting [default: 0.1]
@@ -3091,6 +3113,9 @@ Options:
       --gene-labels &lt;GENE_LABELS&gt;
           Path to plain text file of a list of gene names, one per line, to mark
           in the volcano plot
+      --sort-by-effect-size
+          Determine which points to plot by sorting to decreasing effect size
+          instead of increasing p-value
   -h, --help
           Print help
 </code></pre>
@@ -3161,6 +3186,16 @@ Compute Options:
 Logging Options:
       --log-filepath &lt;LOG_FILEPATH&gt;
           Specify a file to write debug logs to
+
+Filtering Options:
+      --min-samples &lt;MIN_SAMPLES&gt;
+          Only output a position present in at least this many input bedMethyl
+          files. Accepts an integer greater than 1, or "all" to require the
+          position in every input (an inner join across replicates)
+
+      --min-sample-coverage &lt;MIN_SAMPLE_COVERAGE&gt;
+          Minimum valid coverage for an input's record to count towards a
+          position, for both the --min-samples tally and the summed counts
 </code></pre>
 <h2 id="bedmethyl-tobigwig"><a class="header" href="#bedmethyl-tobigwig">bedmethyl tobigwig</a></h2>
 <pre><code class="language-text">Make a BigWig track from a bedMethyl file or stream. For details on the BigWig
@@ -3255,11 +3290,20 @@ Arguments:
   &lt;OUTPUT_BEDMETHYL&gt;  
 
 Options:
-  -t, --transcript-id &lt;TRANSCRIPT_ID&gt;            
-      --transcript-version &lt;TRANSCRIPT_VERSION&gt;  
-      --gtf &lt;GTF&gt;                                
-      --header                                   
-  -h, --help                                     Print help
+  -t, --transcript-id &lt;TRANSCRIPT_ID&gt;
+          
+      --transcript-version &lt;TRANSCRIPT_VERSION&gt;
+          
+      --ignore-version
+          Ignore gene ID version and transcript ID version in GTF, if there are
+          multiple identical transcript IDs or gene IDs with different versions
+          the last one will be kept
+      --gtf &lt;GTF&gt;
+          
+      --header
+          
+  -h, --help
+          Print help
 </code></pre>
 <h2 id="modbam-adjust-mods"><a class="header" href="#modbam-adjust-mods">modbam adjust-mods</a></h2>
 <pre><code class="language-text">Performs various operations on BAM files containing base modification
@@ -4001,7 +4045,7 @@ Selection Options:
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="troubleshooting.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="mac_compile_modkit.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -4015,7 +4059,7 @@ Selection Options:
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="troubleshooting.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="mac_compile_modkit.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
@@ -4028,6 +4072,22 @@ Selection Options:
         <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
         <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
         <script>
