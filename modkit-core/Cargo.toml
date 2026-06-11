@@ -1,6 +1,6 @@
 [package]
 name = "mod_kit"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2021"
 
 #[[bin]]
@@ -61,4 +61,3 @@ assert_approx_eq = "1.1.0"
 similar-asserts = "1.4.2"
 tempfile = "3.2"
 serde = {version = "1.0.219", features = ["derive"]}
-

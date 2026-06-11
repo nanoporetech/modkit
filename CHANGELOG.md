@@ -4,9 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.6.4]
 ### Adds
   - [bedmethyl] Adds `--min-samples` (an integer or `all`) and `--min-sample-coverage` to `bedmethyl merge` to require a position to be present in (and optionally covered to a minimum valid depth in) multiple inputs, enabling an inner join across replicates. Omitting them preserves the original outer-join behaviour.
+### Fixes
+  - [dmr, isoform] Fix tool tips in isoform plot.
+  - [dmr, isoform, compare-tx-sites] Makes GTF parsing more robust.
+  - [dmr, compare-tx-sites] Fix bug where unmethylated counts are not calculated correctly.
+  - [dmr, compare-tx-sites] Fix bug where conditions are swapped.
+### Changes
+  - [dmr] Don't allow negative Cohen's CI values
+  - [pileup] When using 'any-code' make it the default for all mods on that base.
+
 
 ## [v0.6.3]
 ### Adds

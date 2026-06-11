@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec6434a5.js";
+            window.path_to_searchindex_js = "searchindex-b348220b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4ae5f900.js"></script>
+        <script src="toc-869b6773.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -194,10 +194,15 @@ This command also requires an accompanying GTF file with valid transcript models
 <pre><code class="language-bash">modkit dmr isoform \
   ${bedmethyl} \
   isoform_dmr_${gene_name}.bed \
-  --plot path/to/plot/dir \ # &lt;-- add this option
-  --gene-name ${gene_name} \ # &lt;-- requires a gene name (or gene id to plot)
+  --plot path/to/plot/dir \
+  --gene-name ${gene_name} \
   --gtf ${gtf}
 </code></pre>
+<blockquote>
+<p><strong>Important:</strong> <code>--plot</code> requires either <code>--gene-name</code> or <code>--gene-id</code> and <strong>cannot</strong> be used
+in whole-transcriptome mode (i.e. without one of those arguments). Attempting to use <code>--plot</code>
+without a gene specifier will result in an error.</p>
+</blockquote>
 <p><em>Note</em> that exons without marks in certain transcripts indicates that there is no data in the input bedMethyl.
 The command <code>modkit bedmethyl map-to-genome</code> can map a transcript-aligned bedMethyl to genome coordinates.</p>
 <h2 id="schema-of-output"><a class="header" href="#schema-of-output">Schema of output</a></h2>
@@ -218,19 +223,26 @@ The command <code>modkit bedmethyl map-to-genome</code> can map a transcript-ali
 <tr><td>9</td><td>n_transcripts</td><td>number of transcripts (isoforms) contributing to this position</td><td>int</td></tr>
 <tr><td>10</td><td>gene_id</td><td>gene-id from the GTF</td><td>str</td></tr>
 <tr><td>11</td><td>gene_name</td><td>gene-name from the GTF or ‘-’ if not found</td><td>str</td></tr>
-<tr><td>12</td><td>per_isoform_proportions</td><td>JSON formatted string of per-transcript, per-modification proprotions</td><td>str</td></tr>
-<tr><td>13</td><td>per_isoform_counts</td><td>JSON formatted string of per-transcript, per-modification counts</td><td>str</td></tr>
+<tr><td>12</td><td>pooled_proportions</td><td>gene-level aggregate modification rate</td><td>str</td></tr>
+<tr><td>13</td><td>per_isoform_proportions</td><td>JSON formatted string of per-transcript, per-modification proprotions</td><td>str</td></tr>
+<tr><td>14</td><td>per_isoform_counts</td><td>JSON formatted string of per-transcript, per-modification counts</td><td>str</td></tr>
 </tbody>
 </table>
 </div>
-<p>Columns 12 and 13 are only present when the <code>--full</code> flag is passed.</p>
+<p>Columns 12 and 14 are only present when the <code>--full</code> flag is passed.</p>
 <h2 id="background"><a class="header" href="#background">Background</a></h2>
 <p>Gene sequences alone don’t describe all of the diversity of mRNAs in vertebrate cells.
 Through alternative splicing gene exons can be combined in multiple permutations called isoforms.</p>
 <p><img src="./images/central_dogma.png" title="Cartoon of alternative splicing" alt="Central dogma of molecular biology and alternative splicing"></p>
 <h2 id="filtering-the-number-of-methylation-marks"><a class="header" href="#filtering-the-number-of-methylation-marks">Filtering the number of methylation marks</a></h2>
 <p>Some long genes may have many modified positions and drawing them all can get crowded.
-To only plot positions with a maximum p-value or minimum score use the <code>--max-pvalue</code> or <code>--min-score</code> arguments, respectively.</p>
+To only plot positions with a maximum p-value or minimum score use the <code>--max-pval</code> or
+<code>--min-score</code> arguments, respectively.</p>
+<blockquote>
+<p><strong>Note:</strong> <code>--max-pval</code> and <code>--min-score</code> are <strong>plot-only</strong> options. They require <code>--plot</code>
+(and therefore also <code>--gene-name</code> or <code>--gene-id</code>) and have no effect outside of single-gene
+mode. These two flags are <strong>mutually exclusive</strong> — only one may be provided at a time.</p>
+</blockquote>
 
                     </main>
 
@@ -267,6 +279,22 @@ To only plot positions with a maximum p-value or minimum score use the <code>--m
         <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
         <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
         <script>

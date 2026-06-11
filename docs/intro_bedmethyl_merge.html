@@ -38,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec6434a5.js";
+            window.path_to_searchindex_js = "searchindex-b348220b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-4ae5f900.js"></script>
+        <script src="toc-869b6773.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,6 +198,31 @@ tabix sample_b.bed.gz
 <pre><code class="language-text">chr1    249250621
 chr2    243199373
 </code></pre>
+<h2 id="requiring-positions-in-multiple-samples-inner-join"><a class="header" href="#requiring-positions-in-multiple-samples-inner-join">Requiring positions in multiple samples (inner join)</a></h2>
+<p>By default <code>merge</code> performs an outer join: a position is kept if it appears in
+any input. To instead keep only positions shared across inputs, use
+<code>--min-samples</code>, which outputs a position only when it appears in at least that
+many input files. Pass <code>--min-samples all</code> to require the position in every
+input (an inner join), which is useful for retaining positions that reproduce
+across replicates; <code>all</code> avoids hard-coding the input count in scripts.</p>
+<pre><code class="language-bash"># keep only positions present in all three replicates (inner join)
+modkit bedmethyl merge rep1.bed.gz rep2.bed.gz rep3.bed.gz \
+  -o replicates_inner.bed \
+  -g genome_sizes.tsv \
+  --min-samples all
+</code></pre>
+<p><code>--min-sample-coverage</code> adds a per-input confidence floor: an input only counts
+towards a position (both for the <code>--min-samples</code> tally and for the summed counts)
+when that input’s record has at least the given valid coverage. For example, to
+require a position to be covered by at least 5 valid reads in all three
+replicates:</p>
+<pre><code class="language-bash">modkit bedmethyl merge rep1.bed.gz rep2.bed.gz rep3.bed.gz \
+  -o replicates_inner_cov5.bed \
+  -g genome_sizes.tsv \
+  --min-samples all \
+  --min-sample-coverage 5
+</code></pre>
+<p>Omitting both options performs an outer-join.</p>
 <h1 id="convert-bedmethyl-to-bigwig"><a class="header" href="#convert-bedmethyl-to-bigwig">Convert bedMethyl to bigWig</a></h1>
 <p>You may want to convert a bedMethyl to bigWig for easier visualization on a genome browser.
 Modkit provides a <code>bedmethyl tobigwig</code> function that can extract a bigWig track from a bedMethyl.
@@ -254,6 +279,22 @@ You can also make a bigWig from a pre-computed bedMethyl (and use tabix to get j
         <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
         <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
         <script>

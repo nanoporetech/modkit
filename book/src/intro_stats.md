@@ -25,7 +25,7 @@ The output TSV has the following schema:
 | 5      | strand         | Strand (`+`, `-`, `.`) from the input BED (`.` assumed for when not provided) | str   |
 | 6+     | count_x        | total number of `x` base modification codes in the region                     | int   |
 | 7+     | count_valid_x  | total valid calls for the primary base modified by code `x`                   | int   |
-| 8+     | percent_x      | `count_x` / `count_vali_x` * 100                                              | float |
+| 8+     | percent_x      | `count_x` / `count_valid_x` * 100                                              | float |
 
 Columns 6, 7, and 8 are repeated for each modification code found in the bedMethyl file or provided with `--mod-codes` argument.
 
