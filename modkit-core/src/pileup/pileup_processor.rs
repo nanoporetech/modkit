@@ -362,21 +362,20 @@ impl<
                                             break 'overran;
                                         } else {
                                             assert!(pos > q);
-                                            let base = {
-                                                let tmp = DnaBase::try_from(
-                                                    record.seq()[q],
-                                                )
-                                                .unwrap();
-                                                if record.is_reverse() {
-                                                    tmp.complement()
-                                                } else {
-                                                    tmp
-                                                }
-                                            };
-                                            self.matrix.incr_diff_call(
-                                                rpos, base, ref_base, reverse,
-                                                hp,
-                                            );
+                                            if let Ok(tmp) = DnaBase::try_from(
+                                                record.seq()[q],
+                                            ) {
+                                                let base =
+                                                    if record.is_reverse() {
+                                                        tmp.complement()
+                                                    } else {
+                                                        tmp
+                                                    };
+                                                self.matrix.incr_diff_call(
+                                                    rpos, base, ref_base,
+                                                    reverse, hp,
+                                                );
+                                            }
                                             mod_state = Some(ms);
                                             break 'overran;
                                         }
@@ -388,19 +387,18 @@ impl<
                                     continue 'records;
                                 }
                                 Ok(None) => {
-                                    let base = {
-                                        let tmp =
-                                            DnaBase::try_from(record.seq()[q])
-                                                .unwrap();
-                                        if record.is_reverse() {
+                                    if let Ok(tmp) =
+                                        DnaBase::try_from(record.seq()[q])
+                                    {
+                                        let base = if record.is_reverse() {
                                             tmp.complement()
                                         } else {
                                             tmp
-                                        }
-                                    };
-                                    self.matrix.incr_diff_call(
-                                        rpos, base, ref_base, reverse, hp,
-                                    );
+                                        };
+                                        self.matrix.incr_diff_call(
+                                            rpos, base, ref_base, reverse, hp,
+                                        );
+                                    }
                                     mod_state = None;
                                     break 'overran;
                                 }
@@ -412,14 +410,13 @@ impl<
                         self.matrix.incr_delete(rpos, reverse, hp);
                     }
                     (Some(q), None) => {
-                        let base = {
-                            let tmp =
-                                DnaBase::try_from(record.seq()[q]).unwrap();
-                            if record.is_reverse() {
-                                tmp.complement()
-                            } else {
-                                tmp
-                            }
+                        let Ok(tmp) = DnaBase::try_from(record.seq()[q]) else {
+                            continue 'pileup;
+                        };
+                        let base = if record.is_reverse() {
+                            tmp.complement()
+                        } else {
+                            tmp
                         };
                         self.matrix
                             .incr_diff_call(rpos, base, ref_base, reverse, hp);
@@ -910,14 +907,13 @@ impl PileupWorker for GenericPileupWorker {
                         );
                     }
                     (Some(q), None) => {
-                        let base = {
-                            let tmp =
-                                DnaBase::try_from(record.seq()[q]).unwrap();
-                            if record.is_reverse() {
-                                tmp.complement()
-                            } else {
-                                tmp
-                            }
+                        let Ok(tmp) = DnaBase::try_from(record.seq()[q]) else {
+                            continue 'pileup;
+                        };
+                        let base = if record.is_reverse() {
+                            tmp.complement()
+                        } else {
+                            tmp
                         };
                         if implicit_bases.contains(&base) {
                             add_to_tally(

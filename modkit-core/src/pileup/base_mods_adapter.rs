@@ -77,7 +77,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                         b'C' | b'c' => agg[2] += 1u32,
                         b'G' | b'g' => agg[1] += 1u32,
                         b'T' | b't' => agg[0] += 1u32,
-                        _ => unreachable!(),
+                        _ => {}
                     }
                     agg
                 },
@@ -158,7 +158,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                         b'C' => freq[1],
                         b'G' => freq[2],
                         b'T' => freq[3],
-                        _ => unreachable!(),
+                        _ => bail!("invalid canonical base in MM tag: {base}"),
                     };
                     let remainder = total.checked_sub(count).expect(&format!(
                         "count should be less than or equal total, MN tag \
@@ -284,7 +284,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                 }
             }
             let canonical_qual = 255u8.checked_sub(total_mod_qual).unwrap();
-            let primary_base = DnaBase::parse(base as char).unwrap();
+            let primary_base = DnaBase::parse(base as char)?;
             let threshold = filter_thresholds[primary_base as usize];
             let mod_state = if canonical_qual > mod_qual {
                 Some(ModState::new(
@@ -469,7 +469,7 @@ fn base_complement(base: u8) -> u8 {
         b'C' => b'G',
         b'G' => b'C',
         b'T' => b'A',
-        _ => panic!("not allowed base"),
+        _ => base,
     }
 }
 
@@ -953,4 +953,76 @@ mod base_mods_adapter_tests {
     // - [x] Empty
     // - [x] Multi-base
     // - [ ] Remaining edge cases from htslib
+
+    #[test]
+    fn test_base_complement_n_base() {
+        assert_eq!(super::base_complement(b'A'), b'T');
+        assert_eq!(super::base_complement(b'T'), b'A');
+        assert_eq!(super::base_complement(b'C'), b'G');
+        assert_eq!(super::base_complement(b'G'), b'C');
+        // N bases should pass through without panicking
+        assert_eq!(super::base_complement(b'N'), b'N');
+    }
+
+    #[test]
+    fn test_forward_with_n_bases() {
+        // N bases interspersed in the sequence should not affect
+        // modification calls on valid positions
+        let seq = "ANTCATNCATTCCTACCGCTATAGCCT";
+        //          0123456789...
+        // C positions: 3, 7, 11, 15, 16, 18, 24, 25
+        // The MM tag skips 2 C's, then calls next C, then skips 1
+        let mm = "C+mh,2,0,1;";
+        let ml = vec![200, 10, 50, 170, 160, 20];
+        let record = make_record(mm, &ml, seq, None, false);
+        let thresholds = [0f32; 4];
+        let mut scanner = BaseModsAdapter::<2>::new(&record).unwrap();
+        // Should still be able to iterate mod positions without panicking
+        let mod_positions: Vec<usize> = std::iter::from_fn(|| {
+            scanner.next_modified_position(thresholds, &[]).unwrap()
+        })
+        .filter(|ms| !ms.inferred)
+        .map(|ms| ms.mod_position)
+        .collect();
+        // Should find modification positions on C bases, not N bases
+        assert!(!mod_positions.is_empty());
+        for pos in &mod_positions {
+            assert_ne!(seq.as_bytes()[*pos], b'N');
+        }
+    }
+
+    #[test]
+    fn test_reverse_with_n_bases() {
+        // Reverse strand with N bases in the sequence should not panic
+        // during frequency counting
+        let mm = "C+m.,0,0;C+h.,0,0;";
+        let seq = "CGNGATGGANTC";
+        let ml = vec![100, 25, 101, 24];
+        let record = make_record(mm, &ml, seq, None, true);
+
+        let mut scanner = BaseModsAdapter::<2>::new(&record).unwrap();
+        let thresholds = [0f32; 4];
+        // Should not panic; N bases are skipped in frequency counting
+        let mod_positions: Vec<usize> = std::iter::from_fn(|| {
+            scanner.next_modified_position(thresholds, &[]).unwrap()
+        })
+        .map(|ms| ms.mod_position)
+        .collect();
+        assert!(!mod_positions.is_empty());
+    }
+
+    #[test]
+    fn test_all_n_bases_reverse() {
+        // A sequence of all N bases on the reverse strand should not
+        // panic during frequency counting, and should produce no
+        // modification calls
+        let mm = "C+m?;";
+        let seq = "NNNNNNNN";
+        let ml = vec![];
+        let record = make_record(mm, &ml, seq, None, true);
+        let mut scanner = BaseModsAdapter::<1>::new(&record).unwrap();
+        let thresholds = [0f32; 4];
+        let result = scanner.next_modified_position(thresholds, &[]).unwrap();
+        assert!(result.is_none());
+    }
 }
