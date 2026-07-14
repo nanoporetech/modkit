@@ -21,6 +21,7 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{self, Read, Records};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
@@ -226,6 +227,42 @@ impl ModTagViews {
                 prefix,
                 &tab,
             )?;
+            // flatten all primary bases to their codes (including + and -
+            // strands)
+            let modified_bases_to_codes = self.modified_bases.iter().fold(
+                HashMap::new(),
+                |mut agg, (_strand, bases)| {
+                    let base_to_codes = bases.iter().fold(
+                        HashMap::new(),
+                        |mut agg, (base, codes)| {
+                            let e = agg.entry(*base).or_insert(HashSet::new());
+                            for (code, _skip_mode) in codes {
+                                e.insert(*code);
+                            }
+                            agg
+                        },
+                    );
+                    for (base, codes) in base_to_codes {
+                        let e = agg.entry(base).or_insert(HashSet::new());
+                        for code in codes {
+                            e.insert(code);
+                        }
+                    }
+                    agg
+                },
+            );
+
+            let modified_bases = modified_bases_to_codes
+                .into_iter()
+                .sorted_by(|(a, _), (b, _)| a.cmp(b))
+                .fold(Vec::new(), |mut agg, (base, codes)| {
+                    for code in codes.into_iter().sorted_by(|a, b| a.cmp(b)) {
+                        agg.push(format!("{base}:{code}"));
+                    }
+                    agg
+                });
+            let modified_bases = modified_bases.into_iter().join(" ");
+            info!("modified bases list: {modified_bases}");
         }
         let invalid_headers_table =
             Self::make_header_table(&self.invalid_mm_tag_headers);
