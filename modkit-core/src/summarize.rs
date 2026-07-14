@@ -5,7 +5,7 @@ use common_macros::hash_map;
 use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator};
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use rayon::prelude::*;
 
 use crate::mod_bam::{prob_to_qual, BaseModCall, CollapseMethod, EdgeFilter};
@@ -19,7 +19,7 @@ use crate::sample_probs::{ModHist, QualHist};
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 
 use crate::thresholds::calc_thresholds_per_base;
-use crate::util::{get_master_progress_bar, Region};
+use crate::util::{get_master_progress_bar, qual_to_prob, Region};
 
 /// Count statistics from a modBAM.
 #[derive(Debug, new, PartialEq)]
@@ -143,6 +143,7 @@ impl<'a> ModSummary<'a> {
         region: Option<&'a Region>,
         base_thresholds: Option<[f32; 4]>,
         mod_thresholds: Option<&HashMap<ModCodeRepr, f32>>,
+        allow_prob_saturation: bool,
         multi_progress: &MultiProgress,
     ) -> anyhow::Result<Self> {
         let reads_with_mod_calls = hash_map!{
@@ -167,7 +168,23 @@ impl<'a> ModSummary<'a> {
                         let max_t = max_ts[b as usize];
                         agg[b as usize] = if t > max_t { max_t } else { t }
                     } else {
-                        agg[b as usize] = t;
+                        let q = res[0].qual;
+                        if q == 255u8 && !allow_prob_saturation {
+                            let q_fb =
+                                qual_hist.explicit_canonical_probs[b as usize];
+                            let t_fb = qual_to_prob(q_fb);
+                            multi_progress.suspend(|| {
+                                warn!(
+                                    "estimated threshold for {b} too high \
+                                     ({t}, qual: {q}), setting threshold \
+                                     {t_fb} (qual: {q_fb}), highest \
+                                     discovered explicit canonical value",
+                                );
+                            });
+                            agg[b as usize] = t_fb;
+                        } else {
+                            agg[b as usize] = t;
+                        }
                     }
                 }
             }

@@ -1698,6 +1698,13 @@ pub struct ModSummarize {
         action = clap::ArgAction::Append,
     )]
     max_filter_threshold: Option<Vec<String>>,
+
+    #[clap(help_heading = "Filtering Options")]
+    /// Allow the discovered threshold value is equivalent to qual = 255
+    /// (maximum bin), otherwise the threshold value will be set to the maximum
+    /// explicit unmodified value.
+    #[arg(long, hide_short_help = true, default_value_t = false)]
+    allow_prob_saturation: bool,
     /// Discard base modification calls that are this many bases from the start
     /// or the end of the read. Two comma-separated values may be provided
     /// to asymmetrically filter out base modification calls from the start
@@ -2011,6 +2018,7 @@ impl ModSummarize {
             region.as_ref(),
             base_thresholds,
             per_mod_thresholds.as_ref(),
+            self.allow_prob_saturation,
             &multi_progress,
         )?;
 
