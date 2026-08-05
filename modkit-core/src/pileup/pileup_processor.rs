@@ -2495,6 +2495,11 @@ fn update_mods_iter2<'a>(
                 return Err(MkError::HtsLibError(e));
             }
         }
+    } else {
+        *mod_pos = None;
+        *canonical_base = None;
+        *pos_base_mod_call = None;
+        *mod_strand = None;
     }
     Ok(())
 }
@@ -2506,4 +2511,99 @@ fn indices_to_byte(motif_idxs: &BitSlice) -> u8 {
         agg |= b << i;
     }
     agg
+}
+
+#[cfg(test)]
+mod tests {
+    use rust_htslib::bam::{
+        self,
+        header::HeaderRecord,
+        record::{Aux, Cigar, CigarString},
+    };
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn make_aligned_mod_record(
+        name: &[u8],
+        mm: &str,
+        ml: &[u8],
+    ) -> bam::Record {
+        let mut record = bam::Record::new();
+        record.set(
+            name,
+            Some(&CigarString(vec![Cigar::Match(5)])),
+            b"AAAAA",
+            &[255; 5],
+        );
+        record.set_tid(0);
+        record.set_pos(0);
+        record.set_mapq(60);
+        record.push_aux(b"MM", Aux::String(mm)).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8(ml.into())).unwrap();
+        record
+    }
+
+    #[test]
+    fn generic_pileup_clears_mod_state_between_records() {
+        let temp_dir = tempdir().unwrap();
+        let bam_path = temp_dir.path().join("two-records.bam");
+        let mut header = bam::Header::new();
+        let mut hd = HeaderRecord::new(b"HD");
+        hd.push_tag(b"VN", "1.6").push_tag(b"SO", "coordinate");
+        header.push_record(&hd);
+        let mut sq = HeaderRecord::new(b"SQ");
+        sq.push_tag(b"SN", "chr1").push_tag(b"LN", 5);
+        header.push_record(&sq);
+
+        {
+            let mut writer =
+                bam::Writer::from_path(&bam_path, &header, bam::Format::Bam)
+                    .unwrap();
+            writer
+                .write(&make_aligned_mod_record(b"modified", "A+a.,4;", &[255]))
+                .unwrap();
+            writer
+                .write(&make_aligned_mod_record(b"canonical", "A+a.;", &[]))
+                .unwrap();
+        }
+        bam::index::build(&bam_path, None, bam::index::Type::Bai, 1).unwrap();
+
+        let mut worker = GenericPileupWorker::new(
+            &bam_path,
+            None,
+            Vec::new(),
+            0.0,
+            [0.0; 4],
+            &[],
+            PileupNumericOptions::Passthrough,
+            false,
+            u16::MAX,
+        )
+        .unwrap();
+        let coordinates =
+            ChromCoordinates::new(0, 0, 5, FocusPositions2::AllPositions, true);
+        let pileup =
+            worker.process(coordinates, ModBasePileup2::new_empty()).unwrap();
+        let counts = pileup
+            .position_feature_counts
+            .iter()
+            .find(|counts| {
+                counts.position == 4 && counts.mod_code == SIX_METHYL_ADENINE
+            })
+            .unwrap();
+
+        assert_eq!(counts.filtered_coverage, 2);
+        assert_eq!(counts.n_modified, 1);
+        assert_eq!(counts.n_canonical, 1);
+        assert_eq!(counts.n_other_modified, 0);
+        assert_eq!(counts.n_delete, 0);
+        assert_eq!(counts.n_filtered, 0);
+        assert_eq!(counts.n_diff, 0);
+        assert_eq!(counts.n_nocall, 0);
+        assert_eq!(
+            f32::from(counts.n_modified) / f32::from(counts.filtered_coverage),
+            0.5
+        );
+    }
 }
