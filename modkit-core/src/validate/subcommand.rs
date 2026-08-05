@@ -776,6 +776,14 @@ fn machine_parseable_table(
     out_str
 }
 
+fn format_percentage_cell(count: usize, total: usize) -> String {
+    if total == 0 {
+        "NA".to_string()
+    } else {
+        format!("{:.2}%", 100.0 * count as f32 / total as f32)
+    }
+}
+
 fn print_table(
     validate_base: DnaBase,
     status_probs: &StatusProbs,
@@ -825,11 +833,8 @@ fn print_table(
             if show_percentages {
                 let gt_total = gt_totals.get(gt_code).unwrap();
                 row.add_cell(
-                    cell!(&format!(
-                        "{:.2}%",
-                        100.0 * vector_length as f32 / *gt_total as f32
-                    ))
-                    .style_spec("r"),
+                    cell!(&format_percentage_cell(vector_length, *gt_total))
+                        .style_spec("r"),
                 );
             } else {
                 row.add_cell(
@@ -1267,6 +1272,12 @@ mod tests {
     use rust_htslib::bam::record::{Aux, Cigar, CigarString};
 
     use super::*;
+
+    #[test]
+    fn percentage_cells_are_unavailable_without_a_denominator() {
+        assert_eq!(format_percentage_cell(0, 0), "NA");
+        assert_eq!(format_percentage_cell(1, 4), "25.00%");
+    }
 
     fn make_record(gap: Cigar) -> Record {
         let cigar = CigarString(vec![Cigar::Match(1), gap, Cigar::Match(1)]);

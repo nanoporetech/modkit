@@ -498,10 +498,11 @@ fn test_validate_all_calls_filtered_reports_unavailable_filtered_accuracy() {
         ])
         .output()
         .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "validate failed: {}", stderr);
     assert!(
-        output.status.success(),
-        "validate failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        !stderr.contains("NaN%"),
+        "zero-total table cell must be NA:\n{stderr}"
     );
 
     let observed = std::fs::read_to_string(report).unwrap();
