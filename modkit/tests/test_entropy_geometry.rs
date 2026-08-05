@@ -166,3 +166,57 @@ fn region_owning_only_the_anchor_uses_reference_context() {
     assert_eq!(fields[5], "+");
     assert_eq!(&fields[12..], &["1", "0"]);
 }
+
+#[test]
+fn conflicting_combined_motif_partners_fail_before_output_creation() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let reference = write_reference(temp_dir.path(), "CGCG");
+    let bam = write_bam(
+        temp_dir.path(),
+        "CGCG",
+        "C+m?,0,0;",
+        2,
+        &[false],
+    );
+    let output = temp_dir.path().join("conflict.bed");
+    let result = Command::new(env!("CARGO_BIN_EXE_modkit"))
+        .args([
+            "entropy",
+            "--in-bam",
+            bam.to_str().unwrap(),
+            "--out-bed",
+            output.to_str().unwrap(),
+            "--ref",
+            reference.to_str().unwrap(),
+            "--motif",
+            "CG",
+            "0",
+            "--motif",
+            "CGCG",
+            "0",
+            "--combine-strands",
+            "--num-positions",
+            "1",
+            "--window-size",
+            "4",
+            "--min-coverage",
+            "1",
+            "--no-filtering",
+            "--threads",
+            "1",
+            "--io-threads",
+            "1",
+            "--suppress-progress",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("conflicting combined-strand motif partners"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("chr1:0"), "{stderr}");
+    assert!(!output.exists());
+}
