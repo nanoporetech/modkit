@@ -7,6 +7,7 @@ use super::{
     machine_parseable_table, process_bam_record, BaseStatus,
     ChromStrandPositionNames, StatusProbs, TidToChrom,
 };
+use crate::mod_bam::EdgeFilter;
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::util::Strand;
 
@@ -65,6 +66,14 @@ fn classify(
     records: impl IntoIterator<Item = Record>,
     truth: &ChromStrandPositionNames,
 ) -> StatusProbs {
+    classify_with_edge_filter(records, truth, None)
+}
+
+fn classify_with_edge_filter(
+    records: impl IntoIterator<Item = Record>,
+    truth: &ChromStrandPositionNames,
+    edge_filter: Option<&EdgeFilter>,
+) -> StatusProbs {
     let tid_to_chrom: TidToChrom = HashMap::from([(0, "chr1".to_string())]);
     let mut combined = StatusProbs::new();
     for record in records {
@@ -74,7 +83,7 @@ fn classify(
             &tid_to_chrom,
             DnaBase::C,
             None,
-            None,
+            edge_filter,
         )
         .unwrap();
         for (status, probs) in observed {
@@ -369,4 +378,99 @@ fn reverse_minus_fallback_preserves_no_call_mismatch_and_deletion_orientation()
             ((M, BaseStatus::Deletion), 1),
         ],
     );
+}
+
+fn positive_truth_range(end: i64) -> ChromStrandPositionNames {
+    HashMap::from([(
+        "chr1".to_string(),
+        HashMap::from([(
+            Strand::Positive,
+            (0..end).map(|position| (position, M)).collect(),
+        )]),
+    )])
+}
+
+fn forward_edge_filter_record() -> Record {
+    make_record(
+        "forward-edge-filter",
+        "CCCACCC",
+        vec![Cigar::Match(7)],
+        "C+m?,0,0,1,1;",
+        &[255; 4],
+    )
+}
+
+#[test]
+fn ordinary_edge_filter_excludes_filtered_fallback_sites() {
+    let edge_filter = EdgeFilter::new(1, 1, false);
+    let observed = classify_with_edge_filter(
+        [forward_edge_filter_record()],
+        &positive_truth_range(7),
+        Some(&edge_filter),
+    );
+
+    assert_exact_counts(
+        &observed,
+        &[
+            ((M, M), 2),
+            ((M, BaseStatus::NoCall), 2),
+            ((M, BaseStatus::Mismatch(DnaBase::A)), 1),
+        ],
+    );
+}
+
+#[test]
+fn inverted_edge_filter_excludes_filtered_fallback_sites() {
+    let edge_filter = EdgeFilter::new(1, 1, true);
+    let observed = classify_with_edge_filter(
+        [forward_edge_filter_record()],
+        &positive_truth_range(7),
+        Some(&edge_filter),
+    );
+
+    assert_exact_counts(&observed, &[((M, M), 2)]);
+}
+
+#[test]
+fn reverse_alignment_edge_filter_uses_forward_query_coordinates() {
+    let mut record = make_record(
+        "reverse-edge-filter",
+        "CCCCCC",
+        vec![Cigar::Match(6)],
+        "G-m?,0,0,0,0,0,0;",
+        &[255; 6],
+    );
+    record.set_reverse();
+    let truth = positive_truth_range(6);
+
+    for inverted in [false, true] {
+        let edge_filter = EdgeFilter::new(1, 2, inverted);
+        let observed = classify_with_edge_filter(
+            [record.clone()],
+            &truth,
+            Some(&edge_filter),
+        );
+        assert_exact_counts(&observed, &[((M, M), 3)]);
+    }
+}
+
+#[test]
+fn edge_filter_does_not_reclassify_deletion_without_query_position() {
+    let record = make_record(
+        "edge-filter-deletion",
+        "CCC",
+        vec![Cigar::Match(1), Cigar::Del(1), Cigar::Match(2)],
+        "C+m?,0;",
+        &[255],
+    );
+    let truth = HashMap::from([(
+        "chr1".to_string(),
+        HashMap::from([(Strand::Positive, BTreeMap::from([(1, M)]))]),
+    )]);
+    let edge_filter = EdgeFilter::new(1, 1, false);
+
+    let observed =
+        classify_with_edge_filter([record], &truth, Some(&edge_filter));
+
+    assert_exact_counts(&observed, &[((M, BaseStatus::Deletion), 1)]);
 }

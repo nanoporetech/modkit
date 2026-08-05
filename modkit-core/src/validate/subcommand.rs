@@ -417,8 +417,28 @@ fn process_bam_record(
                     .push(f32::NAN);
                 continue;
             };
-            let Ok(mut base) = DnaBase::parse(q_seq[*q_pos as usize] as char)
-            else {
+            let q_pos = *q_pos as usize;
+            if let Some(edge_filter) = edge_filter {
+                // EdgeFilter uses forward/as-sequenced query coordinates,
+                // while aligned_pairs follows the alignment orientation.
+                let forward_q_pos = if record.is_reverse() {
+                    q_pos
+                        .checked_add(1)
+                        .and_then(|p| record.seq_len().checked_sub(p))
+                } else {
+                    Some(q_pos)
+                };
+                let Some(forward_q_pos) = forward_q_pos else {
+                    continue;
+                };
+                if !edge_filter
+                    .keep_position(forward_q_pos, record.seq_len())
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+            }
+            let Ok(mut base) = DnaBase::parse(q_seq[q_pos] as char) else {
                 result
                     .entry((*gt_code, BaseStatus::NoCall))
                     .or_insert_with(Vec::new)
