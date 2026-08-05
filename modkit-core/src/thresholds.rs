@@ -6,7 +6,7 @@ use crate::mod_bam::{CollapseMethod, EdgeFilter};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::position_filter::StrandedPositionFilter;
 use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
-use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs;
+use crate::reads_sampler::get_sampled_read_ids_to_base_mod_probs_with_reference;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::Region;
 use anyhow::{Context, Result as AnyhowResult};
@@ -122,20 +122,56 @@ pub fn calc_threshold_from_bam(
     only_mapped: bool,
     suppress_progress: bool,
 ) -> AnyhowResult<HashMap<DnaBase, f32>> {
-    let (can_base_probs, explicit_can_probs) = get_modbase_probs_from_bam(
+    calc_threshold_from_bam_with_reference(
         bam_fp,
+        None,
         threads,
         interval_size,
         sample_frac,
         num_reads,
+        filter_percentile,
         seed,
         region,
-        collapse_method,
         edge_filter,
+        collapse_method,
         position_filter,
         only_mapped,
         suppress_progress,
-    )?;
+    )
+}
+
+pub(crate) fn calc_threshold_from_bam_with_reference(
+    bam_fp: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
+    threads: usize,
+    interval_size: u32,
+    sample_frac: Option<f64>,
+    num_reads: Option<usize>,
+    filter_percentile: f32,
+    seed: Option<u64>,
+    region: Option<&Region>,
+    edge_filter: Option<&EdgeFilter>,
+    collapse_method: Option<&CollapseMethod>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
+    only_mapped: bool,
+    suppress_progress: bool,
+) -> AnyhowResult<HashMap<DnaBase, f32>> {
+    let (can_base_probs, explicit_can_probs) =
+        get_modbase_probs_from_bam_with_reference(
+            bam_fp,
+            reference_fasta,
+            threads,
+            interval_size,
+            sample_frac,
+            num_reads,
+            seed,
+            region,
+            collapse_method,
+            edge_filter,
+            position_filter,
+            only_mapped,
+            suppress_progress,
+        )?;
     calculate_threshold_with_fallback(
         can_base_probs,
         &explicit_can_probs,
@@ -157,8 +193,43 @@ pub fn get_modbase_probs_from_bam(
     only_mapped: bool,
     suppress_progress: bool,
 ) -> AnyhowResult<(HashMap<DnaBase, Vec<f32>>, HashMap<DnaBase, f32>)> {
-    get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
+    get_modbase_probs_from_bam_with_reference(
         bam_fp,
+        None,
+        threads,
+        interval_size,
+        sample_frac,
+        num_reads,
+        seed,
+        region,
+        collapse_method,
+        edge_filter,
+        position_filter,
+        only_mapped,
+        suppress_progress,
+    )
+}
+
+pub(crate) fn get_modbase_probs_from_bam_with_reference(
+    bam_fp: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
+    threads: usize,
+    interval_size: u32,
+    sample_frac: Option<f64>,
+    num_reads: Option<usize>,
+    seed: Option<u64>,
+    region: Option<&Region>,
+    collapse_method: Option<&CollapseMethod>,
+    edge_filter: Option<&EdgeFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
+    only_mapped: bool,
+    suppress_progress: bool,
+) -> AnyhowResult<(HashMap<DnaBase, Vec<f32>>, HashMap<DnaBase, f32>)> {
+    get_sampled_read_ids_to_base_mod_probs_with_reference::<
+        ReadIdsToBaseModProbs,
+    >(
+        bam_fp,
+        reference_fasta,
         threads,
         interval_size,
         sample_frac,

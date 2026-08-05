@@ -16,7 +16,7 @@ use rust_htslib::bam::{self, HeaderView, Read};
 use modkit_logging::init_logging;
 
 use crate::command_utils::{
-    get_motif_lookup_from_parts, get_threshold_from_options,
+    get_motif_lookup_from_parts, get_threshold_from_options_with_reference,
     parse_edge_filter_input, parse_per_base_thresholds,
     parse_per_mod_thresholds, parse_raw_motifs,
     parse_raw_thresholds_string_with_default, parse_thresholds,
@@ -33,7 +33,9 @@ use crate::mod_base_code::{
 };
 use crate::motifs::motif_bed::{MotifInfo, RegexMotif};
 use crate::pileup::bedrmod::BedRModArgs;
-use crate::pileup::duplex::{process_region_duplex_batch, DuplexModBasePileup};
+use crate::pileup::duplex::{
+    process_region_duplex_batch_with_reference, DuplexModBasePileup,
+};
 use crate::pileup::pileup_processor::{
     CountsMatrix, DnaAllContext, DnaCpGCombineStrands, DnaCytosineCombine,
     DnaModOption, DnaPileupWorker, Dynamic, GenericPileupWorker, PileupWorker,
@@ -50,7 +52,8 @@ use crate::sample_probs::{
 use crate::util::{
     create_out_directory, filter_reference_records, get_master_progress_bar,
     get_master_progress_bar_fancy, get_subroutine_progress_bar, get_targets,
-    get_ticker, reader_is_bam, reader_is_cram, Region,
+    get_ticker, reader_is_bam, reader_is_cram,
+    set_reference_for_cram_indexed_reader, Region,
 };
 use crate::writers::{
     BedMethylWriter, BedMethylWriter2, MultipleMotifBedmethylWriter,
@@ -1991,17 +1994,19 @@ impl DuplexModBamPileup {
             );
         }
         // do this first so we fail when the file isn't readable
-        let header =
-            bam::IndexedReader::from_path(&self.in_bam).map(|reader| {
-                if !reader_is_bam(&reader) {
-                    info!(
-                        "\
-                    detected non-BAM input format, please consider using BAM, \
-                         CRAM may be unstable"
-                    );
-                }
-                reader.header().to_owned()
-            })?;
+        let mut reader = bam::IndexedReader::from_path(&self.in_bam)?;
+        set_reference_for_cram_indexed_reader(
+            &mut reader,
+            Some(&self.reference_fasta),
+        )?;
+        if !reader_is_bam(&reader) {
+            info!(
+                "\
+                detected non-BAM input format, please consider using BAM, \
+                 CRAM may be unstable"
+            );
+        }
+        let header = reader.header().to_owned();
 
         // options parsing below
         let region = self
@@ -2052,8 +2057,9 @@ impl DuplexModBamPileup {
             .transpose()?;
         // use the path here instead of passing the reader directly to avoid
         // potentially changing mutable internal state of the reader.
-        IdxStats::check_any_mapped_reads(
+        IdxStats::check_any_mapped_reads_with_reference(
             &self.in_bam,
+            Some(&self.reference_fasta),
             region.as_ref(),
             position_filter.as_ref(),
         )
@@ -2132,26 +2138,6 @@ impl DuplexModBamPileup {
             bail!("motif must be palindromic for pileup-hemi")
         }
 
-        let mut writer: Box<dyn PileupWriter<DuplexModBasePileup>> =
-            if let Some(out_fp) = self.out_bed.as_ref() {
-                create_out_directory(out_fp)?;
-                let fh = std::fs::File::create(out_fp)
-                    .context("failed to make output file")?;
-                let writer = BufWriter::new(fh);
-                Box::new(BedMethylWriter::new(
-                    writer,
-                    self.mixed_delimiters,
-                    false,
-                )?)
-            } else {
-                let writer = BufWriter::new(std::io::stdout());
-                Box::new(BedMethylWriter::new(
-                    writer,
-                    self.mixed_delimiters,
-                    false,
-                )?)
-            };
-
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()
@@ -2173,8 +2159,9 @@ impl DuplexModBamPileup {
                 parse_thresholds(raw_threshold, per_mod_thresholds)?
             } else {
                 pool.install(|| {
-                    get_threshold_from_options(
+                    get_threshold_from_options_with_reference(
                         &self.in_bam,
+                        Some(&self.reference_fasta),
                         self.threads,
                         self.sampling_interval_size,
                         self.sampling_frac,
@@ -2236,6 +2223,26 @@ impl DuplexModBamPileup {
             }
         }
 
+        let mut writer: Box<dyn PileupWriter<DuplexModBasePileup>> =
+            if let Some(out_fp) = self.out_bed.as_ref() {
+                create_out_directory(out_fp)?;
+                let fh = std::fs::File::create(out_fp)
+                    .context("failed to make output file")?;
+                let writer = BufWriter::new(fh);
+                Box::new(BedMethylWriter::new(
+                    writer,
+                    self.mixed_delimiters,
+                    false,
+                )?)
+            } else {
+                let writer = BufWriter::new(std::io::stdout());
+                Box::new(BedMethylWriter::new(
+                    writer,
+                    self.mixed_delimiters,
+                    false,
+                )?)
+            };
+
         let (snd, rx) = bounded(self.queue_size);
         let reference_records = if let Some(pf) = position_filter.as_ref() {
             pf.optimize_reference_records(reference_records, self.interval_size)
@@ -2252,6 +2259,7 @@ impl DuplexModBamPileup {
         )?;
 
         let in_bam_fp = self.in_bam.clone();
+        let reference_fasta = self.reference_fasta.clone();
 
         let master_progress = MultiProgress::new();
         if self.suppress_progress {
@@ -2299,9 +2307,10 @@ impl DuplexModBamPileup {
                                 .into_par_iter()
                                 .progress_with(chunk_progress)
                                 .map(|multi_chrom_coords| {
-                                    process_region_duplex_batch(
+                                    process_region_duplex_batch_with_reference(
                                         multi_chrom_coords,
                                         &in_bam_fp,
+                                        Some(&reference_fasta),
                                         &threshold_caller,
                                         &pileup_options,
                                         force_allow,

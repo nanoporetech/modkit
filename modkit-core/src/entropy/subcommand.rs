@@ -22,8 +22,8 @@ use crate::reads_sampler::sampling_schedule::{
 };
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{
-    calculate_threshold_with_fallback, get_modbase_probs_from_bam,
-    log_calculated_thresholds,
+    calculate_threshold_with_fallback,
+    get_modbase_probs_from_bam_with_reference, log_calculated_thresholds,
 };
 use crate::util::{
     format_errors_table, get_master_progress_bar, get_ticker, MutOpMax,
@@ -194,13 +194,18 @@ impl MethylationEntropy {
             bail!("min-valid-coverage must be at least 1")
         }
         for bam_fp in self.in_bams.iter() {
-            IdxStats::check_any_mapped_reads(&bam_fp, None, None)
-                .with_context(|| {
-                    format!(
-                        "did not find any mapped reads in {bam_fp:?}, perform \
+            IdxStats::check_any_mapped_reads_with_reference(
+                &bam_fp,
+                Some(&self.reference_fasta),
+                None,
+                None,
+            )
+            .with_context(|| {
+                format!(
+                    "did not find any mapped reads in {bam_fp:?}, perform \
                          alignment first"
-                    )
-                })?;
+                )
+            })?;
         }
 
         let mut writer: Box<dyn EntropyWriter> =
@@ -341,6 +346,7 @@ impl MethylationEntropy {
         let (snd, rcv) = crossbeam::channel::bounded(10_000);
 
         let bam_fps = self.in_bams.clone();
+        let reference_fasta = self.reference_fasta.clone();
         let min_coverage = self.min_valid_coverage;
         let threads = self.threads;
         let io_threads = self.io_threads.unwrap_or(threads);
@@ -387,6 +393,7 @@ impl MethylationEntropy {
                                     io_threads,
                                     threshold_caller.clone(),
                                     &bam_fps,
+                                    &reference_fasta,
                                 )
                             })
                             .collect::<Vec<_>>();
@@ -482,8 +489,9 @@ impl MethylationEntropy {
                     HashMap::<DnaBase, f32>::new();
                 for in_bam in self.in_bams.iter() {
                     let (per_base_thresholds, explicit_canonical_probs) =
-                        get_modbase_probs_from_bam(
+                        get_modbase_probs_from_bam_with_reference(
                             in_bam,
+                            Some(&self.reference_fasta),
                             self.threads,
                             1_000_000,
                             None,

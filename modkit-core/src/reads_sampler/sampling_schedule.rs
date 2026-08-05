@@ -19,7 +19,10 @@ use crate::interval_chunks::{ChromCoordinates, MultiChromCoordinates};
 use crate::monoid::Moniod;
 use crate::position_filter::StrandedPositionFilter;
 use crate::reads_sampler::record_sampler::RecordSampler;
-use crate::util::{get_ticker, reader_is_bam, ReferenceRecord, Region};
+use crate::util::{
+    get_ticker, reader_is_bam, set_reference_for_cram_indexed_reader,
+    ReferenceRecord, Region,
+};
 
 /// Count is an exact count, Sample is a fraction to sample
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -175,7 +178,26 @@ impl SamplingSchedule {
         position_filter: Option<&StrandedPositionFilter<()>>,
         include_unmapped: bool,
     ) -> anyhow::Result<Self> {
+        Self::from_num_reads_with_reference(
+            bam_fp,
+            None,
+            num_reads,
+            region,
+            position_filter,
+            include_unmapped,
+        )
+    }
+
+    pub(crate) fn from_num_reads_with_reference<T: AsRef<Path>>(
+        bam_fp: T,
+        reference_fasta: Option<&PathBuf>,
+        num_reads: usize,
+        region: Option<&Region>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
+        include_unmapped: bool,
+    ) -> anyhow::Result<Self> {
         let mut reader = bam::IndexedReader::from_path(bam_fp)?;
+        set_reference_for_cram_indexed_reader(&mut reader, reference_fasta)?;
         let header = reader.header().to_owned();
         let index_stats =
             IdxStats::new_from_reader(&mut reader, region, position_filter)?;
@@ -318,8 +340,27 @@ impl SamplingSchedule {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_sample_frac<T: AsRef<Path>>(
         bam_fp: T,
+        sample_frac: f32,
+        region: Option<&Region>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
+        include_unmapped: bool,
+    ) -> anyhow::Result<Self> {
+        Self::from_sample_frac_with_reference(
+            bam_fp,
+            None,
+            sample_frac,
+            region,
+            position_filter,
+            include_unmapped,
+        )
+    }
+
+    pub(crate) fn from_sample_frac_with_reference<T: AsRef<Path>>(
+        bam_fp: T,
+        reference_fasta: Option<&PathBuf>,
         sample_frac: f32,
         region: Option<&Region>,
         position_filter: Option<&StrandedPositionFilter<()>>,
@@ -329,6 +370,7 @@ impl SamplingSchedule {
             bail!("sample fraction must be <= 1")
         }
         let mut reader = bam::IndexedReader::from_path(bam_fp)?;
+        set_reference_for_cram_indexed_reader(&mut reader, reference_fasta)?;
         let index_stats =
             IdxStats::new_from_reader(&mut reader, region, position_filter)?;
         drop(reader);
@@ -627,13 +669,19 @@ pub(crate) struct IdxStats {
 }
 
 impl IdxStats {
-    pub(crate) fn check_any_mapped_reads(
+    pub(crate) fn check_any_mapped_reads_with_reference(
         bam_fp: &PathBuf,
+        reference_fasta: Option<&PathBuf>,
         region: Option<&Region>,
         position_filter: Option<&StrandedPositionFilter<()>>,
     ) -> anyhow::Result<bool> {
-        Self::new_from_path(bam_fp, region, position_filter)
-            .map(|idx_stats| idx_stats.mapped_read_count > 0)
+        Self::new_from_path_with_reference(
+            bam_fp,
+            reference_fasta,
+            region,
+            position_filter,
+        )
+        .map(|idx_stats| idx_stats.mapped_read_count > 0)
     }
 
     pub(crate) fn new_from_path(
@@ -641,8 +689,23 @@ impl IdxStats {
         region: Option<&Region>,
         position_filter: Option<&StrandedPositionFilter<()>>,
     ) -> anyhow::Result<Self> {
+        Self::new_from_path_with_reference(
+            bam_fp,
+            None,
+            region,
+            position_filter,
+        )
+    }
+
+    pub(crate) fn new_from_path_with_reference(
+        bam_fp: &PathBuf,
+        reference_fasta: Option<&PathBuf>,
+        region: Option<&Region>,
+        position_filter: Option<&StrandedPositionFilter<()>>,
+    ) -> anyhow::Result<Self> {
         let mut reader = bam::IndexedReader::from_path(bam_fp)
             .context("could not create reader for getting mapping stats")?;
+        set_reference_for_cram_indexed_reader(&mut reader, reference_fasta)?;
         Self::new_from_reader(&mut reader, region, position_filter)
     }
 
@@ -679,7 +742,7 @@ impl IdxStats {
             })
             .transpose()?;
 
-        let is_bam = reader_is_bam(&reader);
+        let is_bam = reader_is_bam(reader);
         if is_bam {
             let idx_stats =
                 reader.index_stats().context("failed to get index stats")?;
@@ -842,7 +905,14 @@ impl ReferenceSequencesLookup {
         let mut tid_to_id = HashMap::new();
         let idxs = bam_fps
             .iter()
-            .map(|fp| IdxStats::new_from_path(fp, None, None))
+            .map(|fp| {
+                IdxStats::new_from_path_with_reference(
+                    fp,
+                    Some(reference_fasta_fp),
+                    None,
+                    None,
+                )
+            })
             .collect::<anyhow::Result<Vec<IdxStats>>>()?;
         let reader = bam::IndexedReader::from_path(&bam_fps[0])?;
         let header = reader.header();

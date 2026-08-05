@@ -26,7 +26,7 @@ use prettytable::row;
 use regex::Regex;
 use rust_htslib::bam::{
     self, ext::BamRecordExtensions, header::HeaderRecord, record::Aux,
-    HeaderView, Read,
+    HeaderView, Read as BamRead,
 };
 use rustc_hash::FxHashMap;
 use substring::Substring;
@@ -852,18 +852,69 @@ pub fn get_reference_mod_strand(
 }
 
 #[inline]
-pub(crate) fn reader_is_bam(reader: &bam::IndexedReader) -> bool {
+pub(crate) fn reader_is_bam<R: bam::Read>(reader: &R) -> bool {
     unsafe {
         (*reader.htsfile()).format.format
             == rust_htslib::htslib::htsExactFormat_bam
     }
 }
 #[inline]
-pub(crate) fn reader_is_cram(reader: &bam::IndexedReader) -> bool {
+pub(crate) fn reader_is_cram<R: bam::Read>(reader: &R) -> bool {
     unsafe {
         (*reader.htsfile()).format.format
             == rust_htslib::htslib::htsExactFormat_cram
     }
+}
+
+pub(crate) fn set_reference_for_cram_reader(
+    reader: &mut bam::Reader,
+    reference_fasta: Option<&PathBuf>,
+) -> anyhow::Result<()> {
+    if reader_is_cram(reader) {
+        if let Some(reference_fasta) = reference_fasta {
+            reader
+                .set_reference(reference_fasta)
+                .context("failed to set CRAM reference")?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn set_reference_for_cram_indexed_reader(
+    reader: &mut bam::IndexedReader,
+    reference_fasta: Option<&PathBuf>,
+) -> anyhow::Result<()> {
+    if reader_is_cram(reader) {
+        if let Some(reference_fasta) = reference_fasta {
+            reader
+                .set_reference(reference_fasta)
+                .context("failed to set CRAM reference")?;
+        }
+    }
+    Ok(())
+}
+
+/// Check that the first record of a CRAM file can be decoded before creating
+/// an output file. When no explicit reference is supplied, htslib may still
+/// resolve an embedded, cached, or remotely available reference.
+pub(crate) fn preflight_cram_input(
+    input: &Path,
+    reference_fasta: Option<&PathBuf>,
+) -> anyhow::Result<()> {
+    let mut reader = bam::Reader::from_path(input)
+        .with_context(|| format!("failed to open input {input:?}"))?;
+    if !reader_is_cram(&reader) {
+        return Ok(());
+    }
+    set_reference_for_cram_reader(&mut reader, reference_fasta)?;
+    let mut record = bam::Record::new();
+    if let Some(result) = reader.read(&mut record) {
+        result.with_context(|| {
+            "failed to decode CRAM input; provide --reference when the CRAM \
+             depends on an external reference"
+        })?;
+    }
+    Ok(())
 }
 
 pub(crate) const KMER_SIZE: usize = 50;
