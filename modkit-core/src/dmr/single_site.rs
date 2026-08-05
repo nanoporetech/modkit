@@ -155,7 +155,7 @@ impl SingleSiteDmrAnalysis {
         }
 
         if self.header {
-            writer.write(
+            writer.write_all(
                 SingleSiteDmrScore::header(multiple_samples, matched_samples)
                     .as_bytes(),
             )?;
@@ -307,7 +307,7 @@ impl SingleSiteDmrAnalysis {
                         for result in results {
                             match result {
                                 Ok(scores) => {
-                                    writer.write(
+                                    writer.write_all(
                                         scores
                                             .to_row(
                                                 multiple_samples,
@@ -370,6 +370,7 @@ impl SingleSiteDmrAnalysis {
             success_count,
             failure_counter.position(),
         );
+        writer.flush()?;
         Ok(())
     }
 }
@@ -1174,6 +1175,7 @@ impl DmrSegmenter for HmmDmrSegmenter {
             "HMM segmenter finished, wrote {} segments",
             self.segments_written.position()
         );
+        self.writer.flush()?;
         Ok(())
     }
 }

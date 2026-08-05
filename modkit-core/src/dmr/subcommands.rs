@@ -1207,7 +1207,7 @@ impl EntryDmrIsoform {
                 self.emit_full_results,
             )
         }) {
-            writer.write(row.as_bytes())?;
+            writer.write_all(row.as_bytes())?;
         }
         if let Some(plot_dir) = self.plot.as_ref() {
             if !plot_dir.exists() {
@@ -1294,6 +1294,7 @@ impl EntryDmrIsoform {
                 }
             }
         }
+        writer.flush()?;
         Ok(())
     }
 
@@ -1432,6 +1433,7 @@ impl EntryDmrIsoform {
             info!("finished, processed {} genes", pb.position());
         });
 
+        writer.flush()?;
         Ok(())
     }
 
@@ -1451,7 +1453,7 @@ impl EntryDmrIsoform {
                 Box::new(BufWriter::new(fh))
             }
         };
-        writer.write(
+        writer.write_all(
             GeneIsoformDmrRecord::<GeneIsoformDmrScore>::header(
                 self.emit_full_results,
             )
@@ -1883,6 +1885,7 @@ impl EntryGeneTx {
             multi_progress.suspend(|| info!("{err_table}"));
         }
 
+        writer.flush()?;
         Ok(())
     }
 
@@ -1903,7 +1906,7 @@ impl EntryGeneTx {
                 Box::new(BufWriter::new(fh))
             }
         };
-        writer.write(
+        writer.write_all(
             GeneIsoformDmrRecord::<GeneDmrScore>::header(
                 single_mod_code,
                 self.emit_full_results,

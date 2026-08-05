@@ -197,16 +197,15 @@ impl<T: Write> PileupWriter<ModBasePileup2> for BedMethylWriter2<T> {
                 &mut self.buff,
                 pfc,
                 self.bedrmod_spec,
-            )
-            .unwrap();
+            )?;
             let pos = self.buff.position() as usize;
             if pos >= 1 << 20 {
-                self.inner.write(&self.buff.get_ref()[..pos]).unwrap();
+                self.inner.write(&self.buff.get_ref()[..pos])?;
                 self.buff.set_position(0);
             }
         }
         let pos = self.buff.position() as usize;
-        self.inner.write(&self.buff.get_ref()[..pos]).unwrap();
+        self.inner.write(&self.buff.get_ref()[..pos])?;
         let _ = self.return_mem.send(item);
         Ok(n_rows)
     }
@@ -256,7 +255,7 @@ impl<T: Write + Sized> BedMethylWriter<T> {
         with_header: bool,
     ) -> anyhow::Result<Self> {
         if with_header {
-            buf_writer.write(Self::header().as_bytes())?;
+            buf_writer.write_all(Self::header().as_bytes())?;
         }
 
         Ok(Self { buf_writer, tabs_and_spaces })
@@ -292,7 +291,7 @@ impl<T: Write + Sized> BedMethylWriter<T> {
         let pos = buff.position() as usize;
 
         writer
-            .write(&buff.get_ref()[..pos])
+            .write_all(&buff.get_ref()[..pos])
             .with_context(|| "failed to write row")?;
 
         Ok(())
@@ -383,7 +382,7 @@ impl<T: Write> PileupWriter<DuplexModBasePileup> for BedMethylWriter<T> {
                         pattern.n_nocall,
                     );
                     self.buf_writer
-                        .write(row.as_bytes())
+                        .write_all(row.as_bytes())
                         .with_context(|| "failed to write row")?;
                     rows_written += 1;
                 }
@@ -410,7 +409,7 @@ impl MultipleMotifBedmethylWriter<BufWriter<std::io::Stdout>> {
     ) -> anyhow::Result<Self> {
         let mut writer = BufWriter::new(stdout());
         if with_header {
-            writer.write(bedmethyl_header().as_bytes())?;
+            writer.write_all(bedmethyl_header().as_bytes())?;
         } else if bed_rmod_args.enabled() {
             let modified_bases_options =
                 modified_bases_options.ok_or_else(|| {
@@ -418,7 +417,7 @@ impl MultipleMotifBedmethylWriter<BufWriter<std::io::Stdout>> {
                 })?;
             let bedrmod_header =
                 bed_rmod_args.header(&header, modified_bases_options)?;
-            writer.write(bedrmod_header.as_bytes())?;
+            writer.write_all(bedrmod_header.as_bytes())?;
         }
 
         let write_pb = multi_progress.add(get_ticker_with_rate());
@@ -720,7 +719,12 @@ pub struct TsvWriter<W> {
 
 impl<T: Write> TsvWriter<T> {
     pub fn write(&mut self, raw: &[u8]) -> std::io::Result<usize> {
-        self.writer.write(raw)
+        self.writer.write_all(raw)?;
+        Ok(raw.len())
+    }
+
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
     }
 }
 
@@ -756,7 +760,7 @@ impl TsvWriter<BufWriter<File>> {
         let fh = File::create(path)?;
         let mut buf_writer = BufWriter::new(fh);
         if let Some(header) = header {
-            buf_writer.write(format!("{header}\n").as_bytes())?;
+            buf_writer.write_all(format!("{header}\n").as_bytes())?;
         }
         Ok(Self { writer: buf_writer })
     }
@@ -789,8 +793,8 @@ impl TsvWriter<ParCompress<Bgzf>> {
             .unwrap()
             .from_writer(out_fh);
         if let Some(header) = header {
-            writer.write(header.as_bytes())?;
-            writer.write(&['\n' as u8])?;
+            writer.write_all(header.as_bytes())?;
+            writer.write_all(&['\n' as u8])?;
         }
 
         Ok(Self { writer })
@@ -799,10 +803,8 @@ impl TsvWriter<ParCompress<Bgzf>> {
 
 impl<W: Write> OutWriter<String> for TsvWriter<W> {
     fn write(&mut self, item: String) -> anyhow::Result<u64> {
-        self.writer
-            .write(item.as_bytes())
-            .map(|b| b as u64)
-            .map_err(|e| anyhow!("{e}"))
+        self.writer.write_all(item.as_bytes())?;
+        Ok(item.len() as u64)
     }
 }
 
@@ -878,7 +880,7 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
             item.total_reads_used
         ));
 
-        self.writer.write(report.as_bytes())?;
+        self.writer.write_all(report.as_bytes())?;
         Ok(1)
     }
 }
@@ -1174,14 +1176,12 @@ impl OutWriter<SampledProbs> for MultiTableWriter {
             );
             tab.to_csv_writer(csv_writer)?;
             match HtmlRenderer::new("Counts", 800, 800).render(&counts_chart) {
-                Ok(blob) => {
-                    counts_plot_fh.write(blob.as_bytes()).map(|_x| ())?
-                }
+                Ok(blob) => counts_plot_fh.write_all(blob.as_bytes())?,
                 Err(e) => debug!("failed to render counts plot, {e:?}"),
             }
             match HtmlRenderer::new("Proportions", 800, 800).render(&prop_chart)
             {
-                Ok(blob) => prop_plot_fh.write(blob.as_bytes()).map(|_x| ())?,
+                Ok(blob) => prop_plot_fh.write_all(blob.as_bytes())?,
                 Err(e) => debug!("failed to render proportions plot, {e:?}"),
             }
         }
@@ -1419,55 +1419,66 @@ where
         let total_rows = combined_counts.len() + hp1.len() + hp2.len();
 
         // TODO: make the "buff"s part of the object.
-        std::thread::scope(|scope| {
-            let hp1_handle = scope.spawn(|| {
+        std::thread::scope(|scope| -> anyhow::Result<()> {
+            let hp1_handle = scope.spawn(|| -> anyhow::Result<()> {
                 let mut buff = Cursor::new(vec![0u8; 1 << 20]);
                 for pfc in hp1.iter().filter(|x| x.is_valid()) {
-                    format_feature_counts2(chrom_name, &mut buff, pfc, false)
-                        .unwrap();
+                    format_feature_counts2(chrom_name, &mut buff, pfc, false)?;
                     let pos = buff.position() as usize;
                     if pos >= 1 << 20 {
-                        self.hp1_writer.write(&buff.get_ref()[..pos]).unwrap();
+                        self.hp1_writer.write(&buff.get_ref()[..pos])?;
                         buff.set_position(0);
                     }
                 }
                 let pos = buff.position() as usize;
-                self.hp1_writer.write(&buff.get_ref()[..pos]).unwrap();
+                self.hp1_writer.write(&buff.get_ref()[..pos])?;
+                Ok(())
             });
-            let hp2_handle = scope.spawn(|| {
+            let hp2_handle = scope.spawn(|| -> anyhow::Result<()> {
                 let mut buff = Cursor::new(vec![0u8; 1 << 20]);
                 for pfc in hp2.iter().filter(|x| x.is_valid()) {
-                    format_feature_counts2(chrom_name, &mut buff, pfc, false)
-                        .unwrap();
+                    format_feature_counts2(chrom_name, &mut buff, pfc, false)?;
                     let pos = buff.position() as usize;
                     if pos >= 1 << 20 {
-                        self.hp2_writer.write(&buff.get_ref()[..pos]).unwrap();
+                        self.hp2_writer.write(&buff.get_ref()[..pos])?;
                         buff.set_position(0);
                     }
                 }
                 let pos = buff.position() as usize;
-                self.hp2_writer.write(&buff.get_ref()[..pos]).unwrap();
+                self.hp2_writer.write(&buff.get_ref()[..pos])?;
+                Ok(())
             });
-            let combined_handle = scope.spawn(|| {
+            let combined_handle = scope.spawn(|| -> anyhow::Result<()> {
                 let mut buff = Cursor::new(vec![0u8; 1 << 20]);
                 for pfc in combined_counts.iter().filter(|x| x.is_valid()) {
-                    format_feature_counts2(&chrom_name, &mut buff, pfc, false)
-                        .unwrap();
+                    format_feature_counts2(&chrom_name, &mut buff, pfc, false)?;
                     let pos = buff.position() as usize;
                     if pos >= 1 << 20 {
-                        self.combined_writer
-                            .write(&buff.get_ref()[..pos])
-                            .unwrap();
+                        self.combined_writer.write(&buff.get_ref()[..pos])?;
                         buff.set_position(0);
                     }
                 }
                 let pos = buff.position() as usize;
-                self.combined_writer.write(&buff.get_ref()[..pos]).unwrap();
+                self.combined_writer.write(&buff.get_ref()[..pos])?;
+                Ok(())
             });
-            let _ = hp1_handle.join().unwrap();
-            let _ = hp2_handle.join().unwrap();
-            let _ = combined_handle.join().unwrap();
-        });
+            let hp1_result = hp1_handle
+                .join()
+                .map_err(|_| anyhow!("hp1 writer thread panicked"))
+                .and_then(|result| result);
+            let hp2_result = hp2_handle
+                .join()
+                .map_err(|_| anyhow!("hp2 writer thread panicked"))
+                .and_then(|result| result);
+            let combined_result = combined_handle
+                .join()
+                .map_err(|_| anyhow!("combined writer thread panicked"))
+                .and_then(|result| result);
+            hp1_result?;
+            hp2_result?;
+            combined_result?;
+            Ok(())
+        })?;
         let _ = self.return_mem.send(item);
 
         Ok(total_rows as u64)

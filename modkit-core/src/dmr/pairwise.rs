@@ -183,7 +183,8 @@ pub(super) fn run_pairwise_dmr(
     multi_progress: MultiProgress,
 ) -> anyhow::Result<(usize, FxHashMap<String, usize>)> {
     if header {
-        writer.write(ModificationCounts::header(a_name, b_name).as_bytes())?;
+        writer
+            .write_all(ModificationCounts::header(a_name, b_name).as_bytes())?;
     }
 
     let (snd, rcv) = crossbeam_channel::bounded(1000);
@@ -254,7 +255,7 @@ pub(super) fn run_pairwise_dmr(
                 for result in results {
                     match result {
                         Ok(counts) => {
-                            writer.write(counts.to_row()?.as_bytes())?;
+                            writer.write_all(counts.to_row()?.as_bytes())?;
                             success_count += 1;
                             pb.inc(1);
                         }
@@ -305,6 +306,7 @@ pub(super) fn run_pairwise_dmr(
     if let Some(e) = err {
         Err(e.into())
     } else {
+        writer.flush()?;
         Ok((success_count, region_error_counts))
     }
 }
