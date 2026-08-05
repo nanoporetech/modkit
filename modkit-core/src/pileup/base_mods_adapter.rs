@@ -77,7 +77,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                         b'C' | b'c' => agg[2] += 1u32,
                         b'G' | b'g' => agg[1] += 1u32,
                         b'T' | b't' => agg[0] += 1u32,
-                        _ => unreachable!(),
+                        _ => {}
                     }
                     agg
                 },
@@ -465,11 +465,23 @@ fn parse_int<const DELIM: u8, const END: u8>(bs: &[u8]) -> (u32, usize) {
 
 fn base_complement(base: u8) -> u8 {
     match base {
+        b'=' => b'=',
         b'A' => b'T',
         b'C' => b'G',
+        b'M' => b'K',
         b'G' => b'C',
+        b'R' => b'Y',
+        b'S' => b'S',
+        b'V' => b'B',
         b'T' => b'A',
-        _ => panic!("not allowed base"),
+        b'W' => b'W',
+        b'Y' => b'R',
+        b'H' => b'D',
+        b'K' => b'M',
+        b'D' => b'H',
+        b'B' => b'V',
+        b'N' => b'N',
+        _ => base,
     }
 }
 
@@ -620,6 +632,33 @@ mod base_mods_adapter_tests {
         assert_eq!(mod_state.mod_code, ModCodeRepr::Code('h'));
         let mod_state = scanner.next_modified_position([0f32; 4], &[]).unwrap();
         assert!(mod_state.is_none());
+    }
+
+    #[test]
+    fn test_ambiguous_query_bases_preserve_mm_scanning() {
+        for (seq, reverse, expected) in [
+            ("CARNCC", false, vec![(0, 235), (4, 225)]),
+            ("GNYGG", true, vec![(3, 225), (4, 235)]),
+        ] {
+            let record =
+                make_record("C+m?,0,0;", &[20, 30], seq, None, reverse);
+            let mut scanner = BaseModsAdapter::<1>::new(&record).unwrap();
+            let states = std::iter::from_fn(|| {
+                scanner.next_modified_position([0f32; 4], &[]).unwrap()
+            })
+            .map(|state| {
+                assert_eq!(
+                    state.primary_base,
+                    crate::mod_base_code::DnaBase::C
+                );
+                assert!(!state.modified);
+                assert!(!state.inferred);
+                (state.mod_position, state.mod_qual)
+            })
+            .collect::<Vec<_>>();
+
+            assert_eq!(states, expected, "reverse={reverse}");
+        }
     }
 
     #[test]
