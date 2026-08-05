@@ -306,7 +306,8 @@ pub struct ModBamPileup {
     /// `--motif CGCG 2 --motif CG 0` there will be output lines with name
     /// fields such as "m,CG,0" and "m,CGCG,2". To use this option with
     /// `--combine-strands`, all motifs must be reverse-complement
-    /// palindromic or an error will be raised.
+    /// palindromic and the reverse-strand anchor must not precede the
+    /// forward-strand anchor, or an error will be raised.
     #[clap(help_heading = "Modified Base Options")]
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
     motif: Option<Vec<String>>,
@@ -436,6 +437,30 @@ impl ModBamPileup {
 
     fn use_cpg(motifs: &[RegexMotif]) -> bool {
         motifs == &[RegexMotif::parse_string("CG", 0).unwrap()]
+    }
+
+    fn validate_combine_strands_anchor_order(
+        combine_strands: bool,
+        motifs: &[RegexMotif],
+    ) -> anyhow::Result<()> {
+        if combine_strands {
+            for motif in motifs {
+                let motif_info = motif.motif_info;
+                if motif_info.reverse_offset < motif_info.forward_offset {
+                    bail!(
+                        "cannot combine strands for motif '{} {}': \
+                         reverse-strand anchor offset {} precedes \
+                         forward-strand anchor offset {}; the reverse anchor \
+                         must not precede the forward anchor",
+                        motif.raw_motif,
+                        motif_info.forward_offset,
+                        motif_info.reverse_offset,
+                        motif_info.forward_offset,
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     fn is_5mc_5hmc_cpg(
@@ -578,6 +603,10 @@ impl ModBamPileup {
             }
             return Ok((None, Some(regex_motifs)));
         }
+        Self::validate_combine_strands_anchor_order(
+            self.combine_strands,
+            &regex_motifs,
+        )?;
         if let Some(modified_bases) = self.modified_bases.as_ref() {
             let modified_bases = modified_bases
                 .iter()
@@ -640,11 +669,7 @@ impl ModBamPileup {
                          motif to combine strands"
                     )
                 }
-                let motif_offset = regex_motifs[0].motif_info.offset();
-                if motif_offset < 0 {
-                    bail!("invalid palindromic motif");
-                }
-                let motif_offset = motif_offset as u32;
+                let motif_offset = regex_motifs[0].motif_info.offset() as u32;
                 let motif_bases = [
                     regex_motifs[0].motif_info.primary_base,
                     DnaBase::C,

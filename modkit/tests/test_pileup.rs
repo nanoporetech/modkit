@@ -131,6 +131,37 @@ fn run_cgcg0_combined_pileup(
     std::fs::read(output_path).unwrap()
 }
 
+fn run_negative_combine_anchor_pileup(
+    output_path: &Path,
+    motif_offset: &str,
+    optimized: bool,
+) -> std::process::Output {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_modkit"));
+    command.args([
+        "pileup",
+        "../tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads.bam",
+        output_path.to_str().unwrap(),
+        "--motif",
+        "CGCG",
+        motif_offset,
+        "--combine-strands",
+        "--no-filtering",
+        "--ref",
+        "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region",
+        "oligo_741_adapters:22-62",
+        "--interval-size",
+        "40",
+        "--threads",
+        "1",
+        "--suppress-progress",
+    ]);
+    if optimized {
+        command.args(["--modified-bases", "C:m"]);
+    }
+    command.output().unwrap()
+}
+
 #[test]
 fn test_pileup_motif_boundaries_are_preload_and_interval_invariant() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -193,6 +224,68 @@ fn test_cgcg0_combined_optimized_and_generic_are_interval_invariant() {
             2,
         );
         assert!(observed.is_empty(), "optimized={optimized}");
+    }
+}
+
+#[test]
+fn test_negative_combine_anchor_is_rejected_before_opening_output() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let sentinel = b"existing output must remain unchanged\n";
+
+    for motif_offset in ["2", "3"] {
+        for optimized in [false, true] {
+            let processor = if optimized { "optimized" } else { "generic" };
+            let output_path = temp_dir
+                .path()
+                .join(format!("cgcg{motif_offset}-{processor}.bed"));
+
+            let output = run_negative_combine_anchor_pileup(
+                &output_path,
+                motif_offset,
+                optimized,
+            );
+            let diagnostics = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                !output.status.success(),
+                "CGCG {motif_offset} unexpectedly succeeded with {processor}"
+            );
+            assert!(
+                diagnostics.contains(&format!(
+                    "cannot combine strands for motif 'CGCG {motif_offset}'"
+                )),
+                "unexpected {processor} diagnostics: {diagnostics}"
+            );
+            assert!(
+                diagnostics.contains(
+                    "the reverse anchor must not precede the forward anchor"
+                ),
+                "unexpected {processor} diagnostics: {diagnostics}"
+            );
+            assert!(
+                !output_path.exists(),
+                "invalid {processor} request created its output"
+            );
+
+            std::fs::write(&output_path, sentinel).unwrap();
+            let output = run_negative_combine_anchor_pileup(
+                &output_path,
+                motif_offset,
+                optimized,
+            );
+            assert!(
+                !output.status.success(),
+                "CGCG {motif_offset} unexpectedly succeeded with {processor}"
+            );
+            assert_eq!(
+                std::fs::read(&output_path).unwrap(),
+                sentinel,
+                "invalid {processor} request truncated its output"
+            );
+        }
     }
 }
 
