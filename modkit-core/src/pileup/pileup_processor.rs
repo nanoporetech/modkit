@@ -1007,10 +1007,51 @@ const DYN_CAN_C: usize = 5usize;
 const DYN_CAN_G: usize = 6usize;
 const DYN_CAN_T: usize = 7usize;
 const DYN_OTHER_MOD_A: usize = 8usize;
-// const DYN_OTHER_MOD_C: usize = 9usize;
-// const DYN_OTHER_MOD_G: usize = 10usize;
-// const DYN_OTHER_MOD_T: usize = 11usize;
+const DYN_OTHER_MOD_C: usize = 9usize;
+const DYN_OTHER_MOD_G: usize = 10usize;
+const DYN_OTHER_MOD_T: usize = 11usize;
 const DYN_N_CONSTANT_COUNTS: usize = 12usize;
+
+fn dynamic_canonical_offset(canonical_base: DnaBase) -> usize {
+    match canonical_base {
+        DnaBase::A => DYN_CAN_A,
+        DnaBase::C => DYN_CAN_C,
+        DnaBase::G => DYN_CAN_G,
+        DnaBase::T => DYN_CAN_T,
+    }
+}
+
+fn dynamic_other_mod_offset(canonical_base: DnaBase) -> usize {
+    match canonical_base {
+        DnaBase::A => DYN_OTHER_MOD_A,
+        DnaBase::C => DYN_OTHER_MOD_C,
+        DnaBase::G => DYN_OTHER_MOD_G,
+        DnaBase::T => DYN_OTHER_MOD_T,
+    }
+}
+
+fn dynamic_mod_offset(
+    mod_codes: &[(DnaBase, ModCodeRepr)],
+    canonical_base: DnaBase,
+    mod_code: ModCodeRepr,
+    combine_mods: bool,
+) -> usize {
+    let compact_slot = if combine_mods {
+        mod_codes.iter().position(|(base, _)| *base == canonical_base)
+    } else {
+        mod_codes.iter().position(|(_, code)| *code == mod_code)
+    };
+    let mod_offset = compact_slot
+        .map(|slot| DYN_N_CONSTANT_COUNTS + slot)
+        .unwrap_or_else(|| dynamic_other_mod_offset(canonical_base));
+    let row_stride = DYN_N_CONSTANT_COUNTS + mod_codes.len();
+    assert!(
+        mod_offset < row_stride,
+        "dynamic modification offset {mod_offset} exceeds row stride \
+         {row_stride}"
+    );
+    mod_offset
+}
 
 pub(super) trait ACountsMatrix<T, const STRANDS: usize, const CHECK_DEPTH: bool>
 {
@@ -1844,12 +1885,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
             reverse,
             haplotype,
         );
-        let base_offset = match base {
-            DnaBase::A => DYN_CAN_A,
-            DnaBase::C => DYN_CAN_C,
-            DnaBase::G => DYN_CAN_G,
-            DnaBase::T => DYN_CAN_T,
-        };
+        let base_offset = dynamic_canonical_offset(base);
         assert!(offset + base_offset < self.inner.len());
         self.inner[offset + base_offset] =
             self.inner[offset + base_offset].saturating_add(1);
@@ -1873,15 +1909,12 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
             reverse,
             haplotype,
         );
-        let mod_offset = if combine_mods {
-            canonical_base as usize + DYN_N_CONSTANT_COUNTS
-        } else {
-            self.mod_codes
-                .iter()
-                .position(|(_b, c)| c == &mod_code)
-                .map(|p| p + DYN_N_CONSTANT_COUNTS)
-                .unwrap_or(DYN_OTHER_MOD_A + canonical_base as usize)
-        };
+        let mod_offset = dynamic_mod_offset(
+            &self.mod_codes,
+            canonical_base,
+            mod_code,
+            combine_mods,
+        );
         assert!(offset + mod_offset < self.inner.len(), "STRANDS {STRANDS}");
         self.inner[offset + mod_offset] =
             self.inner[offset + mod_offset].saturating_add(1);
@@ -2009,9 +2042,10 @@ fn slice_to_counts_dynamic<'a>(
             mod_codes.iter().enumerate().map(
                 move |(j, (primary_base, code))| {
                     let n_modified = chunk[DYN_N_CONSTANT_COUNTS + j];
-                    let n_canonical = chunk[DYN_CAN_A + *primary_base as usize];
+                    let n_canonical =
+                        chunk[dynamic_canonical_offset(*primary_base)];
                     let n_anon_modified =
-                        chunk[DYN_OTHER_MOD_A + *primary_base as usize];
+                        chunk[dynamic_other_mod_offset(*primary_base)];
                     let n_other_modified = mod_codes
                         .iter()
                         .enumerate()

@@ -1,11 +1,14 @@
 use anyhow::Context;
 use itertools::Itertools;
 use rust_htslib::bam;
+use rust_htslib::bam::header::HeaderRecord;
+use rust_htslib::bam::record::{Aux, Cigar, CigarString};
+use rust_htslib::bam::{Format, Header, Record, Writer as BamWriter};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 
 use common::{check_against_expected_text_file, run_modkit};
 use mod_kit::dmr::bedmethyl::BedMethylLine;
@@ -26,6 +29,119 @@ fn read_bed_sites(path: &str) -> HashSet<(String, u32, char)> {
             )
         })
         .collect()
+}
+
+fn write_dynamic_slot_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    let bam_path = root.join("dynamic-slots.bam");
+    let fasta_path = root.join("reference.fa");
+
+    let mut header = Header::new();
+    let mut sq = HeaderRecord::new(b"SQ");
+    sq.push_tag(b"SN", "chr1");
+    sq.push_tag(b"LN", 3);
+    header.push_record(&sq);
+
+    let cigar = CigarString(vec![Cigar::Match(3)]);
+    let mut record = Record::new();
+    record.set(b"read", Some(&cigar), b"ACT", &[30; 3]);
+    record.set_tid(0);
+    record.set_pos(0);
+    record.set_mapq(60);
+    record.push_aux(b"MM", Aux::String("A+m?,0;C+m?,0;T+g?,0;")).unwrap();
+    record
+        .push_aux(b"ML", Aux::ArrayU8((&[255, 255, 255][..]).into()))
+        .unwrap();
+    record.push_aux(b"MN", Aux::U32(3)).unwrap();
+    record.push_aux(b"NM", Aux::U32(0)).unwrap();
+
+    let mut writer =
+        BamWriter::from_path(&bam_path, &header, Format::Bam).unwrap();
+    writer.write(&record).unwrap();
+    drop(writer);
+    bam::index::build(bam_path.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    File::create(&fasta_path).unwrap().write_all(b">chr1\nACT\n").unwrap();
+    File::create(root.join("reference.fa.fai"))
+        .unwrap()
+        .write_all(b"chr1\t3\t6\t3\t4\n")
+        .unwrap();
+
+    (bam_path, fasta_path)
+}
+
+fn run_combined_slot_pileup(
+    root: &Path,
+    bam_path: &Path,
+    fasta_path: &Path,
+    bases: &[&str],
+    high_depth: bool,
+    threads: usize,
+) -> Vec<u8> {
+    let mode = if high_depth { "high" } else { "normal" };
+    let output_path =
+        root.join(format!("combine-{}-{mode}-{threads}.bed", bases.join("")));
+    let threads = threads.to_string();
+    let mut args = vec![
+        "pileup",
+        bam_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--modified-bases",
+    ];
+    args.extend_from_slice(bases);
+    args.extend_from_slice(&[
+        "--combine-mods",
+        "--no-filtering",
+        "--interval-size",
+        "1",
+        "--threads",
+        &threads,
+        "--suppress-progress",
+    ]);
+    if high_depth {
+        args.extend_from_slice(&["--high-depth", "--max-depth", "10"]);
+    }
+
+    run_modkit(&args)
+        .with_context(|| {
+            format!(
+                "combine pileup failed for bases {}, mode {mode}, threads {}",
+                bases.join(","),
+                threads
+            )
+        })
+        .unwrap();
+    std::fs::read(output_path).unwrap()
+}
+
+fn assert_combined_slot_parity(bases: &[&str], expected: &str) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_dynamic_slot_fixture(root);
+    let baseline =
+        run_combined_slot_pileup(root, &bam_path, &fasta_path, bases, false, 1);
+    assert_eq!(baseline, expected.as_bytes());
+
+    for threads in [1, 2, 3, 8] {
+        for high_depth in [false, true] {
+            let observed = run_combined_slot_pileup(
+                root,
+                &bam_path,
+                &fasta_path,
+                bases,
+                high_depth,
+                threads,
+            );
+            assert_eq!(
+                observed,
+                baseline,
+                "bases {}, high_depth {high_depth}, threads {threads}",
+                bases.join(",")
+            );
+        }
+    }
 }
 
 #[test]
@@ -292,6 +408,26 @@ fn test_pileup_cpg_combined_cytosine_debug_regression() {
     );
     assert!(!observed.is_empty());
     assert_eq!(observed, expected);
+}
+
+#[test]
+fn test_pileup_combined_c_compact_slot_matches_high_depth() {
+    assert_combined_slot_parity(
+        &["C"],
+        "chr1\t1\t2\tC\t1\t+\t1\t2\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+    );
+}
+
+#[test]
+fn test_pileup_combined_act_compact_slots_match_high_depth() {
+    assert_combined_slot_parity(
+        &["A", "C", "T"],
+        concat!(
+            "chr1\t0\t1\tA\t1\t+\t0\t1\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+            "chr1\t1\t2\tC\t1\t+\t1\t2\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+            "chr1\t2\t3\tT\t1\t+\t2\t3\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+        ),
+    );
 }
 
 #[test]
