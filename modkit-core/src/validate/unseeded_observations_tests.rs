@@ -435,23 +435,28 @@ fn inverted_edge_filter_excludes_filtered_fallback_sites() {
 fn reverse_alignment_edge_filter_uses_forward_query_coordinates() {
     let mut record = make_record(
         "reverse-edge-filter",
-        "CCCCCC",
+        "CACNCC",
         vec![Cigar::Match(6)],
-        "G-m?,0,0,0,0,0,0;",
-        &[255; 6],
+        "G-m?;",
+        &[],
     );
     record.set_reverse();
     let truth = positive_truth_range(6);
 
-    for inverted in [false, true] {
-        let edge_filter = EdgeFilter::new(1, 2, inverted);
-        let observed = classify_with_edge_filter(
-            [record.clone()],
-            &truth,
-            Some(&edge_filter),
-        );
-        assert_exact_counts(&observed, &[((M, M), 3)]);
-    }
+    let ordinary = EdgeFilter::new(1, 2, false);
+    let observed =
+        classify_with_edge_filter([record.clone()], &truth, Some(&ordinary));
+    assert_exact_counts(&observed, &[((M, BaseStatus::NoCall), 3)]);
+
+    let inverted = EdgeFilter::new(1, 2, true);
+    let observed = classify_with_edge_filter([record], &truth, Some(&inverted));
+    assert_exact_counts(
+        &observed,
+        &[
+            ((M, BaseStatus::NoCall), 2),
+            ((M, BaseStatus::Mismatch(DnaBase::A)), 1),
+        ],
+    );
 }
 
 #[test]
