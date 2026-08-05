@@ -161,12 +161,7 @@ impl ModCodeRepr {
 
 impl PartialOrd for ModCodeRepr {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match (self, other) {
-            (Self::Code(x), Self::Code(y)) => x.partial_cmp(y),
-            (Self::Code(_), Self::ChEbi(_)) => Some(Ordering::Greater),
-            (Self::ChEbi(x), Self::ChEbi(y)) => x.partial_cmp(y),
-            (Self::ChEbi(_), Self::Code(_)) => Some(Ordering::Less),
-        }
+        Some(self.cmp(other))
     }
 }
 
@@ -455,5 +450,90 @@ impl FromStr for ModifiedBasesOptions {
                 .ok_or(anyhow!("unknown long-name base modification {raw}"))?;
             Ok(Self { mod_code, primary_base })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cmp::Ordering;
+
+    use super::ModCodeRepr;
+
+    const ORDERED_REPRESENTATIVES: [ModCodeRepr; 6] = [
+        ModCodeRepr::Code('A'),
+        ModCodeRepr::Code('a'),
+        ModCodeRepr::Code('m'),
+        ModCodeRepr::ChEbi(0),
+        ModCodeRepr::ChEbi(1),
+        ModCodeRepr::ChEbi(u32::MAX),
+    ];
+
+    #[test]
+    fn mod_code_ordering_obeys_total_order_laws() {
+        for left in ORDERED_REPRESENTATIVES {
+            for right in ORDERED_REPRESENTATIVES {
+                let ordering = left.cmp(&right);
+                assert_eq!(
+                    ordering == Ordering::Equal,
+                    left == right,
+                    "comparison equality differs for {left} and {right}"
+                );
+                assert_eq!(
+                    ordering,
+                    right.cmp(&left).reverse(),
+                    "comparison is not antisymmetric for {left} and {right}"
+                );
+                assert_eq!(
+                    left.partial_cmp(&right),
+                    Some(ordering),
+                    "Ord and PartialOrd differ for {left} and {right}"
+                );
+
+                for last in ORDERED_REPRESENTATIVES {
+                    let left_to_right = left.cmp(&right);
+                    let right_to_last = right.cmp(&last);
+                    if left_to_right != Ordering::Greater
+                        && right_to_last != Ordering::Greater
+                    {
+                        assert_ne!(
+                            left.cmp(&last),
+                            Ordering::Greater,
+                            "ordering is not transitive for {left}, {right}, \
+                             and {last}"
+                        );
+                    }
+
+                    let partial_left_to_right =
+                        left.partial_cmp(&right).unwrap();
+                    let partial_right_to_last =
+                        right.partial_cmp(&last).unwrap();
+                    if partial_left_to_right != Ordering::Greater
+                        && partial_right_to_last != Ordering::Greater
+                    {
+                        assert_ne!(
+                            left.partial_cmp(&last).unwrap(),
+                            Ordering::Greater,
+                            "partial ordering is not transitive for {left}, \
+                             {right}, and {last}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mod_code_sorted_output_places_letter_codes_before_chebi_ids() {
+        let mut codes = vec![
+            ModCodeRepr::ChEbi(2),
+            ModCodeRepr::Code('m'),
+            ModCodeRepr::ChEbi(1),
+            ModCodeRepr::Code('a'),
+        ];
+        codes.sort();
+
+        let rendered =
+            codes.into_iter().map(|code| code.to_string()).collect::<Vec<_>>();
+        assert_eq!(rendered.join(","), "a,m,1,2");
     }
 }
