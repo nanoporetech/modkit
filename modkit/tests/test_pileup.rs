@@ -2,7 +2,7 @@ use anyhow::Context;
 use itertools::Itertools;
 use rust_htslib::bam;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -12,6 +12,21 @@ use mod_kit::dmr::bedmethyl::BedMethylLine;
 use mod_kit::mod_base_code::{ModCodeRepr, METHYL_CYTOSINE};
 
 mod common;
+
+fn read_bed_sites(path: &str) -> HashSet<(String, u32, char)> {
+    BufReader::new(File::open(path).unwrap())
+        .lines()
+        .map(|line| {
+            let line = line.unwrap();
+            let fields = line.split('\t').collect::<Vec<_>>();
+            (
+                fields[0].to_string(),
+                fields[1].parse::<u32>().unwrap(),
+                fields[5].parse::<char>().unwrap(),
+            )
+        })
+        .collect()
+}
 
 #[test]
 fn test_pileup_help() {
@@ -249,6 +264,34 @@ fn test_pileup_cpg_motif_filtering() {
         temp_file.to_str().unwrap(),
         "../tests/resources/bc_anchored_10_reads_nofilt_cg_motif.bed",
     );
+}
+
+#[test]
+fn test_pileup_cpg_combined_cytosine_debug_regression() {
+    let temp_file = std::env::temp_dir()
+        .join("test_pileup_cpg_combined_cytosine_debug_regression.bed");
+    run_modkit(&[
+        "pileup",
+        "../tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+        "--cpg",
+        "--modified-bases",
+        "C",
+        "--combine-mods",
+        "--no-filtering",
+        "--ref",
+        "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--threads",
+        "1",
+    ])
+    .expect("valid overlapping CpG and internal C masks should not panic");
+
+    let observed = read_bed_sites(temp_file.to_str().unwrap());
+    let expected = read_bed_sites(
+        "../tests/resources/bc_anchored_10_reads_nofilt_cg_motif.bed",
+    );
+    assert!(!observed.is_empty());
+    assert_eq!(observed, expected);
 }
 
 #[test]

@@ -256,10 +256,6 @@ impl<
                             "bs:{bs:?} st:{st} end:{end} \
                              num_motifs:{num_motifs}"
                         );
-                        #[cfg(debug_assertions)]
-                        {
-                            assert!(bs.count_ones() <= 1);
-                        }
                         if bs[0] {
                             Some((qpos, rpos, self.motif_bases[0]))
                         } else if *num_motifs >= 2u8 && bs[1] {
