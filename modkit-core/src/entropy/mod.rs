@@ -709,7 +709,7 @@ impl GenomeWindows {
     }
 }
 
-#[derive(Debug, new)]
+#[derive(Debug, new, Clone, Copy, PartialEq, Eq)]
 struct MotifHit {
     pos: u64,
     neg_position: Option<u64>,
@@ -718,40 +718,166 @@ struct MotifHit {
     motif_idx: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ReferenceSearchSpace {
     record: ReferenceRecord,
-    sequence: Vec<char>,
+    sequence: Arc<Vec<char>>,
     owner: Range<usize>,
 }
 
 #[derive(Debug)]
-struct ScannedReference {
-    record: ReferenceRecord,
+struct ScannedStripe {
+    hits: Vec<MotifHit>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    raw_hit_count: usize,
+}
+
+#[derive(Debug)]
+struct BufferedStripe {
+    hits: Vec<MotifHit>,
+    next_hit: usize,
+}
+
+impl BufferedStripe {
+    fn new(hits: Vec<MotifHit>) -> Self {
+        Self { hits, next_hit: 0 }
+    }
+
+    fn pop(&mut self) -> Option<MotifHit> {
+        let hit = self.hits.get(self.next_hit).copied()?;
+        self.next_hit += 1;
+        Some(hit)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.next_hit >= self.hits.len()
+    }
+
+    #[cfg(test)]
+    fn remaining(&self) -> usize {
+        self.hits.len().saturating_sub(self.next_hit)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PartnerAnchor {
+    positive_position: u64,
+    motif_idx: usize,
+}
+
+#[derive(Debug)]
+struct CombinedPartnerValidator {
+    max_anchor_distance: u64,
+    partner_to_positive: BTreeMap<BaseAndPosition, PartnerAnchor>,
+    anchors_in_range: VecDeque<(u64, BaseAndPosition)>,
+}
+
+impl CombinedPartnerValidator {
+    fn new(motif_search_context: usize) -> Self {
+        let max_anchor_distance =
+            u64::try_from(motif_search_context.saturating_mul(2))
+                .unwrap_or(u64::MAX);
+        Self {
+            max_anchor_distance,
+            partner_to_positive: BTreeMap::new(),
+            anchors_in_range: VecDeque::new(),
+        }
+    }
+
+    fn validate(
+        &mut self,
+        hit: &MotifHit,
+        motifs: &[RegexMotif],
+        reference_name: &str,
+    ) -> anyhow::Result<()> {
+        debug_assert_eq!(hit.strand, Strand::Positive);
+        let Some(negative_position) = hit.neg_position else {
+            return Ok(());
+        };
+
+        // For a palindromic motif of length m and focus f, the partner
+        // displacement is d = m - 1 - 2f, so |d| <= C where C is the maximum
+        // motif length minus one. If two anchors share a partner, their
+        // distance is therefore at most 2C. Older entries cannot collide with
+        // this or any future (monotonically ordered) positive anchor.
+        while let Some((positive_position, partner)) =
+            self.anchors_in_range.front().copied()
+        {
+            if positive_position.saturating_add(self.max_anchor_distance)
+                >= hit.pos
+            {
+                break;
+            }
+            self.anchors_in_range.pop_front();
+            if self.partner_to_positive.get(&partner).is_some_and(|anchor| {
+                anchor.positive_position == positive_position
+            }) {
+                self.partner_to_positive.remove(&partner);
+            }
+        }
+
+        let negative_partner = (hit.base, negative_position);
+        if let Some(previous) =
+            self.partner_to_positive.get(&negative_partner).copied()
+        {
+            if previous.positive_position != hit.pos {
+                bail!(
+                    "conflicting combined-strand motif anchors at \
+                     {reference_name}: negative {} partner {} maps to positive \
+                     anchors {} from motif {} and {} from motif {}",
+                    hit.base,
+                    negative_position,
+                    previous.positive_position,
+                    motifs[previous.motif_idx],
+                    hit.pos,
+                    motifs[hit.motif_idx],
+                )
+            }
+            return Ok(());
+        }
+
+        self.partner_to_positive.insert(
+            negative_partner,
+            PartnerAnchor {
+                positive_position: hit.pos,
+                motif_idx: hit.motif_idx,
+            },
+        );
+        self.anchors_in_range.push_back((hit.pos, negative_partner));
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct OrderedMotifScanner {
+    sequence: Arc<Vec<char>>,
     owner: Range<usize>,
-    motif_hits: Vec<MotifHit>,
-}
-
-struct SlidingWindows {
-    motifs: Vec<RegexMotif>,
-    work_queue: VecDeque<ReferenceSearchSpace>,
-    region_names: VecDeque<String>,
-    window_size: usize,
-    num_positions: usize,
-    batch_size: usize,
-    curr_position: usize,
-    curr_hit_cursor: usize,
-    curr_contig: ReferenceRecord,
-    curr_owner: Range<usize>,
-    curr_motif_hits: Vec<MotifHit>,
-    curr_region_name: Option<String>,
+    reference_start: u64,
+    reference_name: String,
+    motifs: Arc<Vec<RegexMotif>>,
+    strand_filter: Option<Strand>,
     combine_strands: bool,
-    done: bool,
+    motif_search_context: usize,
+    chunk_size: usize,
+    stripes_per_batch: usize,
+    next_stripe_start: usize,
+    pending_stripes: VecDeque<BufferedStripe>,
+    partner_validator: Option<CombinedPartnerValidator>,
+    #[cfg(test)]
+    current_batch_raw_hits: usize,
 }
 
-impl SlidingWindows {
-    const START_SEARCH_CHUNK_SIZE: usize = 10_000;
-
+// Bounded motif-scan pipeline invariant:
+// - OrderedMotifScanner emits locally sorted, deduplicated owner stripes in
+//   reference order and retains at most one fixed-size stripe batch.
+// - StrandHitStream retains at most the requested N-hit lookahead; separate
+//   monotonic strand streams prevent a dense strand from accumulating while
+//   the other strand searches ahead.
+// - CombinedPartnerValidator needs only the preceding 2C anchor span, where C
+//   is the maximum motif-search context.
+// Thus motif-hit storage depends on N and the fixed stripe/context settings,
+// never on owner length or requested window width.
+impl OrderedMotifScanner {
     fn motif_search_context(motifs: &[RegexMotif]) -> usize {
         motifs
             .iter()
@@ -760,78 +886,119 @@ impl SlidingWindows {
             .unwrap_or(0)
     }
 
+    fn new(
+        search_space: &ReferenceSearchSpace,
+        motifs: Arc<Vec<RegexMotif>>,
+        strand_filter: Option<Strand>,
+        combine_strands: bool,
+        chunk_size: usize,
+        stripes_per_batch: usize,
+    ) -> Self {
+        assert!(chunk_size > 0, "motif search chunk size must be positive");
+        assert!(
+            stripes_per_batch > 0,
+            "motif stripe batch size must be positive"
+        );
+        assert!(search_space.owner.start <= search_space.owner.end);
+        assert!(search_space.owner.end <= search_space.sequence.len());
+        let motif_search_context =
+            Self::motif_search_context(motifs.as_slice());
+        let partner_validator = (combine_strands && motifs.len() > 1)
+            .then(|| CombinedPartnerValidator::new(motif_search_context));
+        Self {
+            sequence: search_space.sequence.clone(),
+            owner: search_space.owner.clone(),
+            reference_start: search_space.record.start as u64,
+            reference_name: search_space.record.name.clone(),
+            motifs,
+            strand_filter,
+            combine_strands,
+            motif_search_context,
+            chunk_size,
+            stripes_per_batch,
+            next_stripe_start: search_space.owner.start,
+            pending_stripes: VecDeque::new(),
+            partner_validator,
+            #[cfg(test)]
+            current_batch_raw_hits: 0,
+        }
+    }
+
     fn find_motif_hits_in_owner(
         seq: &[char],
         motifs: &[RegexMotif],
         owner: Range<usize>,
         reference_start: u64,
         motif_search_context: usize,
-    ) -> Vec<MotifHit> {
+        strand_filter: Option<Strand>,
+    ) -> (Vec<MotifHit>, usize) {
         assert!(owner.start <= owner.end);
         assert!(owner.end <= seq.len());
         if owner.is_empty() {
-            return Vec::new();
+            return (Vec::new(), 0);
         }
 
         let search_start = owner.start.saturating_sub(motif_search_context);
-        let search_end = owner
-            .end
-            .saturating_add(motif_search_context)
-            .min(seq.len());
+        let search_end =
+            owner.end.saturating_add(motif_search_context).min(seq.len());
         let subseq = seq[search_start..search_end].iter().collect::<String>();
-
-        motifs
-            .iter()
-            .enumerate()
-            .flat_map(|(motif_idx, motif)| {
-                motif
-                    .find_hits(&subseq)
-                    .into_iter()
-                    .filter_map(|(search_position, strand)| {
-                        let local_position =
-                            search_start.checked_add(search_position)?;
-                        if !owner.contains(&local_position) {
-                            return None;
-                        }
-                        let position = reference_start
-                            .checked_add(local_position as u64)
-                            .expect("reference position overflow");
-                        let dna_base = DnaBase::parse(seq[local_position])
-                            .expect("motif anchor must be a DNA base");
-                        let base = if strand == Strand::Negative {
-                            dna_base.complement()
-                        } else {
-                            dna_base
-                        };
-                        let neg_position = motif
-                            .motif_info
-                            .negative_strand_position(position as u32)
-                            .map(|position| position as u64);
-                        Some(MotifHit::new(
-                            position,
-                            neg_position,
-                            strand,
-                            base,
-                            motif_idx,
-                        ))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect()
+        let mut motif_hits = Vec::new();
+        let mut raw_hit_count = 0usize;
+        for (motif_idx, motif) in motifs.iter().enumerate() {
+            let raw_motif_hits = motif.find_hits(&subseq);
+            raw_hit_count = raw_hit_count.saturating_add(raw_motif_hits.len());
+            for (search_position, strand) in raw_motif_hits {
+                if strand_filter.is_some() && strand_filter != Some(strand) {
+                    continue;
+                }
+                let Some(local_position) =
+                    search_start.checked_add(search_position)
+                else {
+                    continue;
+                };
+                if !owner.contains(&local_position) {
+                    continue;
+                }
+                let position = reference_start
+                    .checked_add(local_position as u64)
+                    .expect("reference position overflow");
+                let dna_base = DnaBase::parse(seq[local_position])
+                    .expect("motif anchor must be a DNA base");
+                let base = if strand == Strand::Negative {
+                    dna_base.complement()
+                } else {
+                    dna_base
+                };
+                let neg_position = motif
+                    .motif_info
+                    .negative_strand_position(position as u32)
+                    .map(|position| position as u64);
+                motif_hits.push(MotifHit::new(
+                    position,
+                    neg_position,
+                    strand,
+                    base,
+                    motif_idx,
+                ));
+            }
+        }
+        (motif_hits, raw_hit_count)
     }
 
-    fn sort_and_dedup_motif_hits(
+    fn sort_and_dedup_stripe(
         mut motif_hits: Vec<MotifHit>,
+        raw_hit_count: usize,
         motifs: &[RegexMotif],
         combine_strands: bool,
         reference_name: &str,
-    ) -> anyhow::Result<Vec<MotifHit>> {
-        motif_hits.sort_by_key(|hit| {
-            (hit.pos, hit.strand, hit.base, hit.motif_idx)
-        });
-        let mut deduped: Vec<MotifHit> = Vec::with_capacity(motif_hits.len());
-        for hit in motif_hits {
-            if let Some(previous) = deduped.last() {
+    ) -> anyhow::Result<ScannedStripe> {
+        motif_hits
+            .sort_by_key(|hit| (hit.pos, hit.strand, hit.base, hit.motif_idx));
+        let mut write_idx = 0usize;
+        for read_idx in 0..motif_hits.len() {
+            let hit = motif_hits[read_idx];
+            if write_idx > 0 {
+                let previous = motif_hits[write_idx - 1];
                 let same_anchor = previous.pos == hit.pos
                     && previous.strand == hit.strand
                     && previous.base == hit.base;
@@ -855,121 +1022,365 @@ impl SlidingWindows {
                     continue;
                 }
             }
-            deduped.push(hit);
-        }
-
-        if combine_strands {
-            let mut partner_to_positive = BTreeMap::new();
-            for hit in deduped
-                .iter()
-                .filter(|hit| hit.strand == Strand::Positive)
-            {
-                let Some(negative_position) = hit.neg_position else {
-                    continue;
-                };
-                let negative_partner = (hit.base, negative_position);
-                if let Some(previous) =
-                    partner_to_positive.insert(negative_partner, hit)
-                {
-                    if previous.pos != hit.pos {
-                        bail!(
-                            "conflicting combined-strand motif anchors at \
-                             {reference_name}: negative {} partner {} maps \
-                             to positive anchors {} from motif {} and {} \
-                             from motif {}",
-                            hit.base,
-                            negative_position,
-                            previous.pos,
-                            motifs[previous.motif_idx],
-                            hit.pos,
-                            motifs[hit.motif_idx],
-                        )
-                    }
-                }
+            if write_idx != read_idx {
+                motif_hits.swap(write_idx, read_idx);
             }
+            write_idx += 1;
         }
-        Ok(deduped)
+        motif_hits.truncate(write_idx);
+        Ok(ScannedStripe { hits: motif_hits, raw_hit_count })
     }
 
-    fn scan_motif_hits_with_chunk_size(
-        seq: &[char],
-        motifs: &[RegexMotif],
-        owner: Range<usize>,
-        reference_start: u64,
-        reference_name: &str,
-        combine_strands: bool,
-        chunk_size: usize,
-    ) -> anyhow::Result<Vec<MotifHit>> {
-        assert!(chunk_size > 0, "motif search chunk size must be positive");
-        assert!(owner.start <= owner.end);
-        assert!(owner.end <= seq.len());
-        let motif_search_context = Self::motif_search_context(motifs);
-        let owner_chunks = (owner.start..owner.end)
-            .step_by(chunk_size)
-            .map(|start| start..start.saturating_add(chunk_size).min(owner.end))
-            .collect::<Vec<_>>();
-        let motif_hits = owner_chunks
+    fn fill_stripe_batch(&mut self) -> anyhow::Result<bool> {
+        if self.next_stripe_start >= self.owner.end {
+            return Ok(false);
+        }
+        debug_assert!(self.pending_stripes.is_empty());
+        let mut owner_chunks = Vec::with_capacity(self.stripes_per_batch);
+        for _ in 0..self.stripes_per_batch {
+            if self.next_stripe_start >= self.owner.end {
+                break;
+            }
+            let start = self.next_stripe_start;
+            let end = start.saturating_add(self.chunk_size).min(self.owner.end);
+            owner_chunks.push(start..end);
+            self.next_stripe_start = end;
+        }
+
+        let scanned_stripes = owner_chunks
             .into_par_iter()
-            .flat_map(|owner_chunk| {
-                Self::find_motif_hits_in_owner(
-                    seq,
-                    motifs,
+            .map(|owner_chunk| {
+                let (hits, raw_hit_count) = Self::find_motif_hits_in_owner(
+                    &self.sequence,
+                    self.motifs.as_slice(),
                     owner_chunk,
-                    reference_start,
-                    motif_search_context,
+                    self.reference_start,
+                    self.motif_search_context,
+                    self.strand_filter,
+                );
+                Self::sort_and_dedup_stripe(
+                    hits,
+                    raw_hit_count,
+                    self.motifs.as_slice(),
+                    self.combine_strands,
+                    &self.reference_name,
                 )
-                .into_par_iter()
             })
             .collect::<Vec<_>>();
-        Self::sort_and_dedup_motif_hits(
-            motif_hits,
-            motifs,
-            combine_strands,
-            reference_name,
-        )
+
+        #[cfg(test)]
+        {
+            self.current_batch_raw_hits = scanned_stripes
+                .iter()
+                .filter_map(|result| result.as_ref().ok())
+                .map(|stripe| stripe.raw_hit_count)
+                .sum();
+        }
+        for scanned_stripe in scanned_stripes {
+            let ScannedStripe { hits, raw_hit_count: _ } = scanned_stripe?;
+            if !hits.is_empty() {
+                self.pending_stripes.push_back(BufferedStripe::new(hits));
+            }
+        }
+        Ok(true)
     }
 
-    fn scan_reference(
-        search_space: ReferenceSearchSpace,
-        motifs: &[RegexMotif],
+    fn next_hit(&mut self) -> anyhow::Result<Option<MotifHit>> {
+        loop {
+            while self
+                .pending_stripes
+                .front()
+                .is_some_and(|stripe| stripe.is_empty())
+            {
+                self.pending_stripes.pop_front();
+            }
+            if let Some(hit) =
+                self.pending_stripes.front_mut().and_then(BufferedStripe::pop)
+            {
+                if let Some(validator) = self.partner_validator.as_mut() {
+                    validator.validate(
+                        &hit,
+                        self.motifs.as_slice(),
+                        &self.reference_name,
+                    )?;
+                }
+                return Ok(Some(hit));
+            }
+
+            #[cfg(test)]
+            {
+                self.current_batch_raw_hits = 0;
+            }
+            if !self.fill_stripe_batch()? {
+                return Ok(None);
+            }
+        }
+    }
+
+    fn is_exhausted(&self) -> bool {
+        self.next_stripe_start >= self.owner.end
+            && self.pending_stripes.iter().all(BufferedStripe::is_empty)
+    }
+
+    #[cfg(test)]
+    fn live_hits_for_test(&self) -> usize {
+        let pending_hits = self
+            .pending_stripes
+            .iter()
+            .map(BufferedStripe::remaining)
+            .sum::<usize>();
+        pending_hits.saturating_add(self.current_batch_raw_hits)
+    }
+}
+
+#[derive(Debug)]
+struct StrandHitStream {
+    scanner: OrderedMotifScanner,
+    lookahead: VecDeque<MotifHit>,
+    minimum_position: u64,
+}
+
+impl StrandHitStream {
+    fn new(
+        search_space: &ReferenceSearchSpace,
+        motifs: Arc<Vec<RegexMotif>>,
+        strand: Strand,
         combine_strands: bool,
-    ) -> anyhow::Result<ScannedReference> {
-        let ReferenceSearchSpace { record, sequence, owner } = search_space;
-        let motif_hits = Self::scan_motif_hits_with_chunk_size(
-            &sequence,
-            motifs,
-            owner.clone(),
-            record.start as u64,
-            &record.name,
+        chunk_size: usize,
+        stripes_per_batch: usize,
+    ) -> Self {
+        let minimum_position = (search_space.record.start as u64)
+            .saturating_add(search_space.owner.start as u64);
+        Self {
+            scanner: OrderedMotifScanner::new(
+                search_space,
+                motifs,
+                Some(strand),
+                combine_strands,
+                chunk_size,
+                stripes_per_batch,
+            ),
+            lookahead: VecDeque::new(),
+            minimum_position,
+        }
+    }
+
+    fn fill_to_len(&mut self, len: usize) -> anyhow::Result<()> {
+        while self.lookahead.len() < len {
+            let Some(hit) = self.scanner.next_hit()? else {
+                break;
+            };
+            if hit.pos >= self.minimum_position {
+                self.lookahead.push_back(hit);
+            }
+        }
+        Ok(())
+    }
+
+    fn discard_before(&mut self, minimum_position: u64) {
+        self.minimum_position = minimum_position;
+        while self
+            .lookahead
+            .front()
+            .is_some_and(|hit| hit.pos < minimum_position)
+        {
+            self.lookahead.pop_front();
+        }
+    }
+
+    fn first_after(&mut self, position: u64) -> anyhow::Result<Option<u64>> {
+        let minimum_position =
+            position.checked_add(1).expect("reference position overflow");
+        self.discard_before(minimum_position);
+        self.fill_to_len(1)?;
+        Ok(self.lookahead.front().map(|hit| hit.pos))
+    }
+
+    fn hits_before(&self, end: u64, limit: usize) -> Vec<MotifHit> {
+        self.lookahead
+            .iter()
+            .take(limit)
+            .take_while(|hit| hit.pos < end)
+            .copied()
+            .collect()
+    }
+
+    fn first_position(&self) -> Option<u64> {
+        self.lookahead.front().map(|hit| hit.pos)
+    }
+
+    fn is_exhausted(&self) -> bool {
+        self.lookahead.is_empty() && self.scanner.is_exhausted()
+    }
+
+    #[cfg(test)]
+    fn live_hits_for_test(&self) -> usize {
+        self.lookahead.len() + self.scanner.live_hits_for_test()
+    }
+}
+
+#[derive(Debug)]
+struct ActiveReference {
+    record: ReferenceRecord,
+    owner: Range<usize>,
+    positive_hits: StrandHitStream,
+    negative_hits: Option<StrandHitStream>,
+}
+
+impl ActiveReference {
+    fn new(
+        search_space: ReferenceSearchSpace,
+        motifs: Arc<Vec<RegexMotif>>,
+        combine_strands: bool,
+        chunk_size: usize,
+        stripes_per_batch: usize,
+    ) -> Self {
+        let positive_hits = StrandHitStream::new(
+            &search_space,
+            motifs.clone(),
+            Strand::Positive,
             combine_strands,
-            Self::START_SEARCH_CHUNK_SIZE,
-        )?;
-        Ok(ScannedReference { record, owner, motif_hits })
+            chunk_size,
+            stripes_per_batch,
+        );
+        let negative_hits = (!combine_strands).then(|| {
+            StrandHitStream::new(
+                &search_space,
+                motifs,
+                Strand::Negative,
+                false,
+                chunk_size,
+                stripes_per_batch,
+            )
+        });
+        Self {
+            record: search_space.record,
+            owner: search_space.owner,
+            positive_hits,
+            negative_hits,
+        }
+    }
+
+    fn fill_lookahead(&mut self, len: usize) -> anyhow::Result<()> {
+        self.positive_hits.fill_to_len(len)?;
+        if let Some(negative_hits) = self.negative_hits.as_mut() {
+            negative_hits.fill_to_len(len)?;
+        }
+        Ok(())
+    }
+
+    fn first_position(&mut self) -> anyhow::Result<Option<u64>> {
+        self.fill_lookahead(1)?;
+        Ok(self
+            .positive_hits
+            .first_position()
+            .into_iter()
+            .chain(
+                self.negative_hits
+                    .as_ref()
+                    .and_then(StrandHitStream::first_position),
+            )
+            .min())
+    }
+
+    fn window_hits(
+        &self,
+        end: u64,
+        limit: usize,
+    ) -> (Vec<MotifHit>, Vec<MotifHit>) {
+        let positive_hits = self.positive_hits.hits_before(end, limit);
+        let negative_hits = self
+            .negative_hits
+            .as_ref()
+            .map(|hits| hits.hits_before(end, limit))
+            .unwrap_or_default();
+        (positive_hits, negative_hits)
+    }
+
+    fn discard_before(&mut self, minimum_position: u64) {
+        self.positive_hits.discard_before(minimum_position);
+        if let Some(negative_hits) = self.negative_hits.as_mut() {
+            negative_hits.discard_before(minimum_position);
+        }
+    }
+
+    fn first_after(&mut self, position: u64) -> anyhow::Result<Option<u64>> {
+        let positive = self.positive_hits.first_after(position)?;
+        let negative = match self.negative_hits.as_mut() {
+            Some(hits) => hits.first_after(position)?,
+            None => None,
+        };
+        Ok(positive.into_iter().chain(negative).min())
+    }
+
+    fn is_exhausted(&self) -> bool {
+        self.positive_hits.is_exhausted()
+            && self
+                .negative_hits
+                .as_ref()
+                .is_none_or(StrandHitStream::is_exhausted)
+    }
+
+    #[cfg(test)]
+    fn live_hits_for_test(&self) -> usize {
+        self.positive_hits.live_hits_for_test()
+            + self
+                .negative_hits
+                .as_ref()
+                .map(StrandHitStream::live_hits_for_test)
+                .unwrap_or(0)
+    }
+}
+
+struct SlidingWindows {
+    motifs: Arc<Vec<RegexMotif>>,
+    work_queue: VecDeque<ReferenceSearchSpace>,
+    region_names: VecDeque<String>,
+    window_size: usize,
+    num_positions: usize,
+    batch_size: usize,
+    curr_position: usize,
+    curr_reference: Option<ActiveReference>,
+    curr_region_name: Option<String>,
+    combine_strands: bool,
+    scan_chunk_size: usize,
+    stripes_per_batch: usize,
+    done: bool,
+    #[cfg(test)]
+    high_water_retained_hits: usize,
+}
+
+impl SlidingWindows {
+    const START_SEARCH_CHUNK_SIZE: usize = 10_000;
+    const STRIPES_PER_BATCH: usize = 32;
+
+    fn motif_search_context(motifs: &[RegexMotif]) -> usize {
+        OrderedMotifScanner::motif_search_context(motifs)
     }
 
     fn preflight_combined_partner_conflicts(
         work_queue: &VecDeque<ReferenceSearchSpace>,
-        motifs: &[RegexMotif],
+        motifs: Arc<Vec<RegexMotif>>,
         combine_strands: bool,
+        chunk_size: usize,
+        stripes_per_batch: usize,
     ) -> anyhow::Result<()> {
         if !(combine_strands && motifs.len() > 1) {
             return Ok(());
         }
 
-        // Conflicting partner mappings must fail before the output writer is
-        // created. Multi-motif combined mode is uncommon, so preflight each
-        // owner with bounded memory and discard its hits. Ordinary and
-        // single-motif modes retain the one-scan-per-active-owner path.
+        // Consume the ordered positive stream for every owner before creating
+        // the writer. Partner validation uses only the bounded 2C carry.
         for search_space in work_queue {
-            Self::scan_motif_hits_with_chunk_size(
-                &search_space.sequence,
-                motifs,
-                search_space.owner.clone(),
-                search_space.record.start as u64,
-                &search_space.record.name,
-                combine_strands,
-                Self::START_SEARCH_CHUNK_SIZE,
-            )?;
+            let mut scanner = OrderedMotifScanner::new(
+                search_space,
+                motifs.clone(),
+                Some(Strand::Positive),
+                true,
+                chunk_size,
+                stripes_per_batch,
+            );
+            while scanner.next_hit()?.is_some() {}
         }
         Ok(())
     }
@@ -1025,10 +1436,15 @@ impl SlidingWindows {
                     let owner = bed_region.interval.start - search_start
                         ..bed_region.interval.end - search_start;
                     let seq = reference_sequences_lookup
-                        .get_subsequence_by_name(chrom, search_start..search_end)?;
+                        .get_subsequence_by_name(
+                            chrom,
+                            search_start..search_end,
+                        )?;
                     let tid = reference_sequences_lookup
                         .name_to_chrom_id(chrom)
-                        .ok_or_else(|| anyhow!("missing reference ID for {chrom}"))?;
+                        .ok_or_else(|| {
+                            anyhow!("missing reference ID for {chrom}")
+                        })?;
                     let reference_record = ReferenceRecord::new(
                         tid,
                         search_start as u32,
@@ -1055,7 +1471,7 @@ impl SlidingWindows {
                 Ok((reference_record, region_name, subseq, owner)) => {
                     work_queue.push_back(ReferenceSearchSpace {
                         record: reference_record,
-                        sequence: subseq,
+                        sequence: Arc::new(subseq),
                         owner,
                     });
                     region_queue.push_back(region_name);
@@ -1080,83 +1496,18 @@ impl SlidingWindows {
         }
 
         assert_eq!(region_queue.len(), work_queue.len());
-        Self::preflight_combined_partner_conflicts(
-            &work_queue,
-            &motifs,
-            combine_strands,
-        )?;
-        let (
-            curr_contig,
-            curr_owner,
-            curr_motif_hits,
-            curr_position,
-            curr_region_name,
-        ) = loop {
-            let (search_space, region_name) =
-                match (work_queue.pop_front(), region_queue.pop_front()) {
-                    (Some(search_space), Some(region_name)) => {
-                        anyhow::Ok((search_space, region_name))
-                    }
-                    _ => bail!(
-                        "didn't find at least 1 sequence with valid start \
-                         position"
-                    ),
-                }?;
-            let scanned = Self::scan_reference(
-                search_space,
-                &motifs,
-                combine_strands,
-            )
-            .with_context(|| {
-                format!("failed to scan entropy region {region_name}")
-            })?;
-            if let Some(first_hit) = scanned.motif_hits.first() {
-                let start_position = first_hit
-                    .pos
-                    .checked_sub(scanned.record.start as u64)
-                    .and_then(|position| usize::try_from(position).ok())
-                    .expect("motif hit must be local to its reference slice");
-                info!(
-                    "starting with region {region_name} at 0-based position \
-                     {} on contig {}",
-                    first_hit.pos,
-                    &scanned.record.name
-                );
-                break (
-                    scanned.record,
-                    scanned.owner,
-                    scanned.motif_hits,
-                    start_position,
-                    region_name,
-                );
-            } else {
-                info!("region {region_name} has no valid positions, skipping");
-                continue;
-            }
-        };
-        debug!(
-            "parsed {} regions, starting with {} on contig {}",
-            region_queue.len() + 1usize,
-            &curr_region_name,
-            curr_contig.name
-        );
-
-        Ok(Self {
-            motifs,
+        Self::new_from_work_queue(
             work_queue,
-            region_names: region_queue,
-            window_size,
-            num_positions,
-            batch_size,
-            curr_position,
-            curr_hit_cursor: 0,
-            curr_contig,
-            curr_owner,
-            curr_motif_hits,
-            curr_region_name: Some(curr_region_name),
+            region_queue,
+            motifs,
             combine_strands,
-            done: false,
-        })
+            num_positions,
+            window_size,
+            batch_size,
+            Self::START_SEARCH_CHUNK_SIZE,
+            Self::STRIPES_PER_BATCH,
+            true,
+        )
     }
 
     fn new(
@@ -1167,80 +1518,176 @@ impl SlidingWindows {
         window_size: usize,
         batch_size: usize,
     ) -> anyhow::Result<Self> {
-        let mut work_queue = reference_sequence_lookup
+        let work_queue = reference_sequence_lookup
             .into_reference_sequences()
             .into_iter()
             .map(|(record, sequence)| {
                 let owner = 0..sequence.len();
-                ReferenceSearchSpace { record, sequence, owner }
+                ReferenceSearchSpace {
+                    record,
+                    sequence: Arc::new(sequence),
+                    owner,
+                }
             })
             .collect::<VecDeque<_>>();
+        Self::new_from_work_queue(
+            work_queue,
+            VecDeque::new(),
+            motifs,
+            combine_strands,
+            num_positions,
+            window_size,
+            batch_size,
+            Self::START_SEARCH_CHUNK_SIZE,
+            Self::STRIPES_PER_BATCH,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_from_work_queue(
+        mut work_queue: VecDeque<ReferenceSearchSpace>,
+        mut region_names: VecDeque<String>,
+        motifs: Vec<RegexMotif>,
+        combine_strands: bool,
+        num_positions: usize,
+        window_size: usize,
+        batch_size: usize,
+        scan_chunk_size: usize,
+        stripes_per_batch: usize,
+        regions_mode: bool,
+    ) -> anyhow::Result<Self> {
+        if regions_mode {
+            assert_eq!(region_names.len(), work_queue.len());
+        } else {
+            assert!(region_names.is_empty());
+        }
+        let motifs = Arc::new(motifs);
         Self::preflight_combined_partner_conflicts(
             &work_queue,
-            &motifs,
+            motifs.clone(),
             combine_strands,
+            scan_chunk_size,
+            stripes_per_batch,
         )?;
 
-        let (
-            curr_contig,
-            curr_owner,
-            curr_motif_hits,
-            curr_position,
-        ) = loop {
+        let (curr_reference, curr_position, curr_region_name) = loop {
             let search_space = work_queue.pop_front().ok_or_else(|| {
                 anyhow!(
                     "didn't find at least 1 sequence with a valid start \
                      position"
                 )
             })?;
-            let scanned =
-                Self::scan_reference(search_space, &motifs, combine_strands)?;
-            if let Some(first_hit) = scanned.motif_hits.first() {
-                let pos = first_hit
-                    .pos
-                    .checked_sub(scanned.record.start as u64)
+            let region_name = if regions_mode {
+                Some(region_names.pop_front().expect(
+                    "region names must remain aligned with search spaces",
+                ))
+            } else {
+                None
+            };
+            let mut active = ActiveReference::new(
+                search_space,
+                motifs.clone(),
+                combine_strands,
+                scan_chunk_size,
+                stripes_per_batch,
+            );
+            let first_position =
+                active.first_position().with_context(|| {
+                    region_name
+                        .as_ref()
+                        .map(|name| {
+                            format!("failed to scan entropy region {name}")
+                        })
+                        .unwrap_or_else(|| {
+                            format!(
+                                "failed to scan entropy contig {}",
+                                active.record.name
+                            )
+                        })
+                })?;
+            if let Some(first_position) = first_position {
+                let local_position = first_position
+                    .checked_sub(active.record.start as u64)
                     .and_then(|position| usize::try_from(position).ok())
                     .expect("motif hit must be local to its reference slice");
-                info!(
-                    "starting with contig {} at 0-based position {pos}",
-                    &scanned.record.name
-                );
-                break (
-                    scanned.record,
-                    scanned.owner,
-                    scanned.motif_hits,
-                    pos,
-                );
+                if let Some(name) = region_name.as_ref() {
+                    info!(
+                        "starting with region {name} at 0-based position \
+                         {first_position} on contig {}",
+                        active.record.name
+                    );
+                } else {
+                    info!(
+                        "starting with contig {} at 0-based position \
+                         {local_position}",
+                        active.record.name
+                    );
+                }
+                break (active, local_position, region_name);
+            }
+
+            if let Some(name) = region_name {
+                info!("region {name} has no valid positions, skipping");
             } else {
                 info!(
                     "contig {} had no valid motif positions, skipping..",
-                    scanned.record.name
+                    active.record.name
                 );
             }
         };
 
-        Ok(Self {
+        let mut windows = Self {
             motifs,
             work_queue,
-            region_names: VecDeque::new(),
+            region_names,
             window_size,
             num_positions,
             batch_size,
             curr_position,
-            curr_hit_cursor: 0,
-            curr_contig,
-            curr_owner,
-            curr_motif_hits,
-            curr_region_name: None,
+            curr_reference: Some(curr_reference),
+            curr_region_name,
             combine_strands,
+            scan_chunk_size,
+            stripes_per_batch,
             done: false,
-        })
+            #[cfg(test)]
+            high_water_retained_hits: 0,
+        };
+        windows.observe_retained_hits();
+        Ok(windows)
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    fn new_for_test(
+        work_queue: VecDeque<ReferenceSearchSpace>,
+        motifs: Vec<RegexMotif>,
+        combine_strands: bool,
+        num_positions: usize,
+        window_size: usize,
+        batch_size: usize,
+        scan_chunk_size: usize,
+        stripes_per_batch: usize,
+    ) -> anyhow::Result<Self> {
+        Self::new_from_work_queue(
+            work_queue,
+            VecDeque::new(),
+            motifs,
+            combine_strands,
+            num_positions,
+            window_size,
+            batch_size,
+            scan_chunk_size,
+            stripes_per_batch,
+            false,
+        )
     }
 
     #[inline]
     fn take_hits_if_enough(
         &self,
-        motif_hits: &[&MotifHit],
+        motif_hits: &[MotifHit],
     ) -> Option<Vec<BaseAndPosition>> {
         let positions = motif_hits
             .iter()
@@ -1258,8 +1705,8 @@ impl SlidingWindows {
     #[inline]
     fn enough_hits_for_window(
         &self,
-        pos_hits: &[&MotifHit],
-        neg_hits: &[&MotifHit],
+        pos_hits: &[MotifHit],
+        neg_hits: &[MotifHit],
     ) -> Option<(GenomeWindow, u64)> {
         if self.combine_strands {
             let next_reference_position = pos_hits
@@ -1406,8 +1853,12 @@ impl SlidingWindows {
     }
 
     fn advance_cursor(&mut self, next_reference_position: u64) {
+        let curr_reference = self
+            .curr_reference
+            .as_ref()
+            .expect("active reference must exist while advancing");
         let next_local_position = next_reference_position
-            .checked_sub(self.curr_contig.start as u64)
+            .checked_sub(curr_reference.record.start as u64)
             .and_then(|position| usize::try_from(position).ok())
             .expect("next motif cursor must be local to its reference slice");
         assert!(
@@ -1417,47 +1868,52 @@ impl SlidingWindows {
             next_local_position
         );
         assert!(
-            next_local_position <= self.curr_owner.end,
+            next_local_position <= curr_reference.owner.end,
             "motif cursor must remain inside its owner"
         );
         self.curr_position = next_local_position;
-        while self.curr_hit_cursor < self.curr_motif_hits.len()
-            && self.curr_motif_hits[self.curr_hit_cursor].pos
-                < next_reference_position
-        {
-            self.curr_hit_cursor += 1;
-        }
+        self.curr_reference
+            .as_mut()
+            .expect("active reference must exist while advancing")
+            .discard_before(next_reference_position);
+        self.observe_retained_hits();
     }
 
     fn next_window(&mut self) -> Option<GenomeWindow> {
         while !self.at_end_of_contig() {
-            let current_reference_position = self
-                .curr_contig
+            let curr_reference = self
+                .curr_reference
+                .as_ref()
+                .expect("active reference must exist while scanning windows");
+            let current_reference_position = curr_reference
+                .record
                 .start
                 .checked_add(self.curr_position as u32)
                 .expect("reference position overflow")
                 as u64;
-            let owner_end = self
-                .curr_contig
+            let owner_end = curr_reference
+                .record
                 .start
-                .checked_add(self.curr_owner.end as u32)
+                .checked_add(curr_reference.owner.end as u32)
                 .expect("reference position overflow")
                 as u64;
             let window_end = current_reference_position
                 .saturating_add(self.window_size as u64)
                 .min(owner_end);
-            let relative_end = self.curr_motif_hits[self.curr_hit_cursor..]
-                .partition_point(|hit| hit.pos < window_end);
-            let window_hits = &self.curr_motif_hits
-                [self.curr_hit_cursor..self.curr_hit_cursor + relative_end];
-            let pos_hits = window_hits
-                .iter()
-                .filter(|hit| hit.strand == Strand::Positive)
-                .collect::<Vec<_>>();
-            let neg_hits = window_hits
-                .iter()
-                .filter(|hit| hit.strand == Strand::Negative)
-                .collect::<Vec<_>>();
+            self.curr_reference
+                .as_mut()
+                .expect("active reference must exist while scanning windows")
+                .fill_lookahead(self.num_positions)
+                .expect(
+                    "combined motif partner conflicts must be rejected during \
+                     construction",
+                );
+            self.observe_retained_hits();
+            let (pos_hits, neg_hits) = self
+                .curr_reference
+                .as_ref()
+                .expect("active reference must exist while scanning windows")
+                .window_hits(window_end, self.num_positions);
 
             if let Some((entropy_window, next_reference_position)) =
                 self.enough_hits_for_window(&pos_hits, &neg_hits)
@@ -1466,15 +1922,109 @@ impl SlidingWindows {
                 return Some(entropy_window);
             }
 
-            let next_reference_position = self.curr_motif_hits
-                [self.curr_hit_cursor..]
-                .iter()
-                .find(|hit| hit.pos > current_reference_position)
-                .map(|hit| hit.pos)
+            let next_reference_position = self
+                .curr_reference
+                .as_mut()
+                .expect("active reference must exist while scanning windows")
+                .first_after(current_reference_position)
+                .expect(
+                    "combined motif partner conflicts must be rejected during \
+                     construction",
+                )
                 .unwrap_or(owner_end);
+            self.observe_retained_hits();
             self.advance_cursor(next_reference_position);
         }
         None
+    }
+
+    #[cfg(test)]
+    fn sort_and_dedup_motif_hits(
+        motif_hits: Vec<MotifHit>,
+        motifs: &[RegexMotif],
+        combine_strands: bool,
+        reference_name: &str,
+    ) -> anyhow::Result<Vec<MotifHit>> {
+        let raw_hit_count = motif_hits.len();
+        let ScannedStripe { hits, raw_hit_count: _ } =
+            OrderedMotifScanner::sort_and_dedup_stripe(
+                motif_hits,
+                raw_hit_count,
+                motifs,
+                combine_strands,
+                reference_name,
+            )?;
+        if combine_strands && motifs.len() > 1 {
+            let mut validator = CombinedPartnerValidator::new(
+                Self::motif_search_context(motifs),
+            );
+            for hit in hits.iter().filter(|hit| hit.strand == Strand::Positive)
+            {
+                validator.validate(hit, motifs, reference_name)?;
+            }
+        }
+        Ok(hits)
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    fn scan_motif_hits_with_config_for_test(
+        seq: &[char],
+        motifs: &[RegexMotif],
+        owner: Range<usize>,
+        reference_start: u64,
+        reference_name: &str,
+        combine_strands: bool,
+        chunk_size: usize,
+        stripes_per_batch: usize,
+        strand_filter: Option<Strand>,
+    ) -> anyhow::Result<Vec<MotifHit>> {
+        let search_space = ReferenceSearchSpace {
+            record: ReferenceRecord::new(
+                0,
+                reference_start as u32,
+                seq.len() as u32,
+                reference_name.to_string(),
+            ),
+            sequence: Arc::new(seq.to_vec()),
+            owner,
+        };
+        let mut scanner = OrderedMotifScanner::new(
+            &search_space,
+            Arc::new(motifs.to_vec()),
+            strand_filter,
+            combine_strands,
+            chunk_size,
+            stripes_per_batch,
+        );
+        let mut hits = Vec::new();
+        while let Some(hit) = scanner.next_hit()? {
+            hits.push(hit);
+        }
+        Ok(hits)
+    }
+
+    #[cfg(test)]
+    fn scan_motif_hits_with_chunk_size(
+        seq: &[char],
+        motifs: &[RegexMotif],
+        owner: Range<usize>,
+        reference_start: u64,
+        reference_name: &str,
+        combine_strands: bool,
+        chunk_size: usize,
+    ) -> anyhow::Result<Vec<MotifHit>> {
+        Self::scan_motif_hits_with_config_for_test(
+            seq,
+            motifs,
+            owner,
+            reference_start,
+            reference_name,
+            combine_strands,
+            chunk_size,
+            Self::STRIPES_PER_BATCH,
+            None,
+        )
     }
 
     #[cfg(test)]
@@ -1498,11 +2048,14 @@ impl SlidingWindows {
 
     #[inline]
     fn at_end_of_contig(&self) -> bool {
-        self.curr_position >= self.curr_owner.end
-            || self.curr_hit_cursor >= self.curr_motif_hits.len()
+        self.curr_reference.as_ref().is_none_or(|active| {
+            self.curr_position >= active.owner.end || active.is_exhausted()
+        })
     }
 
     fn update_current_contig(&mut self) {
+        self.observe_retained_hits();
+        drop(self.curr_reference.take());
         'search: loop {
             let Some(search_space) = self.work_queue.pop_front() else {
                 assert!(self.region_names.is_empty());
@@ -1519,27 +2072,26 @@ impl SlidingWindows {
             } else {
                 self.region_names.pop_front()
             };
-            let scanned = Self::scan_reference(
+            let mut active = ActiveReference::new(
                 search_space,
-                &self.motifs,
+                self.motifs.clone(),
                 self.combine_strands,
-            )
-            .expect(
+                self.scan_chunk_size,
+                self.stripes_per_batch,
+            );
+            let first_position = active.first_position().expect(
                 "combined motif partner conflicts must be rejected during \
                  construction",
             );
-            if let Some(first_hit) = scanned.motif_hits.first() {
-                let start_position = first_hit
-                    .pos
-                    .checked_sub(scanned.record.start as u64)
+            if let Some(first_position) = first_position {
+                let start_position = first_position
+                    .checked_sub(active.record.start as u64)
                     .and_then(|position| usize::try_from(position).ok())
                     .expect("motif hit must be local to its reference slice");
-                self.curr_contig = scanned.record;
                 self.curr_position = start_position;
-                self.curr_hit_cursor = 0;
-                self.curr_owner = scanned.owner;
-                self.curr_motif_hits = scanned.motif_hits;
+                self.curr_reference = Some(active);
                 self.curr_region_name = region_name;
+                self.observe_retained_hits();
                 break 'search;
             }
 
@@ -1552,7 +2104,7 @@ impl SlidingWindows {
             } else {
                 debug!(
                     "skipping {}, no valid positions for motifs {:?}",
-                    &scanned.record.name, &self.motifs
+                    &active.record.name, &self.motifs
                 );
             }
         }
@@ -1565,8 +2117,37 @@ impl SlidingWindows {
                 search_space.owner.end - search_space.owner.start
             })
             .sum::<usize>()
-            + self.curr_owner.end
-            - self.curr_owner.start
+            + self
+                .curr_reference
+                .as_ref()
+                .map(|active| active.owner.end - active.owner.start)
+                .unwrap_or(0)
+    }
+
+    fn current_chrom_id(&self) -> u32 {
+        self.curr_reference
+            .as_ref()
+            .expect("active reference must exist")
+            .record
+            .tid
+    }
+
+    fn observe_retained_hits(&mut self) {
+        #[cfg(test)]
+        {
+            let retained_hits = self
+                .curr_reference
+                .as_ref()
+                .map(ActiveReference::live_hits_for_test)
+                .unwrap_or(0);
+            self.high_water_retained_hits =
+                self.high_water_retained_hits.max(retained_hits);
+        }
+    }
+
+    #[cfg(test)]
+    fn high_water_retained_hits_for_test(&self) -> usize {
+        self.high_water_retained_hits
     }
 }
 
@@ -1597,7 +2178,7 @@ impl Iterator for SlidingWindows {
                     std::mem::replace(&mut self.curr_region_name, None);
                 if !finished_windows.is_empty() {
                     let entropy_windows = GenomeWindows::new(
-                        self.curr_contig.tid,
+                        self.current_chrom_id(),
                         finished_windows,
                         finished_region,
                     );
@@ -1624,7 +2205,7 @@ impl Iterator for SlidingWindows {
                     std::mem::replace(&mut windows, Vec::new());
                 if !finished_windows.is_empty() {
                     let entropy_windows = GenomeWindows::new(
-                        self.curr_contig.tid,
+                        self.current_chrom_id(),
                         finished_windows,
                         None,
                     );
@@ -1639,7 +2220,7 @@ impl Iterator for SlidingWindows {
                 "region names should be empty here also!"
             );
             let entropy_windows =
-                GenomeWindows::new(self.curr_contig.tid, windows, None);
+                GenomeWindows::new(self.current_chrom_id(), windows, None);
             batch.push(entropy_windows)
         }
 
@@ -2120,38 +2701,26 @@ mod entropy_mod_tests {
     ) -> SlidingWindows {
         let sequence = sequence.chars().collect::<Vec<_>>();
         let sequence_length = sequence.len();
-        let scanned = SlidingWindows::scan_reference(
-            ReferenceSearchSpace {
+        SlidingWindows::new_for_test(
+            VecDeque::from([ReferenceSearchSpace {
                 record: ReferenceRecord::new(
                     0,
                     0,
                     sequence_length as u32,
                     "chr1".to_string(),
                 ),
-                sequence,
+                sequence: Arc::new(sequence),
                 owner: 0..sequence_length,
-            },
-            &motifs,
-            combine_strands,
-        )
-        .unwrap();
-        let curr_position = scanned.motif_hits.first().unwrap().pos as usize;
-        SlidingWindows {
+            }]),
             motifs,
-            work_queue: VecDeque::new(),
-            region_names: VecDeque::new(),
-            window_size: sequence_length,
-            num_positions,
-            batch_size: 1,
-            curr_position,
-            curr_hit_cursor: 0,
-            curr_contig: scanned.record,
-            curr_owner: scanned.owner,
-            curr_motif_hits: scanned.motif_hits,
-            curr_region_name: None,
             combine_strands,
-            done: false,
-        }
+            num_positions,
+            sequence_length,
+            1,
+            SlidingWindows::START_SEARCH_CHUNK_SIZE,
+            SlidingWindows::STRIPES_PER_BATCH,
+        )
+        .unwrap()
     }
 
     #[test]
