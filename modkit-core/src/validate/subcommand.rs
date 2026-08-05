@@ -966,15 +966,15 @@ impl ValidateFromModBam {
 
         let mut all_probs = HashMap::new();
         for (bam_path, bed_indices) in bam_path_to_bed_indices {
-            let mut reader = Reader::from_path(bam_path.as_path())?;
-            reader.set_threads(self.threads)?;
-            let tid_to_chrom = get_tid_to_chrom(&reader)?;
             info!(
                 "Parsing mapping at {}",
                 bam_path.to_str().unwrap_or("invalid-UTF-8")
             );
 
             for bed_idx in bed_indices {
+                let mut reader = Reader::from_path(bam_path.as_path())?;
+                reader.set_threads(self.threads)?;
+                let tid_to_chrom = get_tid_to_chrom(&reader)?;
                 let status_probs = process_bam_file(
                     &mut reader,
                     &read_filter,
