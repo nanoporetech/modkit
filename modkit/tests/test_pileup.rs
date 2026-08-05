@@ -31,8 +31,12 @@ fn read_bed_sites(path: &str) -> HashSet<(String, u32, char)> {
         .collect()
 }
 
-fn write_dynamic_slot_fixture(root: &Path) -> (PathBuf, PathBuf) {
-    let bam_path = root.join("dynamic-slots.bam");
+fn write_dynamic_slot_fixture_with_probs(
+    root: &Path,
+    name: &str,
+    probabilities: &[[u8; 3]],
+) -> (PathBuf, PathBuf) {
+    let bam_path = root.join(format!("{name}.bam"));
     let fasta_path = root.join("reference.fa");
 
     let mut header = Header::new();
@@ -41,22 +45,28 @@ fn write_dynamic_slot_fixture(root: &Path) -> (PathBuf, PathBuf) {
     sq.push_tag(b"LN", 3);
     header.push_record(&sq);
 
-    let cigar = CigarString(vec![Cigar::Match(3)]);
-    let mut record = Record::new();
-    record.set(b"read", Some(&cigar), b"ACT", &[30; 3]);
-    record.set_tid(0);
-    record.set_pos(0);
-    record.set_mapq(60);
-    record.push_aux(b"MM", Aux::String("A+m?,0;C+m?,0;T+g?,0;")).unwrap();
-    record
-        .push_aux(b"ML", Aux::ArrayU8((&[255, 255, 255][..]).into()))
-        .unwrap();
-    record.push_aux(b"MN", Aux::U32(3)).unwrap();
-    record.push_aux(b"NM", Aux::U32(0)).unwrap();
-
     let mut writer =
         BamWriter::from_path(&bam_path, &header, Format::Bam).unwrap();
-    writer.write(&record).unwrap();
+    for (i, probabilities) in probabilities.iter().enumerate() {
+        let cigar = CigarString(vec![Cigar::Match(3)]);
+        let mut record = Record::new();
+        record.set(
+            format!("read-{i}").as_bytes(),
+            Some(&cigar),
+            b"ACT",
+            &[30; 3],
+        );
+        record.set_tid(0);
+        record.set_pos(0);
+        record.set_mapq(60);
+        record.push_aux(b"MM", Aux::String("A+m?,0;C+m?,0;T+g?,0;")).unwrap();
+        record
+            .push_aux(b"ML", Aux::ArrayU8((&probabilities[..]).into()))
+            .unwrap();
+        record.push_aux(b"MN", Aux::U32(3)).unwrap();
+        record.push_aux(b"NM", Aux::U32(0)).unwrap();
+        writer.write(&record).unwrap();
+    }
     drop(writer);
     bam::index::build(bam_path.clone(), None, bam::index::Type::Bai, 1)
         .unwrap();
@@ -68,6 +78,14 @@ fn write_dynamic_slot_fixture(root: &Path) -> (PathBuf, PathBuf) {
         .unwrap();
 
     (bam_path, fasta_path)
+}
+
+fn write_dynamic_slot_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    write_dynamic_slot_fixture_with_probs(
+        root,
+        "dynamic-slots",
+        &[[255, 255, 255]],
+    )
 }
 
 fn run_combined_slot_pileup(
@@ -142,6 +160,47 @@ fn assert_combined_slot_parity(bases: &[&str], expected: &str) {
             );
         }
     }
+}
+
+fn run_explicit_pair_slot_pileup(
+    root: &Path,
+    bam_path: &Path,
+    fasta_path: &Path,
+    high_depth: bool,
+    threads: usize,
+) -> Vec<u8> {
+    let mode = if high_depth { "high" } else { "normal" };
+    let output_path = root.join(format!("explicit-{mode}-{threads}.bed"));
+    let threads = threads.to_string();
+    let mut args = vec![
+        "pileup",
+        bam_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--modified-bases",
+        "A:m",
+        "C:m",
+        "--no-filtering",
+        "--interval-size",
+        "1",
+        "--threads",
+        &threads,
+        "--suppress-progress",
+    ];
+    if high_depth {
+        args.extend_from_slice(&["--high-depth", "--max-depth", "10"]);
+    }
+
+    run_modkit(&args)
+        .with_context(|| {
+            format!(
+                "explicit pair pileup failed for mode {mode}, threads \
+                 {threads}"
+            )
+        })
+        .unwrap();
+    std::fs::read(output_path).unwrap()
 }
 
 #[test]
@@ -428,6 +487,38 @@ fn test_pileup_combined_act_compact_slots_match_high_depth() {
             "chr1\t2\t3\tT\t1\t+\t2\t3\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
         ),
     );
+}
+
+#[test]
+fn test_pileup_explicit_same_code_slots_are_keyed_by_base() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_dynamic_slot_fixture_with_probs(
+        root,
+        "explicit-pairs",
+        &[[255, 255, 255], [0, 0, 0]],
+    );
+    let expected = concat!(
+        "chr1\t0\t1\tm\t2\t+\t0\t1\t255,0,0\t2\t50.00\t1\t1\t0\t0\t0\t0\t0\n",
+        "chr1\t1\t2\tm\t2\t+\t1\t2\t255,0,0\t2\t50.00\t1\t1\t0\t0\t0\t0\t0\n",
+    );
+
+    for threads in [1, 2, 3, 8] {
+        for high_depth in [false, true] {
+            let observed = run_explicit_pair_slot_pileup(
+                root,
+                &bam_path,
+                &fasta_path,
+                high_depth,
+                threads,
+            );
+            assert_eq!(
+                observed,
+                expected.as_bytes(),
+                "high_depth {high_depth}, threads {threads}"
+            );
+        }
+    }
 }
 
 #[test]

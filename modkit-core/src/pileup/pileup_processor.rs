@@ -1039,7 +1039,9 @@ fn dynamic_mod_offset(
     let compact_slot = if combine_mods {
         mod_codes.iter().position(|(base, _)| *base == canonical_base)
     } else {
-        mod_codes.iter().position(|(_, code)| *code == mod_code)
+        mod_codes.iter().position(|(base, code)| {
+            *base == canonical_base && *code == mod_code
+        })
     };
     let mod_offset = compact_slot
         .map(|slot| DYN_N_CONSTANT_COUNTS + slot)
@@ -2595,6 +2597,40 @@ mod tests {
             DnaModOption::Combine,
             false,
         )
+    }
+
+    #[test]
+    fn dynamic_explicit_mod_offsets_are_keyed_by_base_and_code() {
+        let mod_codes =
+            [(DnaBase::A, METHYL_CYTOSINE), (DnaBase::C, METHYL_CYTOSINE)];
+
+        assert_eq!(
+            super::dynamic_mod_offset(
+                &mod_codes,
+                DnaBase::A,
+                METHYL_CYTOSINE,
+                false,
+            ),
+            super::DYN_N_CONSTANT_COUNTS
+        );
+        assert_eq!(
+            super::dynamic_mod_offset(
+                &mod_codes,
+                DnaBase::C,
+                METHYL_CYTOSINE,
+                false,
+            ),
+            super::DYN_N_CONSTANT_COUNTS + 1
+        );
+        assert_eq!(
+            super::dynamic_mod_offset(
+                &mod_codes,
+                DnaBase::T,
+                METHYL_CYTOSINE,
+                false,
+            ),
+            super::DYN_OTHER_MOD_T
+        );
     }
 
     #[test]
