@@ -208,6 +208,30 @@ impl DuplexFeatureVector {
 
 // todo this function should be removed in favor of a more
 //  generic version in pileup/mod.rs
+#[allow(dead_code)]
+pub fn process_region_duplex_batch<T: AsRef<Path> + Copy>(
+    chromosome_coordintes: &MultiChromCoordinates,
+    bam_fp: T,
+    caller: &MultipleThresholdModCaller,
+    pileup_numeric_options: &PileupNumericOptions,
+    force_allow: bool,
+    max_depth: u32,
+    motif: MotifInfo,
+    edge_filter: Option<&EdgeFilter>,
+) -> Vec<anyhow::Result<DuplexModBasePileup>> {
+    process_region_duplex_batch_with_reference(
+        chromosome_coordintes,
+        bam_fp,
+        None,
+        caller,
+        pileup_numeric_options,
+        force_allow,
+        max_depth,
+        motif,
+        edge_filter,
+    )
+}
+
 pub(crate) fn process_region_duplex_batch_with_reference<
     T: AsRef<Path> + Copy,
 >(
@@ -349,4 +373,36 @@ fn process_region_duplex<T: AsRef<Path>>(
         processed_records,
         skipped_records,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_duplex_batch_signature_compiles() {
+        fn call_legacy_signature(
+            chromosome_coordinates: &MultiChromCoordinates,
+            bam_fp: &Path,
+            caller: &MultipleThresholdModCaller,
+            pileup_numeric_options: &PileupNumericOptions,
+            force_allow: bool,
+            max_depth: u32,
+            motif: MotifInfo,
+            edge_filter: Option<&EdgeFilter>,
+        ) -> Vec<anyhow::Result<DuplexModBasePileup>> {
+            process_region_duplex_batch(
+                chromosome_coordinates,
+                bam_fp,
+                caller,
+                pileup_numeric_options,
+                force_allow,
+                max_depth,
+                motif,
+                edge_filter,
+            )
+        }
+
+        let _ = call_legacy_signature;
+    }
 }
