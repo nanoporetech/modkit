@@ -417,7 +417,14 @@ fn process_bam_record(
                     .push(f32::NAN);
                 continue;
             };
-            let mut base = DnaBase::parse(q_seq[*q_pos as usize] as char)?;
+            let Ok(mut base) = DnaBase::parse(q_seq[*q_pos as usize] as char)
+            else {
+                result
+                    .entry((*gt_code, BaseStatus::NoCall))
+                    .or_insert_with(Vec::new)
+                    .push(f32::NAN);
+                continue;
+            };
             if record.is_reverse() {
                 base = base.complement();
             }
@@ -1184,6 +1191,17 @@ mod tests {
         record
     }
 
+    fn make_record_with_ambiguous_bases() -> Record {
+        let cigar = CigarString(vec![Cigar::Match(5)]);
+        let mut record = Record::new();
+        record.set(b"ambiguous", Some(&cigar), b"CNRAC", &[255; 5]);
+        record.set_tid(0);
+        record.set_pos(0);
+        record.push_aux(b"MM", Aux::String("C+m?,0,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[255, 0][..]).into())).unwrap();
+        record
+    }
+
     fn category_count(
         status_probs: &StatusProbs,
         truth: BaseStatus,
@@ -1192,7 +1210,7 @@ mod tests {
         status_probs.get(&(truth, call)).map(Vec::len).unwrap_or(0)
     }
 
-    fn classify(gap: Cigar) -> StatusProbs {
+    fn classify_record(record: &Record) -> anyhow::Result<StatusProbs> {
         let truth_status = BaseStatus::Modified(ModCodeRepr::Code('m'));
         let truth = HashMap::from([(
             "chr1".to_string(),
@@ -1204,14 +1222,17 @@ mod tests {
         let tid_to_chrom = HashMap::from([(0, "chr1".to_string())]);
 
         process_bam_record(
-            &make_record(gap),
+            record,
             &truth,
             &tid_to_chrom,
             DnaBase::C,
             None,
             None,
         )
-        .unwrap()
+    }
+
+    fn classify(gap: Cigar) -> StatusProbs {
+        classify_record(&make_record(gap)).unwrap()
     }
 
     #[test]
@@ -1241,5 +1262,33 @@ mod tests {
             3
         );
         assert_eq!(deleted.values().map(Vec::len).sum::<usize>(), 5);
+    }
+
+    #[test]
+    fn ambiguous_aligned_bases_are_site_local_no_calls() {
+        let truth_status = BaseStatus::Modified(ModCodeRepr::Code('m'));
+        let classified = classify_record(&make_record_with_ambiguous_bases())
+            .expect(
+                "N and IUPAC query bases must not discard the whole record",
+            );
+
+        assert_eq!(category_count(&classified, truth_status, truth_status), 1);
+        assert_eq!(
+            category_count(&classified, truth_status, BaseStatus::Canonical),
+            1
+        );
+        assert_eq!(
+            category_count(&classified, truth_status, BaseStatus::NoCall),
+            2
+        );
+        assert_eq!(
+            category_count(
+                &classified,
+                truth_status,
+                BaseStatus::Mismatch(DnaBase::A),
+            ),
+            1
+        );
+        assert_eq!(classified.values().map(Vec::len).sum::<usize>(), 5);
     }
 }
