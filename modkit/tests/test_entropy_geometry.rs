@@ -65,6 +65,51 @@ fn write_bam(
     bam_path
 }
 
+fn write_two_contig_conflict_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    let reference = root.join("two-contigs.fa");
+    fs::write(&reference, ">chr1\nCG\n>chr2\nCGCG\n").unwrap();
+    fs::write(
+        root.join("two-contigs.fa.fai"),
+        "chr1\t2\t6\t2\t3\nchr2\t4\t15\t4\t5\n",
+    )
+    .unwrap();
+
+    let bam_path = root.join("two-contigs.bam");
+    let mut header = bam::Header::new();
+    for (name, length) in [("chr1", 2), ("chr2", 4)] {
+        let mut sq = HeaderRecord::new(b"SQ");
+        sq.push_tag(b"SN", name).push_tag(b"LN", length);
+        header.push_record(&sq);
+    }
+    let mut writer =
+        bam::Writer::from_path(&bam_path, &header, bam::Format::Bam).unwrap();
+    for (tid, sequence, mm_tag, ml_count) in [
+        (0, "CG", "C+m?,0;", 1),
+        (1, "CGCG", "C+m?,0,0;", 2),
+    ] {
+        let cigar = CigarString(vec![Cigar::Match(sequence.len() as u32)]);
+        let mut record = bam::Record::new();
+        record.set(
+            format!("read-{tid}").as_bytes(),
+            Some(&cigar),
+            sequence.as_bytes(),
+            &vec![30; sequence.len()],
+        );
+        record.set_tid(tid);
+        record.set_pos(0);
+        record.set_mapq(60);
+        let ml = vec![255u8; ml_count];
+        record.push_aux(b"MM", Aux::String(mm_tag)).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&ml[..]).into())).unwrap();
+        record.push_aux(b"MN", Aux::U32(sequence.len() as u32)).unwrap();
+        record.push_aux(b"NM", Aux::U32(0)).unwrap();
+        writer.write(&record).unwrap();
+    }
+    drop(writer);
+    bam::index::build(&bam_path, None, bam::index::Type::Bai, 1).unwrap();
+    (reference, bam_path)
+}
+
 fn run_entropy(
     bam: &Path,
     reference: &Path,
@@ -218,5 +263,53 @@ fn conflicting_combined_motif_partners_fail_before_output_creation() {
         "{stderr}"
     );
     assert!(stderr.contains("chr1:0"), "{stderr}");
+    assert!(!output.exists());
+}
+
+#[test]
+fn conflict_on_later_contig_fails_before_output_creation() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let (reference, bam) =
+        write_two_contig_conflict_fixture(temp_dir.path());
+    let output = temp_dir.path().join("later-conflict.bed");
+    let result = Command::new(env!("CARGO_BIN_EXE_modkit"))
+        .args([
+            "entropy",
+            "--in-bam",
+            bam.to_str().unwrap(),
+            "--out-bed",
+            output.to_str().unwrap(),
+            "--ref",
+            reference.to_str().unwrap(),
+            "--motif",
+            "CG",
+            "0",
+            "--motif",
+            "CGCG",
+            "0",
+            "--combine-strands",
+            "--num-positions",
+            "1",
+            "--window-size",
+            "4",
+            "--min-coverage",
+            "1",
+            "--no-filtering",
+            "--threads",
+            "1",
+            "--io-threads",
+            "1",
+            "--suppress-progress",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("conflicting combined-strand motif partners"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("chr2:0"), "{stderr}");
     assert!(!output.exists());
 }
