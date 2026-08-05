@@ -369,3 +369,99 @@ fn test_bedmethyl_merge_min_sample_coverage() {
     .unwrap();
     assert_eq!(count_bed_records(&out_bed), 0);
 }
+
+fn write_indexed_bedmethyl(path: &Path, rows: &[&str]) {
+    let mut writer = rust_htslib::bgzf::Writer::from_path(path).unwrap();
+    for row in rows {
+        writeln!(writer, "{row}").unwrap();
+    }
+    drop(writer);
+
+    let c_path = CString::new(path.to_str().unwrap()).unwrap();
+    let result = unsafe {
+        rust_htslib::htslib::tbx_index_build(
+            c_path.as_ptr(),
+            0,
+            &rust_htslib::htslib::tbx_conf_bed,
+        )
+    };
+    assert_eq!(result, 0, "failed to index {}", path.display());
+}
+
+#[test]
+fn test_bedmethyl_merge_preserves_full_name_and_counts_distinct_inputs() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let sizes = root.join("sizes.tsv");
+    std::fs::write(&sizes, "chr1\t100\n").unwrap();
+
+    // Repeating a requested path remains a distinct sample, as in the
+    // existing merge CLI. These fixtures instead duplicate records within
+    // one input, which must not inflate that input's --min-samples tally.
+    let input_a_rows = [
+        "chr1\t10\t11\tm,CG,0\t4\t+\t10\t11\t255,0,0\t4\t25.00\t1\t2\t1\t1\t1\t1\t1",
+        "chr1\t10\t11\tm,DRACH,2\t5\t+\t10\t11\t255,0,0\t5\t40.00\t2\t2\t1\t2\t0\t1\t0",
+        "chr1\t10\t11\tm,CG,0\t6\t+\t10\t11\t255,0,0\t6\t33.33\t2\t3\t1\t2\t2\t2\t2",
+        "chr1\t10\t11\th,CG,0\t3\t+\t10\t11\t255,0,0\t3\t33.33\t1\t2\t0\t3\t3\t3\t3",
+        "chr1\t10\t11\th,CG,0\t4\t+\t10\t11\t255,0,0\t4\t50.00\t2\t2\t0\t4\t4\t4\t4",
+        "chr1\t10\t11\ta\t2\t+\t10\t11\t255,0,0\t2\t50.00\t1\t1\t0\t1\t1\t1\t1",
+        "chr1\t10\t11\t76792,CG,0\t1\t+\t10\t11\t255,0,0\t1\t100.00\t1\t0\t0\t1\t1\t1\t1",
+    ];
+    let input_b_rows = [
+        "chr1\t10\t11\tm,CG,0\t5\t+\t10\t11\t255,0,0\t5\t80.00\t4\t1\t0\t4\t4\t4\t4",
+        "chr1\t10\t11\tm,DRACH,2\t5\t+\t10\t11\t255,0,0\t5\t60.00\t3\t2\t0\t3\t3\t3\t3",
+        "chr1\t10\t11\ta\t3\t+\t10\t11\t255,0,0\t3\t66.67\t2\t1\t0\t2\t2\t2\t2",
+        "chr1\t10\t11\t76792,CG,0\t2\t+\t10\t11\t255,0,0\t2\t50.00\t1\t1\t0\t2\t2\t2\t2",
+    ];
+
+    let input_a = root.join("a.bed.gz");
+    let input_b = root.join("b.bed.gz");
+    let input_a_reversed = root.join("a-reversed.bed.gz");
+    let input_b_reversed = root.join("b-reversed.bed.gz");
+    write_indexed_bedmethyl(&input_a, &input_a_rows);
+    write_indexed_bedmethyl(&input_b, &input_b_rows);
+    write_indexed_bedmethyl(
+        &input_a_reversed,
+        &input_a_rows.iter().copied().rev().collect::<Vec<_>>(),
+    );
+    write_indexed_bedmethyl(
+        &input_b_reversed,
+        &input_b_rows.iter().copied().rev().collect::<Vec<_>>(),
+    );
+
+    let expected = concat!(
+        "chr1\t10\t11\ta\t5\t+\t10\t11\t255,0,0\t5\t60.00\t3\t2\t0\t3\t3\t3\t3\n",
+        "chr1\t10\t11\tm,CG,0\t15\t+\t10\t11\t255,0,0\t15\t46.67\t7\t6\t2\t7\t7\t7\t7\n",
+        "chr1\t10\t11\tm,DRACH,2\t10\t+\t10\t11\t255,0,0\t10\t50.00\t5\t4\t1\t5\t3\t4\t3\n",
+        "chr1\t10\t11\t76792,CG,0\t3\t+\t10\t11\t255,0,0\t3\t66.67\t2\t1\t0\t3\t3\t3\t3\n",
+    );
+
+    for (run, inputs) in
+        [[&input_a, &input_b], [&input_b_reversed, &input_a_reversed]]
+            .into_iter()
+            .enumerate()
+    {
+        let output = root.join(format!("merged-{run}.bed"));
+        run_modkit(&[
+            "bedmethyl",
+            "merge",
+            inputs[0].to_str().unwrap(),
+            inputs[1].to_str().unwrap(),
+            "--genome-sizes",
+            sizes.to_str().unwrap(),
+            "--out-bed",
+            output.to_str().unwrap(),
+            "--threads",
+            "1",
+            "--io-threads",
+            "1",
+            "--min-samples",
+            "all",
+        ])
+        .unwrap();
+
+        let observed = std::fs::read_to_string(output).unwrap();
+        assert_eq!(observed, expected);
+        assert!(!observed.contains("h,CG,0"));
+    }
+}

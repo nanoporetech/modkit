@@ -182,25 +182,62 @@ pub struct EntryMergeBedMethyl {
     min_sample_coverage: Option<u64>,
 }
 
-type BedMethylChunk = Vec<BedMethylLine>;
+#[derive(Debug)]
+struct MergeBedMethylLine {
+    record: BedMethylLine,
+    name: String,
+}
+
+impl ParseBedLine for MergeBedMethylLine {
+    fn parse(line: &str) -> Result<Self, MkError> {
+        let record = BedMethylLine::parse(line)?;
+        let name = line
+            .split_whitespace()
+            .nth(3)
+            .ok_or_else(|| {
+                MkError::InvalidBedMethyl(format!(
+                    "missing name field in bedMethyl record:\n{line}"
+                ))
+            })?
+            .to_string();
+        Ok(Self { record, name })
+    }
+
+    fn overlaps(&self, strand_rule: StrandRule) -> bool {
+        self.record.strand.overlaps(&strand_rule)
+    }
+
+    fn to_line(&self) -> String {
+        let parsed_line = self.record.to_line();
+        let mut fields = parsed_line.splitn(5, '\t');
+        let chrom = fields.next().unwrap();
+        let start = fields.next().unwrap();
+        let stop = fields.next().unwrap();
+        let _parsed_name = fields.next().unwrap();
+        let remaining_fields = fields.next().unwrap();
+        format!("{chrom}\t{start}\t{stop}\t{}\t{remaining_fields}", self.name)
+    }
+}
+
+type BedMethylChunk = Vec<MergeBedMethylLine>;
 
 fn merge_data(
-    readers: &[HtsTabixHandler<BedMethylLine>],
+    readers: &[HtsTabixHandler<MergeBedMethylLine>],
     chrom_coordinates: ChromCoordinates,
     tid_to_name: &FxHashMap<u32, String>,
     io_threads: usize,
     min_samples: usize,
     min_sample_coverage: u64,
 ) -> anyhow::Result<BedMethylChunk> {
-    type Key = (u64, ModCodeRepr, StrandRule);
+    type Key = (u64, ModCodeRepr, StrandRule, String);
     // this is safe because of how we constructed this
     let contig = tid_to_name.get(&chrom_coordinates.chrom_tid).unwrap();
     let range = (chrom_coordinates.start_pos as u64)
         ..(chrom_coordinates.end_pos as u64);
-    // value is the merged record plus a tally of how many inputs contributed to
-    // it (each input has at most one record per key), used for the
-    // --min-samples (inner-join) filter below.
-    let mut merged_data = FxHashMap::<Key, (BedMethylLine, usize)>::default();
+    // value is the merged record plus a tally of how many requested inputs
+    // contributed to it, used for the --min-samples filter below.
+    let mut merged_data =
+        FxHashMap::<Key, (MergeBedMethylLine, usize)>::default();
 
     // rationale:
     // iterate over every possible contig
@@ -210,30 +247,45 @@ fn merge_data(
     // lines in a hashmap write the hashmap to a new bedmethyl
     // recreate hashmap and repeat process for next contig/regions
     for index in readers.iter() {
-        let lines = index.read_bedmethyl(&contig, &range, io_threads)?;
+        let lines = index.fetch_region(
+            &contig,
+            &range,
+            StrandRule::Both,
+            io_threads,
+        )?;
+        let mut contributed_keys = FxHashSet::<Key>::default();
 
         for line in lines {
-            let line = line?;
-
             // an input only contributes to a position when its record has at
             // least the requested valid coverage
-            if line.valid_coverage < min_sample_coverage {
+            if line.record.valid_coverage < min_sample_coverage {
                 continue;
             }
 
+            let key = (
+                line.record.start(),
+                line.record.raw_mod_code,
+                line.record.strand,
+                line.name.clone(),
+            );
+            let first_for_input = contributed_keys.insert(key.clone());
             merged_data
-                .entry((line.start(), line.raw_mod_code, line.strand))
+                .entry(key)
                 // modify the methyl data if an entry is found
                 .and_modify(|(methyl, n_samples)| {
-                    methyl.count_methylated += line.count_methylated;
-                    methyl.valid_coverage += line.valid_coverage;
-                    methyl.count_canonical += line.count_canonical;
-                    methyl.count_other += line.count_other;
-                    methyl.count_delete += line.count_delete;
-                    methyl.count_fail += line.count_fail;
-                    methyl.count_diff += line.count_diff;
-                    methyl.count_nocall += line.count_nocall;
-                    *n_samples += 1;
+                    methyl.record.count_methylated +=
+                        line.record.count_methylated;
+                    methyl.record.valid_coverage += line.record.valid_coverage;
+                    methyl.record.count_canonical +=
+                        line.record.count_canonical;
+                    methyl.record.count_other += line.record.count_other;
+                    methyl.record.count_delete += line.record.count_delete;
+                    methyl.record.count_fail += line.record.count_fail;
+                    methyl.record.count_diff += line.record.count_diff;
+                    methyl.record.count_nocall += line.record.count_nocall;
+                    if first_for_input {
+                        *n_samples += 1;
+                    }
                 })
                 .or_insert((line, 1));
         }
@@ -246,12 +298,21 @@ fn merge_data(
         .filter(|(_, n_samples)| *n_samples >= min_samples)
         .map(|(methyl, _)| methyl)
         .sorted_by(|a, b| {
-            debug_assert_eq!(a.chrom, b.chrom);
-            match a.start().cmp(&b.start()) {
-                Ordering::Equal => match a.strand.cmp(&b.strand) {
-                    Ordering::Equal => a.raw_mod_code.cmp(&b.raw_mod_code),
-                    o @ _ => o,
-                },
+            debug_assert_eq!(a.record.chrom, b.record.chrom);
+            match a.record.start().cmp(&b.record.start()) {
+                Ordering::Equal => {
+                    match a.record.strand.cmp(&b.record.strand) {
+                        Ordering::Equal => match a
+                            .record
+                            .raw_mod_code
+                            .cmp(&b.record.raw_mod_code)
+                        {
+                            Ordering::Equal => a.name.cmp(&b.name),
+                            o @ _ => o,
+                        },
+                        o @ _ => o,
+                    }
+                }
                 o @ _ => o,
             }
         })
@@ -296,12 +357,13 @@ impl EntryMergeBedMethyl {
                     )
                 })?;
 
-                HtsTabixHandler::from_path(bedmethyl).with_context(|| {
-                    format!(
-                        "failed to read indexed input bedMethyl file {}",
-                        bedmethyl.display()
-                    )
-                })
+                HtsTabixHandler::<MergeBedMethylLine>::from_path(bedmethyl)
+                    .with_context(|| {
+                        format!(
+                            "failed to read indexed input bedMethyl file {}",
+                            bedmethyl.display()
+                        )
+                    })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
