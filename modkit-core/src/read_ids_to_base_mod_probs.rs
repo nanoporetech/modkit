@@ -498,7 +498,7 @@ impl ModProfile {
         let query_kmer = format!("{}", self.query_kmer);
         let motif_hits = motif_positions_lookup.and_then(|lu| {
             match (self.ref_position, tid, self.alignment_strand) {
-                (Some(i), Some(tid), Some(strand)) if i > 0i64 => {
+                (Some(i), Some(tid), Some(strand)) if i >= 0i64 => {
                     let pos = i as usize;
                     let motif_hits = lu.get_motif_hits(
                         tid,
