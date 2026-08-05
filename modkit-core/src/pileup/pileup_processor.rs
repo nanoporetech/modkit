@@ -2546,8 +2546,66 @@ mod tests {
     };
 
     use super::{
-        ACountsMatrix, CountsMatrix, DnaCytosineCombine, DnaModOption,
+        ACountsMatrix, CountsMatrix, DnaCytosineCombine, DnaModOption, Dynamic,
     };
+
+    type DynamicCounts =
+        (u32, char, u16, ModCodeRepr, u16, u16, u16, u16, u16, u16, u16, u8);
+
+    fn increment_dynamic_call(
+        matrix: &mut CountsMatrix,
+        rpos: u32,
+        primary_base: DnaBase,
+        reference_base: DnaBase,
+        mod_code: ModCodeRepr,
+        modified: bool,
+        filtered: bool,
+        reverse: bool,
+        haplotype: u8,
+    ) {
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_call(
+            matrix,
+            ModState {
+                mod_position: rpos as usize,
+                modified,
+                filtered,
+                mod_code,
+                primary_base,
+                inferred: false,
+                mod_qual: 255,
+            },
+            rpos,
+            reference_base,
+            reverse,
+            haplotype,
+            false,
+        );
+    }
+
+    fn valid_dynamic_counts(
+        counts: &[crate::pileup::PileupFeatureCounts2],
+    ) -> Vec<DynamicCounts> {
+        counts
+            .iter()
+            .filter(|counts| counts.is_valid())
+            .map(|counts| {
+                (
+                    counts.position,
+                    counts.raw_strand,
+                    counts.filtered_coverage,
+                    counts.mod_code,
+                    counts.n_canonical,
+                    counts.n_modified,
+                    counts.n_other_modified,
+                    counts.n_delete,
+                    counts.n_filtered,
+                    counts.n_diff,
+                    counts.n_nocall,
+                    counts.motif_idxs,
+                )
+            })
+            .collect()
+    }
 
     fn new_cytosine_combine_matrix() -> CountsMatrix {
         <CountsMatrix as ACountsMatrix<DnaCytosineCombine, 2, false>>::new(
@@ -2630,6 +2688,156 @@ mod tests {
                 false,
             ),
             super::DYN_OTHER_MOD_T
+        );
+    }
+
+    #[test]
+    fn dynamic_explicit_slots_preserve_statuses_across_strand_and_phase() {
+        let mod_codes =
+            vec![(DnaBase::A, METHYL_CYTOSINE), (DnaBase::C, METHYL_CYTOSINE)];
+        let mut matrix = <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::new(
+            2,
+            true,
+            mod_codes,
+            0,
+            u16::MAX,
+        );
+
+        // The unphased partition proves that identical modification codes on
+        // different primary bases retain independent requested slots.
+        increment_dynamic_call(
+            &mut matrix,
+            0,
+            DnaBase::A,
+            DnaBase::A,
+            METHYL_CYTOSINE,
+            true,
+            false,
+            false,
+            0,
+        );
+        increment_dynamic_call(
+            &mut matrix,
+            1,
+            DnaBase::C,
+            DnaBase::C,
+            METHYL_CYTOSINE,
+            true,
+            false,
+            false,
+            0,
+        );
+
+        // Exercise every dynamic status in the reverse HP1 partition. A zero
+        // motif offset intentionally isolates slot mapping from motif shifts.
+        for (mod_code, modified, filtered) in [
+            (METHYL_CYTOSINE, true, false),
+            (METHYL_CYTOSINE, false, false),
+            (HYDROXY_METHYL_CYTOSINE, true, false),
+            (METHYL_CYTOSINE, false, true),
+        ] {
+            increment_dynamic_call(
+                &mut matrix,
+                1,
+                DnaBase::C,
+                DnaBase::C,
+                mod_code,
+                modified,
+                filtered,
+                true,
+                1,
+            );
+        }
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_diff_call(
+            &mut matrix,
+            1,
+            DnaBase::A,
+            DnaBase::C,
+            true,
+            1,
+        );
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_diff_call(
+            &mut matrix,
+            1,
+            DnaBase::C,
+            DnaBase::C,
+            true,
+            1,
+        );
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_delete(
+            &mut matrix,
+            1,
+            true,
+            1,
+        );
+
+        // Repeat the same status oracle for adenine in the forward HP2
+        // partition, including an unrequested modification code.
+        for (mod_code, modified, filtered) in [
+            (METHYL_CYTOSINE, true, false),
+            (METHYL_CYTOSINE, false, false),
+            (ModCodeRepr::Code('x'), true, false),
+            (METHYL_CYTOSINE, false, true),
+        ] {
+            increment_dynamic_call(
+                &mut matrix,
+                0,
+                DnaBase::A,
+                DnaBase::A,
+                mod_code,
+                modified,
+                filtered,
+                false,
+                2,
+            );
+        }
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_diff_call(
+            &mut matrix,
+            0,
+            DnaBase::C,
+            DnaBase::A,
+            false,
+            2,
+        );
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_diff_call(
+            &mut matrix,
+            0,
+            DnaBase::A,
+            DnaBase::A,
+            false,
+            2,
+        );
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_delete(
+            &mut matrix,
+            0,
+            false,
+            2,
+        );
+
+        let decoded = <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::decode(
+            &matrix,
+            100,
+            DnaModOption::Other(ANY_CYTOSINE),
+            true,
+        );
+        let partition_width = 2 * 2 * 2;
+        assert_eq!(decoded.len(), partition_width * 3);
+        assert_eq!(
+            valid_dynamic_counts(&decoded[..partition_width]),
+            vec![
+                (100, '+', 1, METHYL_CYTOSINE, 0, 1, 0, 0, 0, 0, 0, 0),
+                (101, '+', 1, METHYL_CYTOSINE, 0, 1, 0, 0, 0, 0, 0, 0),
+            ]
+        );
+        assert_eq!(
+            valid_dynamic_counts(
+                &decoded[partition_width..partition_width * 2]
+            ),
+            vec![(101, '-', 3, METHYL_CYTOSINE, 1, 1, 1, 1, 1, 1, 1, 0,)]
+        );
+        assert_eq!(
+            valid_dynamic_counts(&decoded[partition_width * 2..]),
+            vec![(100, '+', 3, METHYL_CYTOSINE, 1, 1, 1, 1, 1, 1, 1, 0,)]
         );
     }
 
