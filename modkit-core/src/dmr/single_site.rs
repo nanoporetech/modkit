@@ -1345,3 +1345,75 @@ fn path_to_region_labels(
         agg
     }
 }
+
+#[cfg(test)]
+mod segmentation_path_tests {
+    use super::{path_to_region_labels, States};
+
+    fn assert_every_position_covered_once(
+        path: &[States],
+        positions: &[u64],
+        regions: &[(u64, u64, States)],
+    ) {
+        for (&position, &state) in positions.iter().zip(path) {
+            let covering_regions = regions
+                .iter()
+                .filter(|(start, end, _)| *start <= position && position < *end)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                covering_regions.len(),
+                1,
+                "position {position} in state {state:?} was not covered exactly once"
+            );
+            assert_eq!(covering_regions[0].2, state);
+        }
+    }
+
+    fn check_case(
+        path: &[States],
+        positions: &[u64],
+        expected: &[(u64, u64, States)],
+    ) {
+        let regions = path_to_region_labels(path, positions);
+        assert_eq!(regions, expected);
+        assert_every_position_covered_once(path, positions, &regions);
+    }
+
+    #[test]
+    fn singleton_position_becomes_a_single_base_region() {
+        check_case(&[States::Same], &[10], &[(10, 11, States::Same)]);
+    }
+
+    #[test]
+    fn two_positions_are_both_integrated() {
+        check_case(
+            &[States::Same, States::Same],
+            &[10, 20],
+            &[(10, 21, States::Same)],
+        );
+        check_case(
+            &[States::Same, States::Different],
+            &[10, 20],
+            &[(10, 11, States::Same), (20, 21, States::Different)],
+        );
+    }
+
+    #[test]
+    fn multi_position_transitions_cover_each_position_once() {
+        check_case(
+            &[
+                States::Same,
+                States::Same,
+                States::Different,
+                States::Different,
+                States::Same,
+            ],
+            &[10, 20, 30, 40, 50],
+            &[
+                (10, 21, States::Same),
+                (30, 41, States::Different),
+                (50, 51, States::Same),
+            ],
+        );
+    }
+}
