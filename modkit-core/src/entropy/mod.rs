@@ -1680,13 +1680,17 @@ impl BedRegion {
 #[cfg(test)]
 mod entropy_mod_tests {
     use crate::entropy::methylation_entropy::EntropySymbol;
-    use crate::entropy::{BedRegion, GenomeWindow};
+    use crate::entropy::{
+        BedRegion, GenomeWindow, GenomeWindows, SlidingWindows,
+    };
     use crate::mod_bam::BaseModCall;
-    use crate::mod_base_code::ModCodeRepr;
+    use crate::mod_base_code::{DnaBase, ModCodeRepr};
+    use crate::motifs::motif_bed::RegexMotif;
+    use crate::util::{ReferenceRecord, Strand};
     use rayon::prelude::*;
     use rayon::ThreadPoolBuilder;
     use rustc_hash::FxHashMap;
-    use std::collections::{BTreeSet, HashSet};
+    use std::collections::{BTreeSet, HashSet, VecDeque};
 
     fn combined_window_with_code_count(code_count: usize) -> GenomeWindow {
         let read_patterns = (0..code_count)
@@ -1787,6 +1791,108 @@ mod entropy_mod_tests {
         let pos = entropy.pos_me_entropy.unwrap().unwrap();
         let neg = entropy.neg_me_entropy.unwrap().unwrap();
         [(pos.me_entropy, pos.num_reads), (neg.me_entropy, neg.num_reads)]
+    }
+
+    fn motif_sequence(length: usize, start: usize, motif: &str) -> Vec<char> {
+        let mut sequence = vec!['N'; length];
+        for (idx, base) in motif.chars().enumerate() {
+            sequence[start + idx] = base;
+        }
+        sequence
+    }
+
+    #[test]
+    fn one_position_window_is_one_base_half_open() {
+        let mut window =
+            GenomeWindow::new_stranded(Some(vec![(DnaBase::C, 9)]), None, 1);
+        window.inc_coverage(0, &Strand::Positive);
+        window
+            .add_pattern(&Strand::Positive, vec![BaseModCall::Canonical(1.0)]);
+
+        let entropy = window.into_entropy(0, 1);
+        assert_eq!(entropy.pos_me_entropy.unwrap().unwrap().interval, 9..10);
+    }
+
+    #[test]
+    fn reverse_anchor_at_final_base_is_one_base_half_open() {
+        let mut window =
+            GenomeWindow::new_stranded(None, Some(vec![(DnaBase::C, 3)]), 1);
+        window.inc_coverage(0, &Strand::Negative);
+        window
+            .add_pattern(&Strand::Negative, vec![BaseModCall::Canonical(1.0)]);
+
+        let entropy = window.into_entropy(0, 1);
+        assert_eq!(entropy.neg_me_entropy.unwrap().unwrap().interval, 3..4);
+    }
+
+    #[test]
+    fn entropy_start_position_is_global_after_first_search_chunk() {
+        let sequence = motif_sequence(20_010, 15_000, "GATC");
+        let motif = RegexMotif::parse_string("GATC", 1).unwrap();
+
+        assert_eq!(
+            super::SlidingWindows::find_start_position(&sequence, &[motif]),
+            Some(15_001)
+        );
+    }
+
+    #[test]
+    fn entropy_start_position_finds_motif_across_search_chunk_seam() {
+        let sequence = motif_sequence(10_010, 9_998, "GATC");
+        let motif = RegexMotif::parse_string("GATC", 1).unwrap();
+
+        assert_eq!(
+            super::SlidingWindows::find_start_position(&sequence, &[motif]),
+            Some(9_999)
+        );
+    }
+
+    #[test]
+    fn fetch_range_uses_global_min_start_and_max_exclusive_end() {
+        let first = GenomeWindow::new_combine_strands(
+            10..21,
+            0,
+            FxHashMap::default(),
+        );
+        let second = GenomeWindow::new_combine_strands(
+            15..17,
+            0,
+            FxHashMap::default(),
+        );
+        let windows = GenomeWindows::new(0, vec![first, second], None);
+
+        assert_eq!(windows.get_range(), 10..21);
+    }
+
+    #[test]
+    fn combined_window_advances_from_owned_anchor_not_left_partner() {
+        let curr_seq = "GATC".chars().collect::<Vec<_>>();
+        let motifs = vec![RegexMotif::parse_string("GATC", 3).unwrap()];
+        let curr_position =
+            SlidingWindows::find_start_position(&curr_seq, &motifs).unwrap();
+        let mut windows = SlidingWindows {
+            motifs,
+            work_queue: VecDeque::new(),
+            region_names: VecDeque::new(),
+            window_size: curr_seq.len(),
+            num_positions: 1,
+            batch_size: 1,
+            curr_position,
+            curr_contig: ReferenceRecord::new(
+                0,
+                0,
+                curr_seq.len() as u32,
+                "chr1".to_string(),
+            ),
+            curr_seq,
+            curr_region_name: None,
+            combine_strands: true,
+            motif_search_adj: 4,
+            done: false,
+        };
+
+        assert!(windows.next_window().is_some());
+        assert_eq!(windows.curr_position, 4);
     }
 
     #[test]
