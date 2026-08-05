@@ -583,19 +583,47 @@ fn compare_summary_mod_codes(
     }
 }
 
-fn compare_summary_base_states(
-    left: &BaseState,
-    right: &BaseState,
-) -> Ordering {
-    match (left, right) {
-        (BaseState::Canonical(left), BaseState::Canonical(right)) => {
-            left.cmp(right)
-        }
-        (BaseState::Canonical(_), BaseState::Modified(_)) => Ordering::Less,
-        (BaseState::Modified(_), BaseState::Canonical(_)) => Ordering::Greater,
-        (BaseState::Modified(left), BaseState::Modified(right)) => {
-            compare_summary_mod_codes(left, right)
-        }
+fn summary_output_bases(item: &ModSummary<'_>) -> Vec<DnaBase> {
+    [DnaBase::A, DnaBase::C, DnaBase::G, DnaBase::T]
+        .into_iter()
+        .filter(|base| {
+            item.mod_call_counts.contains_key(base)
+                || item.filtered_mod_call_counts.contains_key(base)
+                || item.per_base_mod_codes.contains_key(base)
+        })
+        .collect()
+}
+
+fn summary_mod_codes(item: &ModSummary<'_>, base: DnaBase) -> Vec<ModCodeRepr> {
+    let mut codes = item
+        .per_base_mod_codes
+        .get(&base)
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+    for counts in [
+        item.mod_call_counts.get(&base),
+        item.filtered_mod_call_counts.get(&base),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        codes.extend(counts.keys().filter_map(|state| match state {
+            BaseState::Canonical(_) => None,
+            BaseState::Modified(code) => Some(*code),
+        }));
+    }
+    codes.sort_by(compare_summary_mod_codes);
+    codes.dedup();
+    codes
+}
+
+fn summary_fraction(numerator: u64, denominator: u64) -> f32 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f32 / denominator as f32
     }
 }
 
@@ -608,6 +636,7 @@ impl TableWriter<Stdout> {
 
 impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
     fn write(&mut self, item: ModSummary<'a>) -> AnyhowResult<u64> {
+        let output_bases = summary_output_bases(&item);
         let mut metadata_table = Table::new();
         let metadata_format =
             FormatBuilder::new().padding(1, 1).left_border('#').build();
@@ -635,20 +664,14 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
         if let Some(region) = item.region {
             metadata_table.add_row(row!["region", region.to_string()]);
         }
-        for (base, codes) in
-            item.per_base_mod_codes.iter().sorted_by(|(a, _), (b, _)| a.cmp(b))
-        {
-            metadata_table.add_row(row![
-                format!("modification_codes_for_{base}"),
-                format!(
-                    "{}",
-                    codes
-                        .iter()
-                        .copied()
-                        .sorted_by(compare_summary_mod_codes)
-                        .join(",")
-                )
-            ]);
+        for base in output_bases.iter().copied() {
+            let codes = summary_mod_codes(&item, base);
+            if !codes.is_empty() {
+                metadata_table.add_row(row![
+                    format!("modification_codes_for_{base}"),
+                    codes.into_iter().join(",")
+                ]);
+            }
         }
 
         let emitted = metadata_table.print(&mut self.writer)?;
@@ -664,11 +687,8 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
             "all_frac",
         ]);
 
-        for (canonical_base, mut mod_codes) in item
-            .per_base_mod_codes
-            .into_iter()
-            .sorted_by(|(a, _), (b, _)| a.cmp(b))
-        {
+        for canonical_base in output_bases {
+            let mod_codes = summary_mod_codes(&item, canonical_base);
             let pass_mod_to_counts = item.mod_call_counts.get(&canonical_base);
             let filtered_counts =
                 item.filtered_mod_call_counts.get(&canonical_base);
@@ -680,50 +700,30 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
                 .unwrap_or(0);
             let total_calls = total_filtered_calls + total_pass_calls;
 
-            if let Some(pass_counts) = pass_mod_to_counts {
-                for base_state in pass_counts.keys() {
-                    if let BaseState::Modified(mod_code) = base_state {
-                        mod_codes.insert(*mod_code);
-                    }
-                }
-            }
-
             let mut add_row = |base_state: BaseState, label: String| {
-                if let Some(pass_count) = pass_mod_to_counts
+                let pass_count = pass_mod_to_counts
                     .and_then(|counts| counts.get(&base_state))
-                {
-                    let filtered = filtered_counts
-                        .and_then(|counts| counts.get(&base_state))
-                        .copied()
-                        .unwrap_or(0);
-                    let all_counts = *pass_count + filtered;
-                    let all_frac = all_counts as f32 / total_calls as f32;
-                    let pass_frac =
-                        *pass_count as f32 / total_pass_calls as f32;
-                    report_table.add_row(row![
-                        canonical_base.char(),
-                        label,
-                        pass_count,
-                        pass_frac,
-                        all_counts,
-                        all_frac,
-                    ]);
-                } else {
-                    report_table.add_row(row![
-                        canonical_base.char(),
-                        label,
-                        0u64,
-                        0f32,
-                        0u64,
-                        0f32
-                    ]);
-                }
+                    .copied()
+                    .unwrap_or(0);
+                let filtered = filtered_counts
+                    .and_then(|counts| counts.get(&base_state))
+                    .copied()
+                    .unwrap_or(0);
+                let all_counts = pass_count.saturating_add(filtered);
+                let all_frac = summary_fraction(all_counts, total_calls);
+                let pass_frac = summary_fraction(pass_count, total_pass_calls);
+                report_table.add_row(row![
+                    canonical_base.char(),
+                    label,
+                    pass_count,
+                    pass_frac,
+                    all_counts,
+                    all_frac,
+                ]);
             };
 
             add_row(BaseState::Canonical(canonical_base), "-".to_string());
-            for mod_code in
-                mod_codes.into_iter().sorted_by(compare_summary_mod_codes)
-            {
+            for mod_code in mod_codes {
                 add_row(BaseState::Modified(mod_code), mod_code.to_string());
             }
         }
@@ -833,11 +833,12 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
              format will require the --tsv option"
         );
         let mut report = String::new();
+        let output_bases = summary_output_bases(&item);
         let mod_called_bases = item.mod_bases();
         report.push_str(&format!("mod_bases\t{}\n", mod_called_bases));
         for (dna_base, read_count) in item
             .reads_with_mod_calls
-            .into_iter()
+            .iter()
             .sorted_by(|(a, _), (b, _)| a.cmp(b))
         {
             report.push_str(&format!(
@@ -846,33 +847,45 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
                 read_count
             ));
         }
-        for (canonical_base, mod_counts) in item
-            .mod_call_counts
-            .into_iter()
-            .sorted_by(|(a, _), (b, _)| a.cmp(b))
-        {
-            let total_calls = mod_counts.values().sum::<u64>() as f64;
-            let total_filtered_calls = item
-                .filtered_mod_call_counts
-                .get(&canonical_base)
-                .map(|filtered_counts| filtered_counts.values().sum::<u64>())
+        for canonical_base in output_bases {
+            let pass_counts = item.mod_call_counts.get(&canonical_base);
+            let filtered_counts =
+                item.filtered_mod_call_counts.get(&canonical_base);
+            let total_calls = pass_counts
+                .map(|counts| counts.values().sum::<u64>())
                 .unwrap_or(0);
-            for (base_state, counts) in
-                mod_counts.into_iter().sorted_by(|(left, _), (right, _)| {
-                    compare_summary_base_states(left, right)
-                })
-            {
-                let label = match base_state {
-                    BaseState::Canonical(_) => format!("unmodified"),
-                    BaseState::Modified(repr) => format!("modified_{repr}"),
+            let total_filtered_calls = filtered_counts
+                .map(|counts| counts.values().sum::<u64>())
+                .unwrap_or(0);
+            let mut states = vec![(
+                BaseState::Canonical(canonical_base),
+                "unmodified".to_string(),
+            )];
+            states.extend(
+                summary_mod_codes(&item, canonical_base).into_iter().map(
+                    |mod_code| {
+                        (
+                            BaseState::Modified(mod_code),
+                            format!("modified_{mod_code}"),
+                        )
+                    },
+                ),
+            );
+
+            for (base_state, label) in states {
+                let counts = pass_counts
+                    .and_then(|counts| counts.get(&base_state))
+                    .copied()
+                    .unwrap_or(0);
+                let filtered = filtered_counts
+                    .and_then(|counts| counts.get(&base_state))
+                    .copied()
+                    .unwrap_or(0);
+                let pass_fraction = if total_calls == 0 {
+                    0.0
+                } else {
+                    counts as f64 / total_calls as f64
                 };
-                let filtered = *item
-                    .filtered_mod_call_counts
-                    .get(&canonical_base)
-                    .and_then(|filtered_counts| {
-                        filtered_counts.get(&base_state)
-                    })
-                    .unwrap_or(&0);
                 report.push_str(&format!(
                     "{}_pass_calls_{}\t{}\n",
                     canonical_base.char(),
@@ -883,7 +896,7 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
                     "{}_pass_frac_{}\t{}\n",
                     canonical_base.char(),
                     label,
-                    counts as f64 / total_calls
+                    pass_fraction
                 ));
                 report.push_str(&format!(
                     "{}_fail_calls_{}\t{}\n",
@@ -895,7 +908,7 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
             report.push_str(&format!(
                 "{}_total_mod_calls\t{}\n",
                 canonical_base.char(),
-                total_calls as u64
+                total_calls
             ));
             report.push_str(&format!(
                 "{}_total_fail_mod_calls\t{}\n",
@@ -1523,11 +1536,20 @@ mod tests {
         "A_pass_calls_unmodified\t8\n",
         "A_pass_frac_unmodified\t1\n",
         "A_fail_calls_unmodified\t1\n",
+        "A_pass_calls_modified_a\t0\n",
+        "A_pass_frac_modified_a\t0\n",
+        "A_fail_calls_modified_a\t0\n",
         "A_total_mod_calls\t8\n",
         "A_total_fail_mod_calls\t1\n",
         "C_pass_calls_unmodified\t6\n",
         "C_pass_frac_unmodified\t0.75\n",
         "C_fail_calls_unmodified\t1\n",
+        "C_pass_calls_modified_f\t0\n",
+        "C_pass_frac_modified_f\t0\n",
+        "C_fail_calls_modified_f\t0\n",
+        "C_pass_calls_modified_h\t0\n",
+        "C_pass_frac_modified_h\t0\n",
+        "C_fail_calls_modified_h\t0\n",
         "C_pass_calls_modified_m\t2\n",
         "C_pass_frac_modified_m\t0.25\n",
         "C_fail_calls_modified_m\t1\n",
@@ -1566,6 +1588,8 @@ mod tests {
         " C     f     0           0          0          0 \n",
         " C     h     0           0          0          0 \n",
         " C     m     2           0.25       3          0.3 \n",
+        " G     -     5           1          5          1 \n",
+        " T     -     4           1          5          1 \n",
     );
 
     const EXPECTED_MIXED_CODE_TABLE: &str = concat!(
@@ -1578,6 +1602,52 @@ mod tests {
         " C     -     1           0.5        1          0.5 \n",
         " C     m     0           0          0          0 \n",
         " C     123   1           0.5        1          0.5 \n",
+    );
+
+    const EXPECTED_MIXED_CODE_TSV: &str = concat!(
+        "mod_bases\tC\n",
+        "count_reads_C\t1\n",
+        "C_pass_calls_unmodified\t1\n",
+        "C_pass_frac_unmodified\t0.5\n",
+        "C_fail_calls_unmodified\t0\n",
+        "C_pass_calls_modified_m\t0\n",
+        "C_pass_frac_modified_m\t0\n",
+        "C_fail_calls_modified_m\t0\n",
+        "C_pass_calls_modified_123\t1\n",
+        "C_pass_frac_modified_123\t0.5\n",
+        "C_fail_calls_modified_123\t0\n",
+        "C_total_mod_calls\t2\n",
+        "C_total_fail_mod_calls\t0\n",
+        "total_reads_used\t1\n",
+    );
+
+    const EXPECTED_FILTERED_ONLY_TSV: &str = concat!(
+        "mod_bases\tC\n",
+        "count_reads_C\t1\n",
+        "C_pass_calls_unmodified\t0\n",
+        "C_pass_frac_unmodified\t0\n",
+        "C_fail_calls_unmodified\t1\n",
+        "C_pass_calls_modified_m\t0\n",
+        "C_pass_frac_modified_m\t0\n",
+        "C_fail_calls_modified_m\t3\n",
+        "C_pass_calls_modified_123\t0\n",
+        "C_pass_frac_modified_123\t0\n",
+        "C_fail_calls_modified_123\t2\n",
+        "C_total_mod_calls\t0\n",
+        "C_total_fail_mod_calls\t6\n",
+        "total_reads_used\t1\n",
+    );
+
+    const EXPECTED_FILTERED_ONLY_TABLE: &str = concat!(
+        "# bases                     C \n",
+        "# total_reads_used          1 \n",
+        "# count_reads_C             1 \n",
+        "# pass_threshold_C          0.5 \n",
+        "# modification_codes_for_C  m,123 \n",
+        " base  code  pass_count  pass_frac  all_count  all_frac \n",
+        " C     -     0           0          1          0.16666667 \n",
+        " C     m     0           0          3          0.5 \n",
+        " C     123   0           0          2          0.33333334 \n",
     );
 
     fn summary_with_insertion_order(reverse: bool) -> ModSummary<'static> {
@@ -1712,6 +1782,27 @@ mod tests {
         )
     }
 
+    fn filtered_only_summary() -> ModSummary<'static> {
+        let canonical = BaseState::Canonical(DnaBase::C);
+        let methyl = BaseState::Modified('m'.into());
+        let chebi = BaseState::Modified(ModCodeRepr::ChEbi(123));
+        ModSummary::new(
+            HashMap::from([(DnaBase::C, 1)]),
+            HashMap::new(),
+            HashMap::from([(
+                DnaBase::C,
+                HashMap::from([(canonical, 1), (methyl, 3), (chebi, 2)]),
+            )]),
+            1,
+            HashMap::from([(DnaBase::C, 0.5)]),
+            None,
+            HashMap::from([(
+                DnaBase::C,
+                HashSet::from(['m'.into(), ModCodeRepr::ChEbi(123)]),
+            )]),
+        )
+    }
+
     #[test]
     fn summary_tsv_is_deterministic_across_insertion_orders() {
         let forward = render_tsv(summary_with_insertion_order(false));
@@ -1736,5 +1827,25 @@ mod tests {
         let reverse = render_table(mixed_code_summary(true));
         assert_eq!(forward, reverse);
         assert_eq!(forward, EXPECTED_MIXED_CODE_TABLE);
+    }
+
+    #[test]
+    fn summary_tsv_uses_one_code_and_chebi_order() {
+        let forward = render_tsv(mixed_code_summary(false));
+        let reverse = render_tsv(mixed_code_summary(true));
+        assert_eq!(forward, reverse);
+        assert_eq!(forward, EXPECTED_MIXED_CODE_TSV);
+    }
+
+    #[test]
+    fn summary_outputs_filtered_only_states_exactly() {
+        assert_eq!(
+            render_tsv(filtered_only_summary()),
+            EXPECTED_FILTERED_ONLY_TSV
+        );
+        assert_eq!(
+            render_table(filtered_only_summary()),
+            EXPECTED_FILTERED_ONLY_TABLE
+        );
     }
 }

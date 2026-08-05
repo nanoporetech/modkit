@@ -50,7 +50,11 @@ impl<'a> ModSummary<'a> {
     pub(crate) fn mod_bases(&self) -> String {
         [DnaBase::A, DnaBase::C, DnaBase::G, DnaBase::T]
             .into_iter()
-            .filter(|base| self.mod_call_counts.contains_key(base))
+            .filter(|base| {
+                self.mod_call_counts.contains_key(base)
+                    || self.filtered_mod_call_counts.contains_key(base)
+                    || self.per_base_mod_codes.contains_key(base)
+            })
             .map(|d| d.char().to_string())
             .collect::<Vec<String>>()
             .join(",")
