@@ -47,6 +47,7 @@ rust-htslib = "0.46.0"
 rust-lapper = "1.1.0"
 rustc-hash = "1.1.0"
 rv = "=0.16.0"
+smallvec = { version = "1.15.2", features = ["const_generics"] }
 statrs = "0.16.0"
 substring = "1.4.5"
 thiserror = "2.0.11"

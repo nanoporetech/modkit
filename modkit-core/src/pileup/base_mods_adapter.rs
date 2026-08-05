@@ -7,6 +7,7 @@ use rust_htslib::bam::{
     ext::{BamRecordExtensions, IterAlignedPairs},
     record::AuxArray,
 };
+use smallvec::SmallVec;
 
 use crate::{
     errs::MkResult,
@@ -25,21 +26,25 @@ pub(crate) struct ModState {
     pub mod_qual: u8,
 }
 
+#[derive(Debug, Copy, Clone)]
+struct ModCodeState {
+    mm_pos: usize,
+    ml_pos: usize,
+    ml_stride: usize,
+    mod_code: ModCodeRepr,
+    mm_next: Option<u32>,
+    num_explicit_positions: u32,
+    canonical_base: u8,
+    implicit: bool,
+    explicit_at_position: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct BaseModsAdapter<'a, const SIZE: usize = 16> {
     mm: &'a [u8],
     seq: bam::record::Seq<'a>,
     ml: AuxArray<'a, u8>,
-    mod_codes: [ModCodeRepr; SIZE],
-    canonical_bases: [u8; SIZE],
-    mm_pos: [usize; SIZE],
-    ml_pos: [usize; SIZE],
-    // strands: [u8; SIZE], // could be bitvec
-    implicits: [bool; SIZE],
-    ml_strides: [usize; SIZE],
-    n_codes: usize,
-    mm_next: [Option<u32>; SIZE],
-    num_explicit_positions: [u32; SIZE],
+    code_states: SmallVec<[ModCodeState; SIZE]>,
     reverse: bool,
     left_to_right_seq_pos: usize,
 }
@@ -88,18 +93,8 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
 
         let mut i = 0;
         let mut ml_start = 0usize;
-        let mut mod_codes = [ModCodeRepr::Code('N'); SIZE];
-        let mut canonical_bases = [0u8; SIZE];
-        // let mut strands = [0u8; SIZE];
-        let mut ml_strides = [0usize; SIZE];
-        let mut implicits = [false; SIZE];
-        let mut mm_pos = [0usize; SIZE];
-        let mut ml_pos = [0usize; SIZE];
-        let mut num_explicit_positions = [0u32; SIZE];
-        let mut n_codes = 0;
-        let mut mm_next = [None; SIZE];
+        let mut code_states = SmallVec::<[ModCodeState; SIZE]>::new();
         while i < mm.len() {
-            assert!(n_codes < SIZE);
             let base = mm[i];
             i += 1;
             let strand = mm[i];
@@ -107,8 +102,8 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                 bail!("duplex data not currently supported")
             }
             i += 1;
-            let (mods_in_rec, offset) =
-                parse_mod_code(&mm[i..], &mut mod_codes, n_codes);
+            let (parsed_mod_codes, offset) = parse_mod_code(&mm[i..]);
+            let mods_in_rec = parsed_mod_codes.len();
             i += offset;
             assert!(i < mm.len());
             let implicit_mode = match mm[i] {
@@ -173,37 +168,23 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
             };
 
             for j in 0..mods_in_rec {
-                mm_pos[j + n_codes] = mm_idx;
-                canonical_bases[j + n_codes] = base;
-                // strands[j + n_codes] = strand;
-                ml_strides[j + n_codes] = mods_in_rec;
-                implicits[j + n_codes] = implicit_mode;
-                mm_next[j + n_codes] = delta;
-                num_explicit_positions[j + n_codes] = n_deltas;
-                ml_pos[j + n_codes] = ml_idx + j;
+                code_states.push(ModCodeState {
+                    mm_pos: mm_idx,
+                    ml_pos: ml_idx + j,
+                    ml_stride: mods_in_rec,
+                    mod_code: parsed_mod_codes.get(j),
+                    mm_next: delta,
+                    num_explicit_positions: n_deltas,
+                    canonical_base: base,
+                    implicit: implicit_mode,
+                    explicit_at_position: false,
+                });
             }
-            n_codes += mods_in_rec;
             ml_start += n_deltas as usize * mods_in_rec;
             i += record_end + 1;
         }
 
-        Ok(Self {
-            mm,
-            ml,
-            seq,
-            mod_codes,
-            canonical_bases,
-            n_codes,
-            implicits,
-            mm_pos,
-            ml_pos,
-            // strands,
-            ml_strides,
-            mm_next,
-            num_explicit_positions,
-            reverse,
-            left_to_right_seq_pos: 0,
-        })
+        Ok(Self { mm, ml, seq, code_states, reverse, left_to_right_seq_pos: 0 })
     }
 
     pub fn next_modified_position_no_thresh(
@@ -222,8 +203,12 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
         let mut done = false;
         let mut inferred = true;
         // A different MM group can count down to zero while this position is
-        // scanned. Only code slots already at zero have an explicit call here.
-        let mut explicit_codes_at_position = [false; SIZE];
+        // scanned. Only code states already at zero have an explicit call here.
+        // Store readiness with each dynamically sized state so this scan does
+        // not allocate, including when the inline capacity is exceeded.
+        self.code_states
+            .iter_mut()
+            .for_each(|state| state.explicit_at_position = false);
 
         while !done && pos < self.seq.len() {
             let base = if self.reverse {
@@ -231,32 +216,34 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
             } else {
                 self.seq[pos]
             };
-            for i in 0..self.n_codes {
-                match &mut self.mm_next[i] {
-                    Some(skip_count) if *skip_count == 0u32 => {
+            for code_state in &mut self.code_states {
+                match code_state.mm_next {
+                    Some(0) => {
                         // there is at least one explicit modification here
-                        if self.canonical_bases[i] == base {
+                        if code_state.canonical_base == base {
                             done = true;
                             mod_pos = Some(pos);
                             inferred = false;
-                            explicit_codes_at_position[i] = true;
+                            code_state.explicit_at_position = true;
                         }
                     }
                     Some(skip_count) => {
-                        if self.canonical_bases[i] == base {
-                            if self.implicits[i] {
+                        if code_state.canonical_base == base {
+                            if code_state.implicit {
                                 done = true;
                                 mod_pos = Some(pos);
                             } else {
-                                *skip_count = skip_count
-                                    .checked_sub(1u32)
-                                    .expect("should not go off the end");
+                                code_state.mm_next = Some(
+                                    skip_count
+                                        .checked_sub(1u32)
+                                        .expect("should not go off the end"),
+                                );
                             }
                         }
                     }
                     None => {
-                        if self.canonical_bases[i] == base {
-                            if self.implicits[i] {
+                        if code_state.canonical_base == base {
+                            if code_state.implicit {
                                 done = true;
                                 mod_pos = Some(pos);
                             }
@@ -275,14 +262,14 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                 self.seq[mod_pos]
             };
             let mut mod_code = ModCodeRepr::Code(base as char);
-            for i in 0..self.n_codes {
-                if self.canonical_bases[i] == base
-                    && explicit_codes_at_position[i]
-                    && self.mm_next[i].map(|x| x == 0).unwrap_or(false)
+            for code_state in &self.code_states {
+                if code_state.canonical_base == base
+                    && code_state.explicit_at_position
+                    && code_state.mm_next.map(|x| x == 0).unwrap_or(false)
                 {
-                    let q = self.ml.get(self.ml_pos[i]).unwrap();
+                    let q = self.ml.get(code_state.ml_pos).unwrap();
                     if q > mod_qual {
-                        mod_code = self.mod_codes[i];
+                        mod_code = code_state.mod_code;
                         mod_qual = q;
                     }
                     total_mod_qual = total_mod_qual.saturating_add(q);
@@ -324,7 +311,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                 ))
             };
 
-            self.move_forward(mod_pos, base, &explicit_codes_at_position);
+            self.move_forward(mod_pos, base);
 
             mod_state
         } else {
@@ -336,8 +323,8 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
 
     pub fn primary_bases_in_record(&self) -> u8 {
         let mut bs = 0u8;
-        for &raw_can_base in self.canonical_bases.iter().take(self.n_codes) {
-            match raw_can_base {
+        for code_state in &self.code_states {
+            match code_state.canonical_base {
                 b'A' => bs.view_bits_mut::<Lsb0>().set(0, true),
                 b'C' => bs.view_bits_mut::<Lsb0>().set(1, true),
                 b'G' => bs.view_bits_mut::<Lsb0>().set(2, true),
@@ -349,25 +336,22 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
     }
 
     #[inline]
-    fn move_forward(
-        &mut self,
-        last_pos: usize,
-        base: u8,
-        explicit_codes_at_position: &[bool; SIZE],
-    ) {
+    fn move_forward(&mut self, last_pos: usize, base: u8) {
         self.left_to_right_seq_pos = last_pos.saturating_add(1);
-        for i in (0..self.n_codes).filter(|i| self.canonical_bases[*i] == base)
+        for code_state in self
+            .code_states
+            .iter_mut()
+            .filter(|state| state.canonical_base == base)
         {
-            assert!(i < SIZE);
-            match &mut self.mm_next[i] {
-                Some(x) if *x == 0 && explicit_codes_at_position[i] => {
+            match code_state.mm_next {
+                Some(0) if code_state.explicit_at_position => {
                     let num_explicit_positions =
-                        self.num_explicit_positions[i].saturating_sub(1);
+                        code_state.num_explicit_positions.saturating_sub(1);
                     if num_explicit_positions == 0 {
                         // done
-                        self.mm_next[i] = None;
+                        code_state.mm_next = None;
                     } else {
-                        let mm_pos = self.mm_pos[i];
+                        let mm_pos = code_state.mm_pos;
                         if self.reverse {
                             let mut p = mm_pos.saturating_sub(1);
                             while self.mm[p] != b',' {
@@ -378,27 +362,30 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                                 let c = self.mm[idx];
                                 val = val * 10 + (c - b'0') as u32;
                             }
-                            self.mm_next[i] = Some(val);
-                            self.mm_pos[i] = p;
-                            self.ml_pos[i] -= self.ml_strides[i];
+                            code_state.mm_next = Some(val);
+                            code_state.mm_pos = p;
+                            code_state.ml_pos -= code_state.ml_stride;
                             // if num_explicit_positions > 1 {
                             // }
                         } else {
                             let (delta, offset) =
                                 parse_int::<b',', b';'>(&self.mm[mm_pos..]);
-                            self.mm_next[i] = Some(delta);
-                            self.mm_pos[i] = offset + mm_pos;
-                            self.ml_pos[i] += self.ml_strides[i];
+                            code_state.mm_next = Some(delta);
+                            code_state.mm_pos = offset + mm_pos;
+                            code_state.ml_pos += code_state.ml_stride;
                             // if num_explicit_positions > 1 {
                             // }
                         }
-                        self.num_explicit_positions[i] = num_explicit_positions;
+                        code_state.num_explicit_positions =
+                            num_explicit_positions;
                     }
                 }
-                Some(x) if self.implicits[i] => {
-                    *x = x
-                        .checked_sub(1u32)
-                        .expect("should not go less than zero");
+                Some(skip_count) if code_state.implicit => {
+                    code_state.mm_next = Some(
+                        skip_count
+                            .checked_sub(1u32)
+                            .expect("should not go less than zero"),
+                    );
                 }
                 _ => {}
             }
@@ -406,12 +393,32 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
     }
 }
 
+enum ParsedModCodes<'a> {
+    Alphabetic(&'a [u8]),
+    ChEbi(u32),
+}
+
+impl ParsedModCodes<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Alphabetic(codes) => codes.len(),
+            Self::ChEbi(_) => 1,
+        }
+    }
+
+    fn get(&self, index: usize) -> ModCodeRepr {
+        match self {
+            Self::Alphabetic(codes) => ModCodeRepr::Code(codes[index] as char),
+            Self::ChEbi(code) => {
+                debug_assert_eq!(index, 0);
+                ModCodeRepr::ChEbi(*code)
+            }
+        }
+    }
+}
+
 #[inline(always)]
-fn parse_mod_code<const SIZE: usize>(
-    bytes: &[u8],
-    mod_codes: &mut [ModCodeRepr; SIZE],
-    mut n_mods_so_far: usize,
-) -> (usize, usize) {
+fn parse_mod_code(bytes: &[u8]) -> (ParsedModCodes<'_>, usize) {
     let mut idx = 0;
     let mut val: u32 = 0;
 
@@ -434,25 +441,18 @@ fn parse_mod_code<const SIZE: usize>(
     }
 
     if !all_digits {
-        let mut mods_parsed = 0usize;
+        let start = idx;
         while bytes[idx] != b'.'
             && bytes[idx] != b'?'
             && bytes[idx] != b','
             && bytes[idx] != b';'
         {
-            let c = bytes[idx];
-            assert!(n_mods_so_far < SIZE);
-            mod_codes[n_mods_so_far] = ModCodeRepr::Code(c as char);
-            n_mods_so_far += 1;
             idx += 1;
-            mods_parsed += 1;
         }
 
-        return (mods_parsed, idx);
+        (ParsedModCodes::Alphabetic(&bytes[start..idx]), idx)
     } else {
-        assert!(n_mods_so_far < SIZE);
-        mod_codes[n_mods_so_far] = ModCodeRepr::ChEbi(val);
-        (1usize, idx)
+        (ParsedModCodes::ChEbi(val), idx)
     }
 }
 
@@ -583,6 +583,38 @@ mod base_mods_adapter_tests {
             record.set_reverse();
         }
         record
+    }
+
+    fn make_forward_record_with_mn(
+        mm: &str,
+        ml: &[u8],
+        seq: &str,
+    ) -> bam::Record {
+        let mut record = make_record(mm, ml, seq, None, false);
+        record.push_aux(b"MN", Aux::I32(seq.len() as i32)).unwrap();
+        record
+    }
+
+    fn collect_states<const SIZE: usize>(
+        scanner: &mut BaseModsAdapter<SIZE>,
+    ) -> Vec<(usize, ModCodeRepr, u8, bool, bool)> {
+        std::iter::from_fn(|| {
+            scanner.next_modified_position_no_thresh().unwrap()
+        })
+        .map(|state| {
+            (
+                state.mod_position,
+                state.mod_code,
+                state.mod_qual,
+                state.modified,
+                state.inferred,
+            )
+        })
+        .collect()
+    }
+
+    fn alphabetic_codes(count: usize) -> String {
+        (b'a'..).take(count).map(char::from).collect()
     }
 
     #[test]
@@ -803,7 +835,14 @@ mod base_mods_adapter_tests {
         let record = make_record(mm, &ml, seq, None, true);
         let thresholds = [0f32; 4];
         let mut scanner = BaseModsAdapter::<2>::new(&record).unwrap();
-        assert_eq!(scanner.ml_pos, [2, 3]);
+        assert_eq!(
+            scanner
+                .code_states
+                .iter()
+                .map(|state| state.ml_pos)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
         let mod_state =
             scanner.next_modified_position(thresholds, &[]).unwrap().unwrap();
         assert_eq!(mod_state.mod_position, 0);
@@ -967,6 +1006,188 @@ mod base_mods_adapter_tests {
     }
 
     #[test]
+    fn test_single_group_grows_beyond_inline_code_capacity() {
+        for count in [16, 17] {
+            let codes = alphabetic_codes(count);
+            let mm = format!("C+{codes}?,0;");
+            let mut ml = vec![0; count];
+            ml[count - 1] = 200;
+            let record = make_forward_record_with_mn(&mm, &ml, "C");
+
+            let mut scanner = BaseModsAdapter::<16>::new(&record).unwrap();
+            assert_eq!(
+                scanner
+                    .code_states
+                    .iter()
+                    .map(|state| state.mod_code)
+                    .collect::<Vec<_>>(),
+                codes
+                    .bytes()
+                    .map(|code| ModCodeRepr::Code(code as char))
+                    .collect::<Vec<_>>()
+            );
+            assert!(scanner
+                .code_states
+                .iter()
+                .all(|state| state.ml_stride == count));
+            assert_eq!(scanner.code_states.spilled(), count > 16);
+            let expected_code =
+                ModCodeRepr::Code(codes.as_bytes()[count - 1] as char);
+            assert_eq!(
+                collect_states(&mut scanner),
+                vec![(0, expected_code, 200, true, false)]
+            );
+        }
+    }
+
+    #[test]
+    fn test_spilled_single_group_reverse_cursor_and_ml_stride() {
+        let codes = alphabetic_codes(17);
+        let mm = format!("C+{codes}?,0,0;");
+        let mut ml = vec![0; 34];
+        ml[0] = 200;
+        ml[33] = 220;
+        let mut record = make_record(&mm, &ml, "GG", None, true);
+        record.push_aux(b"MN", Aux::I32(2)).unwrap();
+
+        let mut scanner = BaseModsAdapter::<16>::new(&record).unwrap();
+        assert!(scanner.code_states.spilled());
+        assert_eq!(scanner.code_states.len(), 17);
+        assert!(scanner.code_states.iter().all(|state| state.ml_stride == 17));
+        assert_eq!(
+            scanner
+                .code_states
+                .iter()
+                .map(|state| state.ml_pos)
+                .collect::<Vec<_>>(),
+            (17..34).collect::<Vec<_>>()
+        );
+        let initial_mm_pos = scanner.code_states[0].mm_pos;
+
+        let state =
+            scanner.next_modified_position_no_thresh().unwrap().unwrap();
+        assert_eq!(
+            (
+                state.mod_position,
+                state.mod_code,
+                state.mod_qual,
+                state.modified,
+                state.inferred,
+            ),
+            (0, ModCodeRepr::Code('q'), 220, true, false)
+        );
+        assert!(scanner.code_states.iter().all(|state| {
+            state.mm_pos == initial_mm_pos - 2
+                && state.mm_next == Some(0)
+                && state.num_explicit_positions == 1
+        }));
+        assert_eq!(
+            scanner
+                .code_states
+                .iter()
+                .map(|state| state.ml_pos)
+                .collect::<Vec<_>>(),
+            (0..17).collect::<Vec<_>>()
+        );
+
+        let state =
+            scanner.next_modified_position_no_thresh().unwrap().unwrap();
+        assert_eq!(
+            (
+                state.mod_position,
+                state.mod_code,
+                state.mod_qual,
+                state.modified,
+                state.inferred,
+            ),
+            (1, ModCodeRepr::Code('a'), 200, true, false)
+        );
+        assert!(scanner.next_modified_position_no_thresh().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_one_code_groups_grow_beyond_inline_capacity() {
+        for count in [16, 17] {
+            // Separate MM groups for the same canonical base must target
+            // different positions to avoid conflicting calls.
+            let codes =
+                (0..count).map(|idx| 10_000 + idx as u32).collect::<Vec<_>>();
+            let mm = codes
+                .iter()
+                .enumerate()
+                .map(|(idx, code)| format!("C+{code}?,{idx};"))
+                .collect::<String>();
+            let ml = vec![200; count];
+            let seq = "C".repeat(count);
+            let record = make_forward_record_with_mn(&mm, &ml, &seq);
+
+            let mut scanner = BaseModsAdapter::<16>::new(&record).unwrap();
+            assert_eq!(
+                scanner
+                    .code_states
+                    .iter()
+                    .map(|state| state.mod_code)
+                    .collect::<Vec<_>>(),
+                codes
+                    .iter()
+                    .copied()
+                    .map(ModCodeRepr::ChEbi)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                scanner
+                    .code_states
+                    .iter()
+                    .map(|state| state.mm_next)
+                    .collect::<Vec<_>>(),
+                (0..count).map(|idx| Some(idx as u32)).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                scanner
+                    .code_states
+                    .iter()
+                    .map(|state| state.ml_pos)
+                    .collect::<Vec<_>>(),
+                (0..count).collect::<Vec<_>>()
+            );
+            assert!(scanner
+                .code_states
+                .iter()
+                .all(|state| state.ml_stride == 1));
+            assert_eq!(scanner.code_states.spilled(), count > 16);
+            let expected = codes
+                .iter()
+                .enumerate()
+                .map(|(position, code)| {
+                    (position, ModCodeRepr::ChEbi(*code), 200, true, false)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(collect_states(&mut scanner), expected);
+        }
+    }
+
+    #[test]
+    fn test_explicit_position_count_is_not_code_capacity() {
+        let seq = "C".repeat(17);
+        let mm = format!("C+m?,{};", vec!["0"; 17].join(","));
+        let ml = (200..217).collect::<Vec<u8>>();
+        let record = make_forward_record_with_mn(&mm, &ml, &seq);
+
+        let mut scanner = BaseModsAdapter::<16>::new(&record).unwrap();
+        assert_eq!(scanner.code_states.len(), 1);
+        assert_eq!(scanner.code_states[0].num_explicit_positions, 17);
+        assert!(!scanner.code_states.spilled());
+        let expected = ml
+            .iter()
+            .enumerate()
+            .map(|(position, qual)| {
+                (position, METHYL_CYTOSINE, *qual, true, false)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(collect_states(&mut scanner), expected);
+    }
+
+    #[test]
     fn test_chebi() {
         let mm = "C+m.,0,0;C+76792.,0,0;";
         let seq = "CGGATGGAGTC";
@@ -974,8 +1195,12 @@ mod base_mods_adapter_tests {
         let record = make_record(mm, &ml, seq, None, true);
         let scanner = BaseModsAdapter::<2>::new(&record).unwrap();
         assert_eq!(
-            scanner.mod_codes,
-            [METHYL_CYTOSINE, ModCodeRepr::ChEbi(76792)]
+            scanner
+                .code_states
+                .iter()
+                .map(|state| state.mod_code)
+                .collect::<Vec<_>>(),
+            vec![METHYL_CYTOSINE, ModCodeRepr::ChEbi(76792)]
         )
     }
 
