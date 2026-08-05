@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::string::FromUtf8Error;
 
 use ansi_term::Style;
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use clap::Args;
 use derive_new::new;
 use itertools::Itertools;
@@ -80,18 +80,30 @@ impl BaseStatus {
 
 impl BaseStatus {
     pub fn parse(raw: &str) -> anyhow::Result<Self> {
-        if let Ok(code) = raw.parse::<char>() {
-            if code == '-' {
-                Ok(Self::Canonical)
-            } else {
+        if raw == "-" {
+            return Ok(Self::Canonical);
+        }
+
+        if !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) {
+            let chebi = raw.parse::<u32>().map_err(|e| {
+                anyhow!("failed to parse ChEBI code {raw}: {e}")
+            })?;
+            return Ok(Self::Modified(ModCodeRepr::ChEbi(chebi)));
+        }
+
+        let mut chars = raw.chars();
+        match (chars.next(), chars.next()) {
+            (Some(code), None)
+                if code.is_ascii_lowercase()
+                    || matches!(code, 'A' | 'C' | 'G' | 'T' | 'U' | 'N') =>
+            {
                 Ok(Self::Modified(ModCodeRepr::Code(code)))
             }
-        } else {
-            if let Ok(chebi) = raw.parse::<u32>() {
-                Ok(Self::Modified(ModCodeRepr::ChEbi(chebi)))
-            } else {
-                Err(anyhow!("failed to parse mod code {raw}"))
-            }
+            _ => Err(anyhow!(
+                "failed to parse mod code {raw}: expected `-`, a numeric \
+                 ChEBI code, one lowercase ASCII letter, or one of \
+                 A/C/G/T/U/N"
+            )),
         }
     }
 }
@@ -136,13 +148,21 @@ fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
         fields[1].parse().map_err(|e| anyhow!("Error parsing start: {}", e))?;
     let end: i64 =
         fields[2].parse().map_err(|e| anyhow!("Error parsing end: {}", e))?;
+    if start < 0 {
+        bail!("BED start must be non-negative, found {start}");
+    }
+    if end <= start {
+        bail!(
+            "BED end must be greater than start, found start {start} and end \
+             {end}"
+        );
+    }
     let raw_mod_code = fields[3];
-    let strand_char = fields[5]
-        .chars()
-        .next()
-        .ok_or_else(|| anyhow!("Error parsing strand {}", fields[5]))?;
-
-    let strand = Strand::parse_char(strand_char)?;
+    let strand = match fields[5] {
+        "+" => Strand::Positive,
+        "-" => Strand::Negative,
+        raw => bail!("Error parsing strand {raw}: expected `+` or `-`"),
+    };
     let base_status = BaseStatus::parse(&raw_mod_code)
         .map_err(|e| anyhow!("Error parsing base status code: {}", e))?;
     if let BaseStatus::Modified(mod_code) = base_status {
@@ -192,16 +212,29 @@ fn parse_ground_truth_bed_file(
     }
     lines_processed.set_message("rows processed");
 
-    let reader = BufReader::new(File::open(file_path)?);
-    for ground_truth_site in reader
-        .lines()
-        .skip_while(|r| r.as_ref().map(|l| l.starts_with('#')).unwrap_or(false))
-        .filter_map(|r| {
-            r.map_err(|e| anyhow!("failed to read, {}", e.to_string()))
-                .and_then(|line| parse_ground_truth_bed_line(&line))
-                .ok()
-        })
-    {
+    let reader = BufReader::new(File::open(file_path).with_context(|| {
+        format!("failed to open ground truth BED {}", file_path.display())
+    })?);
+    for (line_idx, raw_line) in reader.lines().enumerate() {
+        let line_number = line_idx + 1;
+        let line = raw_line.with_context(|| {
+            format!(
+                "failed to read ground truth BED {} at line {line_number}",
+                file_path.display()
+            )
+        })?;
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let ground_truth_site = parse_ground_truth_bed_line(line)
+            .with_context(|| {
+                format!(
+                    "failed to parse ground truth BED {} at line \
+                     {line_number}",
+                    file_path.display()
+                )
+            })?;
         let cs_res = result
             .entry(ground_truth_site.chrom)
             .or_insert_with(HashMap::new)
@@ -213,7 +246,10 @@ fn parse_ground_truth_bed_file(
         lines_processed.inc(1);
     }
     if result.is_empty() {
-        bail!("zero valid positions parsed from BED file".to_string());
+        bail!(
+            "zero valid positions parsed from BED file {}",
+            file_path.display()
+        );
     }
     lines_processed.finish_and_clear();
     info!("Processed {} BED lines", lines_processed.position());
@@ -898,10 +934,6 @@ pub struct ValidateFromModBam {
 impl ValidateFromModBam {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let mut out_handle: Option<File> = None;
-        if let Some(file_path) = self.out_filepath.clone() {
-            out_handle = Some(File::create(&file_path)?);
-        }
         let collapse_method = match &self.ignore {
             Some(raw_mod_code) => {
                 let mod_code = ModCodeRepr::parse(raw_mod_code)?;
@@ -963,6 +995,8 @@ impl ValidateFromModBam {
         let can_base =
             derive_canonical_base(&gt_positions, self.canonical_base)?;
         info!("Canonical base: {}", can_base);
+        let mut out_handle =
+            self.out_filepath.as_ref().map(File::create).transpose()?;
 
         let mut all_probs = HashMap::new();
         for (bam_path, bed_indices) in bam_path_to_bed_indices {
@@ -1130,5 +1164,166 @@ impl ValidateFromModBam {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use tempfile::NamedTempFile;
+
+    use super::{parse_ground_truth_bed_file, BaseStatus, ModCodeRepr, Strand};
+
+    #[test]
+    fn ground_truth_bed_reports_mixed_row_error_with_physical_line() {
+        let mut bed = NamedTempFile::new().unwrap();
+        writeln!(bed, "chr1\t4\t5\tm\t.\t+").unwrap();
+        writeln!(bed, "not-a-bed-row").unwrap();
+
+        let error =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&bed.path().display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("line 2"), "{message}");
+        assert!(message.contains("Invalid number of fields"), "{message}");
+    }
+
+    #[test]
+    fn ground_truth_bed_allows_blank_and_comment_rows_anywhere() {
+        let mut bed = NamedTempFile::new().unwrap();
+        writeln!(bed, "# header").unwrap();
+        writeln!(bed, "chr1\t4\t5\tm\t.\t+").unwrap();
+        writeln!(bed).unwrap();
+        writeln!(bed, "  # another comment").unwrap();
+        writeln!(bed, "chr1\t8\t9\t-\t.\t-").unwrap();
+
+        let parsed =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap();
+        assert_eq!(
+            parsed["chr1"][&Strand::Positive][&4],
+            BaseStatus::Modified('m'.into())
+        );
+        assert_eq!(
+            parsed["chr1"][&Strand::Negative][&8],
+            BaseStatus::Canonical
+        );
+    }
+
+    #[test]
+    fn ground_truth_bed_rejects_invalid_truth_fields_with_physical_line() {
+        let cases = [
+            (
+                "negative start",
+                "chr1\t-1\t1\tm\t.\t+",
+                "BED start must be non-negative",
+            ),
+            (
+                "reversed interval",
+                "chr1\t5\t4\tm\t.\t+",
+                "BED end must be greater than start",
+            ),
+            (
+                "zero-width interval",
+                "chr1\t5\t5\tm\t.\t+",
+                "BED end must be greater than start",
+            ),
+            ("strand suffix", "chr1\t5\t6\tm\t.\t+junk", "expected `+` or `-`"),
+            (
+                "punctuation mod code",
+                "chr1\t5\t6\t.\t.\t+",
+                "failed to parse mod code",
+            ),
+            (
+                "multi-letter mod code",
+                "chr1\t5\t6\tmm\t.\t+",
+                "failed to parse mod code",
+            ),
+            (
+                "invalid uppercase mod code",
+                "chr1\t5\t6\tM\t.\t+",
+                "failed to parse mod code",
+            ),
+            (
+                "non-ASCII mod code",
+                "chr1\t5\t6\té\t.\t+",
+                "failed to parse mod code",
+            ),
+        ];
+
+        for (case_name, invalid_line, expected_error) in cases {
+            let mut bed = NamedTempFile::new().unwrap();
+            writeln!(bed, "# header").unwrap();
+            writeln!(bed, "chr1\t4\t5\tm\t.\t+").unwrap();
+            writeln!(bed).unwrap();
+            writeln!(bed, "{invalid_line}").unwrap();
+
+            let error =
+                parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                    .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(&bed.path().display().to_string()),
+                "{case_name}: {message}"
+            );
+            assert!(message.contains("line 4"), "{case_name}: {message}");
+            assert!(message.contains(expected_error), "{case_name}: {message}");
+        }
+    }
+
+    #[test]
+    fn ground_truth_bed_accepts_documented_mod_tokens_and_extra_columns() {
+        let cases = [
+            ("m", BaseStatus::Modified(ModCodeRepr::Code('m'))),
+            ("C", BaseStatus::Modified(ModCodeRepr::Code('C'))),
+            ("1", BaseStatus::Modified(ModCodeRepr::ChEbi(1))),
+            ("21839", BaseStatus::Modified(ModCodeRepr::ChEbi(21839))),
+            ("-", BaseStatus::Canonical),
+        ];
+        let mut bed = NamedTempFile::new().unwrap();
+        for (offset, (raw_code, _)) in cases.iter().enumerate() {
+            let start = 10 + offset as i64;
+            writeln!(
+                bed,
+                "chr1\t{start}\t{}\t{raw_code}\t.\t+\textra\tcolumns",
+                start + 1
+            )
+            .unwrap();
+        }
+
+        let parsed =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap();
+        for (offset, (raw_code, expected_status)) in cases.iter().enumerate() {
+            let position = 10 + offset as i64;
+            assert_eq!(
+                parsed["chr1"][&Strand::Positive][&position],
+                *expected_status,
+                "token {raw_code}"
+            );
+        }
+    }
+
+    #[test]
+    fn ground_truth_bed_reports_read_error_with_physical_line() {
+        let mut bed = NamedTempFile::new().unwrap();
+        bed.write_all(b"chr1\t4\t5\tm\t.\t+\n").unwrap();
+        bed.write_all(&[0xff, b'\n']).unwrap();
+
+        let error =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&bed.path().display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("line 2"), "{message}");
+        assert!(message.contains("failed to read"), "{message}");
     }
 }

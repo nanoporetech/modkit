@@ -76,9 +76,13 @@ These fields are as follows:
 | 2      | start position | 0-based start position         | int |
 | 3      | end position   | 0-based exclusive end position | int |
 | 4      | mod code       | modified base code             | str |
-| 6      | strand         | strand (e.g. +,-,.)            | str |
+| 6      | strand         | strand (`+` or `-`)            | str |
 
 The 5th column is ignored in the validate command.
+
+The start position must be non-negative and the end position must be greater
+than the start position. Zero-length BED features do not annotate a reference
+base and are rejected by `validate`.
 
 The 4th column represents the modified base code annotating the status at this reference position (or range of reference positions).
 This value can be `-` representing a canonical base (note that this differs from the `remora validate` annotation), a single letter code as defined in the modBAM tag specification, or any ChEBI code.
