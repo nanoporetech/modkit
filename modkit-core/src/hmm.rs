@@ -187,7 +187,7 @@ impl HmmModel {
         assert_eq!(probs.len(), transitions.len());
         let (dp_matrix, pointers) = self.viterbi_forward(&probs, &transitions);
         let path = self.viterbi_decode(&dp_matrix, &pointers);
-        assert_eq!(path.len(), scores.len() - 1);
+        assert_eq!(path.len(), scores.len());
         path
     }
 
@@ -197,21 +197,16 @@ impl HmmModel {
         pointers: &[PointerCell],
     ) -> Vec<States> {
         let final_state = dp_matrix.last().unwrap().argmax();
-        // dbg!(final_state);
         let mut path = vec![final_state];
-        let mut curr_pointer =
-            pointers.last().unwrap().get_value(final_state).unwrap();
-        for pointers in pointers.iter().rev().skip(1) {
-            let pointer = pointers.get_value(curr_pointer);
-            if let Some(pointer) = pointer {
-                path.push(pointer);
-                curr_pointer = pointer;
-            } else {
-                break;
-            }
+        let mut current_state = final_state;
+        // The first pointer cell is the empty start cell, and the second
+        // points back to the un-emitted start state. Decode only the emitted
+        // states, from the final score back through the second score.
+        for pointers in pointers.iter().skip(2).rev() {
+            current_state = pointers.get_value(current_state).unwrap();
+            path.push(current_state);
         }
 
-        path.pop();
         path.reverse();
         path
     }

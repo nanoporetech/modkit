@@ -1319,7 +1319,7 @@ fn path_to_region_labels(
     path: &[States],
     positions: &[u64],
 ) -> Vec<(u64, u64, States)> {
-    assert_eq!(path.len(), positions.len() - 1);
+    assert_eq!(path.len(), positions.len());
     if path.is_empty() {
         return Vec::new();
     } else {
