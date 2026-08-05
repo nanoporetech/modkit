@@ -131,7 +131,14 @@ impl ReadIdsToBaseModProbs {
                             }
                         }
                         if let Some(p) = explicit_prob {
-                            canonical_probs.insert(*dna_base, p);
+                            canonical_probs
+                                .entry(*dna_base)
+                                .and_modify(|current| {
+                                    if p > *current {
+                                        *current = p;
+                                    }
+                                })
+                                .or_insert(p);
                         }
                     }
                     (calls_per_base, canonical_probs)
@@ -1293,9 +1300,35 @@ mod read_ids_to_base_mod_probs_tests {
     use rust_htslib::bam::{self, Read};
     use rustc_hash::{FxHashMap, FxHashSet};
 
-    use crate::mod_bam::filter_records_iter;
+    use crate::mod_bam::{filter_records_iter, BaseModProbs};
+    use crate::mod_base_code::DnaBase;
     use crate::position_filter::StrandedPositionFilter;
     use crate::util::get_aligned_pairs_forward;
+
+    use super::ReadIdsToBaseModProbs;
+
+    #[test]
+    fn explicit_canonical_probability_is_global_max_across_reads() {
+        let pool =
+            rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+
+        for repetition in 0..8 {
+            let mut reads = ReadIdsToBaseModProbs { inner: HashMap::new() };
+            for index in 1..100 {
+                // The canonical probability is 1 - modified probability, so
+                // the maximum explicit canonical probability is 0.99.
+                reads.add_mod_probs_for_read(
+                    &format!("read-{repetition}-{index}"),
+                    DnaBase::C,
+                    vec![BaseModProbs::new_init('m', index as f32 / 100.0)],
+                );
+            }
+
+            let (_, explicit_canonical) =
+                pool.install(|| reads.mle_probs_per_base());
+            assert_eq!(explicit_canonical[&DnaBase::C], 0.99);
+        }
+    }
 
     #[test]
     fn test_seq_pos_base_mod_probs_filter_positions() {
