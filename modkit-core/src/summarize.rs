@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use anyhow::bail;
 use common_macros::hash_map;
 use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator};
@@ -154,6 +155,12 @@ impl<'a> ModSummary<'a> {
         let base_thresholds = if let Some(x) = base_thresholds {
             x
         } else {
+            if !qual_hist.has_probability_observations() {
+                bail!(
+                    "cannot calculate automatic thresholds because no \
+                     modification probabilities were sampled"
+                )
+            }
             let mut agg = [0f32; 4];
             let base_level_threshs = qual_hist.base_level_percentiles(
                 &[filter_percentile],
