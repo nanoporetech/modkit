@@ -221,6 +221,9 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
         let mut pos = self.left_to_right_seq_pos;
         let mut done = false;
         let mut inferred = true;
+        // A different MM group can count down to zero while this position is
+        // scanned. Only code slots already at zero have an explicit call here.
+        let mut explicit_codes_at_position = [false; SIZE];
 
         while !done && pos < self.seq.len() {
             let base = if self.reverse {
@@ -236,6 +239,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                             done = true;
                             mod_pos = Some(pos);
                             inferred = false;
+                            explicit_codes_at_position[i] = true;
                         }
                     }
                     Some(skip_count) => {
@@ -273,6 +277,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
             let mut mod_code = ModCodeRepr::Code(base as char);
             for i in 0..self.n_codes {
                 if self.canonical_bases[i] == base
+                    && explicit_codes_at_position[i]
                     && self.mm_next[i].map(|x| x == 0).unwrap_or(false)
                 {
                     let q = self.ml.get(self.ml_pos[i]).unwrap();
@@ -319,7 +324,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
                 ))
             };
 
-            self.move_forward(mod_pos, base);
+            self.move_forward(mod_pos, base, &explicit_codes_at_position);
 
             mod_state
         } else {
@@ -344,13 +349,18 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
     }
 
     #[inline]
-    fn move_forward(&mut self, last_pos: usize, base: u8) {
+    fn move_forward(
+        &mut self,
+        last_pos: usize,
+        base: u8,
+        explicit_codes_at_position: &[bool; SIZE],
+    ) {
         self.left_to_right_seq_pos = last_pos.saturating_add(1);
         for i in (0..self.n_codes).filter(|i| self.canonical_bases[*i] == base)
         {
             assert!(i < SIZE);
             match &mut self.mm_next[i] {
-                Some(x) if *x == 0 => {
+                Some(x) if *x == 0 && explicit_codes_at_position[i] => {
                     let num_explicit_positions =
                         self.num_explicit_positions[i].saturating_sub(1);
                     if num_explicit_positions == 0 {
@@ -692,6 +702,30 @@ mod base_mods_adapter_tests {
         assert_eq!(mod_state.mod_qual, 255);
         assert!(!mod_state.modified);
         assert!(mod_state.inferred);
+    }
+
+    #[test]
+    fn test_independent_same_base_groups_keep_their_delta_progression() {
+        let mut record =
+            make_record("C+m?,0;C+h?,1;", &[200, 250], "CC", None, false);
+        record.push_aux(b"MN", Aux::I32(2)).unwrap();
+
+        let mut scanner = BaseModsAdapter::<2>::new(&record).unwrap();
+        let mod_states = std::iter::from_fn(|| {
+            scanner.next_modified_position_no_thresh().unwrap()
+        })
+        .map(|state| {
+            (state.mod_position, state.mod_code, state.mod_qual, state.modified)
+        })
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            mod_states,
+            vec![
+                (0, METHYL_CYTOSINE, 200, true),
+                (1, HYDROXY_METHYL_CYTOSINE, 250, true),
+            ]
+        );
     }
 
     #[test]
