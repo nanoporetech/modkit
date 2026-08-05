@@ -390,8 +390,8 @@ impl QualHist {
         let _ = std::mem::replace(&mut self.mods_hists, mod_hists);
     }
 
-    pub(crate) fn from_records<R: bam::Read>(
-        records: bam::Records<R>,
+    pub(crate) fn from_records<I, E>(
+        records: I,
         stranded_position_filter: Option<StrandedPositionFilter<()>>,
         num_reads: Option<usize>,
         sampling_frac: Option<f64>,
@@ -401,7 +401,11 @@ impl QualHist {
         allow_non_primary: bool,
         mapped_only: bool,
         multi_progress: &MultiProgress,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Self>
+    where
+        I: IntoIterator<Item = Result<bam::Record, E>>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
         let edge_filter_start =
             edge_filter.map(|ef| ef.edge_filter_start).unwrap_or(0usize);
         let edge_filter_end =
@@ -420,10 +424,8 @@ impl QualHist {
                     return Ok(mem);
                 }
             }
-            let Ok(record) = res else {
-                mem.erred_records = mem.erred_records.saturating_add(1);
-                continue 'records;
-            };
+            let record =
+                res.context("failed to read alignment record while collecting probabilities")?;
             if record_is_not_primary(&record) {
                 if !allow_non_primary {
                     continue 'records;
@@ -1820,6 +1822,7 @@ fn byte_to_bool_positions<const SIZE: usize>(b: u8, agg: &mut [u32; SIZE]) {
 #[cfg(test)]
 mod tests {
     use std::{
+        io::{Error, ErrorKind},
         path::PathBuf,
         process::{Command, Stdio},
         thread,
@@ -1828,7 +1831,7 @@ mod tests {
 
     use anyhow::{anyhow, bail};
     use indicatif::MultiProgress;
-    use rust_htslib::bam;
+    use rust_htslib::bam::{self, record::Aux};
 
     use super::{
         process_region_records, run_extract_probs_workers, ChromCoordinates,
@@ -2195,5 +2198,90 @@ mod tests {
             "zero_workers" => assert!(error.contains("at least one")),
             _ => unreachable!(),
         }
+    }
+
+    fn valid_record() -> bam::Record {
+        let mut record = bam::Record::new();
+        record.set(b"valid", None, b"A", &[255]);
+        record.push_aux(b"MM", Aux::String("A+a.,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[42u8][..]).into())).unwrap();
+        record
+    }
+
+    fn collect_test_records(
+        records: Vec<Result<bam::Record, Error>>,
+        allow_non_primary: bool,
+    ) -> anyhow::Result<QualHist> {
+        QualHist::from_records(
+            records,
+            None,
+            None,
+            None,
+            Some(42),
+            None,
+            false,
+            allow_non_primary,
+            false,
+            &MultiProgress::new(),
+        )
+    }
+
+    #[test]
+    fn streaming_reader_error_is_fatal_instead_of_partial_success() {
+        let error = collect_test_records(
+            vec![
+                Ok(valid_record()),
+                Err(Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "synthetic BAM decode failure",
+                )),
+            ],
+            false,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(message.contains("synthetic BAM decode failure"), "{message}");
+        assert!(
+            message.contains("failed to read alignment record"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn malformed_mod_records_remain_nonfatal_rejections() {
+        let mut invalid_secondary = bam::Record::new();
+        invalid_secondary.set(b"secondary", None, b"A", &[255]);
+        invalid_secondary.set_flags(0x100);
+        let mut invalid_primary = bam::Record::new();
+        invalid_primary.set(b"primary", None, b"A", &[255]);
+
+        let hist = collect_test_records(
+            vec![Ok(invalid_secondary), Ok(invalid_primary)],
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(hist.ok_records, 0);
+        assert_eq!(hist.erred_records, 2);
+    }
+
+    #[test]
+    fn valid_streaming_records_are_aggregated_exactly() {
+        let hist = collect_test_records(
+            vec![Ok(valid_record()), Ok(valid_record())],
+            false,
+        )
+        .unwrap();
+        let mut expected = [[0u64; 256]; 4];
+        expected[0][213] = 2;
+
+        assert_eq!(hist.hist, expected);
+        assert_eq!(hist.base_totals, [2, 0, 0, 0]);
+        assert_eq!(hist.num_records_with_base_mods, [2, 0, 0, 0]);
+        assert_eq!(hist.explicit_canonical_probs, [213, 0, 0, 0]);
+        assert!(hist.mods_hists.is_empty());
+        assert_eq!(hist.ok_records, 2);
+        assert_eq!(hist.erred_records, 0);
     }
 }
