@@ -118,10 +118,27 @@ impl LocalizedModCounts {
             .flat_map(|counts| counts.keys().copied())
             .sorted()
             .collect::<Vec<i64>>();
-        let (left, right) = match xs.iter().minmax() {
-            MinMaxResult::MinMax(x, y) => (*x, *y),
-            _ => bail!("should be at least one offset"),
+        let (left, right, has_single_offset) = match xs.iter().minmax() {
+            MinMaxResult::NoElements => {
+                bail!("cannot create localize chart: no offsets available")
+            }
+            MinMaxResult::OneElement(x) => {
+                let x = *x;
+                (x.saturating_sub(1), x.saturating_add(1), true)
+            }
+            MinMaxResult::MinMax(x, y) if x == y => {
+                let x = *x;
+                (x.saturating_sub(1), x.saturating_add(1), true)
+            }
+            MinMaxResult::MinMax(x, y) => (*x, *y, false),
         };
+        let x_axis = Axis::new()
+            .type_(AxisType::Value)
+            .min(left)
+            .max(right)
+            .name("offset");
+        let x_axis =
+            if has_single_offset { x_axis.min_interval(1) } else { x_axis };
         let mut chart = Chart::new()
             .data_zoom(
                 DataZoom::new()
@@ -143,13 +160,7 @@ impl LocalizedModCounts {
                         .save_as_image(SaveAsImage::new()),
                 ),
             )
-            .x_axis(
-                Axis::new()
-                    .type_(AxisType::Value)
-                    .min(left)
-                    .max(right)
-                    .name("offset"),
-            )
+            .x_axis(x_axis)
             .y_axis(
                 Axis::new().type_(AxisType::Value).name("percent modified"),
             );
@@ -161,18 +172,22 @@ impl LocalizedModCounts {
                     DataPoint::Value(CompositeValue::Array(vec![
                         CompositeValue::Number(NumericValue::Integer(*offset)),
                         CompositeValue::Number(NumericValue::Float(
-                            info.frac_modified() as f64,
+                            info.percent_modified() as f64,
                         )),
                     ]))
                 })
                 .collect::<Vec<DataPoint>>();
-            chart = chart.series(
-                Line::new()
-                    .name(format!("{mod_code}"))
-                    .data(dat)
-                    .symbol(Symbol::None)
-                    .line_style(LineStyle::new().width(1.5)),
-            );
+            let is_singleton = dat.len() == 1;
+            let line = Line::new()
+                .name(format!("{mod_code}"))
+                .data(dat)
+                .line_style(LineStyle::new().width(1.5));
+            let line = if is_singleton {
+                line.symbol(Symbol::Circle).show_symbol(true)
+            } else {
+                line.symbol(Symbol::None)
+            };
+            chart = chart.series(line);
         }
 
         HtmlRenderer::new(chart_name.unwrap_or(&default_name), 800, 800)
@@ -298,5 +313,129 @@ mod tests {
             assert_eq!(focus.region.end, expected_end);
             assert_eq!(focus.anchor_point, expected_anchor);
         }
+    }
+    use serde_json::Value;
+
+    use super::LocalizedModCounts;
+    use crate::mod_base_code::{
+        ModCodeRepr, HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE,
+    };
+    use crate::util::ModPositionInfo;
+
+    fn counts(
+        series: impl IntoIterator<Item = (ModCodeRepr, Vec<(i64, u64, u64)>)>,
+    ) -> LocalizedModCounts {
+        let offsets = series
+            .into_iter()
+            .map(|(code, values)| {
+                let values = values
+                    .into_iter()
+                    .map(|(offset, n_valid, n_mod)| {
+                        (offset, ModPositionInfo::new(n_valid, n_mod))
+                    })
+                    .collect();
+                (code, values)
+            })
+            .collect();
+        LocalizedModCounts { offsets }
+    }
+
+    fn chart_json(counts: &LocalizedModCounts) -> Value {
+        let html = counts.get_plot(None).unwrap();
+        let raw_chart = html
+            .split_once("var option = ")
+            .unwrap()
+            .1
+            .split_once(";\n          chart.setOption")
+            .unwrap()
+            .0;
+        serde_json::from_str(raw_chart).unwrap()
+    }
+
+    fn series_named<'a>(chart: &'a Value, name: &str) -> &'a Value {
+        chart["series"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|series| series["name"] == name)
+            .unwrap()
+    }
+
+    #[test]
+    fn plot_uses_percent_modified() {
+        let counts = counts([(METHYL_CYTOSINE, vec![(-1, 4, 1), (1, 4, 3)])]);
+        let chart = chart_json(&counts);
+        let data = chart["series"][0]["data"].as_array().unwrap();
+
+        assert_eq!(chart["yAxis"][0]["name"], "percent modified");
+        assert_eq!(data[0][1].as_f64(), Some(25.0));
+        assert_eq!(data[1][1].as_f64(), Some(75.0));
+    }
+
+    #[test]
+    fn plot_one_point_has_padded_axis_and_visible_symbol() {
+        let counts = counts([(METHYL_CYTOSINE, vec![(0, 4, 1)])]);
+        let chart = chart_json(&counts);
+        let x_axis = &chart["xAxis"][0];
+        let series = series_named(&chart, "m");
+
+        assert_eq!(x_axis["min"].as_i64(), Some(-1));
+        assert_eq!(x_axis["max"].as_i64(), Some(1));
+        assert_eq!(x_axis["minInterval"].as_f64(), Some(1.0));
+        assert_eq!(series["symbol"], "circle");
+        assert_eq!(series["showSymbol"], true);
+        assert_eq!(series["data"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn plot_multiple_singleton_codes_share_padded_axis() {
+        let counts = counts([
+            (METHYL_CYTOSINE, vec![(7, 4, 1)]),
+            (HYDROXY_METHYL_CYTOSINE, vec![(7, 5, 2)]),
+        ]);
+        let chart = chart_json(&counts);
+        let x_axis = &chart["xAxis"][0];
+
+        assert_eq!(x_axis["min"].as_i64(), Some(6));
+        assert_eq!(x_axis["max"].as_i64(), Some(8));
+        assert_eq!(x_axis["minInterval"].as_f64(), Some(1.0));
+        for name in ["m", "h"] {
+            let series = series_named(&chart, name);
+            assert_eq!(series["symbol"], "circle");
+            assert_eq!(series["showSymbol"], true);
+        }
+    }
+
+    #[test]
+    fn plot_singleton_symbol_does_not_change_multi_point_series() {
+        let counts = counts([
+            (METHYL_CYTOSINE, vec![(-2, 4, 1), (2, 4, 3)]),
+            (HYDROXY_METHYL_CYTOSINE, vec![(0, 5, 2)]),
+        ]);
+        let chart = chart_json(&counts);
+        let multi = series_named(&chart, "m");
+        let singleton = series_named(&chart, "h");
+
+        assert_eq!(multi["symbol"], "none");
+        assert!(multi.get("showSymbol").is_none());
+        assert_eq!(singleton["symbol"], "circle");
+        assert_eq!(singleton["showSymbol"], true);
+    }
+
+    #[test]
+    fn plot_preserves_multi_offset_bounds() {
+        let counts = counts([(METHYL_CYTOSINE, vec![(-5, 4, 1), (9, 4, 3)])]);
+        let chart = chart_json(&counts);
+        let x_axis = &chart["xAxis"][0];
+
+        assert_eq!(x_axis["min"].as_i64(), Some(-5));
+        assert_eq!(x_axis["max"].as_i64(), Some(9));
+        assert!(x_axis.get("minInterval").is_none());
+    }
+
+    #[test]
+    fn plot_empty_counts_returns_clear_error() {
+        let error = LocalizedModCounts::default().get_plot(None).unwrap_err();
+        assert!(error.to_string().contains("no offsets"));
     }
 }

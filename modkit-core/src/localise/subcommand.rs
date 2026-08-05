@@ -420,13 +420,13 @@ impl EntryLocalize {
         table.to_csv_writer(writer)?;
 
         if let Some(p) = self.chart_filepath.as_ref() {
+            let blob = counts.get_plot(self.chart_name.as_ref())?;
             let fh = if self.force {
                 File::create(p)?
             } else {
                 File::create_new(p)?
             };
             let mut writer = BufWriter::new(fh);
-            let blob = counts.get_plot(self.chart_name.as_ref())?;
             writer.write(blob.as_bytes())?;
         }
 
