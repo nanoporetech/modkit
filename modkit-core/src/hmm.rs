@@ -413,12 +413,141 @@ impl Projection {
 
 #[cfg(test)]
 mod hmm_tests {
-    use crate::hmm::HmmModel;
+    use crate::hmm::{HmmModel, States};
+
+    fn test_model() -> HmmModel {
+        HmmModel::new(0.1, 0.9, 0.3, -0.1, 0.01, 500, true).unwrap()
+    }
+
+    fn emission_score(model: &HmmModel, p: f64, state: States) -> f64 {
+        let p = if p == 0f64 { 1e-5 } else { p };
+        let (factor, log_probability) = match state {
+            States::Same => (model.same_state_factor, p.ln()),
+            States::Different => {
+                (model.diff_state_factor, (1f64 - p + 1e-5).ln())
+            }
+        };
+        factor * (log_probability - model.significance_factor)
+    }
+
+    fn transition_score(
+        model: &HmmModel,
+        previous: States,
+        current: States,
+        diff_stay: f64,
+    ) -> f64 {
+        match (previous, current) {
+            (States::Same, States::Same) => model.same_to_same,
+            (States::Same, States::Different) => model.same_to_diff,
+            (States::Different, States::Same) => (1f64 - diff_stay).ln(),
+            (States::Different, States::Different) => diff_stay.ln(),
+        }
+    }
+
+    /// Exhaustively score the hidden start state and every emitted state.
+    /// This deliberately does not use the dynamic-programming matrix or its
+    /// back-pointers, so it independently checks both state order and length.
+    fn brute_force_path(
+        model: &HmmModel,
+        scores: &[f64],
+        positions: &[u64],
+    ) -> Vec<States> {
+        assert!(!scores.is_empty());
+        assert_eq!(scores.len(), positions.len());
+
+        let probabilities = scores
+            .iter()
+            .map(|&score| (-score.max(0f64)).exp())
+            .collect::<Vec<_>>();
+        let diff_stays = positions.windows(2).fold(
+            vec![model.dmr_prior],
+            |mut transitions, window| {
+                let gap = (window[1] - window[0]) as f64;
+                transitions.push(if model.linear_proj {
+                    model.projection.linear_project_prob(gap)
+                } else {
+                    model.projection.ln_project_prob(gap)
+                });
+                transitions
+            },
+        );
+
+        let state_count = scores.len() + 1;
+        let mut best: Option<(f64, Vec<States>)> = None;
+        for encoded_path in 0..(1usize << state_count) {
+            let states = (0..state_count)
+                .map(|i| {
+                    if encoded_path & (1usize << i) == 0 {
+                        States::Same
+                    } else {
+                        States::Different
+                    }
+                })
+                .collect::<Vec<_>>();
+            let initial_score = match states[0] {
+                States::Same => model.same_to_same,
+                States::Different => model.same_to_diff,
+            };
+            let total_score = probabilities
+                .iter()
+                .zip(diff_stays.iter())
+                .enumerate()
+                .fold(initial_score, |total, (i, (&p, &diff_stay))| {
+                    total
+                        + transition_score(
+                            model,
+                            states[i],
+                            states[i + 1],
+                            diff_stay,
+                        )
+                        + emission_score(model, p, states[i + 1])
+                });
+
+            if best
+                .as_ref()
+                .map(|(best_score, _)| total_score > *best_score)
+                .unwrap_or(true)
+            {
+                best = Some((total_score, states[1..].to_vec()));
+            }
+        }
+        best.unwrap().1
+    }
 
     #[test]
     fn test_prob_to_factor() {
         let sig_fact = 0.01;
         let fact = HmmModel::prob_to_factor(sig_fact).unwrap();
         dbg!(fact);
+    }
+
+    #[test]
+    fn viterbi_path_matches_independent_oracle_for_tiny_sequences() {
+        let model = test_model();
+        let cases = [
+            (vec![0.0], vec![10]),
+            (vec![12.0], vec![10]),
+            (vec![0.0, 12.0], vec![10, 20]),
+            (vec![12.0, 0.0], vec![10, 20]),
+            (vec![0.0, 0.0, 12.0, 12.0, 0.0], vec![10, 20, 30, 40, 50]),
+        ];
+
+        for (scores, positions) in cases {
+            let expected = brute_force_path(&model, &scores, &positions);
+            let actual = model.viterbi_path(&scores, &positions);
+            assert_eq!(actual.len(), scores.len());
+            assert_eq!(actual, expected, "scores: {scores:?}");
+        }
+    }
+
+    #[test]
+    fn viterbi_path_preserves_state_transitions_in_order() {
+        let model = test_model();
+        let scores = vec![0.0, 0.0, 12.0, 12.0, 0.0];
+        let positions = vec![10, 20, 30, 40, 50];
+        let expected = brute_force_path(&model, &scores, &positions);
+        assert!(expected.windows(2).any(|states| states[0] != states[1]));
+
+        assert_eq!(model.viterbi_path(&scores, &positions), expected);
     }
 }
