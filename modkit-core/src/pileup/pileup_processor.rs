@@ -51,6 +51,17 @@ where
     ) -> anyhow::Result<ModBasePileup2>;
 }
 
+#[inline]
+fn get_query_base(record: &bam::Record, qpos: usize) -> Option<DnaBase> {
+    DnaBase::try_from(record.seq()[qpos]).ok().map(|base| {
+        if record.is_reverse() {
+            base.complement()
+        } else {
+            base
+        }
+    })
+}
+
 pub(super) struct DnaPileupWorker<
     T,
     M,
@@ -319,17 +330,8 @@ impl<
                     // at this aligned position, but there is no modification
                     // call
                     (Some(q), Some(mp)) if q < mp.mod_position => {
-                        let base = {
-                            let Ok(tmp) = DnaBase::try_from(record.seq()[q])
-                            else {
-                                erred_records = erred_records.saturating_add(1);
-                                continue 'records;
-                            };
-                            if record.is_reverse() {
-                                tmp.complement()
-                            } else {
-                                tmp
-                            }
+                        let Some(base) = get_query_base(&record, q) else {
+                            continue 'pileup;
                         };
                         self.matrix
                             .incr_diff_call(rpos, base, ref_base, reverse, hp);
@@ -362,22 +364,16 @@ impl<
                                             break 'overran;
                                         } else {
                                             assert!(pos > q);
-                                            let base = {
-                                                let tmp = DnaBase::try_from(
-                                                    record.seq()[q],
-                                                )
-                                                .unwrap();
-                                                if record.is_reverse() {
-                                                    tmp.complement()
-                                                } else {
-                                                    tmp
-                                                }
+                                            mod_state = Some(ms);
+                                            let Some(base) =
+                                                get_query_base(&record, q)
+                                            else {
+                                                break 'overran;
                                             };
                                             self.matrix.incr_diff_call(
                                                 rpos, base, ref_base, reverse,
                                                 hp,
                                             );
-                                            mod_state = Some(ms);
                                             break 'overran;
                                         }
                                     }
@@ -388,20 +384,14 @@ impl<
                                     continue 'records;
                                 }
                                 Ok(None) => {
-                                    let base = {
-                                        let tmp =
-                                            DnaBase::try_from(record.seq()[q])
-                                                .unwrap();
-                                        if record.is_reverse() {
-                                            tmp.complement()
-                                        } else {
-                                            tmp
-                                        }
+                                    mod_state = None;
+                                    let Some(base) = get_query_base(&record, q)
+                                    else {
+                                        break 'overran;
                                     };
                                     self.matrix.incr_diff_call(
                                         rpos, base, ref_base, reverse, hp,
                                     );
-                                    mod_state = None;
                                     break 'overran;
                                 }
                             }
@@ -412,14 +402,8 @@ impl<
                         self.matrix.incr_delete(rpos, reverse, hp);
                     }
                     (Some(q), None) => {
-                        let base = {
-                            let tmp =
-                                DnaBase::try_from(record.seq()[q]).unwrap();
-                            if record.is_reverse() {
-                                tmp.complement()
-                            } else {
-                                tmp
-                            }
+                        let Some(base) = get_query_base(&record, q) else {
+                            continue 'pileup;
                         };
                         self.matrix
                             .incr_diff_call(rpos, base, ref_base, reverse, hp);
@@ -755,17 +739,8 @@ impl PileupWorker for GenericPileupWorker {
                         continue 'pileup;
                     }
                     (Some(q), Some(mp)) if q < mp => {
-                        let base = {
-                            let Ok(tmp) = DnaBase::try_from(record.seq()[q])
-                            else {
-                                erred_records = erred_records.saturating_add(1);
-                                continue 'records;
-                            };
-                            if record.is_reverse() {
-                                tmp.complement()
-                            } else {
-                                tmp
-                            }
+                        let Some(base) = get_query_base(&record, q) else {
+                            continue 'pileup;
                         };
                         if implicit_bases.contains(&base) {
                             add_to_tally(
@@ -860,15 +835,13 @@ impl PileupWorker for GenericPileupWorker {
                                     break 'overran;
                                 } else {
                                     assert!(pos > q);
-                                    let base = {
-                                        let tmp =
-                                            DnaBase::try_from(record.seq()[q])
-                                                .unwrap();
-                                        if record.is_reverse() {
-                                            tmp.complement()
-                                        } else {
-                                            tmp
-                                        }
+                                    mod_pos = Some(pos);
+                                    canonical_base = Some(can_base);
+                                    pos_base_mod_call = Some(call);
+                                    mod_strand = Some(pos_mod_strand);
+                                    let Some(base) = get_query_base(&record, q)
+                                    else {
+                                        break 'overran;
                                     };
                                     if implicit_bases.contains(&base) {
                                         add_to_tally(
@@ -891,10 +864,6 @@ impl PileupWorker for GenericPileupWorker {
                                             motif_idxs,
                                         );
                                     }
-                                    mod_pos = Some(pos);
-                                    canonical_base = Some(can_base);
-                                    pos_base_mod_call = Some(call);
-                                    mod_strand = Some(pos_mod_strand);
                                     break 'overran;
                                 }
                             }
@@ -910,14 +879,8 @@ impl PileupWorker for GenericPileupWorker {
                         );
                     }
                     (Some(q), None) => {
-                        let base = {
-                            let tmp =
-                                DnaBase::try_from(record.seq()[q]).unwrap();
-                            if record.is_reverse() {
-                                tmp.complement()
-                            } else {
-                                tmp
-                            }
+                        let Some(base) = get_query_base(&record, q) else {
+                            continue 'pileup;
                         };
                         if implicit_bases.contains(&base) {
                             add_to_tally(

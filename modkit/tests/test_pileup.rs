@@ -13,6 +13,90 @@ use mod_kit::mod_base_code::{ModCodeRepr, METHYL_CYTOSINE};
 
 mod common;
 
+fn make_ambiguous_query_pileup_bam(bam_path: &PathBuf, overrun: bool) {
+    let mut header = bam::Header::new();
+    let mut header_record = bam::header::HeaderRecord::new(b"HD");
+    header_record.push_tag(b"VN", "1.6").push_tag(b"SO", "coordinate");
+    header.push_record(&header_record);
+    let mut reference_record = bam::header::HeaderRecord::new(b"SQ");
+    reference_record
+        .push_tag(b"SN", "oligo_1512_adapters")
+        .push_tag(b"LN", 156);
+    header.push_record(&reference_record);
+
+    let (sequence, cigar, mm_tag, ml_tag) = if overrun {
+        (
+            b"CNCTGTACTT".as_slice(),
+            bam::record::CigarString(vec![
+                bam::record::Cigar::SoftClip(1),
+                bam::record::Cigar::Match(9),
+            ]),
+            "C+m?,0,0;",
+            vec![255, 255],
+        )
+    } else {
+        (
+            b"NCTGTACTTN".as_slice(),
+            bam::record::CigarString(vec![bam::record::Cigar::Match(10)]),
+            "C+m?,0;",
+            vec![255],
+        )
+    };
+    let mut record = bam::Record::new();
+    record.set(b"ambiguous-query", Some(&cigar), sequence, &[30; 10]);
+    record.set_tid(0);
+    record.set_pos(0);
+    record.set_mapq(60);
+    record.push_aux(b"MM", bam::record::Aux::String(mm_tag)).unwrap();
+    record
+        .push_aux(b"ML", bam::record::Aux::ArrayU8((&ml_tag[..]).into()))
+        .unwrap();
+
+    let mut writer =
+        bam::Writer::from_path(bam_path, &header, bam::Format::Bam).unwrap();
+    writer.write(&record).unwrap();
+    drop(writer);
+    bam::index::build(bam_path, None, bam::index::Type::Bai, 1).unwrap();
+}
+
+type AmbiguousQueryPileupRow = (u64, ModCodeRepr, u64, u64);
+
+fn run_ambiguous_query_pileup(
+    input_bam: &PathBuf,
+    output_bed: &PathBuf,
+    optimized: bool,
+) -> Result<Vec<AmbiguousQueryPileupRow>, String> {
+    let mut args = vec![
+        "pileup",
+        input_bam.to_str().unwrap(),
+        output_bed.to_str().unwrap(),
+    ];
+    if optimized {
+        args.extend(["--modified-bases", "5mC"]);
+    }
+    args.extend([
+        "--no-filtering",
+        "--ref",
+        "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--threads",
+        "1",
+    ]);
+    run_modkit(&args).map_err(|error| error.to_string())?;
+
+    Ok(BufReader::new(File::open(output_bed).unwrap())
+        .lines()
+        .map(|line| BedMethylLine::parse(&line.unwrap()).unwrap())
+        .map(|row| {
+            (
+                row.start(),
+                row.raw_mod_code,
+                row.count_methylated,
+                row.valid_coverage,
+            )
+        })
+        .collect())
+}
+
 #[test]
 fn test_pileup_help() {
     let pileup_help_args = ["pileup", "--help"];
@@ -153,6 +237,62 @@ fn test_pileup_no_mod_calls() {
     let reader = BufReader::new(File::open(empty_bedfile).unwrap());
     let lines = reader.lines().collect::<Vec<Result<String, _>>>();
     assert_eq!(lines.len(), 0);
+}
+
+#[test]
+fn test_pileup_skips_ambiguous_query_and_keeps_downstream_modification() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let input_bam = temp_dir.path().join("ambiguous-query.bam");
+    let optimized_output = temp_dir.path().join("optimized.bed");
+    let generic_output = temp_dir.path().join("generic.bed");
+    make_ambiguous_query_pileup_bam(&input_bam, false);
+    let observed = vec![
+        (
+            "optimized",
+            run_ambiguous_query_pileup(&input_bam, &optimized_output, true),
+        ),
+        (
+            "generic",
+            run_ambiguous_query_pileup(&input_bam, &generic_output, false),
+        ),
+    ];
+    let expected_row = (1, METHYL_CYTOSINE, 1, 1);
+
+    assert_eq!(
+        observed,
+        vec![
+            ("optimized", Ok(vec![expected_row])),
+            ("generic", Ok(vec![expected_row])),
+        ]
+    );
+}
+
+#[test]
+fn test_pileup_skips_ambiguous_query_after_unaligned_modification() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let input_bam = temp_dir.path().join("ambiguous-query-overrun.bam");
+    let optimized_output = temp_dir.path().join("optimized.bed");
+    let generic_output = temp_dir.path().join("generic.bed");
+    make_ambiguous_query_pileup_bam(&input_bam, true);
+    let observed = vec![
+        (
+            "optimized",
+            run_ambiguous_query_pileup(&input_bam, &optimized_output, true),
+        ),
+        (
+            "generic",
+            run_ambiguous_query_pileup(&input_bam, &generic_output, false),
+        ),
+    ];
+    let expected_row = (1, METHYL_CYTOSINE, 1, 1);
+
+    assert_eq!(
+        observed,
+        vec![
+            ("optimized", Ok(vec![expected_row])),
+            ("generic", Ok(vec![expected_row])),
+        ]
+    );
 }
 
 #[test]
