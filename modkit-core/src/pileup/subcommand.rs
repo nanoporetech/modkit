@@ -41,6 +41,7 @@ use crate::pileup::pileup_processor::{
 };
 use crate::pileup::{ModBasePileup2, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
+use crate::reads_sampler::deterministic_sampler::resolve_master_seed;
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::sample_probs::{
     calculate_reads_per_contig, run_extract_probs_workers,
@@ -778,6 +779,11 @@ impl ModBamPileup {
                 self.sampling_interval_size,
                 sampling_region,
             )?;
+        let master_seed = if rng_sample {
+            resolve_master_seed(self.seed)
+        } else {
+            self.seed.unwrap_or_default()
+        };
         let chrom_to_counts = chrom_to_counts.map(|x| Arc::new(x));
 
         if let Some(preset) = preset {
@@ -808,7 +814,7 @@ impl ModBamPileup {
                     *motif_bases
                 }
             };
-            for i in 0..n_workers {
+            for _ in 0..n_workers {
                 let worker = RegionMleProbs::<
                     AlignedBaseArgmaxProbs,
                     ProbsExtractor,
@@ -819,7 +825,7 @@ impl ModBamPileup {
                     motif_bases,
                     edge_filter,
                     thread_pool,
-                    self.seed.unwrap_or(i as u64),
+                    master_seed,
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
@@ -834,7 +840,7 @@ impl ModBamPileup {
                     motif_bases.iter().unique().join(",")
                 )
             });
-            for i in 0..n_workers {
+            for _ in 0..n_workers {
                 let worker = RegionMleProbs::<
                     AlignedBaseArgmaxProbs,
                     ProbsExtractor,
@@ -845,7 +851,7 @@ impl ModBamPileup {
                     motif_bases,
                     edge_filter,
                     thread_pool,
-                    self.seed.unwrap_or(i as u64),
+                    master_seed,
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
@@ -858,7 +864,7 @@ impl ModBamPileup {
                     "calculating threshold value with probabilites from reads",
                 )
             });
-            for i in 0..n_workers {
+            for _ in 0..n_workers {
                 let worker =
                     RegionMleProbs::<BaseArgmaxProbs, ProbsExtractor>::new(
                         &self.in_bam,
@@ -867,7 +873,7 @@ impl ModBamPileup {
                         [DnaBase::A; 4],
                         edge_filter,
                         thread_pool,
-                        self.seed.unwrap_or(i as u64),
+                        master_seed,
                         rng_sample,
                         sample_frac,
                         chrom_to_counts.clone(),

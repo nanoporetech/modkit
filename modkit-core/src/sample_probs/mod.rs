@@ -32,6 +32,9 @@ use crate::{
         AlignedBaseModsIterator, BaseModsAdapter, ModState,
     },
     position_filter::StrandedPositionFilter,
+    reads_sampler::deterministic_sampler::{
+        resolve_master_seed, DeterministicFractionSampler,
+    },
     util::{
         get_human_readable_table, get_master_progress_bar, get_targets,
         get_ticker, record_is_not_primary, CheckedAddArr, Region, Strand,
@@ -675,7 +678,9 @@ pub(crate) trait ExtractsMleProbs<T> {
         sample_frac: f64,
         motif_bases: [DnaBase; 4],
         edge_filter: Option<&EdgeFilter>,
-    ) -> Self;
+    ) -> anyhow::Result<Self>
+    where
+        Self: Sized;
     fn process_record(
         &mut self,
         record: &bam::Record,
@@ -725,6 +730,8 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T>> RegionMleProbs<T, H> {
         sample_frac: f64,
         chrom_to_counts: Option<Arc<FxHashMap<u32, usize>>>,
     ) -> anyhow::Result<Self> {
+        let hist =
+            H::new(worker_no, sample, sample_frac, motif_bases, edge_filter)?;
         let mut reader = bam::IndexedReader::from_path(bam_fp)?;
         reader.set_thread_pool(&thread_pool)?;
         if reader_is_cram(&reader) {
@@ -732,7 +739,8 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T>> RegionMleProbs<T, H> {
                 reader.set_reference(reference_fp)?;
                 reader.set_cram_options(
                     htslib::hts_fmt_option_CRAM_OPT_REQUIRED_FIELDS,
-                    htslib::sam_fields_SAM_FLAG
+                    htslib::sam_fields_SAM_QNAME
+                        | htslib::sam_fields_SAM_FLAG
                         | htslib::sam_fields_SAM_RNAME
                         | htslib::sam_fields_SAM_POS
                         | htslib::sam_fields_SAM_MAPQ
@@ -744,8 +752,6 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T>> RegionMleProbs<T, H> {
                 bail!("CRAM input requires reference")
             }
         };
-        let hist =
-            H::new(worker_no, sample, sample_frac, motif_bases, edge_filter);
         Ok(Self {
             reader,
             allow_non_primary,
@@ -838,14 +844,44 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
 
 pub(crate) struct ProbsExtractor {
     rng: SmallRng,
-    sample: bool,
-    sample_frac: f64,
+    sampler: Option<DeterministicFractionSampler>,
     motif_bases: [DnaBase; 4],
     edge_filter_start: usize,
     edge_filter_end: usize,
 }
 
 impl ProbsExtractor {
+    fn new(
+        seed: u64,
+        sample: bool,
+        sample_frac: f64,
+        motif_bases: [DnaBase; 4],
+        edge_filter: Option<&EdgeFilter>,
+    ) -> anyhow::Result<Self> {
+        let sampler = sample
+            .then(|| DeterministicFractionSampler::new(seed, sample_frac))
+            .transpose()?;
+        let edge_filter_start =
+            edge_filter.map(|ef| ef.edge_filter_start).unwrap_or(0usize);
+        let edge_filter_end =
+            edge_filter.map(|ef| ef.edge_filter_end).unwrap_or(0usize);
+        Ok(Self {
+            rng: SmallRng::seed_from_u64(seed),
+            sampler,
+            motif_bases,
+            edge_filter_start,
+            edge_filter_end,
+        })
+    }
+
+    #[inline]
+    fn include_record(&self, record: &bam::Record) -> bool {
+        self.sampler
+            .as_ref()
+            .map(|sampler| sampler.include(record))
+            .unwrap_or(true)
+    }
+
     fn get_aligned_mod_state_iterator<'a>(
         record: &'a bam::Record,
         chrom_coords: &'a ChromCoordinates,
@@ -1060,16 +1096,8 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
         sample_frac: f64,
         motif_bases: [DnaBase; 4],
         _edge_filter: Option<&EdgeFilter>,
-    ) -> Self {
-        let rng = SmallRng::seed_from_u64(seed);
-        Self {
-            rng,
-            sample,
-            sample_frac,
-            motif_bases,
-            edge_filter_start: 0usize,
-            edge_filter_end: 0usize,
-        }
+    ) -> anyhow::Result<Self> {
+        Self::new(seed, sample, sample_frac, motif_bases, None)
     }
 
     #[inline]
@@ -1083,10 +1111,8 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
         _mods_hists: &mut Vec<ModHist>,
         records_with_base_mods: &mut [u32; 4],
     ) -> anyhow::Result<bool> {
-        if self.sample {
-            if !self.rng.gen_bool(self.sample_frac) {
-                return Ok(false);
-            }
+        if !self.include_record(record) {
+            return Ok(false);
         }
 
         if !chrom_coords.final_interval {
@@ -1127,16 +1153,8 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
         sample_frac: f64,
         motif_bases: [DnaBase; 4],
         _edge_filter: Option<&EdgeFilter>,
-    ) -> Self {
-        let rng = SmallRng::seed_from_u64(seed);
-        Self {
-            rng,
-            sample,
-            sample_frac,
-            motif_bases,
-            edge_filter_start: 0usize,
-            edge_filter_end: 0usize,
-        }
+    ) -> anyhow::Result<Self> {
+        Self::new(seed, sample, sample_frac, motif_bases, None)
     }
 
     #[inline]
@@ -1150,10 +1168,8 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
         mods_hists: &mut Vec<ModHist>,
         records_with_base_mods: &mut [u32; 4],
     ) -> anyhow::Result<bool> {
-        if self.sample {
-            if !self.rng.gen_bool(self.sample_frac) {
-                return Ok(false);
-            }
+        if !self.include_record(record) {
+            return Ok(false);
         }
         if !chrom_coords.final_interval {
             let aln_end = record.reference_end();
@@ -1194,20 +1210,8 @@ impl ExtractsMleProbs<AlignedBaseAndModArgmaxProbs> for ProbsExtractor {
         sample_frac: f64,
         motif_bases: [DnaBase; 4],
         edge_filter: Option<&EdgeFilter>,
-    ) -> Self {
-        let rng = SmallRng::seed_from_u64(seed);
-        let edge_filter_start =
-            edge_filter.map(|ef| ef.edge_filter_start).unwrap_or(0usize);
-        let edge_filter_end =
-            edge_filter.map(|ef| ef.edge_filter_end).unwrap_or(0usize);
-        Self {
-            rng,
-            sample,
-            sample_frac,
-            motif_bases,
-            edge_filter_start,
-            edge_filter_end,
-        }
+    ) -> anyhow::Result<Self> {
+        Self::new(seed, sample, sample_frac, motif_bases, edge_filter)
     }
 
     #[inline]
@@ -1221,10 +1225,8 @@ impl ExtractsMleProbs<AlignedBaseAndModArgmaxProbs> for ProbsExtractor {
         mods_hists: &mut Vec<ModHist>,
         records_with_base_mods: &mut [u32; 4],
     ) -> anyhow::Result<bool> {
-        if self.sample {
-            if !self.rng.gen_bool(self.sample_frac) {
-                return Ok(false);
-            }
+        if !self.include_record(record) {
+            return Ok(false);
         }
         let start_pos = chrom_coords.start_pos;
         let end_pos = chrom_coords.end_pos;
@@ -1279,20 +1281,8 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
         sample_frac: f64,
         motif_bases: [DnaBase; 4],
         edge_filter: Option<&EdgeFilter>,
-    ) -> Self {
-        let rng = SmallRng::seed_from_u64(seed);
-        let edge_filter_start =
-            edge_filter.map(|ef| ef.edge_filter_start).unwrap_or(0usize);
-        let edge_filter_end =
-            edge_filter.map(|ef| ef.edge_filter_end).unwrap_or(0usize);
-        Self {
-            rng,
-            sample,
-            sample_frac,
-            motif_bases,
-            edge_filter_start,
-            edge_filter_end,
-        }
+    ) -> anyhow::Result<Self> {
+        Self::new(seed, sample, sample_frac, motif_bases, edge_filter)
     }
 
     #[inline]
@@ -1306,10 +1296,8 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
         _mods_hists: &mut Vec<ModHist>,
         records_with_base_mods: &mut [u32; 4],
     ) -> anyhow::Result<bool> {
-        if self.sample {
-            if !self.rng.gen_bool(self.sample_frac) {
-                return Ok(false);
-            }
+        if !self.include_record(record) {
+            return Ok(false);
         }
         let should_count_record = if !chrom_coords.final_interval {
             let aln_end = record.reference_end();
@@ -1556,6 +1544,11 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
             interval_size,
             sampling_region,
         )?;
+    let master_seed = if rng_sample {
+        resolve_master_seed(seed)
+    } else {
+        seed.unwrap_or_default()
+    };
     let chrom_to_counts = chrom_to_counts.map(|x| Arc::new(x));
     let motif_lookup = get_motif_lookup_from_parts(
         motifs,
@@ -1572,7 +1565,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
         stranded_position_filter.clone(),
     )?;
     if let Some(motif_bases) = feeder.get_motif_bases() {
-        for i in 0..n_workers {
+        for _ in 0..n_workers {
             let worker: Box<dyn ExtractProbsWorker> = if collect_mod_histograms
             {
                 Box::new(RegionMleProbs::<
@@ -1585,7 +1578,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
                     motif_bases,
                     edge_filter,
                     io_threadpool,
-                    seed.unwrap_or(i as u64),
+                    master_seed,
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
@@ -1601,7 +1594,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
                     motif_bases,
                     edge_filter,
                     io_threadpool,
-                    seed.unwrap_or(i as u64),
+                    master_seed,
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
@@ -1610,7 +1603,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
             workers.push(worker);
         }
     } else if feeder.has_position_filter() {
-        for i in 0..n_workers {
+        for _ in 0..n_workers {
             let worker: Box<dyn ExtractProbsWorker> = if collect_mod_histograms
             {
                 Box::new(RegionMleProbs::<
@@ -1623,7 +1616,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
                     [DnaBase::A; 4],
                     edge_filter,
                     io_threadpool,
-                    seed.unwrap_or(i as u64),
+                    master_seed,
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
@@ -1639,7 +1632,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
                     [DnaBase::A; 4],
                     edge_filter,
                     io_threadpool,
-                    seed.unwrap_or(i as u64),
+                    master_seed,
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
@@ -1648,7 +1641,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
             workers.push(worker);
         }
     } else {
-        for i in 0..n_workers {
+        for _ in 0..n_workers {
             let worker: Box<dyn ExtractProbsWorker> = if collect_mod_histograms
             {
                 Box::new(RegionMleProbs::<BaseAndModArgmaxProbs, ProbsExtractor>::new(
@@ -1658,7 +1651,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
                                     [DnaBase::A; 4],
                                     edge_filter,
                                     io_threadpool,
-                                    seed.unwrap_or(i as u64),
+                                    master_seed,
                                     rng_sample,
                                     sample_frac,
                                     chrom_to_counts.clone(),
@@ -1672,7 +1665,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
                         [DnaBase::A; 4],
                         edge_filter,
                         io_threadpool,
-                        seed.unwrap_or(i as u64),
+                        master_seed,
                         rng_sample,
                         sample_frac,
                         chrom_to_counts.clone(),
@@ -1759,3 +1752,6 @@ fn byte_to_bool_positions<const SIZE: usize>(b: u8, agg: &mut [u32; SIZE]) {
         agg[i] = count.saturating_add(1u32);
     }
 }
+
+#[cfg(test)]
+mod tests;

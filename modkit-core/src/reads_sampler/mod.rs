@@ -24,6 +24,7 @@ use crate::util::{
 };
 use record_sampler::RecordSampler;
 
+pub(crate) mod deterministic_sampler;
 pub mod record_sampler;
 pub mod sampling_schedule;
 

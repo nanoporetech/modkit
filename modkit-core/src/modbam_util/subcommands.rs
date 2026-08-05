@@ -40,6 +40,7 @@ use crate::modbam_util::check_tags::ModTagViews;
 use crate::monoid::Moniod;
 use crate::motifs::motif_bed::RegexMotif;
 use crate::position_filter::StrandedPositionFilter;
+use crate::reads_sampler::deterministic_sampler::resolve_master_seed;
 use crate::reads_sampler::record_sampler::RecordSampler;
 use crate::reads_sampler::sample_reads_from_interval;
 use crate::reads_sampler::sampling_schedule::SamplingSchedule;
@@ -1028,8 +1029,8 @@ pub struct SampleModBaseProbs {
     #[clap(help_heading = "Sampling Options")]
     #[arg(long, alias = "no_filtering", default_value_t = false)]
     no_sampling: bool,
-    /// Random seed for deterministic running, the default is
-    /// non-deterministic, only used when no BAM index is provided.
+    /// Provide a seed to make fractional read sampling decisions repeatable
+    /// for indexed and unindexed inputs.
     #[clap(help_heading = "Sampling Options")]
     #[arg(short, conflicts_with = "no_sampling", long)]
     seed: Option<u64>,
@@ -1250,6 +1251,11 @@ impl SampleModBaseProbs {
                     0f64,
                 )
             };
+        let master_seed = if rng_sample {
+            resolve_master_seed(self.seed)
+        } else {
+            self.seed.unwrap_or_default()
+        };
 
         let mut workers: Vec<Box<dyn ExtractProbsWorker>> =
             Vec::with_capacity(self.threads);
@@ -1276,7 +1282,7 @@ impl SampleModBaseProbs {
                     "collecting base and modification histograms at aligned \
                      positions"
                 );
-                for i in 0..self.threads {
+                for _ in 0..self.threads {
                     let w = RegionMleProbs::<
                         AlignedBaseAndModArgmaxProbs,
                         ProbsExtractor,
@@ -1287,7 +1293,7 @@ impl SampleModBaseProbs {
                         motif_bases,
                         edge_filter.as_ref(),
                         &thread_pool,
-                        self.seed.unwrap_or(i as u64),
+                        master_seed,
                         rng_sample,
                         sample_frac,
                         chrom_to_counts.clone(),
@@ -1296,7 +1302,7 @@ impl SampleModBaseProbs {
                 }
             } else {
                 info!("collecting base-level histograms at aligned positions");
-                for i in 0..self.threads {
+                for _ in 0..self.threads {
                     let w = RegionMleProbs::<
                         AlignedBaseArgmaxProbs,
                         ProbsExtractor,
@@ -1307,7 +1313,7 @@ impl SampleModBaseProbs {
                         motif_bases,
                         edge_filter.as_ref(),
                         &thread_pool,
-                        self.seed.unwrap_or(i as u64),
+                        master_seed,
                         rng_sample,
                         sample_frac,
                         chrom_to_counts.clone(),
@@ -1321,7 +1327,7 @@ impl SampleModBaseProbs {
                     "collecting base and modification histograms, using all \
                      read positions"
                 );
-                for i in 0..self.threads {
+                for _ in 0..self.threads {
                     let w = RegionMleProbs::<
                         BaseAndModArgmaxProbs,
                         ProbsExtractor,
@@ -1332,7 +1338,7 @@ impl SampleModBaseProbs {
                         motif_bases,
                         edge_filter.as_ref(),
                         &thread_pool,
-                        self.seed.unwrap_or(i as u64),
+                        master_seed,
                         rng_sample,
                         sample_frac,
                         chrom_to_counts.clone(),
@@ -1344,7 +1350,7 @@ impl SampleModBaseProbs {
                     "collecting base-level histograms, using all read \
                      positions"
                 );
-                for i in 0..self.threads {
+                for _ in 0..self.threads {
                     let w =
                         RegionMleProbs::<BaseArgmaxProbs, ProbsExtractor>::new(
                             &bam_fp,
@@ -1353,7 +1359,7 @@ impl SampleModBaseProbs {
                             motif_bases,
                             edge_filter.as_ref(),
                             &thread_pool,
-                            self.seed.unwrap_or(i as u64),
+                            master_seed,
                             rng_sample,
                             sample_frac,
                             chrom_to_counts.clone(),
@@ -2275,8 +2281,8 @@ pub struct CallMods {
         value_parser = parse_sampling_fraction
     )]
     sampling_frac: Option<f64>,
-    /// Set a random seed for deterministic running, the default is
-    /// non-deterministic, only used when no BAM index is provided.
+    /// Provide a seed to make fractional read sampling decisions repeatable
+    /// for indexed and unindexed inputs.
     #[arg(
         long,
         conflicts_with = "num_reads",
