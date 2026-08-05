@@ -47,6 +47,20 @@ fn truth(
     HashMap::from([("chr1".to_string(), strand_positions)])
 }
 
+fn truth_positions(
+    strand: Strand,
+    positions: impl IntoIterator<Item = i64>,
+    status: BaseStatus,
+) -> ChromStrandPositionNames {
+    HashMap::from([(
+        "chr1".to_string(),
+        HashMap::from([(
+            strand,
+            positions.into_iter().map(|pos| (pos, status)).collect(),
+        )]),
+    )])
+}
+
 fn classify(
     records: impl IntoIterator<Item = Record>,
     truth: &ChromStrandPositionNames,
@@ -310,4 +324,49 @@ fn unrelated_empty_descriptor_does_not_create_observations() {
         classify([unrelated], &truth([Strand::Positive, Strand::Negative], M));
 
     assert!(observed.is_empty());
+}
+
+#[test]
+fn explicit_unseeded_sites_compose_reference_skips_and_iupac_no_calls() {
+    let record = make_record(
+        "unseeded-refskip-iupac",
+        "CNRAC",
+        vec![Cigar::Match(1), Cigar::RefSkip(3), Cigar::Match(4)],
+        "C+m?,0;",
+        &[255],
+    );
+    let observed =
+        classify([record], &truth_positions(Strand::Positive, 1..8, M));
+
+    assert_exact_counts(
+        &observed,
+        &[
+            ((M, BaseStatus::NoCall), 3),
+            ((M, BaseStatus::Mismatch(DnaBase::A)), 1),
+        ],
+    );
+}
+
+#[test]
+fn reverse_minus_fallback_preserves_no_call_mismatch_and_deletion_orientation()
+{
+    let mut record = make_record(
+        "reverse-minus-fallback",
+        "CAC",
+        vec![Cigar::Match(2), Cigar::Del(1), Cigar::Match(1)],
+        "G-m?;",
+        &[],
+    );
+    record.set_reverse();
+    let observed =
+        classify([record], &truth_positions(Strand::Positive, 0..3, M));
+
+    assert_exact_counts(
+        &observed,
+        &[
+            ((M, BaseStatus::NoCall), 1),
+            ((M, BaseStatus::Mismatch(DnaBase::A)), 1),
+            ((M, BaseStatus::Deletion), 1),
+        ],
+    );
 }
