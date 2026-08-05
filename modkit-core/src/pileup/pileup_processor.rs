@@ -18,8 +18,7 @@ use crate::{
         MmTagInfo,
     },
     mod_base_code::{
-        DnaBase, ModCodeRepr, ANY_CYTOSINE, HYDROXY_METHYL_CYTOSINE,
-        METHYL_CYTOSINE, SIX_METHYL_ADENINE,
+        DnaBase, ModCodeRepr, ANY_CYTOSINE, METHYL_CYTOSINE, SIX_METHYL_ADENINE,
     },
     motifs::motif_bed::MotifInfo,
     pileup::{
@@ -1460,7 +1459,7 @@ impl ACountsMatrix<DnaCytosineCombine, 2, false> for CountsMatrix {
         &mut self,
         rpos: u32,
         canonical_base: DnaBase,
-        mod_code: ModCodeRepr,
+        _mod_code: ModCodeRepr,
         reverse: bool,
         haplotype: u8,
         _combine_mods: bool,
@@ -1473,12 +1472,8 @@ impl ACountsMatrix<DnaCytosineCombine, 2, false> for CountsMatrix {
         );
         match canonical_base {
             DnaBase::C => {
-                if mod_code == METHYL_CYTOSINE
-                    || mod_code == HYDROXY_METHYL_CYTOSINE
-                {
-                    self.inner[offset + METH_C_OFFSET] =
-                        self.inner[offset + METH_C_OFFSET].saturating_add(1);
-                }
+                self.inner[offset + METH_C_OFFSET] =
+                    self.inner[offset + METH_C_OFFSET].saturating_add(1);
             }
             _ => {}
         }
@@ -1501,7 +1496,7 @@ impl ACountsMatrix<DnaCytosineCombine, 2, false> for CountsMatrix {
         match canonical_base {
             DnaBase::C => {
                 self.inner[offset + FILT_C_OFFSET] =
-                    self.inner[offset + FILT_C_OFFSET];
+                    self.inner[offset + FILT_C_OFFSET].saturating_add(1);
             }
             _ => {}
         }
@@ -2506,4 +2501,147 @@ fn indices_to_byte(motif_idxs: &BitSlice) -> u8 {
         agg |= b << i;
     }
     agg
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        mod_base_code::{
+            DnaBase, ModCodeRepr, ANY_CYTOSINE, FORMYL_CYTOSINE,
+            HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE, TWO_OME_CYTOSINE,
+        },
+        pileup::base_mods_adapter::ModState,
+    };
+
+    use super::{
+        ACountsMatrix, CountsMatrix, DnaCytosineCombine, DnaModOption,
+    };
+
+    fn new_cytosine_combine_matrix() -> CountsMatrix {
+        <CountsMatrix as ACountsMatrix<DnaCytosineCombine, 2, false>>::new(
+            1,
+            false,
+            Vec::new(),
+            0,
+            u16::MAX,
+        )
+    }
+
+    fn increment_cytosine_call(
+        matrix: &mut CountsMatrix,
+        modified: bool,
+        filtered: bool,
+        mod_code: ModCodeRepr,
+    ) {
+        <CountsMatrix as ACountsMatrix<
+            DnaCytosineCombine,
+            2,
+            false,
+        >>::incr_call(
+            matrix,
+            ModState {
+                mod_position: 0,
+                modified,
+                filtered,
+                mod_code,
+                primary_base: DnaBase::C,
+                inferred: false,
+                mod_qual: 255,
+            },
+            0,
+            DnaBase::C,
+            false,
+            0,
+            true,
+        );
+    }
+
+    fn decode_cytosine_combine(
+        matrix: &CountsMatrix,
+    ) -> Vec<crate::pileup::PileupFeatureCounts2> {
+        <CountsMatrix as ACountsMatrix<DnaCytosineCombine, 2, false>>::decode(
+            matrix,
+            100,
+            DnaModOption::Combine,
+            false,
+        )
+    }
+
+    #[test]
+    fn dna_cytosine_combine_counts_every_c_modification() {
+        let mut matrix = new_cytosine_combine_matrix();
+        increment_cytosine_call(&mut matrix, false, false, ANY_CYTOSINE);
+        for mod_code in [
+            METHYL_CYTOSINE,
+            HYDROXY_METHYL_CYTOSINE,
+            FORMYL_CYTOSINE,
+            TWO_OME_CYTOSINE,
+        ] {
+            increment_cytosine_call(&mut matrix, true, false, mod_code);
+        }
+
+        let decoded = decode_cytosine_combine(&matrix);
+        let counts = &decoded[0];
+        assert_eq!(
+            (
+                counts.position,
+                counts.raw_strand,
+                counts.filtered_coverage,
+                counts.mod_code,
+                counts.n_canonical,
+                counts.n_modified,
+                counts.n_other_modified,
+                counts.n_delete,
+                counts.n_filtered,
+                counts.n_diff,
+                counts.n_nocall,
+                counts.motif_idxs,
+            ),
+            (100, '+', 5, ANY_CYTOSINE, 1, 4, 0, 0, 0, 0, 0, 0)
+        );
+        assert_eq!(
+            counts.filtered_coverage,
+            counts
+                .n_canonical
+                .saturating_add(counts.n_modified)
+                .saturating_add(counts.n_other_modified)
+        );
+    }
+
+    #[test]
+    fn dna_cytosine_combine_counts_filtered_c_calls_saturating() {
+        let mut matrix = new_cytosine_combine_matrix();
+        increment_cytosine_call(&mut matrix, false, false, ANY_CYTOSINE);
+        increment_cytosine_call(&mut matrix, false, true, ANY_CYTOSINE);
+        let decoded = decode_cytosine_combine(&matrix);
+        let counts = &decoded[0];
+        assert_eq!(
+            (
+                counts.position,
+                counts.raw_strand,
+                counts.filtered_coverage,
+                counts.mod_code,
+                counts.n_canonical,
+                counts.n_modified,
+                counts.n_other_modified,
+                counts.n_delete,
+                counts.n_filtered,
+                counts.n_diff,
+                counts.n_nocall,
+                counts.motif_idxs,
+            ),
+            (100, '+', 1, ANY_CYTOSINE, 1, 0, 0, 0, 1, 0, 0, 0)
+        );
+        assert_eq!(
+            counts.filtered_coverage,
+            counts
+                .n_canonical
+                .saturating_add(counts.n_modified)
+                .saturating_add(counts.n_other_modified)
+        );
+
+        matrix.inner[super::FILT_C_OFFSET] = u16::MAX;
+        increment_cytosine_call(&mut matrix, false, true, ANY_CYTOSINE);
+        assert_eq!(decode_cytosine_combine(&matrix)[0].n_filtered, u16::MAX);
+    }
 }
