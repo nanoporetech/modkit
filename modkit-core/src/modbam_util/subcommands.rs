@@ -776,7 +776,6 @@ impl Adjust {
             .map(|raw| parse_edge_filter_input(raw, self.invert_edge_filter))
             .transpose()?;
 
-        dbg!(&self.cpg);
         let motifs = parse_forward_motifs(&self.motif, self.cpg)?;
         if let Some(ms) = motifs.as_ref() {
             let patterns = ms.iter().map(|x| x.as_str()).join(",");

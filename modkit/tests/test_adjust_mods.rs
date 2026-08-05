@@ -5,6 +5,8 @@ use mod_kit::mod_bam::RawModTags;
 use mod_kit::mod_base_code::{BaseState, DnaBase};
 use rust_htslib::{bam, bam::Read};
 use std::path::PathBuf;
+use std::process::Command;
+use tempfile::tempdir;
 
 mod common;
 
@@ -12,6 +14,29 @@ mod common;
 fn test_help() {
     let pileup_help_args = ["adjust-mods", "--help"];
     let _out = run_modkit(&pileup_help_args).unwrap();
+}
+
+#[test]
+fn test_adjust_mods_does_not_dump_cpg_to_stderr() {
+    let temp_dir = tempdir().unwrap();
+    let output_bam = temp_dir.path().join("adjusted.bam");
+    let output = Command::new(env!("CARGO_BIN_EXE_modkit"))
+        .args([
+            "adjust-mods",
+            "--ignore",
+            "h",
+            "../tests/resources/bc_anchored_10_reads.sorted.bam",
+            output_bam.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "adjust-mods failed: {stderr}");
+    let mut reader = bam::Reader::from_path(&output_bam).unwrap();
+    assert!(reader.records().next().is_some(), "expected adjusted records");
+    assert!(!stderr.contains("&self.cpg = false"), "{stderr}");
+    assert!(!stderr.contains("modbam_util/subcommands.rs"), "{stderr}");
 }
 
 fn tests_adjust_output(
