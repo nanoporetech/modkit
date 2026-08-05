@@ -250,6 +250,11 @@ pub(crate) fn calculate_threshold_with_fallback(
     max_explicit_canonical_prob: &HashMap<DnaBase, f32>,
     filter_percentile: f32,
 ) -> anyhow::Result<HashMap<DnaBase, f32>> {
+    anyhow::ensure!(
+        !probs_per_base.is_empty(),
+        "cannot calculate automatic thresholds because no modification \
+         probabilities were sampled"
+    );
     probs_per_base
         .iter_mut()
         .map(|(dna_base, mod_base_probs)| {
@@ -327,5 +332,21 @@ mod thresolds_tests {
         for (_, t) in thresholds {
             assert_eq!(t, 0.95);
         }
+    }
+
+    #[test]
+    fn empty_sample_does_not_produce_an_empty_threshold_map() {
+        let error = calculate_threshold_with_fallback(
+            Default::default(),
+            &Default::default(),
+            0.1,
+        )
+        .expect_err("an empty sample must not disable filtering");
+
+        assert_eq!(
+            error.to_string(),
+            "cannot calculate automatic thresholds because no modification \
+             probabilities were sampled"
+        );
     }
 }
