@@ -751,11 +751,13 @@ fn machine_parseable_table(
         gt_codes.iter().chain(call_codes.iter()).unique().collect();
     all_codes.sort();
 
-    let mut out_str = "[[\"ground_truth_label\",\"".to_string();
-    out_str.push_str(
-        &all_codes.iter().map(|x| x.human_display(validate_base)).join("\",\""),
-    );
-    out_str.push_str("\"]");
+    let mut out_str = "[[\"ground_truth_label\"".to_string();
+    for &call_code in &all_codes {
+        out_str.push_str(",\"");
+        out_str.push_str(&call_code.human_display(validate_base));
+        out_str.push_str("\"");
+    }
+    out_str.push_str("]");
     for gt_code in &gt_codes {
         out_str.push_str(",[\"");
         out_str.push_str(&gt_code.human_display(validate_base));
@@ -1076,6 +1078,58 @@ impl ValidateFromModBam {
             _ => false,
         });
 
+        // Accuracy and filtering rates have no denominator when every
+        // observation is a non-call status.
+        if all_probs.values().all(Vec::is_empty) {
+            info!("Balancing ground truth call totals");
+            print_table(can_base, &all_probs, false, "Balanced counts summary");
+            info!("Raw accuracy: NA");
+            print_table(
+                can_base,
+                &all_probs,
+                true,
+                "Raw modified base calls contingency table",
+            );
+
+            let threshold = self
+                .filter_threshold
+                .map(|threshold| threshold.to_string())
+                .unwrap_or_else(|| "NA".to_string());
+            info!("Call probability threshold: {threshold}");
+            info!("Percent of modified base calls removed: NA");
+            info!("{}", Style::new().bold().paint("Filtered accuracy: NA"));
+            print_table(
+                can_base,
+                &all_probs,
+                true,
+                "Filtered modified base calls contingency table",
+            );
+
+            if let Some(valid_out_handle) = &mut out_handle {
+                let empty_table = machine_parseable_table(can_base, &all_probs);
+                valid_out_handle
+                    .write_all(
+                        format!(
+                            concat!(
+                                "raw_accuracy: NA\n",
+                                "raw_contingency_table: {}\n",
+                                "filter_threshold: {}\n",
+                                "percent_of_mod_called_removed: NA\n",
+                                "filtered_accuracy: NA\n",
+                                "filtered_contingency_table: {}\n",
+                            ),
+                            empty_table, threshold, empty_table,
+                        )
+                        .as_bytes(),
+                    )
+                    .map_err(|e| {
+                        anyhow::anyhow!("Error writing to file: {}", e)
+                    })?;
+            }
+
+            return Ok(());
+        }
+
         info!("Balancing ground truth call totals");
         balance_ground_truth(&mut all_probs)?;
         print_table(can_base, &all_probs, false, "Balanced counts summary");
@@ -1146,13 +1200,26 @@ impl ValidateFromModBam {
             .filter(|&((gt_code, call_code), _)| gt_code == call_code)
             .map(|(_, values)| values.len())
             .sum::<usize>();
-        let filt_acc = 100.0 * correct_filt_calls as f32 / filt_calls as f32;
-        info!(
-            "{}",
-            Style::new()
-                .bold()
-                .paint(format!("Filtered accuracy: {:.2}%", filt_acc)),
-        );
+        let filt_acc = if filt_calls == 0 {
+            None
+        } else {
+            Some(100.0 * correct_filt_calls as f32 / filt_calls as f32)
+        };
+        let filtered_accuracy = match filt_acc {
+            Some(accuracy) => {
+                info!(
+                    "{}",
+                    Style::new()
+                        .bold()
+                        .paint(format!("Filtered accuracy: {:.2}%", accuracy)),
+                );
+                accuracy.to_string()
+            }
+            None => {
+                info!("{}", Style::new().bold().paint("Filtered accuracy: NA"));
+                "NA".to_string()
+            }
+        };
         print_table(
             can_base,
             &all_probs,
@@ -1176,7 +1243,8 @@ impl ValidateFromModBam {
                 .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
             valid_out_handle
                 .write_all(
-                    &format!("filtered_accuracy: {}\n", filt_acc).into_bytes(),
+                    &format!("filtered_accuracy: {}\n", filtered_accuracy)
+                        .into_bytes(),
                 )
                 .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
             valid_out_handle

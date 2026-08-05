@@ -406,3 +406,115 @@ fn test_validate_counts_observations_without_truth_overlapping_seed_calls() {
         "[[\"ground_truth_label\",\"C\"],[\"C\",3]]",
     );
 }
+
+#[test]
+fn test_validate_all_no_calls_reports_counts_and_unavailable_accuracies() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let bam = root.join("all-no-calls.bam");
+    let bed = root.join("all-no-calls.bed");
+    let report = root.join("all-no-calls.tsv");
+
+    let records = (0..3)
+        .map(|i| {
+            synthetic_record(
+                &format!("no-call-{i}"),
+                "CC",
+                vec![Cigar::Match(2)],
+                "C+m?;",
+                &[],
+                0,
+            )
+        })
+        .collect();
+    write_synthetic_bam(&bam, records);
+    File::create(&bed).unwrap().write_all(b"chr1\t1\t2\tm\t0\t+\n").unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_modkit"))
+        .args([
+            "validate",
+            "--bam-and-bed",
+            bam.to_str().unwrap(),
+            bed.to_str().unwrap(),
+            "--canonical-base",
+            "C",
+            "--filter-threshold",
+            "0",
+            "--threads",
+            "1",
+            "--suppress-progress",
+            "--out-filepath",
+            report.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "validate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let observed = std::fs::read_to_string(report).unwrap();
+    assert_eq!(
+        observed,
+        concat!(
+            "full_contingency_table: [[\"ground_truth_label\",\"m\",\"No Call\"],[\"m\",0,3]]\n",
+            "raw_accuracy: NA\n",
+            "raw_contingency_table: [[\"ground_truth_label\"]]\n",
+            "filter_threshold: 0\n",
+            "percent_of_mod_called_removed: NA\n",
+            "filtered_accuracy: NA\n",
+            "filtered_contingency_table: [[\"ground_truth_label\"]]\n",
+        )
+    );
+}
+
+#[test]
+fn test_validate_all_calls_filtered_reports_unavailable_filtered_accuracy() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let bam = root.join("all-filtered.bam");
+    let bed = root.join("all-filtered.bed");
+    let report = root.join("all-filtered.tsv");
+
+    write_synthetic_bam(&bam, vec![synthetic_called("called", '+')]);
+    File::create(&bed).unwrap().write_all(b"chr1\t1\t2\tm\t0\t+\n").unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_modkit"))
+        .args([
+            "validate",
+            "--bam-and-bed",
+            bam.to_str().unwrap(),
+            bed.to_str().unwrap(),
+            "--canonical-base",
+            "C",
+            "--filter-threshold",
+            "1",
+            "--threads",
+            "1",
+            "--suppress-progress",
+            "--out-filepath",
+            report.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "validate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let observed = std::fs::read_to_string(report).unwrap();
+    assert_eq!(
+        observed,
+        concat!(
+            "full_contingency_table: [[\"ground_truth_label\",\"m\"],[\"m\",1]]\n",
+            "raw_accuracy: 100\n",
+            "raw_contingency_table: [[\"ground_truth_label\",\"m\"],[\"m\",1]]\n",
+            "filter_threshold: 1\n",
+            "percent_of_mod_called_removed: 100\n",
+            "filtered_accuracy: NA\n",
+            "filtered_contingency_table: [[\"ground_truth_label\",\"m\"],[\"m\",0]]\n",
+        )
+    );
+}
