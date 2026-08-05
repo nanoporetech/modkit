@@ -280,6 +280,15 @@ fn derive_canonical_base(
 // ground truth and observed base status pointing to vector of mod probabilities
 type StatusProbs = HashMap<(BaseStatus, BaseStatus), Vec<f32>>;
 
+fn position_is_reference_skip(
+    position: i64,
+    reference_skips: &[[i64; 2]],
+) -> bool {
+    let insertion_idx =
+        reference_skips.partition_point(|[start, _]| *start <= position);
+    insertion_idx > 0 && position < reference_skips[insertion_idx - 1][1]
+}
+
 fn process_bam_record(
     record: &Record,
     mod_positions: &ChromStrandPositionNames,
@@ -387,6 +396,7 @@ fn process_bam_record(
     let q_seq = record.seq();
     let ref_to_query: FxHashMap<i64, i64> =
         record.aligned_pairs().map(|pos| (pos[1], pos[0])).collect();
+    let reference_skips = record.introns().collect::<Vec<_>>();
     for (strand, positions) in called_ref_pos.iter() {
         let Some(cs_mod_pos) = cgt_mod_pos.get(&strand) else {
             // should be unnecessary
@@ -398,6 +408,9 @@ fn process_bam_record(
                 continue;
             };
             let Some(q_pos) = ref_to_query.get(pos) else {
+                if position_is_reference_skip(*pos, &reference_skips) {
+                    continue;
+                }
                 result
                     .entry((*gt_code, BaseStatus::Deletion))
                     .or_insert_with(Vec::new)
@@ -1151,5 +1164,82 @@ impl ValidateFromModBam {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rust_htslib::bam::record::{Aux, Cigar, CigarString};
+
+    use super::*;
+
+    fn make_record(gap: Cigar) -> Record {
+        let cigar = CigarString(vec![Cigar::Match(1), gap, Cigar::Match(1)]);
+        let mut record = Record::new();
+        record.set(b"read", Some(&cigar), b"CC", &[255, 255]);
+        record.set_tid(0);
+        record.set_pos(0);
+        record.push_aux(b"MM", Aux::String("C+m?,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[255][..]).into())).unwrap();
+        record
+    }
+
+    fn category_count(
+        status_probs: &StatusProbs,
+        truth: BaseStatus,
+        call: BaseStatus,
+    ) -> usize {
+        status_probs.get(&(truth, call)).map(Vec::len).unwrap_or(0)
+    }
+
+    fn classify(gap: Cigar) -> StatusProbs {
+        let truth_status = BaseStatus::Modified(ModCodeRepr::Code('m'));
+        let truth = HashMap::from([(
+            "chr1".to_string(),
+            HashMap::from([(
+                Strand::Positive,
+                (0..5).map(|pos| (pos, truth_status)).collect(),
+            )]),
+        )]);
+        let tid_to_chrom = HashMap::from([(0, "chr1".to_string())]);
+
+        process_bam_record(
+            &make_record(gap),
+            &truth,
+            &tid_to_chrom,
+            DnaBase::C,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn reference_skips_are_not_classified_as_deletions() {
+        let truth_status = BaseStatus::Modified(ModCodeRepr::Code('m'));
+
+        let skipped = classify(Cigar::RefSkip(3));
+        assert_eq!(category_count(&skipped, truth_status, truth_status), 1);
+        assert_eq!(
+            category_count(&skipped, truth_status, BaseStatus::NoCall),
+            1
+        );
+        assert_eq!(
+            category_count(&skipped, truth_status, BaseStatus::Deletion),
+            0
+        );
+        assert_eq!(skipped.values().map(Vec::len).sum::<usize>(), 2);
+
+        let deleted = classify(Cigar::Del(3));
+        assert_eq!(category_count(&deleted, truth_status, truth_status), 1);
+        assert_eq!(
+            category_count(&deleted, truth_status, BaseStatus::NoCall),
+            1
+        );
+        assert_eq!(
+            category_count(&deleted, truth_status, BaseStatus::Deletion),
+            3
+        );
+        assert_eq!(deleted.values().map(Vec::len).sum::<usize>(), 5);
     }
 }
