@@ -22,7 +22,8 @@ use crate::command_utils::{
     get_bam_writer, get_motif_lookup_from_parts, get_serial_reader,
     get_threshold_from_options, parse_edge_filter_input, parse_forward_motifs,
     parse_per_mod_thresholds, parse_raw_motifs,
-    parse_raw_thresholds_string_with_default, parse_thresholds, using_stream,
+    parse_raw_thresholds_string_with_default, parse_sampling_fraction,
+    parse_thresholds, using_stream,
 };
 use crate::errs::{MkError, MkResult};
 use crate::interval_chunks::{
@@ -1012,13 +1013,15 @@ pub struct SampleModBaseProbs {
     num_reads: Option<usize>,
     /// Instead of using a defined number of reads, specify a fraction of reads
     /// to sample, for example 0.1 will sample 1/10th of the reads.
+    /// Must be a finite value in the inclusive range [0, 1].
     #[clap(help_heading = "Sampling Options")]
     #[arg(
         short = 'f',
         long,
         alias = "sample-frac",
         group = "sampling_options",
-        conflicts_with = "no_sampling"
+        conflicts_with = "no_sampling",
+        value_parser = parse_sampling_fraction
     )]
     sampling_frac: Option<f64>,
     /// No sampling, use all of the reads to calculate the filter thresholds.
@@ -1638,8 +1641,14 @@ pub struct ModSummarize {
     /// Instead of using a defined number of reads, specify a fraction of reads
     /// to sample when estimating the filter threshold. For example 0.1 will
     /// sample 1/10th of the reads.
+    /// Must be a finite value in the inclusive range [0, 1].
     #[clap(help_heading = "Sampling Options")]
-    #[arg(group = "sampling_options", short = 'f', long)]
+    #[arg(
+        group = "sampling_options",
+        short = 'f',
+        long,
+        value_parser = parse_sampling_fraction
+    )]
     sampling_frac: Option<f64>,
     /// Sets a random seed for deterministic running (when using
     /// --sample-frac).
@@ -2257,11 +2266,13 @@ pub struct CallMods {
     /// filter-percentile. In practice, 50-100 thousand reads is sufficient
     /// to estimate the model output distribution and determine the
     /// filtering threshold. See filtering.md for details on filtering.
+    /// Must be a finite value in the inclusive range [0, 1].
     #[arg(
         group = "sampling_options",
         short = 'f',
         long,
-        hide_short_help = true
+        hide_short_help = true,
+        value_parser = parse_sampling_fraction
     )]
     sampling_frac: Option<f64>,
     /// Set a random seed for deterministic running, the default is

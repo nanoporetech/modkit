@@ -19,8 +19,8 @@ use crate::command_utils::{
     get_motif_lookup_from_parts, get_threshold_from_options,
     parse_edge_filter_input, parse_per_base_thresholds,
     parse_per_mod_thresholds, parse_raw_motifs,
-    parse_raw_thresholds_string_with_default, parse_thresholds,
-    parse_thresholds_values,
+    parse_raw_thresholds_string_with_default, parse_sampling_fraction,
+    parse_thresholds, parse_thresholds_values,
 };
 use crate::fasta::MotifLocationsLookup;
 use crate::interval_chunks::{
@@ -172,12 +172,14 @@ pub struct ModBamPileup {
     /// In practice, 10-100 thousand reads is sufficient to estimate the model
     /// output distribution and determine the filtering threshold. See
     /// filtering.md for details on filtering.
+    /// Must be a finite value in the inclusive range [0, 1].
     #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'f',
         long,
-        hide_short_help = true
+        hide_short_help = true,
+        value_parser = parse_sampling_fraction
     )]
     sampling_frac: Option<f64>,
     /// Set a random seed for deterministic running, the default is
@@ -1787,12 +1789,14 @@ pub struct DuplexModBamPileup {
     /// filter-percentile. In practice, 50-100 thousand reads is sufficient
     /// to estimate the model output distribution and determine the
     /// filtering threshold. See filtering.md for details on filtering.
+    /// Must be a finite value in the inclusive range [0, 1].
     #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'f',
         long,
-        hide_short_help = true
+        hide_short_help = true,
+        value_parser = parse_sampling_fraction
     )]
     sampling_frac: Option<f64>,
     /// Set a random seed for deterministic running, the default is

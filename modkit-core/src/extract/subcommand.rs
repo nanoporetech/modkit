@@ -17,7 +17,7 @@ use modkit_logging::{init_logging, init_logging_smart};
 use crate::command_utils::{
     get_serial_reader, parse_edge_filter_input, parse_per_base_thresholds,
     parse_per_mod_thresholds, parse_raw_thresholds_string_with_default,
-    parse_thresholds, using_stream,
+    parse_sampling_fraction, parse_thresholds, using_stream,
 };
 use crate::extract::args::InputArgs;
 use crate::extract::util::{
@@ -450,12 +450,14 @@ pub struct EntryExtractCalls {
     /// In practice, 10-100 thousand reads is sufficient to estimate the model
     /// output distribution and determine the filtering threshold. See
     /// filtering.md for details on filtering.
+    /// Must be a finite value in the inclusive range [0, 1].
     #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'f',
         long,
-        hide_short_help = true
+        hide_short_help = true,
+        value_parser = parse_sampling_fraction
     )]
     sampling_frac: Option<f64>,
     /// Sample this many reads when estimating the filtering threshold. If a
