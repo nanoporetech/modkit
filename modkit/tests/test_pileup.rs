@@ -661,6 +661,61 @@ fn test_pileup_explicit_same_code_slots_are_keyed_by_base() {
 }
 
 #[test]
+fn test_pileup_duplicate_modified_base_selections_are_idempotent() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_dynamic_slot_fixture(root);
+    for (mode, mode_args) in [
+        ("optimized", &[][..]),
+        ("dynamic", &["--use-dynamic"][..]),
+        ("high-depth", &["--high-depth", "--max-depth", "100"][..]),
+    ] {
+        let unique_output = root.join(format!("{mode}-unique.bed"));
+        let duplicate_output = root.join(format!("{mode}-duplicate.bed"));
+        let mut unique_args = vec![
+            "pileup",
+            bam_path.to_str().unwrap(),
+            unique_output.to_str().unwrap(),
+            "--ref",
+            fasta_path.to_str().unwrap(),
+            "--modified-bases",
+            "C:m",
+            "--no-filtering",
+            "--threads",
+            "1",
+            "--suppress-progress",
+        ];
+        unique_args.extend_from_slice(mode_args);
+        run_modkit(&unique_args).unwrap();
+
+        let mut duplicate_args = vec![
+            "pileup",
+            bam_path.to_str().unwrap(),
+            duplicate_output.to_str().unwrap(),
+            "--ref",
+            fasta_path.to_str().unwrap(),
+            "--modified-bases",
+            "C:m",
+            "C:m",
+            "--no-filtering",
+            "--threads",
+            "1",
+            "--suppress-progress",
+        ];
+        duplicate_args.extend_from_slice(mode_args);
+        run_modkit(&duplicate_args).unwrap();
+
+        let expected = std::fs::read(unique_output).unwrap();
+        assert!(!expected.is_empty(), "{mode} control emitted no rows");
+        assert_eq!(
+            std::fs::read(duplicate_output).unwrap(),
+            expected,
+            "duplicate selection changed {mode} output"
+        );
+    }
+}
+
+#[test]
 fn test_pileup_combined_non_cpg_reverse_statuses_share_anchor() {
     let temp_dir = tempfile::tempdir().unwrap();
     let root = temp_dir.path();
