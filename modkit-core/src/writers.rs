@@ -1473,3 +1473,132 @@ where
         Ok(total_rows as u64)
     }
 }
+
+#[cfg(test)]
+mod writer_tests {
+    use super::{
+        BedMethylWriter, BedMethylWriter2, PileupWriter, RecordingWriter,
+        TsvWriter,
+    };
+    use crate::mod_base_code::ModCodeRepr;
+    use crate::pileup::{ModBasePileup2, PileupFeatureCounts2};
+    use indicatif::ProgressBar;
+    use std::io::{self, BufWriter, Write};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct ShortWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        max_write: usize,
+        fail_flush: bool,
+    }
+
+    impl ShortWriter {
+        fn new(max_write: usize) -> Self {
+            assert!(max_write > 0);
+            Self {
+                bytes: Arc::new(Mutex::new(Vec::new())),
+                max_write,
+                fail_flush: false,
+            }
+        }
+
+        fn failing_flush(max_write: usize) -> Self {
+            Self { fail_flush: true, ..Self::new(max_write) }
+        }
+
+        fn bytes(&self) -> Vec<u8> {
+            self.bytes.lock().unwrap().clone()
+        }
+    }
+
+    impl Write for ShortWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let count = buf.len().min(self.max_write);
+            self.bytes.lock().unwrap().extend_from_slice(&buf[..count]);
+            Ok(count)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if self.fail_flush {
+                Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn feature_counts() -> PileupFeatureCounts2 {
+        PileupFeatureCounts2::new(
+            7,
+            '+',
+            4,
+            ModCodeRepr::Code('m'),
+            3,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+    }
+
+    fn pileup() -> ModBasePileup2 {
+        ModBasePileup2 {
+            chrom_name: "chr1".to_string(),
+            position_feature_counts: vec![feature_counts()],
+            interval_width: 1,
+            stride: 1,
+            failed_records: 0,
+            phased_feature_counts: [Vec::new(), Vec::new()],
+        }
+    }
+
+    #[test]
+    fn tsv_writer_retries_short_writes_without_changing_bytes() {
+        let sink = ShortWriter::new(2);
+        let mut writer = TsvWriter { writer: sink.clone() };
+        let expected = b"alpha\tbeta\n";
+
+        assert_eq!(writer.write(expected).unwrap(), expected.len());
+        assert_eq!(sink.bytes(), expected);
+    }
+
+    #[test]
+    fn bedmethyl_writer_retries_short_writes_without_changing_row() {
+        let sink = ShortWriter::new(3);
+        let buf_writer = BufWriter::with_capacity(1, sink.clone());
+        let mut writer = BedMethylWriter { buf_writer, tabs_and_spaces: false };
+
+        assert_eq!(PileupWriter::write(&mut writer, pileup(), &[]).unwrap(), 1);
+        writer.buf_writer.flush().unwrap();
+        assert_eq!(
+            sink.bytes(),
+            b"chr1\t7\t8\tm\t4\t+\t7\t8\t255,0,0\t4\t25.00\t1\t3\t0\t0\t0\t0\t0\n"
+        );
+    }
+
+    #[test]
+    fn bedmethyl_writer_returns_flush_error_instead_of_panicking() {
+        let sink = ShortWriter::failing_flush(usize::MAX);
+        let (return_mem, _returned) = crossbeam_channel::unbounded();
+        let mut writer = BedMethylWriter2 {
+            buff: std::io::Cursor::new(vec![0u8; 1 << 20]),
+            inner: RecordingWriter { inner: sink, pb: ProgressBar::hidden() },
+            return_mem,
+            bedrmod_spec: false,
+        };
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            PileupWriter::write(&mut writer, pileup(), &[])
+        }));
+        assert!(
+            result.is_ok(),
+            "writer panicked instead of returning the error"
+        );
+        assert!(result.unwrap().is_err());
+    }
+}
