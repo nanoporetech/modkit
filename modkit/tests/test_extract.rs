@@ -92,6 +92,24 @@ fn check_mod_profiles_same(
     }
 }
 
+fn assert_cpg_motif_schema(output_fp: &Path, expected_columns: usize) {
+    let mut lines = BufReader::new(File::open(output_fp).unwrap())
+        .lines()
+        .map(|line| line.unwrap());
+    let header = lines.next().expect("expected extract header");
+    let header_fields = header.split('\t').collect::<Vec<_>>();
+    assert_eq!(header_fields.len(), expected_columns);
+    assert_eq!(header_fields.last(), Some(&"motifs"));
+
+    let rows = lines.collect::<Vec<_>>();
+    assert!(!rows.is_empty(), "expected at least one extracted row");
+    for row in rows {
+        let fields = row.split('\t').collect::<Vec<_>>();
+        assert_eq!(fields.len(), expected_columns);
+        assert_eq!(fields.last(), Some(&"CG,0"));
+    }
+}
+
 // #[test]
 // fn test_common_parse_extract_full() {
 //     let mut reader = csv::ReaderBuilder::new()
@@ -470,6 +488,8 @@ fn test_extract_implicit_mod_calls() {
 fn test_extract_cpg_motif() {
     let extract_tsv =
         std::env::temp_dir().join("test_extract_cpg_motif_extract.tsv");
+    let calls_tsv =
+        std::env::temp_dir().join("test_extract_cpg_motif_calls.tsv");
     let reference_fasta_fp = "../tests/resources/CGI_ladder_3.6kb_ref.fa";
     let cpg_positions = parse_bed_file(
         &Path::new("../tests/resources/CGI_ladder_3.6kb_ref_CG.bed")
@@ -501,6 +521,22 @@ fn test_extract_cpg_motif() {
         "--force",
     ])
     .unwrap();
+
+    run_modkit(&[
+        "extract",
+        "calls",
+        "../tests/resources/2_reads_all_context.bam",
+        calls_tsv.to_str().unwrap(),
+        "--cpg",
+        "--reference",
+        reference_fasta_fp,
+        "--no-filtering",
+        "--force",
+    ])
+    .unwrap();
+
+    assert_cpg_motif_schema(&extract_tsv, 22);
+    assert_cpg_motif_schema(&calls_tsv, 24);
 
     let mod_profile = parse_mod_profile(&extract_tsv).unwrap();
     for (read, mod_data) in mod_profile {

@@ -276,7 +276,8 @@ impl EntryExtractFull {
             );
         });
 
-        let with_motifs = self.input_args.motif.is_some();
+        let with_motifs =
+            self.input_args.motif.is_some() || self.input_args.cpg;
         let output_header = if self.input_args.no_headers {
             None
         } else {
@@ -716,7 +717,8 @@ impl EntryExtractCalls {
         // TODO(arand) once I refactor extract, I'll want to keep this around.
         drop(io_threadpool);
 
-        let with_motifs = self.input_args.motif.is_some();
+        let with_motifs =
+            self.input_args.motif.is_some() || self.input_args.cpg;
         let output_header = if self.input_args.no_headers {
             None
         } else {
@@ -1192,5 +1194,70 @@ impl EntryReadStats {
 
     fn has_filtering(&self) -> bool {
         !(self.filter_threshold.is_empty() && self.mod_thresholds.is_none())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::ExtractMods;
+
+    #[derive(Parser)]
+    #[command(name = "extract")]
+    struct ExtractCli {
+        #[command(subcommand)]
+        command: ExtractMods,
+    }
+
+    fn parse_extract(subcommand: &str, extra_args: &[&str]) -> bool {
+        let mut args = vec![
+            "extract",
+            subcommand,
+            "input.bam",
+            "output.tsv",
+            "--reference",
+            "reference.fa",
+        ];
+        args.extend_from_slice(extra_args);
+        ExtractCli::try_parse_from(args).is_ok()
+    }
+
+    #[test]
+    fn motif_dependent_flags_accept_motif_or_cpg() {
+        let actual = ["full", "calls"]
+            .into_iter()
+            .flat_map(|subcommand| {
+                ["--annotate-motifs", "--mask"].into_iter().map(
+                    move |dependent_arg| {
+                        (
+                            subcommand,
+                            dependent_arg,
+                            parse_extract(
+                                subcommand,
+                                &[dependent_arg, "--motif", "CG", "0"],
+                            ),
+                            parse_extract(
+                                subcommand,
+                                &[dependent_arg, "--cpg"],
+                            ),
+                            !parse_extract(subcommand, &[dependent_arg]),
+                        )
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let expected = ["full", "calls"]
+            .into_iter()
+            .flat_map(|subcommand| {
+                ["--annotate-motifs", "--mask"].into_iter().map(
+                    move |dependent_arg| {
+                        (subcommand, dependent_arg, true, true, true)
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual, expected);
     }
 }
