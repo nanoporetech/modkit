@@ -213,33 +213,6 @@ impl MethylationEntropy {
             })?;
         }
 
-        let mut writer: Box<dyn EntropyWriter> =
-            match (self.out_bed.as_ref(), self.regions_fp.is_some()) {
-                (Some(out_fp), false) => Box::new(
-                    WindowsWriter::new_file(out_fp, self.header, self.verbose)
-                        .context("failed to make writer to file")?,
-                ),
-                (Some(out_dir), true) => Box::new(
-                    RegionsWriter::new(
-                        out_dir,
-                        self.prefix.as_ref(),
-                        self.header,
-                        self.verbose,
-                    )
-                    .context(
-                        "failed to make regions writer, output must be a \
-                         directory",
-                    )?,
-                ),
-                (None, false) => Box::new(
-                    WindowsWriter::new_stdout(self.header, self.verbose)
-                        .context("failed to make writer to stdout")?,
-                ),
-                (None, true) => {
-                    bail!("must provide output directory with regions")
-                }
-            };
-
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()?;
@@ -347,6 +320,39 @@ impl MethylationEntropy {
 
         let threshold_caller =
             self.get_threshold_caller(&pool).map(|c| Arc::new(c))?;
+
+        let mut writer: Box<dyn EntropyWriter> =
+            match (self.out_bed.as_ref(), self.regions_fp.is_some()) {
+                (Some(out_fp), false) => Box::new(
+                    WindowsWriter::new_file(
+                        out_fp,
+                        self.header,
+                        self.verbose,
+                        self.force,
+                    )
+                    .context("failed to make writer to file")?,
+                ),
+                (Some(out_dir), true) => Box::new(
+                    RegionsWriter::new(
+                        out_dir,
+                        self.prefix.as_ref(),
+                        self.header,
+                        self.verbose,
+                        self.force,
+                    )
+                    .context(
+                        "failed to make regions writer, output must be a \
+                         directory",
+                    )?,
+                ),
+                (None, false) => Box::new(
+                    WindowsWriter::new_stdout(self.header, self.verbose)
+                        .context("failed to make writer to stdout")?,
+                ),
+                (None, true) => {
+                    bail!("must provide output directory with regions")
+                }
+            };
 
         let (snd, rcv) = crossbeam::channel::bounded(10_000);
 

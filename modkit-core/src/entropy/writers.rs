@@ -6,10 +6,10 @@ use indicatif::ProgressBar;
 use log::debug;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{stdout, BufWriter, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{stdout, BufWriter, ErrorKind, Write};
 use std::ops::AddAssign;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 #[inline(always)]
 fn write_entropy_windows<T: Write>(
@@ -142,6 +142,72 @@ pub(super) trait EntropyWriter {
 const WINDOWS_HEADER: &'static str = "\
         #chrom\tstart\tend\tentropy\tstrand\tnum_reads\n";
 
+fn preflight_output_file(out_fp: &Path) -> anyhow::Result<bool> {
+    match std::fs::symlink_metadata(out_fp) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(true),
+        Ok(_) => bail!(
+            "entropy output target must be a regular file and may not be a \
+             symbolic link: {}",
+            out_fp.display()
+        ),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn open_output_file_untruncated(
+    out_fp: &Path,
+    existed: bool,
+) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true);
+    if !existed {
+        options.create_new(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    options.open(out_fp)
+}
+
+fn open_output_file(out_fp: &Path, force: bool) -> anyhow::Result<File> {
+    let existed = preflight_output_file(out_fp)?;
+    if existed && !force {
+        bail!(
+            "entropy output already exists, use --force to overwrite it: {}",
+            out_fp.display()
+        )
+    }
+    let file = open_output_file_untruncated(out_fp, existed)?;
+    if force {
+        file.set_len(0)?;
+    }
+    Ok(file)
+}
+
+fn validate_regions_prefix(
+    prefix: Option<&String>,
+) -> anyhow::Result<Option<&str>> {
+    let Some(prefix) = prefix else {
+        return Ok(None);
+    };
+    let path = Path::new(prefix);
+    let mut components = path.components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(component)), None)
+            if !component.is_empty() && path.as_os_str() == component =>
+        {
+            Ok(Some(prefix))
+        }
+        _ => bail!(
+            "entropy regions prefix must be exactly one non-empty filename \
+             component"
+        ),
+    }
+}
+
 pub(super) struct WindowsWriter<T: Write> {
     output: BufWriter<T>,
     verbose: bool,
@@ -152,8 +218,9 @@ impl WindowsWriter<File> {
         out_fp: &PathBuf,
         header: bool,
         verbose: bool,
+        force: bool,
     ) -> anyhow::Result<Self> {
-        let mut output = BufWriter::new(File::create(out_fp)?);
+        let mut output = BufWriter::new(open_output_file(out_fp, force)?);
         if header {
             output.write(WINDOWS_HEADER.as_bytes())?;
         }
@@ -186,27 +253,54 @@ impl RegionsWriter {
         prefix: Option<&String>,
         header: bool,
         verbose: bool,
+        force: bool,
     ) -> anyhow::Result<Self> {
-        if out_dir.is_file() {
+        let prefix = validate_regions_prefix(prefix)?;
+        if out_dir.exists() && !out_dir.is_dir() {
             bail!("regions output location must be a directory")
         }
-        std::fs::create_dir_all(out_dir)?;
+        if !out_dir.exists() {
+            std::fs::create_dir_all(out_dir)?;
+        }
         debug_assert!(out_dir.exists(), "out_dir should exist now");
-        let mut regions_bed_out = if let Some(p) = prefix {
-            let fp = out_dir.join(format!("{p}_regions.bed"));
-            BufWriter::new(File::create(fp)?)
+        let regions_fp = if let Some(p) = prefix {
+            out_dir.join(format!("{p}_regions.bed"))
         } else {
-            let fp = out_dir.join("regions.bed");
-            BufWriter::new(File::create(fp)?)
+            out_dir.join("regions.bed")
         };
+        let windows_fp = if let Some(p) = prefix {
+            out_dir.join(format!("{p}_windows.bedgraph"))
+        } else {
+            out_dir.join("windows.bedgraph")
+        };
+        let regions_existed = preflight_output_file(&regions_fp)?;
+        let windows_existed = preflight_output_file(&windows_fp)?;
+        if !force && (regions_existed || windows_existed) {
+            bail!(
+                "entropy region output already exists, use --force to \
+                 overwrite it"
+            )
+        }
+        let regions_file =
+            open_output_file_untruncated(&regions_fp, regions_existed)?;
+        let windows_file =
+            match open_output_file_untruncated(&windows_fp, windows_existed) {
+                Ok(file) => file,
+                Err(error) => {
+                    drop(regions_file);
+                    if !regions_existed {
+                        std::fs::remove_file(&regions_fp)?;
+                    }
+                    return Err(error.into());
+                }
+            };
+        if force {
+            regions_file.set_len(0)?;
+            windows_file.set_len(0)?;
+        }
 
-        let mut windows_bed_out = if let Some(p) = prefix {
-            let fp = out_dir.join(format!("{p}_windows.bedgraph"));
-            BufWriter::new(File::create(fp)?)
-        } else {
-            let fp = out_dir.join("windows.bedgraph");
-            BufWriter::new(File::create(fp)?)
-        };
+        let mut regions_bed_out = BufWriter::new(regions_file);
+        let mut windows_bed_out = BufWriter::new(windows_file);
 
         if header {
             windows_bed_out.write(WINDOWS_HEADER.as_bytes())?;
