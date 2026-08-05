@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
+use std::process::Command;
 use tempfile::tempdir;
 
 mod common;
@@ -518,4 +519,57 @@ fn test_validate_all_calls_filtered_reports_unavailable_filtered_accuracy() {
             "filtered_contingency_table: [[\"ground_truth_label\",\"m\"],[\"m\",0]]\n",
         )
     );
+}
+
+#[test]
+fn test_validate_bed_errors_preserve_output_and_report_line() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let cases = [
+        ("field-count", "not-a-bed-row", "Invalid number of fields"),
+        (
+            "coordinate",
+            "chr1\t5\t5\tm\t.\t+",
+            "BED end must be greater than start",
+        ),
+        ("strand", "chr1\t5\t6\tm\t.\t+junk", "expected `+` or `-`"),
+        ("mod-code", "chr1\t5\t6\t.\t.\t+", "failed to parse mod code"),
+    ];
+
+    for (case_name, invalid_line, expected_error) in cases {
+        let bed_path = temp_dir.path().join(format!("{case_name}.bed"));
+        let output_path = temp_dir.path().join(format!("{case_name}.tsv"));
+        std::fs::write(
+            &bed_path,
+            format!("chr1\t4\t5\tm\t.\t+\n{invalid_line}\n"),
+        )
+        .unwrap();
+        std::fs::write(&output_path, "sentinel\n").unwrap();
+
+        let output = Command::new(Path::new(env!("CARGO_BIN_EXE_modkit")))
+            .arg("validate")
+            .arg("--bam-and-bed")
+            .arg("../tests/resources/input_5mC.bam")
+            .arg(&bed_path)
+            .arg("--canonical-base")
+            .arg("C")
+            .arg("--out-filepath")
+            .arg(&output_path)
+            .arg("--suppress-progress")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(!output.status.success(), "{case_name}: {stderr}");
+        assert!(
+            stderr.contains(&bed_path.display().to_string()),
+            "{case_name}: {stderr}"
+        );
+        assert!(stderr.contains("line 2"), "{case_name}: {stderr}");
+        assert!(stderr.contains(expected_error), "{case_name}: {stderr}");
+        assert_eq!(
+            std::fs::read(&output_path).unwrap(),
+            b"sentinel\n",
+            "{case_name}"
+        );
+    }
 }
