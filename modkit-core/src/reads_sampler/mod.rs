@@ -24,6 +24,8 @@ use crate::util::{
 };
 use record_sampler::RecordSampler;
 
+use self::deterministic_sampler::resolve_master_seed;
+
 pub(crate) mod deterministic_sampler;
 pub mod record_sampler;
 pub mod sampling_schedule;
@@ -47,6 +49,11 @@ where
 {
     let use_regions = bam::IndexedReader::from_path(&bam_fp).is_ok();
     if use_regions {
+        // Resolve once for the mapped indexed job so every interval worker
+        // makes the same identity-based decision. Count sampling,
+        // passthrough, and the unmapped fallback preserve existing behavior.
+        let indexed_fraction_seed =
+            sample_frac.map(|_| resolve_master_seed(seed));
         debug!(
             "found BAM index, sampling reads in {interval_size} base pair \
              chunks"
@@ -84,6 +91,7 @@ where
                 collapse_method,
                 position_filter,
                 &schedule,
+                sample_frac.zip(indexed_fraction_seed),
                 only_mapped,
                 suppress_progress,
             )?;
@@ -100,6 +108,9 @@ where
             let num_reads_unmapped = num_reads.map(|nr| {
                 nr.checked_sub(read_ids_to_base_mod_calls.len()).unwrap_or(0)
             });
+            // Keep the indexed-unmapped fallback on its legacy, sequential
+            // sampler. Its semantics are tracked separately from mapped
+            // indexed sampling.
             let record_sampler = RecordSampler::new_from_options(
                 sample_frac,
                 num_reads_unmapped,
@@ -170,6 +181,7 @@ fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
     collapse_method: Option<&CollapseMethod>,
     position_filter: Option<&StrandedPositionFilter<()>>,
     sampling_schedule: &SamplingSchedule,
+    indexed_fraction: Option<(f64, u64)>,
     only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<P::Output>
@@ -189,6 +201,10 @@ where
     let contig_sizes = contigs
         .iter()
         .map(|rec| (rec.tid, rec.length))
+        .collect::<FxHashMap<u32, u32>>();
+    let contig_starts = contigs
+        .iter()
+        .map(|rec| (rec.tid, rec.start))
         .collect::<FxHashMap<u32, u32>>();
 
     let feeder = ReferenceIntervalBatchesFeeder::new(
@@ -220,13 +236,27 @@ where
     for super_batch in feeder {
         let total_batch_length =
             super_batch.iter().map(|c| c.total_length()).sum::<u64>();
-        let super_batch_with_counts = sampling_schedule
-            .accumulate_sample_counts(
+        let super_batch_with_counts = if indexed_fraction.is_some() {
+            // Fractional sampling is decided independently for every record,
+            // so every requested interval must be visited. The legacy count
+            // schedule can stop assigning intervals after its target count is
+            // reached, which would make the result interval-size dependent.
+            super_batch
+                .into_iter()
+                .flat_map(|coordinates| coordinates.0)
+                .map(|coordinates| (coordinates, CountOrSample::All))
+                .chunks(batch_size)
+                .into_iter()
+                .map(|batch| batch.collect())
+                .collect()
+        } else {
+            sampling_schedule.accumulate_sample_counts(
                 super_batch,
                 &contig_sizes,
                 &reads_sampled_per_chr,
                 batch_size,
-            );
+            )
+        };
         let (super_batch_result, chrom_counts_for_batch) =
             super_batch_with_counts
                 .into_par_iter()
@@ -235,6 +265,8 @@ where
                         bam_fp,
                         multi_coords,
                         sampling_schedule,
+                        indexed_fraction,
+                        &contig_starts,
                         collapse_method,
                         edge_filter,
                         position_filter,
@@ -261,6 +293,8 @@ fn run_batch<P: RecordProcessor>(
     bam_fp: &PathBuf,
     batch: Vec<(ChromCoordinates, CountOrSample)>,
     sampling_schedule: &SamplingSchedule,
+    indexed_fraction: Option<(f64, u64)>,
+    contig_starts: &FxHashMap<u32, u32>,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
     position_filter: Option<&StrandedPositionFilter<()>>,
@@ -287,20 +321,35 @@ where
                 .unwrap_or(true)
         })
         .filter_map(|(cc, counts_or_sample)| {
-            let record_sampler = match counts_or_sample {
-                CountOrSample::Count(x) => RecordSampler::new_num_reads(x),
-                CountOrSample::Sample(x) => {
-                    RecordSampler::new_sample_frac(x as f64, None)
+            let record_sampler = if let Some((frac, master_seed)) =
+                indexed_fraction
+            {
+                RecordSampler::new_deterministic_sample_frac(frac, master_seed)
+            } else {
+                match counts_or_sample {
+                    CountOrSample::Count(x) => RecordSampler::new_num_reads(x),
+                    CountOrSample::Sample(x) => {
+                        RecordSampler::new_sample_frac(x as f64, None)
+                    }
+                    CountOrSample::All => RecordSampler::new_passthrough(),
                 }
-                CountOrSample::All => RecordSampler::new_passthrough(),
             };
+            // Indexed fetches return alignments that start before an interval
+            // but overlap it. Assign those alignments to the first requested
+            // interval only, avoiding repeated MM/ML parsing while retaining
+            // records that overlap the beginning of a user-specified region.
+            let record_start_cut = indexed_fraction.and_then(|_| {
+                contig_starts.get(&cc.chrom_tid).and_then(|contig_start| {
+                    (cc.start_pos > *contig_start).then_some(cc.start_pos)
+                })
+            });
 
             match sample_reads_from_interval::<P>(
                 bam_fp,
                 cc.chrom_tid,
                 cc.start_pos,
                 cc.end_pos,
-                None,
+                record_start_cut,
                 record_sampler,
                 collapse_method,
                 edge_filter,
@@ -389,4 +438,97 @@ fn log_sampled_reads(sampled_reads_per_chr: &FxHashMap<u32, usize>) {
 
     tab.add_row(row!["total", total]);
     debug!("final mapped reads sampled:\n{tab}");
+}
+
+#[cfg(test)]
+mod tests {
+    use rust_htslib::bam::{
+        self,
+        header::HeaderRecord,
+        record::{Aux, Cigar, CigarString},
+        Read,
+    };
+
+    use super::{
+        deterministic_sampler::DeterministicFractionSampler,
+        get_sampled_read_ids_to_base_mod_probs, SamplingSchedule,
+    };
+    use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
+
+    fn mapped_mod_record(name: &str, tid: i32) -> bam::Record {
+        let mut record = bam::Record::new();
+        let cigar = CigarString(vec![Cigar::Match(10)]);
+        record.set(name.as_bytes(), Some(&cigar), b"CCCCCCCCCC", &[30; 10]);
+        record.set_tid(tid);
+        record.set_pos(10);
+        record.set_flags(0);
+        record.set_mapq(60);
+        record.push_aux(b"MM", Aux::String("C+m?,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[200][..]).into())).unwrap();
+        record.push_aux(b"MN", Aux::U32(10)).unwrap();
+        record
+    }
+
+    #[test]
+    fn indexed_fraction_visits_later_single_read_contig() {
+        const FRACTION: f64 = 0.01;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let bam_path = temp_dir.path().join("two-contig.bam");
+        let mut header = bam::Header::new();
+        for name in ["tiny-0", "tiny-1"] {
+            let mut sq = HeaderRecord::new(b"SQ");
+            sq.push_tag(b"SN", name).push_tag(b"LN", 100);
+            header.push_record(&sq);
+        }
+        let mut writer =
+            bam::Writer::from_path(&bam_path, &header, bam::Format::Bam)
+                .unwrap();
+        writer.write(&mapped_mod_record("read-tiny-0", 0)).unwrap();
+        writer.write(&mapped_mod_record("read-tiny-1", 1)).unwrap();
+        drop(writer);
+        bam::index::build(&bam_path, None, bam::index::Type::Bai, 1).unwrap();
+
+        let schedule = SamplingSchedule::from_sample_frac(
+            &bam_path,
+            FRACTION as f32,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(schedule.chrom_has_reads(0));
+        assert!(schedule.chrom_has_reads(1));
+
+        let mut reader = bam::Reader::from_path(&bam_path).unwrap();
+        let records =
+            reader.records().map(Result::unwrap).collect::<Vec<bam::Record>>();
+        let seed = (0_u64..100_000)
+            .find(|seed| {
+                let sampler =
+                    DeterministicFractionSampler::new(*seed, FRACTION).unwrap();
+                !sampler.include(&records[0]) && sampler.include(&records[1])
+            })
+            .expect("expected a seed selecting only the later tiny contig");
+
+        let sampled =
+            get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
+                &bam_path,
+                2,
+                20,
+                Some(FRACTION),
+                None,
+                Some(seed),
+                None,
+                None,
+                None,
+                None,
+                true,
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(sampled.inner.len(), 1);
+        assert!(sampled.inner.contains_key("read-tiny-1"));
+    }
 }

@@ -4,6 +4,9 @@ use indicatif::ProgressBar;
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use rust_htslib::bam;
+
+use super::deterministic_sampler::DeterministicFractionSampler;
 
 /// A utility data structure that when used in an interator allows
 /// to randomly sample either a preset number of reads or a fraction
@@ -12,6 +15,7 @@ use rand::{Rng, SeedableRng};
 pub struct RecordSampler {
     pub(crate) num_reads: Option<usize>,
     pub(crate) sample_frac: Option<f64>,
+    deterministic_fraction_sampler: Option<DeterministicFractionSampler>,
     rng: StdRng,
     reads_sampled: usize,
 }
@@ -21,6 +25,7 @@ impl RecordSampler {
         Self {
             num_reads: Some(num_reads),
             sample_frac: None,
+            deterministic_fraction_sampler: None,
             rng: StdRng::from_entropy(),
             reads_sampled: 0,
         }
@@ -33,7 +38,27 @@ impl RecordSampler {
         Self {
             num_reads: None,
             sample_frac: Some(sample_frac),
+            deterministic_fraction_sampler: None,
             rng,
+            reads_sampled: 0,
+        }
+    }
+
+    /// Construct a stateless fractional sampler for indexed record fetching.
+    /// Every worker in the indexed job must receive the same resolved seed.
+    pub(crate) fn new_deterministic_sample_frac(
+        sample_frac: f64,
+        master_seed: u64,
+    ) -> Self {
+        let deterministic_fraction_sampler = Some(
+            DeterministicFractionSampler::new(master_seed, sample_frac)
+                .expect("sampling fraction should already be validated"),
+        );
+        Self {
+            num_reads: None,
+            sample_frac: Some(sample_frac),
+            deterministic_fraction_sampler,
+            rng: StdRng::seed_from_u64(master_seed),
             reads_sampled: 0,
         }
     }
@@ -42,6 +67,7 @@ impl RecordSampler {
         Self {
             num_reads: None,
             sample_frac: None,
+            deterministic_fraction_sampler: None,
             rng: StdRng::from_entropy(),
             reads_sampled: 0,
         }
@@ -86,10 +112,26 @@ impl RecordSampler {
     }
 
     pub(crate) fn ask(&mut self) -> Indicator {
+        debug_assert!(
+            self.deterministic_fraction_sampler.is_none(),
+            "deterministic sampling decisions require a BAM record"
+        );
         match (self.num_reads, self.sample_frac) {
             (Some(_nr), _) => self.check_num_reads(),
             (_, Some(_sample_frac)) => self.check_sample_frac(),
             (None, None) => Indicator::Use(Token),
+        }
+    }
+
+    pub(crate) fn ask_record(&mut self, record: &bam::Record) -> Indicator {
+        if let Some(sampler) = self.deterministic_fraction_sampler {
+            if sampler.include(record) {
+                Indicator::Use(Token)
+            } else {
+                Indicator::Skip
+            }
+        } else {
+            self.ask()
         }
     }
 

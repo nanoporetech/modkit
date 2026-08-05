@@ -283,7 +283,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
         allow_non_primary: bool,
-        _cut: Option<u32>,
+        cut: Option<u32>,
         _kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
         let spinner = if with_progress {
@@ -292,6 +292,15 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
             None
         };
         let mod_base_info_iter = records
+            .filter(|result| {
+                result
+                    .as_ref()
+                    .map(|record| {
+                        cut.map(|cut| record.reference_start() >= cut as i64)
+                            .unwrap_or(true)
+                    })
+                    .unwrap_or(true)
+            })
             .with_mod_base_info()
             .filter(|(record, _)| {
                 if only_mapped || edge_filter.is_some() {
@@ -309,7 +318,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
             });
         let mut read_ids_to_mod_base_probs = Self::zero();
         for (record, mod_base_info) in mod_base_info_iter {
-            match record_sampler.ask() {
+            match record_sampler.ask_record(&record) {
                 Indicator::Use(token) => {
                     let record_name = get_query_name_string(&record);
                     let aligned_pairs = if only_mapped {
