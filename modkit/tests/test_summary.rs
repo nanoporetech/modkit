@@ -5,10 +5,83 @@ use crate::common::{
 use anyhow::Context;
 use mod_kit::mod_bam::{CollapseMethod, EdgeFilter};
 use mod_kit::mod_base_code::{BaseState, DnaBase};
-use std::collections::HashSet;
+use rust_htslib::bam::{self, record::Aux, Read};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::process::Command;
+use tempfile::tempdir;
 
 mod common;
+
+fn run_cpg_summary(bam_fp: &Path) -> HashMap<String, String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_modkit"))
+        .args([
+            "summary",
+            bam_fp.to_str().unwrap(),
+            "--reference",
+            "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+            "--cpg",
+            "--filter-threshold",
+            "0",
+            "--tsv",
+            "--suppress-progress",
+            "--threads",
+            "1",
+            "--io-threads",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "summary failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let (key, value) = line.split_once('\t').unwrap();
+            (key.to_string(), value.to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn test_summary_cpg_excludes_unmapped_calls() {
+    let mapped_bam =
+        Path::new("../tests/resources/bc_anchored_10_reads.sorted.bam");
+    let temp_dir = tempdir().unwrap();
+    let mixed_bam = temp_dir.path().join("mapped-and-unmapped.bam");
+    let mut reader = bam::Reader::from_path(mapped_bam).unwrap();
+    let header = bam::Header::from_template(reader.header());
+    let mut writer =
+        bam::Writer::from_path(&mixed_bam, &header, bam::Format::Bam).unwrap();
+    for record in reader.records() {
+        writer.write(&record.unwrap()).unwrap();
+    }
+
+    let mut unmapped = bam::Record::new();
+    unmapped.set(b"unmapped", None, b"CCCC", &[255; 4]);
+    unmapped.set_unmapped();
+    unmapped.set_tid(-1);
+    unmapped.set_pos(-1);
+    unmapped.set_mtid(-1);
+    unmapped.set_mpos(-1);
+    unmapped.push_aux(b"MM", Aux::String("C+m?,0,0,0,0;")).unwrap();
+    unmapped.push_aux(b"ML", Aux::ArrayU8((&[255; 4][..]).into())).unwrap();
+    unmapped.push_aux(b"MN", Aux::I32(4)).unwrap();
+    writer.write(&unmapped).unwrap();
+    drop(writer);
+    bam::index::build(&mixed_bam, None, bam::index::Type::Bai, 1).unwrap();
+
+    let mixed_summary = run_cpg_summary(&mixed_bam);
+    let mapped_summary = run_cpg_summary(mapped_bam);
+    assert_eq!(mixed_summary["total_reads_used"], "10");
+    assert_eq!(mixed_summary["count_reads_C"], "10");
+    assert_eq!(mixed_summary["C_total_mod_calls"], "77");
+    assert_eq!(mixed_summary, mapped_summary);
+}
 
 /// tests that the summary from a BAM is the same if run with the BAI
 /// or without (just taking the first N reads). In this case we use all
