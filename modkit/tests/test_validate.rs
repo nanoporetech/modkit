@@ -1,8 +1,11 @@
 use crate::common::run_modkit;
 use anyhow::Context;
+use rust_htslib::bam::header::HeaderRecord;
+use rust_htslib::bam::record::{Aux, Cigar, CigarString};
+use rust_htslib::bam::{Format, Header, Record, Writer};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -159,4 +162,247 @@ fn test_validate_reopens_bam_for_each_truth_bed() {
     );
     assert_eq!(split_ba, union);
     assert_eq!(split_ba_output, union_output);
+}
+
+fn synthetic_record(
+    name: &str,
+    sequence: &str,
+    cigar: Vec<Cigar>,
+    mm: &str,
+    ml: &[u8],
+    nm: u32,
+) -> Record {
+    let mut record = Record::new();
+    let cigar = CigarString(cigar);
+    record.set(
+        name.as_bytes(),
+        Some(&cigar),
+        sequence.as_bytes(),
+        &vec![30; sequence.len()],
+    );
+    record.set_tid(0);
+    record.set_pos(0);
+    record.set_mapq(60);
+    record.push_aux(b"MM", Aux::String(mm)).unwrap();
+    record.push_aux(b"ML", Aux::ArrayU8(ml.into())).unwrap();
+    record.push_aux(b"MN", Aux::U32(sequence.len() as u32)).unwrap();
+    record.push_aux(b"NM", Aux::U32(nm)).unwrap();
+    record
+}
+
+fn synthetic_called(name: &str, mod_strand: char) -> Record {
+    let (sequence, fundamental_base) = match mod_strand {
+        '+' => ("CC", 'C'),
+        '-' => ("GG", 'G'),
+        _ => panic!("invalid modification strand"),
+    };
+    synthetic_record(
+        name,
+        sequence,
+        vec![Cigar::Match(2)],
+        &format!("{fundamental_base}{mod_strand}m?,1;"),
+        &[255],
+        0,
+    )
+}
+
+fn synthetic_uncalled(name: &str, sequence: &str, mod_strand: char) -> Record {
+    let (expected_sequence, fundamental_base) = match mod_strand {
+        '+' => ("CC", 'C'),
+        '-' => ("GG", 'G'),
+        _ => panic!("invalid modification strand"),
+    };
+    synthetic_record(
+        name,
+        sequence,
+        vec![Cigar::Match(2)],
+        &format!("{fundamental_base}{mod_strand}m?,0;"),
+        &[255],
+        u32::from(sequence != expected_sequence),
+    )
+}
+
+fn write_synthetic_bam(path: &Path, records: Vec<Record>) {
+    let mut header = Header::new();
+    let mut sq = HeaderRecord::new(b"SQ");
+    sq.push_tag(b"SN", "chr1");
+    sq.push_tag(b"LN", 2);
+    header.push_record(&sq);
+    let mut writer = Writer::from_path(path, &header, Format::Bam).unwrap();
+    for record in records {
+        writer.write(&record).unwrap();
+    }
+}
+
+fn assert_validate_fixture(
+    root: &Path,
+    name: &str,
+    records: Vec<Record>,
+    bed: &str,
+    expected_full_table: &str,
+) {
+    let bam = root.join(format!("{name}.bam"));
+    let bed_path = root.join(format!("{name}.bed"));
+    let output = root.join(format!("{name}.tsv"));
+    let check_tags_dir = root.join(format!("{name}-check-tags"));
+    write_synthetic_bam(&bam, records);
+    let mut bed_file = File::create(&bed_path).unwrap();
+    bed_file.write_all(bed.as_bytes()).unwrap();
+
+    run_modkit(&[
+        "modbam",
+        "check-tags",
+        bam.to_str().unwrap(),
+        "--ignore-index",
+        "--suppress-progress",
+        "--out-dir",
+        check_tags_dir.to_str().unwrap(),
+    ])
+    .with_context(|| {
+        format!("{name}: synthetic records should pass check-tags")
+    })
+    .unwrap();
+
+    run_modkit(&[
+        "validate",
+        "--bam-and-bed",
+        bam.to_str().unwrap(),
+        bed_path.to_str().unwrap(),
+        "--canonical-base",
+        "C",
+        "--filter-threshold",
+        "0",
+        "--threads",
+        "1",
+        "--suppress-progress",
+        "--out-filepath",
+        output.to_str().unwrap(),
+    ])
+    .with_context(|| format!("{name}: validate should succeed"))
+    .unwrap();
+
+    let first_line = BufReader::new(File::open(output).unwrap())
+        .lines()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        first_line,
+        format!("full_contingency_table: {expected_full_table}"),
+        "{name}"
+    );
+}
+
+#[test]
+fn test_validate_counts_observations_without_truth_overlapping_seed_calls() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+
+    let gt_m_records =
+        (0..3)
+            .map(|i| synthetic_called(&format!("called-{i}"), '+'))
+            .chain((0..6).map(|i| {
+                synthetic_uncalled(&format!("uncalled-{i}"), "CC", '+')
+            }))
+            .collect();
+    assert_validate_fixture(
+        root,
+        "gt-m",
+        gt_m_records,
+        "chr1\t1\t2\tm\t0\t+\n",
+        "[[\"ground_truth_label\",\"m\",\"No Call\"],[\"m\",3,6]]",
+    );
+
+    let mirror_records =
+        (0..2)
+            .map(|i| synthetic_called(&format!("called-{i}"), '+'))
+            .chain((0..6).map(|i| {
+                synthetic_uncalled(&format!("uncalled-{i}"), "CC", '+')
+            }))
+            .chain((0..2).map(|i| {
+                synthetic_uncalled(&format!("mismatch-{i}"), "CA", '+')
+            }))
+            .chain((0..2).map(|i| {
+                synthetic_record(
+                    &format!("deletion-{i}"),
+                    "C",
+                    vec![Cigar::Match(1), Cigar::Del(1)],
+                    "C+m?,0;",
+                    &[255],
+                    1,
+                )
+            }))
+            .collect();
+    assert_validate_fixture(
+        root,
+        "mirror",
+        mirror_records,
+        "chr1\t1\t2\tm\t0\t+\n",
+        "[[\"ground_truth_label\",\"m\",\"No Call\",\"A\",\"Deletion\"],[\"m\",2,6,2,2]]",
+    );
+
+    let both_strands_records =
+        std::iter::once(synthetic_called("positive-called", '+'))
+            .chain((0..5).map(|i| {
+                synthetic_uncalled(&format!("positive-uncalled-{i}"), "CC", '+')
+            }))
+            .chain(std::iter::once(synthetic_called("negative-called", '-')))
+            .chain((0..5).map(|i| {
+                synthetic_uncalled(&format!("negative-uncalled-{i}"), "GG", '-')
+            }))
+            .collect();
+    assert_validate_fixture(
+        root,
+        "both-strands",
+        both_strands_records,
+        "chr1\t1\t2\tm\t0\t+\nchr1\t1\t2\tm\t0\t-\n",
+        "[[\"ground_truth_label\",\"m\",\"No Call\"],[\"m\",2,10]]",
+    );
+
+    let empty_descriptor_records = vec![
+        synthetic_called("called-positive", '+'),
+        synthetic_record(
+            "empty-positive",
+            "CC",
+            vec![Cigar::Match(2)],
+            "C+m?;",
+            &[],
+            0,
+        ),
+        synthetic_record(
+            "empty-negative",
+            "GG",
+            vec![Cigar::Match(2)],
+            "G-m?;",
+            &[],
+            0,
+        ),
+    ];
+    assert_validate_fixture(
+        root,
+        "empty-descriptors",
+        empty_descriptor_records,
+        "chr1\t1\t2\tm\t0\t+\nchr1\t1\t2\tm\t0\t-\n",
+        "[[\"ground_truth_label\",\"m\",\"No Call\"],[\"m\",1,2]]",
+    );
+
+    let implicit_records = (0..3)
+        .map(|i| {
+            synthetic_record(
+                &format!("implicit-{i}"),
+                "CC",
+                vec![Cigar::Match(2)],
+                "C+m.,0;",
+                &[255],
+                0,
+            )
+        })
+        .collect();
+    assert_validate_fixture(
+        root,
+        "implicit",
+        implicit_records,
+        "chr1\t1\t2\t-\t0\t+\n",
+        "[[\"ground_truth_label\",\"C\"],[\"C\",3]]",
+    );
 }

@@ -38,6 +38,10 @@ use crate::util::{
     record_is_not_primary, Strand,
 };
 
+#[cfg(test)]
+#[path = "unseeded_observations_tests.rs"]
+mod unseeded_observations_tests;
+
 /// todo investigate using this type in BaseModCall
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum BaseStatus {
@@ -297,6 +301,17 @@ fn process_bam_record(
     let cgt_mod_pos = mod_positions
         .get(chrom)
         .ok_or_else(|| anyhow!("No ground truth on this contig.",))?;
+    let alignment_strand =
+        if record.is_reverse() { Strand::Negative } else { Strand::Positive };
+    let mut called_ref_pos = mbi
+        .mod_strands_for_modified_primary_base(can_base)
+        .map(|mod_strand| {
+            (
+                get_reference_mod_strand(mod_strand, alignment_strand),
+                HashSet::new(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
     let mbp = ReadBaseModProfile::process_record(
         &record,
         &record_name,
@@ -330,20 +345,21 @@ fn process_bam_record(
                 .map(|gt_code| (mod_call, ref_pos, ref_strand, gt_code))
         });
 
-    let mut called_ref_pos = HashMap::new();
     let mut result = HashMap::new();
     for (mod_call, ref_pos, ref_mod_strand, gt_code) in mod_call_iter {
-        called_ref_pos
-            .entry(ref_mod_strand)
-            .or_insert_with(HashSet::new)
-            .insert(ref_pos);
+        let Some(positions) = called_ref_pos.get_mut(&ref_mod_strand) else {
+            continue;
+        };
+        positions.insert(ref_pos);
 
-        if mod_call.canonical_base != can_base {
+        let modified_primary_base = if mod_call.mod_strand == Strand::Negative {
+            mod_call.canonical_base.complement()
+        } else {
+            mod_call.canonical_base
+        };
+        if modified_primary_base != can_base {
             result
-                .entry((
-                    *gt_code,
-                    BaseStatus::Mismatch(mod_call.canonical_base),
-                ))
+                .entry((*gt_code, BaseStatus::Mismatch(modified_primary_base)))
                 .or_insert_with(Vec::new)
                 .push(f32::NAN);
             continue;
@@ -390,6 +406,11 @@ fn process_bam_record(
             };
             let mut base = DnaBase::parse(q_seq[*q_pos as usize] as char)?;
             if record.is_reverse() {
+                base = base.complement();
+            }
+            let mod_strand =
+                get_reference_mod_strand(*strand, alignment_strand);
+            if mod_strand == Strand::Negative {
                 base = base.complement();
             }
             if base == can_base {

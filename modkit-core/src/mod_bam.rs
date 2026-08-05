@@ -1506,6 +1506,7 @@ fn parse_raw_mod_tags(record: &bam::Record) -> MkResult<RawModTags> {
 pub struct ModBaseInfo {
     pub pos_seq_base_mod_probs: HashMap<DnaBase, SeqPosBaseModProbs>,
     pub neg_seq_base_mod_probs: HashMap<DnaBase, SeqPosBaseModProbs>,
+    modified_primary_base_strands: HashMap<DnaBase, HashSet<Strand>>,
     converters: HashMap<DnaBase, DeltaListConverter>,
     pub mm_style: &'static str,
     pub ml_style: &'static str,
@@ -1531,6 +1532,24 @@ impl ModBaseInfo {
             HashMap::<DnaBase, SeqPosBaseModProbs>::new();
         let mut neg_seq_base_mod_probs =
             HashMap::<DnaBase, SeqPosBaseModProbs>::new();
+        let modified_primary_base_strands = tag_infos.iter().fold(
+            HashMap::<DnaBase, HashSet<Strand>>::new(),
+            |mut strands_by_base, tag_info| {
+                for &raw_base in tag_info.fundamental_base.expand_bases() {
+                    let modified_primary_base =
+                        if tag_info.strand == Strand::Negative {
+                            raw_base.complement()
+                        } else {
+                            raw_base
+                        };
+                    strands_by_base
+                        .entry(modified_primary_base)
+                        .or_default()
+                        .insert(tag_info.strand);
+                }
+                strands_by_base
+            },
+        );
 
         let mut converters = HashMap::new();
         let mut pointer = 0usize;
@@ -1604,10 +1623,22 @@ impl ModBaseInfo {
         Ok(Self {
             pos_seq_base_mod_probs,
             neg_seq_base_mod_probs,
+            modified_primary_base_strands,
             converters,
             mm_style: raw_mod_tags.mm_style,
             ml_style: raw_mod_tags.ml_style,
         })
+    }
+
+    pub(crate) fn mod_strands_for_modified_primary_base(
+        &self,
+        canonical_base: DnaBase,
+    ) -> impl Iterator<Item = Strand> + '_ {
+        self.modified_primary_base_strands
+            .get(&canonical_base)
+            .into_iter()
+            .flatten()
+            .copied()
     }
 
     pub fn into_iter_base_mod_probs(
