@@ -1801,6 +1801,39 @@ mod entropy_mod_tests {
         sequence
     }
 
+    fn sliding_windows_for_test(
+        sequence: &str,
+        motifs: Vec<RegexMotif>,
+        combine_strands: bool,
+        num_positions: usize,
+    ) -> SlidingWindows {
+        let curr_seq = sequence.chars().collect::<Vec<_>>();
+        let curr_position =
+            SlidingWindows::find_start_position(&curr_seq, &motifs).unwrap();
+        let motif_search_adj =
+            motifs.iter().map(RegexMotif::length).max().unwrap_or(0);
+        SlidingWindows {
+            motifs,
+            work_queue: VecDeque::new(),
+            region_names: VecDeque::new(),
+            window_size: curr_seq.len(),
+            num_positions,
+            batch_size: 1,
+            curr_position,
+            curr_contig: ReferenceRecord::new(
+                0,
+                0,
+                curr_seq.len() as u32,
+                "chr1".to_string(),
+            ),
+            curr_seq,
+            curr_region_name: None,
+            combine_strands,
+            motif_search_adj,
+            done: false,
+        }
+    }
+
     #[test]
     fn one_position_window_is_one_base_half_open() {
         let mut window =
@@ -1866,33 +1899,24 @@ mod entropy_mod_tests {
 
     #[test]
     fn combined_window_advances_from_owned_anchor_not_left_partner() {
-        let curr_seq = "GATC".chars().collect::<Vec<_>>();
         let motifs = vec![RegexMotif::parse_string("GATC", 3).unwrap()];
-        let curr_position =
-            SlidingWindows::find_start_position(&curr_seq, &motifs).unwrap();
-        let mut windows = SlidingWindows {
-            motifs,
-            work_queue: VecDeque::new(),
-            region_names: VecDeque::new(),
-            window_size: curr_seq.len(),
-            num_positions: 1,
-            batch_size: 1,
-            curr_position,
-            curr_contig: ReferenceRecord::new(
-                0,
-                0,
-                curr_seq.len() as u32,
-                "chr1".to_string(),
-            ),
-            curr_seq,
-            curr_region_name: None,
-            combine_strands: true,
-            motif_search_adj: 4,
-            done: false,
-        };
+        let mut windows =
+            sliding_windows_for_test("GATC", motifs, true, 1);
 
         assert!(windows.next_window().is_some());
         assert_eq!(windows.curr_position, 4);
+    }
+
+    #[test]
+    fn overlapping_motifs_do_not_duplicate_non_combined_anchor() {
+        let motifs = vec![
+            RegexMotif::parse_string("CG", 0).unwrap(),
+            RegexMotif::parse_string("CGN", 0).unwrap(),
+        ];
+        let mut windows =
+            sliding_windows_for_test("CGA", motifs, false, 2);
+
+        assert!(windows.next_window().is_none());
     }
 
     #[test]
