@@ -60,7 +60,12 @@ pub struct MethylationEntropy {
     window_size: usize,
     /// Do not perform any filtering, include all mod base calls in output.
     #[clap(help_heading = "Filtering Options")]
-    #[arg(group = "thresholds", long, default_value_t = false)]
+    #[arg(
+        group = "thresholds",
+        long,
+        conflicts_with = "mod_thresholds",
+        default_value_t = false
+    )]
     no_filtering: bool,
     /// Sample this many reads when estimating the filtering threshold. Reads
     /// will be sampled evenly across aligned genome. If a region is
@@ -462,6 +467,11 @@ impl MethylationEntropy {
         &self,
         pool: &rayon::ThreadPool,
     ) -> anyhow::Result<MultipleThresholdModCaller> {
+        if self.no_filtering {
+            info!("not performing filtering");
+            return Ok(MultipleThresholdModCaller::new_passthrough());
+        }
+
         let per_mod_thresholds = self
             .mod_thresholds
             .as_ref()
