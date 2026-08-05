@@ -231,6 +231,7 @@ impl FocusRegion {
     pub(super) fn into_localized_mod_counts(
         self,
         index: &HtsTabixHandler<BedMethylLine>,
+        min_coverage: u64,
         strand_rule: Option<StrandRule>,
         stranded_features: Option<StrandedFeatures>,
         io_threads: usize,
@@ -244,6 +245,7 @@ impl FocusRegion {
         )?;
         let loc_counts = bedmethyl_records
             .into_par_iter()
+            .filter(|bm| bm.valid_coverage >= min_coverage)
             .filter(|bm| {
                 stranded_features
                     .map(|f| {

@@ -367,3 +367,49 @@ fn test_localize_empty_chart_does_not_create_or_truncate_file() {
         new_chart.exists()
     );
 }
+
+#[test]
+fn test_localize_min_coverage_filters_before_aggregation() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let regions = temp_dir.path().join("regions.bed");
+    let genome_sizes = temp_dir.path().join("genome-sizes.tsv");
+    write(&regions, "chr20\t9681998\t9681999\nchr20\t9838537\t9838538\n")
+        .unwrap();
+    write(&genome_sizes, "chr20\t64444167\n").unwrap();
+
+    let run = |min_coverage: u64| {
+        let output = temp_dir.path().join(format!("min-{min_coverage}.tsv"));
+        let min_coverage = min_coverage.to_string();
+        run_modkit(&[
+            "localize",
+            "../tests/resources/lung_00733-m_adjacent-normal_5mc-5hmc_chr20_cpg_pileup.bed.gz",
+            "--regions",
+            regions.to_str().unwrap(),
+            "--genome-sizes",
+            genome_sizes.to_str().unwrap(),
+            "--window",
+            "0",
+            "--min-coverage",
+            &min_coverage,
+            "--threads",
+            "1",
+            "--io-threads",
+            "1",
+            "--out-file",
+            output.to_str().unwrap(),
+        ])
+        .unwrap();
+        read_to_string(output).unwrap().replace("\r\n", "\n")
+    };
+
+    assert_eq!(
+        run(1),
+        "mod_code\toffset\tn_valid\tn_mod\tpercent_modified\n\
+         C\t0\t24\t3\t12.5\n"
+    );
+    assert_eq!(
+        run(3),
+        "mod_code\toffset\tn_valid\tn_mod\tpercent_modified\n\
+         C\t0\t23\t2\t8.695652\n"
+    );
+}
