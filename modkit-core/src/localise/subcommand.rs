@@ -13,7 +13,9 @@ use rustc_hash::FxHashMap;
 use modkit_logging::init_logging;
 
 use crate::dmr::bedmethyl::BedMethylLine;
-use crate::localise::util::{LocalizedModCounts, StrandedFeatures};
+use crate::localise::util::{
+    FocusRegion, LocalizedModCounts, StrandedFeatures,
+};
 use crate::monoid::Moniod;
 use crate::tabix::HtsTabixHandler;
 use crate::util::{
@@ -194,7 +196,7 @@ impl EntryLocalize {
         sequence_lengths: &FxHashMap<String, u64>,
         index: &HtsTabixHandler<BedMethylLine>,
         multi_progress: &MultiProgress,
-    ) -> anyhow::Result<Vec<GenomeRegion>> {
+    ) -> anyhow::Result<Vec<FocusRegion>> {
         let pb = multi_progress.add(get_ticker());
         pb.set_message("regions parsed");
         let mut data_lines = BufReader::new(File::open(&self.regions)?)
@@ -274,7 +276,7 @@ impl EntryLocalize {
         let (regions, missing_from_sizes, missing_from_index) =
             regions.into_iter().try_fold(
                 (Vec::new(), 0usize, 0usize),
-                |(mut acc, no_size, no_index), (line_number, mut next)| {
+                |(mut acc, no_size, no_index), (line_number, next)| {
                     let contig_length =
                         sequence_lengths.get(&next.chrom).copied();
                     if let Some(contig_length) = contig_length {
@@ -297,19 +299,12 @@ impl EntryLocalize {
                     } else if !index.has_contig(&next.chrom) {
                         Ok((acc, no_size, no_index + 1))
                     } else {
-                        let contig_length = contig_length.unwrap();
-                        let mp = next.midpoint();
-                        let start = mp
-                            .checked_sub(self.expand_window + 1)
-                            .unwrap_or(0u64);
                         // safe because of conditional above
-                        let end = std::cmp::min(
-                            mp.saturating_add(self.expand_window),
-                            contig_length,
-                        );
-                        next.start = start;
-                        next.end = end;
-                        acc.push(next);
+                        acc.push(FocusRegion::from_feature(
+                            next,
+                            self.expand_window,
+                            contig_length.unwrap(),
+                        ));
                         Ok((acc, no_size, no_index))
                     }
                 },
@@ -380,8 +375,13 @@ impl EntryLocalize {
                 .into_par_iter()
                 .progress_with(successes)
                 .map(|gr| {
-                    let region =
-                        format!("{}:{}-{}", gr.chrom, gr.start, gr.end);
+                    let query_region = gr.query_region();
+                    let region = format!(
+                        "{}:{}-{}",
+                        query_region.chrom,
+                        query_region.start,
+                        query_region.end
+                    );
                     gr.into_localized_mod_counts(
                         &tabix_index,
                         self.stranded_features,

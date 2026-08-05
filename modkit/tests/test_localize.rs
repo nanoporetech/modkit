@@ -236,3 +236,35 @@ m\t-1\t28\t10\t35.714287\n";
     assert_eq!(std::fs::read(one_thread).unwrap(), expected);
     assert_eq!(std::fs::read(many_threads).unwrap(), expected);
 }
+
+#[test]
+fn test_localize_zero_window_includes_anchor() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let regions = temp_dir.path().join("regions.bed");
+    let genome_sizes = temp_dir.path().join("genome-sizes.tsv");
+    let output = temp_dir.path().join("localize.tsv");
+
+    write(&regions, "chr20\t9681998\t9681999\n").unwrap();
+    write(&genome_sizes, "chr20\t100000000\n").unwrap();
+
+    run_modkit(&[
+        "localize",
+        "../tests/resources/lung_00733-m_adjacent-normal_5mc-5hmc_chr20_cpg_pileup.bed.gz",
+        "--regions",
+        regions.to_str().unwrap(),
+        "--genome-sizes",
+        genome_sizes.to_str().unwrap(),
+        "--window",
+        "0",
+        "--min-coverage",
+        "1",
+        "--out-file",
+        output.to_str().unwrap(),
+    ])
+    .expect("failed to run modkit localize");
+
+    assert_eq!(
+        read_to_string(output).unwrap(),
+        "mod_code\toffset\tn_valid\tn_mod\tpercent_modified\nC\t0\t1\t1\t100\n"
+    );
+}

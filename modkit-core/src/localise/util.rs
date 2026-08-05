@@ -27,6 +27,32 @@ pub(super) struct LocalizedModCounts {
     offsets: FxHashMap<ModCodeRepr, FxHashMap<i64, ModPositionInfo<u64>>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FocusRegion {
+    region: GenomeRegion,
+    anchor_point: u64,
+}
+
+impl FocusRegion {
+    pub(super) fn from_feature(
+        mut region: GenomeRegion,
+        window: u64,
+        chrom_length: u64,
+    ) -> Self {
+        let anchor_point = region.midpoint();
+        region.start = anchor_point.saturating_sub(window).min(chrom_length);
+        region.end = anchor_point
+            .saturating_add(window)
+            .saturating_add(1)
+            .min(chrom_length);
+        Self { region, anchor_point }
+    }
+
+    pub(super) fn query_region(&self) -> &GenomeRegion {
+        &self.region
+    }
+}
+
 impl LocalizedModCounts {
     fn add_bedmethyl_record(
         &mut self,
@@ -186,7 +212,7 @@ impl Moniod for LocalizedModCounts {
     }
 }
 
-impl GenomeRegion {
+impl FocusRegion {
     pub(super) fn into_localized_mod_counts(
         self,
         index: &HtsTabixHandler<BedMethylLine>,
@@ -194,19 +220,19 @@ impl GenomeRegion {
         stranded_features: Option<StrandedFeatures>,
         io_threads: usize,
     ) -> anyhow::Result<LocalizedModCounts> {
+        let Self { region, anchor_point } = self;
         let bedmethyl_records = index.fetch_region(
-            &self.chrom,
-            &(self.start..self.end),
-            strand_rule.unwrap_or(self.strand),
+            &region.chrom,
+            &(region.start..region.end),
+            strand_rule.unwrap_or(region.strand),
             io_threads,
         )?;
-        let anchor_point = self.midpoint();
         let loc_counts = bedmethyl_records
             .into_par_iter()
             .filter(|bm| {
                 stranded_features
                     .map(|f| {
-                        let overlaps = self.strand.overlaps(&bm.strand);
+                        let overlaps = region.strand.overlaps(&bm.strand);
                         match f {
                             StrandedFeatures::Same => overlaps,
                             StrandedFeatures::Opposite => !overlaps,
@@ -232,4 +258,45 @@ pub(super) enum StrandedFeatures {
     Same,
     #[clap(name = "opposite")]
     Opposite,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FocusRegion;
+    use crate::util::{GenomeRegion, StrandRule};
+
+    #[test]
+    fn focus_region_uses_inclusive_window_and_preserves_anchor() {
+        let cases = [
+            (10, 11, 0, 100, 10, 11, 10),
+            (10, 14, 2, 100, 10, 15, 12),
+            (0, 1, 2, 100, 0, 3, 0),
+            (99, 100, 2, 100, 97, 100, 99),
+        ];
+
+        for (
+            feature_start,
+            feature_end,
+            window,
+            chrom_length,
+            expected_start,
+            expected_end,
+            expected_anchor,
+        ) in cases
+        {
+            let feature = GenomeRegion::new(
+                "chr1".to_string(),
+                feature_start,
+                feature_end,
+                StrandRule::Both,
+                None,
+            );
+            let focus =
+                FocusRegion::from_feature(feature, window, chrom_length);
+
+            assert_eq!(focus.region.start, expected_start);
+            assert_eq!(focus.region.end, expected_end);
+            assert_eq!(focus.anchor_point, expected_anchor);
+        }
+    }
 }
