@@ -1932,7 +1932,11 @@ impl ModSummarize {
                 multi_progress.clone(),
             )?;
 
-            if self.mapped_only || self.matched_only || self.motif.is_some() {
+            if self.mapped_only
+                || self.matched_only
+                || self.motif.is_some()
+                || self.cpg
+            {
                 qual_hist
             } else if let Some(nr) = self.num_reads {
                 if qual_hist.ok_records < nr {
