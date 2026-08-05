@@ -154,6 +154,12 @@ pub(crate) struct TranscriptModel {
     pub transcript_len: u64,   // total spliced transcript length
 }
 
+impl TranscriptModel {
+    pub(crate) fn strand(&self) -> char {
+        self.strand
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct GeneCommonCoord {
     pub gene_id: GtfGene,
