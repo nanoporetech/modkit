@@ -179,9 +179,13 @@ impl TotalLength for Vec<MultiChromCoordinates> {
 
 impl TotalLength for ReferenceIntervalBatchesFeeder {
     fn total_length(&self) -> u64 {
-        self.contigs.iter().fold(self.curr_contig.length as u64, |agg, next| {
-            agg.saturating_add(next.length as u64)
-        })
+        self.contigs.iter().fold(
+            self.curr_contig
+                .as_ref()
+                .map(|record| record.length as u64)
+                .unwrap_or(0),
+            |agg, next| agg.saturating_add(next.length as u64),
+        )
     }
 }
 
@@ -192,9 +196,9 @@ pub(crate) struct ReferenceIntervalBatchesFeeder {
     motifs: Option<MotifLocationsLookup>,
     position_filter: Option<StrandedPositionFilter<()>>,
     combine_strands: bool,
-    curr_contig: ReferenceRecord,
+    // None denotes exhaustion, including an explicit zero-target terminal.
+    curr_contig: Option<ReferenceRecord>,
     curr_position: u32,
-    done: bool,
 }
 
 impl ReferenceIntervalBatchesFeeder {
@@ -206,9 +210,52 @@ impl ReferenceIntervalBatchesFeeder {
         multi_motif_locations: Option<MotifLocationsLookup>,
         position_filter: Option<StrandedPositionFilter<()>>,
     ) -> anyhow::Result<Self> {
+        Self::new_inner(
+            reference_records,
+            batch_size,
+            interval_size,
+            combine_strands,
+            multi_motif_locations,
+            position_filter,
+            false,
+        )
+    }
+
+    /// Allow a zero-reference input to produce an already exhausted feeder.
+    /// This is only appropriate when the caller separately processes unmapped
+    /// records after the mapped interval phase.
+    pub(crate) fn new_allowing_zero_reference_targets(
+        reference_records: Vec<ReferenceRecord>,
+        batch_size: usize,
+        interval_size: u32,
+        combine_strands: bool,
+        multi_motif_locations: Option<MotifLocationsLookup>,
+        position_filter: Option<StrandedPositionFilter<()>>,
+    ) -> anyhow::Result<Self> {
+        Self::new_inner(
+            reference_records,
+            batch_size,
+            interval_size,
+            combine_strands,
+            multi_motif_locations,
+            position_filter,
+            true,
+        )
+    }
+
+    fn new_inner(
+        reference_records: Vec<ReferenceRecord>,
+        batch_size: usize,
+        interval_size: u32,
+        combine_strands: bool,
+        multi_motif_locations: Option<MotifLocationsLookup>,
+        position_filter: Option<StrandedPositionFilter<()>>,
+        allow_zero_reference_targets: bool,
+    ) -> anyhow::Result<Self> {
         if combine_strands & !multi_motif_locations.is_some() {
             bail!("cannot combine strands without a motif")
         }
+        let zero_reference_targets = reference_records.is_empty();
         let mut contigs =
             reference_records.into_iter().collect::<VecDeque<_>>();
         let n_contigs = contigs.iter().map(|r| r.tid).unique().count();
@@ -224,10 +271,14 @@ impl ReferenceIntervalBatchesFeeder {
                 contigs.len()
             );
         }
-        let curr_contig = contigs
-            .pop_front()
-            .ok_or(anyhow!("should be at least 1 contig"))?;
-        let curr_position = curr_contig.start;
+        let curr_contig = contigs.pop_front();
+        if curr_contig.is_none()
+            && !(allow_zero_reference_targets && zero_reference_targets)
+        {
+            return Err(anyhow!("should be at least 1 contig"));
+        }
+        let curr_position =
+            curr_contig.as_ref().map(|record| record.start).unwrap_or(0);
         Ok(Self {
             contigs,
             batch_size,
@@ -237,17 +288,16 @@ impl ReferenceIntervalBatchesFeeder {
             position_filter,
             curr_contig,
             curr_position,
-            done: false,
         })
     }
 
     fn update_current(&mut self) {
         if let Some(reference_record) = self.contigs.pop_front() {
             self.curr_position = reference_record.start;
-            self.curr_contig = reference_record;
+            self.curr_contig = Some(reference_record);
         } else {
             debug!("no more records to process");
-            self.done = true;
+            self.curr_contig = None;
         }
     }
 
@@ -260,29 +310,30 @@ impl ReferenceIntervalBatchesFeeder {
         let mut batch_length = 0u32;
 
         loop {
-            if self.done {
+            if self.curr_contig.is_none() {
                 break;
             } else if ret.len() >= self.batch_size {
                 break;
             }
-            debug_assert!(self.curr_position < self.curr_contig.end());
+            let curr_contig = self.curr_contig.as_ref().expect(
+                "non-terminal feeder must have a current reference record",
+            );
+            debug_assert!(self.curr_position < curr_contig.end());
             let start = self.curr_position;
-            let tid = self.curr_contig.tid;
+            let tid = curr_contig.tid;
             // in the case where we're on a large chrom end will be < length,
             // but batch length will be equal to interval size
-            let end = std::cmp::min(
-                start + self.interval_size,
-                self.curr_contig.end(),
-            );
+            let end =
+                std::cmp::min(start + self.interval_size, curr_contig.end());
             // get the sequence here.
             let (focus_positions, end) =
                 if let Some(lookup) = self.motifs.as_mut() {
                     // todo change everything to u64
                     let range = (start as u64)..(end as u64);
                     let (fps, end) = lookup.get_motif_positions(
-                        &self.curr_contig.name,
+                        &curr_contig.name,
                         tid,
-                        self.curr_contig.end(),
+                        curr_contig.end(),
                         range,
                         self.position_filter.as_ref(),
                         self.combine_strands,
@@ -296,7 +347,7 @@ impl ReferenceIntervalBatchesFeeder {
                 } else {
                     (FocusPositions2::AllPositions, end)
                 };
-            let end = std::cmp::min(end, self.curr_contig.end());
+            let end = std::cmp::min(end, curr_contig.end());
             // in the "short contig" case, chrom_coords.len() will be less than
             // interval size so batch length will be less than
             // interval size for a few rounds
@@ -305,7 +356,7 @@ impl ReferenceIntervalBatchesFeeder {
                 start,
                 end,
                 focus_positions,
-                end == self.curr_contig.end(),
+                end == curr_contig.end(),
             );
             batch_length += chrom_coords.len();
             batch.push(chrom_coords);
@@ -319,7 +370,7 @@ impl ReferenceIntervalBatchesFeeder {
             }
             // might need to update the pointers, check if we're at the end of
             // this contig
-            if end >= self.curr_contig.end() {
+            if end >= curr_contig.end() {
                 self.update_current();
             } else {
                 self.curr_position = end;
@@ -348,9 +399,13 @@ impl Iterator for ReferenceIntervalBatchesFeeder {
 
 impl TotalLength for ChromCoordinatesFeeder {
     fn total_length(&self) -> u64 {
-        self.contigs.iter().fold(self.curr_contig.length as u64, |agg, next| {
-            agg.saturating_add(next.length as u64)
-        })
+        self.contigs.iter().fold(
+            self.curr_contig
+                .as_ref()
+                .map(|record| record.length as u64)
+                .unwrap_or(0),
+            |agg, next| agg.saturating_add(next.length as u64),
+        )
     }
 }
 
@@ -362,9 +417,10 @@ pub(crate) struct ChromCoordinatesFeeder {
     // TODO: make this a borrow
     position_filter: Option<StrandedPositionFilter<()>>,
     combine_strands: bool,
-    curr_contig: ReferenceRecord,
+    // None denotes exhaustion, including an explicit zero-target terminal.
+    curr_contig: Option<ReferenceRecord>,
     curr_position: u32,
-    done: bool,
+    zero_reference_target_terminal: bool,
 }
 
 impl ChromCoordinatesFeeder {
@@ -375,10 +431,48 @@ impl ChromCoordinatesFeeder {
         combine_strands: bool,
         position_filter: Option<StrandedPositionFilter<()>>,
     ) -> anyhow::Result<Self> {
+        Self::new_inner(
+            reference_records,
+            interval_size,
+            motifs,
+            combine_strands,
+            position_filter,
+            false,
+        )
+    }
+
+    /// Allow a zero-reference input to produce an already exhausted feeder.
+    /// Inputs whose targets are removed by motif filtering remain errors.
+    pub(crate) fn new_allowing_zero_reference_targets(
+        reference_records: &[ReferenceRecord],
+        interval_size: u32,
+        motifs: Option<MotifLocationsLookup>,
+        combine_strands: bool,
+        position_filter: Option<StrandedPositionFilter<()>>,
+    ) -> anyhow::Result<Self> {
+        Self::new_inner(
+            reference_records,
+            interval_size,
+            motifs,
+            combine_strands,
+            position_filter,
+            true,
+        )
+    }
+
+    fn new_inner(
+        reference_records: &[ReferenceRecord],
+        interval_size: u32,
+        motifs: Option<MotifLocationsLookup>,
+        combine_strands: bool,
+        position_filter: Option<StrandedPositionFilter<()>>,
+        allow_zero_reference_targets: bool,
+    ) -> anyhow::Result<Self> {
         debug!("there is {} reference record(s)", reference_records.len());
         if combine_strands & !motifs.is_some() {
             bail!("cannot combine strands without a motif")
         }
+        let zero_reference_targets = reference_records.is_empty();
         let mut contigs = reference_records
             .into_iter()
             .filter(|rr| {
@@ -403,10 +497,18 @@ impl ChromCoordinatesFeeder {
                 contigs.len()
             );
         }
-        let curr_contig = contigs.pop_front().ok_or(anyhow!(
-            "should be at least 1 contig, are all of the reads unmapped?"
-        ))?;
-        let curr_position = curr_contig.start;
+        let curr_contig = contigs.pop_front();
+        if curr_contig.is_none()
+            && !(allow_zero_reference_targets && zero_reference_targets)
+        {
+            return Err(anyhow!(
+                "should be at least 1 contig, are all of the reads unmapped?"
+            ));
+        }
+        let curr_position =
+            curr_contig.as_ref().map(|record| record.start).unwrap_or(0);
+        let zero_reference_target_terminal =
+            allow_zero_reference_targets && zero_reference_targets;
         Ok(Self {
             contigs,
             interval_size,
@@ -415,18 +517,23 @@ impl ChromCoordinatesFeeder {
             combine_strands,
             curr_contig,
             curr_position,
-            done: false,
+            zero_reference_target_terminal,
         })
     }
 
     fn update_current(&mut self, end: u32) {
-        if end >= self.curr_contig.end() {
+        let curr_contig_end = self
+            .curr_contig
+            .as_ref()
+            .expect("non-terminal feeder must have a current reference record")
+            .end();
+        if end >= curr_contig_end {
             if let Some(rr) = self.contigs.pop_front() {
                 self.curr_position = rr.start;
-                self.curr_contig = rr;
+                self.curr_contig = Some(rr);
             } else {
                 debug!("feeder is done");
-                self.done = true;
+                self.curr_contig = None;
             }
         } else {
             self.curr_position = end
@@ -434,14 +541,14 @@ impl ChromCoordinatesFeeder {
     }
 
     fn get_next(&mut self) -> MkResult<Option<ChromCoordinates>> {
-        if self.done {
+        let Some(curr_contig) = self.curr_contig.as_ref() else {
             return Ok(None);
-        }
+        };
         let start = self.curr_position;
-        let tid = self.curr_contig.tid;
+        let tid = curr_contig.tid;
         let end = std::cmp::min(
             start.saturating_add(self.interval_size),
-            self.curr_contig.end(),
+            curr_contig.end(),
         );
 
         let (focus_positions, end) = if let Some(lookup) = self.motifs.as_mut()
@@ -449,9 +556,9 @@ impl ChromCoordinatesFeeder {
             // todo change everything to u64
             let range = (start as u64)..(end as u64);
             let (fps, end) = lookup.get_motif_positions(
-                &self.curr_contig.name,
+                &curr_contig.name,
                 tid,
-                self.curr_contig.end(),
+                curr_contig.end(),
                 range,
                 self.position_filter.as_ref(),
                 self.combine_strands,
@@ -504,13 +611,13 @@ impl ChromCoordinatesFeeder {
             (FocusPositions2::AllPositions, end)
         };
 
-        let end = std::cmp::min(end, self.curr_contig.end());
+        let end = std::cmp::min(end, curr_contig.end());
         let chrom_coords = ChromCoordinates::new(
             tid,
             start,
             end,
             focus_positions,
-            end == self.curr_contig.end(),
+            end == curr_contig.end(),
         );
         self.update_current(end);
 
@@ -523,6 +630,10 @@ impl ChromCoordinatesFeeder {
 
     pub(crate) fn has_position_filter(&self) -> bool {
         self.position_filter.is_some()
+    }
+
+    pub(crate) fn is_zero_reference_target_terminal(&self) -> bool {
+        self.zero_reference_target_terminal
     }
 
     pub(crate) fn get_motif_bases(&self) -> Option<[DnaBase; 4]> {
@@ -660,8 +771,12 @@ where
 mod interval_chunks_tests {
     use rust_htslib::faidx;
 
-    use crate::interval_chunks::slice_dna_sequence;
+    use crate::interval_chunks::{
+        slice_dna_sequence, ChromCoordinatesFeeder,
+        ReferenceIntervalBatchesFeeder, TotalLength,
+    };
     use crate::test_utils::load_test_sequence;
+    use crate::util::ReferenceRecord;
 
     #[test]
     fn test_check_sequence_slicing_is_same_as_fetch() {
@@ -674,6 +789,74 @@ mod interval_chunks_tests {
         let slice_a = slice_dna_sequence(&dna, start, end);
         let slice_b = fasta_reader.fetch_seq_string(name, start, end).unwrap();
         assert_eq!(slice_a, slice_b);
+    }
+
+    #[test]
+    fn strict_feeders_reject_zero_reference_targets() {
+        assert!(ReferenceIntervalBatchesFeeder::new(
+            Vec::new(),
+            1,
+            100,
+            false,
+            None,
+            None,
+        )
+        .is_err());
+        assert!(
+            ChromCoordinatesFeeder::new(&[], 100, None, false, None).is_err()
+        );
+    }
+
+    #[test]
+    fn interval_batches_zero_reference_terminal_is_exhausted() {
+        let mut feeder =
+            ReferenceIntervalBatchesFeeder::new_allowing_zero_reference_targets(
+                Vec::new(),
+                1,
+                100,
+                false,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(feeder.total_length(), 0);
+        assert!(feeder.next().is_none());
+        assert!(feeder.next().is_none());
+    }
+
+    #[test]
+    fn chrom_coordinates_zero_reference_terminal_and_clone_are_exhausted() {
+        let reference_record =
+            ReferenceRecord::new(0, 0, 1, "chr1".to_string());
+        let active =
+            ChromCoordinatesFeeder::new_allowing_zero_reference_targets(
+                &[reference_record],
+                100,
+                None,
+                false,
+                None,
+            )
+            .unwrap();
+        assert!(!active.is_zero_reference_target_terminal());
+
+        let mut feeder =
+            ChromCoordinatesFeeder::new_allowing_zero_reference_targets(
+                &[],
+                100,
+                None,
+                false,
+                None,
+            )
+            .unwrap();
+        let mut cloned = feeder.clone();
+        assert!(feeder.is_zero_reference_target_terminal());
+        assert!(cloned.is_zero_reference_target_terminal());
+        assert_eq!(feeder.total_length(), 0);
+        assert_eq!(cloned.total_length(), 0);
+        assert!(feeder.next().is_none());
+        assert!(cloned.next().is_none());
+        assert!(feeder.next().is_none());
+        assert!(cloned.next().is_none());
     }
 
     #[test]

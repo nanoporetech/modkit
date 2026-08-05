@@ -321,6 +321,7 @@ pub(super) fn load_regions(
                     input_args.interval_size
                 );
                 let reference_records = get_targets(reader.header(), region);
+                let zero_reference_targets = reference_records.is_empty();
                 let reference_records =
                     if let Some(pf) = include_positions.as_ref() {
                         pf.optimize_reference_records(
@@ -331,14 +332,29 @@ pub(super) fn load_regions(
                         reference_records
                     };
 
-                let feeder = ReferenceIntervalBatchesFeeder::new(
-                    reference_records,
-                    (input_args.threads as f32 * 1.5f32).floor() as usize,
-                    input_args.interval_size,
-                    false,
-                    None,
-                    None,
-                )?;
+                let batch_size =
+                    (input_args.threads as f32 * 1.5f32).floor() as usize;
+                let feeder = if include_unmapped_reads && zero_reference_targets
+                {
+                    ReferenceIntervalBatchesFeeder::
+                        new_allowing_zero_reference_targets(
+                            reference_records,
+                            batch_size,
+                            input_args.interval_size,
+                            false,
+                            None,
+                            None,
+                        )?
+                } else {
+                    ReferenceIntervalBatchesFeeder::new(
+                        reference_records,
+                        batch_size,
+                        input_args.interval_size,
+                        false,
+                        None,
+                        None,
+                    )?
+                };
                 Some(feeder)
             }
             Err(_) => {

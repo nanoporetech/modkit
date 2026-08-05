@@ -1511,6 +1511,7 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
         sampling_region,
         edge_filter,
         io_threadpool,
+        ZeroReferenceTargetMode::FinishMappedPhaseForUnmappedFallback,
         multi_progress.clone(),
     )?;
     if qual_hist.ok_records < 100 {
@@ -1540,6 +1541,14 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
     )
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ZeroReferenceTargetMode {
+    Reject,
+    /// Finish the mapped phase immediately so this consumer can run its
+    /// existing unmapped-record fallback.
+    FinishMappedPhaseForUnmappedFallback,
+}
+
 pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
     bam_fp: &PathBuf,
     reference_fasta: Option<&PathBuf>,
@@ -1557,6 +1566,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
     sampling_region: Option<&Region>,
     edge_filter: Option<&EdgeFilter>,
     io_threadpool: &rust_htslib::tpool::ThreadPool,
+    zero_reference_target_mode: ZeroReferenceTargetMode,
     multi_progress: MultiProgress,
 ) -> anyhow::Result<QualHist> {
     let bam_reader = bam::IndexedReader::from_path(bam_fp)?;
@@ -1579,13 +1589,27 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
         mask,
         preload_references,
     )?;
-    let feeder = ChromCoordinatesFeeder::new(
-        &reference_records,
-        interval_size,
-        motif_lookup,
-        false,
-        stranded_position_filter.clone(),
-    )?;
+    let feeder = match zero_reference_target_mode {
+        ZeroReferenceTargetMode::Reject => ChromCoordinatesFeeder::new(
+            &reference_records,
+            interval_size,
+            motif_lookup,
+            false,
+            stranded_position_filter.clone(),
+        ),
+        ZeroReferenceTargetMode::FinishMappedPhaseForUnmappedFallback => {
+            ChromCoordinatesFeeder::new_allowing_zero_reference_targets(
+                &reference_records,
+                interval_size,
+                motif_lookup,
+                false,
+                stranded_position_filter.clone(),
+            )
+        }
+    }?;
+    if feeder.is_zero_reference_target_terminal() {
+        return Ok(QualHist::default());
+    }
     if let Some(motif_bases) = feeder.get_motif_bases() {
         for i in 0..n_workers {
             let worker: Box<dyn ExtractProbsWorker> = if collect_mod_histograms

@@ -48,7 +48,7 @@ use crate::sample_probs::{
     get_base_mods_quals_from_indexed_hts_file, run_extract_probs_workers,
     AlignedBaseAndModArgmaxProbs, AlignedBaseArgmaxProbs,
     BaseAndModArgmaxProbs, BaseArgmaxProbs, ExtractProbsWorker, ProbsExtractor,
-    QualHist, RegionMleProbs,
+    QualHist, RegionMleProbs, ZeroReferenceTargetMode,
 };
 use crate::summarize::ModSummary;
 use crate::util::{
@@ -1945,6 +1945,7 @@ impl ModSummarize {
                 region.as_ref(),
                 edge_filter.as_ref(),
                 &io_threadpool,
+                ZeroReferenceTargetMode::Reject,
                 multi_progress.clone(),
             )?;
 
