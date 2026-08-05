@@ -298,11 +298,11 @@ impl SingleSiteDmrAnalysis {
                     break 'rcv_loop;
                 }
                 Ok(scores) => {
-                    if let Err(e) = segmenter.add(&scores) {
-                        self.multi_progress.suspend(|| {
-                            error!("segmentation error, {e}");
-                        })
-                    }
+                    add_scores_to_segmenter(
+                        segmenter.as_mut(),
+                        &scores,
+                        &self.multi_progress,
+                    )?;
                     for (chrom, results) in scores {
                         for result in results {
                             match result {
@@ -347,12 +347,9 @@ impl SingleSiteDmrAnalysis {
             }
         }
 
-        if let Err(e) = segmenter.run_current_chunk() {
-            self.multi_progress.suspend(|| error!("segmentation error, {e}"));
-        }
         success_counter.finish_and_clear();
         failure_counter.finish_and_clear();
-        segmenter.clean_up()?;
+        finish_segmenter(segmenter.as_mut(), &self.multi_progress)?;
 
         if let Some(e) = err {
             return Err(e.into());
@@ -985,6 +982,27 @@ trait DmrSegmenter {
     fn clean_up(&mut self) -> anyhow::Result<()>;
 }
 
+fn add_scores_to_segmenter(
+    segmenter: &mut dyn DmrSegmenter,
+    scores: &[ChromToSingleScores],
+    multi_progress: &MultiProgress,
+) -> anyhow::Result<()> {
+    if let Err(e) = segmenter.add(scores) {
+        multi_progress.suspend(|| error!("segmentation error, {e}"));
+    }
+    Ok(())
+}
+
+fn finish_segmenter(
+    segmenter: &mut dyn DmrSegmenter,
+    multi_progress: &MultiProgress,
+) -> anyhow::Result<()> {
+    if let Err(e) = segmenter.run_current_chunk() {
+        multi_progress.suspend(|| error!("segmentation error, {e}"));
+    }
+    segmenter.clean_up()
+}
+
 #[derive(new)]
 struct DummySegmenter {}
 
@@ -1345,5 +1363,100 @@ fn path_to_region_labels(
         agg.push(final_bedline);
 
         agg
+    }
+}
+
+#[cfg(test)]
+mod segmenter_error_tests {
+    use super::{
+        add_scores_to_segmenter, finish_segmenter, ChromToSingleScores,
+        DmrSegmenter,
+    };
+    use anyhow::anyhow;
+    use indicatif::MultiProgress;
+
+    const ADDED_ROW: &[u8] = b"chr1\t10\t11\tSAME\n";
+    const FINAL_ROW: &[u8] = b"chr1\t20\t21\tDIFF\n";
+
+    #[derive(Default)]
+    struct StubSegmenter {
+        output: Vec<u8>,
+        add_error: Option<&'static str>,
+        final_error: Option<&'static str>,
+        cleaned_up: bool,
+    }
+
+    impl DmrSegmenter for StubSegmenter {
+        fn add(
+            &mut self,
+            _dmr_scores: &[ChromToSingleScores],
+        ) -> anyhow::Result<()> {
+            if let Some(message) = self.add_error {
+                return Err(anyhow!(message));
+            }
+            self.output.extend_from_slice(ADDED_ROW);
+            Ok(())
+        }
+
+        fn run_current_chunk(&mut self) -> anyhow::Result<()> {
+            if let Some(message) = self.final_error {
+                return Err(anyhow!(message));
+            }
+            self.output.extend_from_slice(FINAL_ROW);
+            Ok(())
+        }
+
+        fn clean_up(&mut self) -> anyhow::Result<()> {
+            self.cleaned_up = true;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn segmenter_add_error_is_returned_exactly() {
+        let mut segmenter = StubSegmenter {
+            add_error: Some("stub segmenter add failed"),
+            ..StubSegmenter::default()
+        };
+
+        let error =
+            add_scores_to_segmenter(&mut segmenter, &[], &MultiProgress::new())
+                .expect_err("add failure must be returned");
+
+        assert_eq!(error.to_string(), "stub segmenter add failed");
+        assert!(segmenter.output.is_empty());
+        assert!(!segmenter.cleaned_up);
+    }
+
+    #[test]
+    fn segmenter_final_chunk_error_is_returned_exactly() {
+        let mut segmenter = StubSegmenter {
+            final_error: Some("stub segmenter final chunk failed"),
+            ..StubSegmenter::default()
+        };
+        add_scores_to_segmenter(&mut segmenter, &[], &MultiProgress::new())
+            .unwrap();
+
+        let error = finish_segmenter(&mut segmenter, &MultiProgress::new())
+            .expect_err("final chunk failure must be returned");
+
+        assert_eq!(error.to_string(), "stub segmenter final chunk failed");
+        assert_eq!(segmenter.output, ADDED_ROW);
+        assert!(!segmenter.cleaned_up);
+    }
+
+    #[test]
+    fn successful_segmenter_bytes_and_lifecycle_are_unchanged() {
+        let mut segmenter = StubSegmenter::default();
+        let progress = MultiProgress::new();
+
+        add_scores_to_segmenter(&mut segmenter, &[], &progress).unwrap();
+        finish_segmenter(&mut segmenter, &progress).unwrap();
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(ADDED_ROW);
+        expected.extend_from_slice(FINAL_ROW);
+        assert_eq!(segmenter.output, expected);
+        assert!(segmenter.cleaned_up);
     }
 }
