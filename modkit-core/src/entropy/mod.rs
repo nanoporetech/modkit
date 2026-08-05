@@ -16,7 +16,9 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::{self, FetchDefinition, Read};
 use rustc_hash::FxHashMap;
 
-use crate::entropy::methylation_entropy::calc_me_entropy;
+use crate::entropy::methylation_entropy::{
+    calc_me_entropy, EntropyPattern, EntropySymbol,
+};
 use crate::errs::{MkError, MkResult};
 use crate::mod_bam::{BaseModCall, ModBaseInfo};
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
@@ -328,7 +330,7 @@ impl GenomeWindow {
         self.add_pattern(&strand, pattern);
     }
 
-    fn get_mod_code_lookup(&self) -> FxHashMap<ModCodeRepr, char> {
+    fn get_mod_code_lookup(&self) -> FxHashMap<ModCodeRepr, EntropySymbol> {
         // looks complicated, but it just iterates over either the positive and
         // negative read patterns or the positive-combined read patterns
         let read_patterns: Box<dyn Iterator<Item = &Vec<BaseModCall>>> =
@@ -343,9 +345,6 @@ impl GenomeWindow {
                 }
             };
 
-        // todo this could be done more simply with a set, but the idea is to
-        // make  a single char code (e.g. '1', '2', '3', etc. for each
-        // modification code
         read_patterns
             .flat_map(|pattern| {
                 pattern.iter().filter_map(|call| match call {
@@ -358,11 +357,17 @@ impl GenomeWindow {
             .enumerate()
             .map(|(id, code)| {
                 // save 0 for canonical
-                let id = id.saturating_add(1);
-                let encoded = format!("{id}").parse::<char>().unwrap();
-                (code, encoded)
+                let id = id
+                    .checked_add(1)
+                    .and_then(|id| u32::try_from(id).ok())
+                    .filter(|id| *id < u32::MAX)
+                    .expect(
+                        "modification state count must fit below the reserved \
+                         wildcard symbol",
+                    );
+                (code, EntropySymbol::called(id))
             })
-            .collect::<FxHashMap<ModCodeRepr, char>>()
+            .collect::<FxHashMap<ModCodeRepr, EntropySymbol>>()
     }
 
     fn encode_patterns(
@@ -370,10 +375,10 @@ impl GenomeWindow {
         chrom_id: u32,
         strand: Strand,
         patterns: &Vec<Vec<BaseModCall>>,
-        mod_code_lookup: &FxHashMap<ModCodeRepr, char>,
+        mod_code_lookup: &FxHashMap<ModCodeRepr, EntropySymbol>,
         position_valid_coverages: &[u32],
         min_coverage: u32,
-    ) -> MkResult<Vec<String>> {
+    ) -> MkResult<Vec<EntropyPattern>> {
         // todo remove these checks after testing
         assert!(
             self.start(&strand).is_some(),
@@ -393,18 +398,21 @@ impl GenomeWindow {
                     let pattern = pat
                         .iter()
                         .map(|call| match call {
-                            BaseModCall::Canonical(_) => '0',
+                            BaseModCall::Canonical(_) => {
+                                EntropySymbol::CANONICAL
+                            }
                             BaseModCall::Modified(_, code) => {
                                 *mod_code_lookup.get(code).unwrap()
                             }
-                            BaseModCall::Filtered => '*',
+                            BaseModCall::Filtered => EntropySymbol::FILTERED,
                         })
-                        .collect::<String>();
+                        .collect::<Vec<EntropySymbol>>()
+                        .into_boxed_slice();
                     // todo remove after testing
                     assert_eq!(
                         pattern.len(),
                         position_valid_coverages.len(),
-                        "pattern {pattern} is the wrong size? \
+                        "pattern {pattern:?} is the wrong size? \
                          {position_valid_coverages:?}"
                     );
                     pattern
@@ -1671,7 +1679,216 @@ impl BedRegion {
 
 #[cfg(test)]
 mod entropy_mod_tests {
-    use crate::entropy::BedRegion;
+    use crate::entropy::methylation_entropy::EntropySymbol;
+    use crate::entropy::{BedRegion, GenomeWindow};
+    use crate::mod_bam::BaseModCall;
+    use crate::mod_base_code::ModCodeRepr;
+    use rayon::prelude::*;
+    use rayon::ThreadPoolBuilder;
+    use rustc_hash::FxHashMap;
+    use std::collections::{BTreeSet, HashSet};
+
+    fn combined_window_with_code_count(code_count: usize) -> GenomeWindow {
+        let read_patterns = (0..code_count)
+            .map(|idx| {
+                vec![BaseModCall::Modified(1.0, ModCodeRepr::ChEbi(idx as u32))]
+            })
+            .collect();
+        GenomeWindow::CombineStrands {
+            interval: 0..1,
+            neg_to_pos_positions: FxHashMap::default(),
+            read_patterns,
+            position_valid_coverages: vec![code_count as u32],
+        }
+    }
+
+    fn mixed_codes() -> Vec<ModCodeRepr> {
+        vec![
+            ModCodeRepr::Code('z'),
+            ModCodeRepr::ChEbi(900),
+            ModCodeRepr::Code('a'),
+            ModCodeRepr::ChEbi(1),
+            ModCodeRepr::Code('m'),
+            ModCodeRepr::ChEbi(42),
+            ModCodeRepr::Code('b'),
+            ModCodeRepr::ChEbi(7),
+            ModCodeRepr::Code('q'),
+            ModCodeRepr::ChEbi(3),
+            ModCodeRepr::Code('x'),
+            ModCodeRepr::ChEbi(100),
+            ModCodeRepr::Code('c'),
+            ModCodeRepr::ChEbi(2),
+            ModCodeRepr::Code('d'),
+            ModCodeRepr::ChEbi(10),
+            ModCodeRepr::Code('e'),
+        ]
+    }
+
+    fn stranded_lookup_window(
+        pos_codes: &[ModCodeRepr],
+        neg_codes: &[ModCodeRepr],
+    ) -> GenomeWindow {
+        let make_patterns = |codes: &[ModCodeRepr]| {
+            codes
+                .iter()
+                .map(|code| vec![BaseModCall::Modified(1.0, *code)])
+                .collect::<Vec<_>>()
+        };
+        GenomeWindow::Stranded {
+            pos_interval: None,
+            neg_interval: None,
+            pos_positions: None,
+            neg_positions: None,
+            pos_read_patterns: make_patterns(pos_codes),
+            neg_read_patterns: make_patterns(neg_codes),
+            pos_position_valid_coverages: Vec::new(),
+            neg_position_valid_coverages: Vec::new(),
+        }
+    }
+
+    fn p_q_w_calls(codes: &[ModCodeRepr]) -> Vec<Vec<BaseModCall>> {
+        let p = codes
+            .iter()
+            .map(|code| BaseModCall::Modified(1.0, *code))
+            .collect::<Vec<_>>();
+        let mut q = p.clone();
+        q[0] = BaseModCall::Canonical(1.0);
+        let mut wildcard = p.clone();
+        wildcard[0] = BaseModCall::Filtered;
+        vec![p, q, wildcard]
+    }
+
+    fn oracle_window(
+        codes: &[ModCodeRepr],
+        pos_order: &[usize; 3],
+        neg_order: &[usize; 3],
+    ) -> GenomeWindow {
+        let patterns = p_q_w_calls(codes);
+        let reorder = |order: &[usize; 3]| {
+            order.iter().map(|idx| patterns[*idx].clone()).collect::<Vec<_>>()
+        };
+        let mut coverages = vec![3; codes.len()];
+        coverages[0] = 2;
+        let interval_end = codes.len().saturating_sub(1) as u64;
+        GenomeWindow::Stranded {
+            pos_interval: Some(0..interval_end),
+            neg_interval: Some(100..100 + interval_end),
+            pos_positions: None,
+            neg_positions: None,
+            pos_read_patterns: reorder(pos_order),
+            neg_read_patterns: reorder(neg_order),
+            pos_position_valid_coverages: coverages.clone(),
+            neg_position_valid_coverages: coverages,
+        }
+    }
+
+    fn entropy_snapshot(window: &GenomeWindow) -> [(f32, usize); 2] {
+        let entropy = window.into_entropy(7, 2);
+        let pos = entropy.pos_me_entropy.unwrap().unwrap();
+        let neg = entropy.neg_me_entropy.unwrap().unwrap();
+        [(pos.me_entropy, pos.num_reads), (neg.me_entropy, neg.num_reads)]
+    }
+
+    #[test]
+    fn nine_distinct_modification_codes_have_atomic_states() {
+        let window = combined_window_with_code_count(9);
+        let lookup = window.get_mod_code_lookup();
+        assert_eq!(lookup.len(), 9);
+        for id in 1..=9 {
+            assert_eq!(
+                lookup.get(&ModCodeRepr::ChEbi(id - 1)),
+                Some(&EntropySymbol::called(id))
+            );
+        }
+    }
+
+    #[test]
+    fn ten_distinct_modification_codes_have_atomic_states() {
+        let window = combined_window_with_code_count(10);
+        assert_eq!(window.get_mod_code_lookup().len(), 10);
+    }
+
+    #[test]
+    fn mixed_code_strand_union_preserves_current_btree_ranking() {
+        let codes = mixed_codes();
+        let first = stranded_lookup_window(&codes[..8], &codes[8..]);
+        let mut reversed_pos = codes[8..].to_vec();
+        reversed_pos.reverse();
+        let mut reversed_neg = codes[..8].to_vec();
+        reversed_neg.reverse();
+        let permuted = stranded_lookup_window(&reversed_pos, &reversed_neg);
+        let first_lookup = first.get_mod_code_lookup();
+        let permuted_lookup = permuted.get_mod_code_lookup();
+        assert_eq!(first_lookup.len(), 17);
+        assert_eq!(first_lookup, permuted_lookup);
+        assert_eq!(
+            first_lookup.keys().copied().collect::<HashSet<_>>(),
+            codes.iter().copied().collect::<HashSet<_>>()
+        );
+        let distinct_symbols =
+            first_lookup.values().copied().collect::<BTreeSet<_>>();
+        let expected_symbols =
+            (1..=17).map(EntropySymbol::called).collect::<BTreeSet<_>>();
+        assert_eq!(distinct_symbols, expected_symbols);
+        assert!(!distinct_symbols.contains(&EntropySymbol::CANONICAL));
+        assert!(!distinct_symbols.contains(&EntropySymbol::FILTERED));
+
+        let mut code_symbols = codes
+            .iter()
+            .filter_map(|code| match code {
+                ModCodeRepr::Code(c) => Some((*c, first_lookup[code])),
+                ModCodeRepr::ChEbi(_) => None,
+            })
+            .collect::<Vec<_>>();
+        code_symbols.sort_by_key(|(code, _)| *code);
+        assert!(code_symbols.windows(2).all(|pair| pair[0].1 < pair[1].1));
+        let mut chebi_symbols = codes
+            .iter()
+            .filter_map(|code| match code {
+                ModCodeRepr::ChEbi(id) => Some((*id, first_lookup[code])),
+                ModCodeRepr::Code(_) => None,
+            })
+            .collect::<Vec<_>>();
+        chebi_symbols.sort_by_key(|(code, _)| *code);
+        assert!(chebi_symbols.windows(2).all(|pair| pair[0].1 < pair[1].1));
+
+        let expected_entropy = [(1.0 / 17.0, 3), (1.0 / 17.0, 3)];
+        assert_eq!(
+            entropy_snapshot(&oracle_window(&codes, &[0, 1, 2], &[2, 0, 1])),
+            expected_entropy
+        );
+        let mut reversed_codes = codes.clone();
+        reversed_codes.reverse();
+        assert_eq!(
+            entropy_snapshot(&oracle_window(
+                &reversed_codes,
+                &[1, 2, 0],
+                &[0, 2, 1],
+            )),
+            expected_entropy
+        );
+    }
+
+    #[test]
+    fn seventeen_codes_preserve_oracle_across_threads_and_permutations() {
+        let codes = (1..=17).map(ModCodeRepr::ChEbi).collect::<Vec<_>>();
+        let mut reversed_codes = codes.clone();
+        reversed_codes.reverse();
+        let expected = [(1.0 / 17.0, 3), (1.0 / 17.0, 3)];
+
+        for threads in [1, 2, 4] {
+            let windows = vec![
+                oracle_window(&codes, &[0, 1, 2], &[2, 0, 1]),
+                oracle_window(&reversed_codes, &[1, 2, 0], &[0, 2, 1]),
+            ];
+            let pool =
+                ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+            let observed = pool.install(|| {
+                windows.par_iter().map(entropy_snapshot).collect::<Vec<_>>()
+            });
+            assert_eq!(observed, vec![expected, expected]);
+        }
+    }
 
     #[test]
     fn test_bed_region_parsing() {
