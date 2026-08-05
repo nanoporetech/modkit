@@ -271,6 +271,7 @@ impl EntryLocalize {
                 .map(|gr| {
                     gr.into_localized_mod_counts(
                         &tabix_index,
+                        min_cov,
                         self.stranded_features,
                         stranded_features,
                         self.io_threads,
