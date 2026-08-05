@@ -96,6 +96,61 @@ fn run_pileup_hemi(
     (fs::read(output_path).unwrap(), threshold)
 }
 
+fn run_sparse_pileup_hemi(
+    out_dir: &Path,
+    name: &str,
+    sampling_frac: &str,
+    threads: usize,
+    sampling_interval_size: u32,
+) -> (Vec<u8>, String) {
+    let output_path = out_dir.join(format!("{name}.bed"));
+    let log_path = out_dir.join(format!("{name}.log"));
+    let output = Command::new(env!("CARGO_BIN_EXE_modkit"))
+        .args([
+            "pileup-hemi",
+            "../tests/resources/bc_anchored_10_reads.sorted.bam",
+            "--out-bed",
+            output_path.to_str().unwrap(),
+            "--ref",
+            "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+            "--cpg",
+            "--region",
+            "oligo_1512_adapters",
+            "--include-bed",
+            "../tests/resources/include-pos-1-site.bed",
+            "--sampling-frac",
+            sampling_frac,
+            "--seed",
+            "7",
+            "--threads",
+            &threads.to_string(),
+            "--sampling-interval-size",
+            &sampling_interval_size.to_string(),
+            "--suppress-progress",
+            "--log-filepath",
+            log_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run sparse include-BED pileup-hemi");
+    assert!(
+        output.status.success(),
+        "sparse include-BED pileup-hemi failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let log = fs::read_to_string(log_path).unwrap();
+    let threshold = log
+        .lines()
+        .find_map(|line| {
+            line.find("estimated pass threshold")
+                .map(|start| line[start..].to_string())
+        })
+        .expect(
+            "sparse include-BED log did not contain an estimated threshold",
+        );
+    (fs::read(output_path).unwrap(), threshold)
+}
+
 #[test]
 fn call_mods_seeded_fraction_is_stable_across_workers_and_intervals() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -162,6 +217,33 @@ fn duplex_threshold_sampling_is_stable_across_workers_and_intervals() {
             baseline,
             "pileup-hemi threshold or output changed for {threads} workers \
              and interval size {interval_size}"
+        );
+    }
+}
+
+#[test]
+fn duplex_sparse_include_bed_sampling_is_interval_invariant() {
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    for sampling_frac in ["1", "0.5"] {
+        let small_intervals = run_sparse_pileup_hemi(
+            temp_dir.path(),
+            &format!("sparse_{sampling_frac}_small"),
+            sampling_frac,
+            1,
+            20,
+        );
+        let large_intervals = run_sparse_pileup_hemi(
+            temp_dir.path(),
+            &format!("sparse_{sampling_frac}_large"),
+            sampling_frac,
+            4,
+            1_000,
+        );
+        assert_eq!(
+            small_intervals, large_intervals,
+            "sparse include-BED output or sampled threshold changed at \
+             fraction {sampling_frac}"
         );
     }
 }

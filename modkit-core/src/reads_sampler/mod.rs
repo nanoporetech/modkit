@@ -202,11 +202,6 @@ where
         .iter()
         .map(|rec| (rec.tid, rec.length))
         .collect::<FxHashMap<u32, u32>>();
-    let contig_starts = contigs
-        .iter()
-        .map(|rec| (rec.tid, rec.start))
-        .collect::<FxHashMap<u32, u32>>();
-
     let feeder = ReferenceIntervalBatchesFeeder::new(
         contigs,
         batch_size,
@@ -232,11 +227,18 @@ where
 
     let mut aggregator = <P::Output as Moniod>::zero();
     let mut reads_sampled_per_chr = FxHashMap::default();
+    // Indexed fetches return every alignment overlapping an interval, including
+    // alignments that start before it. Track the preceding interval that was
+    // actually retained by an include-BED so records which begin in a skipped
+    // gap remain owned by the next retained interval.
+    let mut retained_interval_ends = FxHashMap::default();
     let feeder = feeder.map(|x| x.unwrap());
     for super_batch in feeder {
         let total_batch_length =
             super_batch.iter().map(|c| c.total_length()).sum::<u64>();
-        let super_batch_with_counts = if indexed_fraction.is_some() {
+        let super_batch_with_counts: Vec<
+            Vec<(ChromCoordinates, CountOrSample, Option<u32>)>,
+        > = if indexed_fraction.is_some() {
             // Fractional sampling is decided independently for every record,
             // so every requested interval must be visited. The legacy count
             // schedule can stop assigning intervals after its target count is
@@ -244,18 +246,44 @@ where
             super_batch
                 .into_iter()
                 .flat_map(|coordinates| coordinates.0)
-                .map(|coordinates| (coordinates, CountOrSample::All))
+                .filter_map(|coordinates| {
+                    let retained = position_filter
+                        .map(|pf| {
+                            pf.overlaps_not_stranded(
+                                coordinates.chrom_tid,
+                                coordinates.start_pos as u64,
+                                coordinates.end_pos as u64,
+                            )
+                        })
+                        .unwrap_or(true);
+                    retained.then(|| {
+                        let record_start_cut = retained_interval_ends
+                            .insert(coordinates.chrom_tid, coordinates.end_pos);
+                        (coordinates, CountOrSample::All, record_start_cut)
+                    })
+                })
                 .chunks(batch_size)
                 .into_iter()
                 .map(|batch| batch.collect())
                 .collect()
         } else {
-            sampling_schedule.accumulate_sample_counts(
-                super_batch,
-                &contig_sizes,
-                &reads_sampled_per_chr,
-                batch_size,
-            )
+            sampling_schedule
+                .accumulate_sample_counts(
+                    super_batch,
+                    &contig_sizes,
+                    &reads_sampled_per_chr,
+                    batch_size,
+                )
+                .into_iter()
+                .map(|batch| {
+                    batch
+                        .into_iter()
+                        .map(|(coordinates, count_or_sample)| {
+                            (coordinates, count_or_sample, None)
+                        })
+                        .collect()
+                })
+                .collect()
         };
         let (super_batch_result, chrom_counts_for_batch) =
             super_batch_with_counts
@@ -266,7 +294,6 @@ where
                         multi_coords,
                         sampling_schedule,
                         indexed_fraction,
-                        &contig_starts,
                         collapse_method,
                         edge_filter,
                         position_filter,
@@ -291,10 +318,9 @@ where
 
 fn run_batch<P: RecordProcessor>(
     bam_fp: &PathBuf,
-    batch: Vec<(ChromCoordinates, CountOrSample)>,
+    batch: Vec<(ChromCoordinates, CountOrSample, Option<u32>)>,
     sampling_schedule: &SamplingSchedule,
     indexed_fraction: Option<(f64, u64)>,
-    contig_starts: &FxHashMap<u32, u32>,
     collapse_method: Option<&CollapseMethod>,
     edge_filter: Option<&EdgeFilter>,
     position_filter: Option<&StrandedPositionFilter<()>>,
@@ -308,8 +334,8 @@ where
 {
     batch
         .into_par_iter()
-        .filter(|(cc, _)| sampling_schedule.chrom_has_reads(cc.chrom_tid))
-        .filter(|(cc, _)| {
+        .filter(|(cc, _, _)| sampling_schedule.chrom_has_reads(cc.chrom_tid))
+        .filter(|(cc, _, _)| {
             position_filter
                 .map(|pf| {
                     pf.overlaps_not_stranded(
@@ -320,7 +346,7 @@ where
                 })
                 .unwrap_or(true)
         })
-        .filter_map(|(cc, counts_or_sample)| {
+        .filter_map(|(cc, counts_or_sample, record_start_cut)| {
             let record_sampler = if let Some((frac, master_seed)) =
                 indexed_fraction
             {
@@ -334,16 +360,6 @@ where
                     CountOrSample::All => RecordSampler::new_passthrough(),
                 }
             };
-            // Indexed fetches return alignments that start before an interval
-            // but overlap it. Assign those alignments to the first requested
-            // interval only, avoiding repeated MM/ML parsing while retaining
-            // records that overlap the beginning of a user-specified region.
-            let record_start_cut = indexed_fraction.and_then(|_| {
-                contig_starts.get(&cc.chrom_tid).and_then(|contig_start| {
-                    (cc.start_pos > *contig_start).then_some(cc.start_pos)
-                })
-            });
-
             match sample_reads_from_interval::<P>(
                 bam_fp,
                 cc.chrom_tid,
@@ -442,6 +458,8 @@ fn log_sampled_reads(sampled_reads_per_chr: &FxHashMap<u32, usize>) {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashSet, fs, path::PathBuf};
+
     use rust_htslib::bam::{
         self,
         header::HeaderRecord,
@@ -453,20 +471,177 @@ mod tests {
         deterministic_sampler::DeterministicFractionSampler,
         get_sampled_read_ids_to_base_mod_probs, SamplingSchedule,
     };
-    use crate::read_ids_to_base_mod_probs::ReadIdsToBaseModProbs;
+    use crate::{
+        mod_base_code::DnaBase, position_filter::StrandedPositionFilter,
+        read_ids_to_base_mod_probs::ReadIdsToBaseModProbs,
+        thresholds::calc_threshold_from_bam,
+    };
 
-    fn mapped_mod_record(name: &str, tid: i32) -> bam::Record {
+    fn mapped_mod_record_with_calls(
+        name: &str,
+        tid: i32,
+        start: i64,
+        length: usize,
+        mod_offsets: &[usize],
+        probs: &[u8],
+    ) -> bam::Record {
+        assert_eq!(mod_offsets.len(), probs.len());
+        assert!(mod_offsets.iter().all(|offset| *offset < length));
+
         let mut record = bam::Record::new();
-        let cigar = CigarString(vec![Cigar::Match(10)]);
-        record.set(name.as_bytes(), Some(&cigar), b"CCCCCCCCCC", &[30; 10]);
+        let cigar = CigarString(vec![Cigar::Match(length as u32)]);
+        let sequence = vec![b'C'; length];
+        let qualities = vec![30; length];
+        record.set(name.as_bytes(), Some(&cigar), &sequence, &qualities);
         record.set_tid(tid);
-        record.set_pos(10);
+        record.set_pos(start);
         record.set_flags(0);
         record.set_mapq(60);
-        record.push_aux(b"MM", Aux::String("C+m?,0;")).unwrap();
-        record.push_aux(b"ML", Aux::ArrayU8((&[200][..]).into())).unwrap();
-        record.push_aux(b"MN", Aux::U32(10)).unwrap();
+
+        let mut previous_offset = None;
+        let deltas = mod_offsets
+            .iter()
+            .map(|offset| {
+                let delta = previous_offset
+                    .map(|previous| offset - previous - 1)
+                    .unwrap_or(*offset);
+                previous_offset = Some(*offset);
+                delta.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let mm_tag = format!("C+m?,{deltas};");
+        record.push_aux(b"MM", Aux::String(&mm_tag)).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8(probs.into())).unwrap();
+        record.push_aux(b"MN", Aux::U32(length as u32)).unwrap();
         record
+    }
+
+    fn mapped_mod_record(name: &str, tid: i32) -> bam::Record {
+        mapped_mod_record_with_calls(name, tid, 10, 10, &[0], &[200])
+    }
+
+    fn sparse_position_fixture() -> (
+        tempfile::TempDir,
+        PathBuf,
+        StrandedPositionFilter<()>,
+        Vec<bam::Record>,
+    ) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let bam_path = temp_dir.path().join("sparse-position-filter.bam");
+        let bed_path = temp_dir.path().join("sparse-positions.bed");
+
+        let mut header = bam::Header::new();
+        let mut sq = HeaderRecord::new(b"SQ");
+        sq.push_tag(b"SN", "chr1").push_tag(b"LN", 160);
+        header.push_record(&sq);
+
+        // Retained 20 bp chunks are [20, 40) and [100, 120). The first read
+        // spans both, while the second starts in the skipped gap and must be
+        // owned by the later retained chunk.
+        let records = vec![
+            mapped_mod_record_with_calls(
+                "spans-retained-chunks",
+                0,
+                5,
+                120,
+                &[20, 100],
+                &[51, 204],
+            ),
+            mapped_mod_record_with_calls(
+                "starts-in-skipped-gap",
+                0,
+                60,
+                60,
+                &[45],
+                &[153],
+            ),
+            mapped_mod_record_with_calls(
+                "starts-in-retained-chunk",
+                0,
+                100,
+                10,
+                &[5],
+                &[102],
+            ),
+        ];
+        let mut writer =
+            bam::Writer::from_path(&bam_path, &header, bam::Format::Bam)
+                .unwrap();
+        for record in &records {
+            writer.write(record).unwrap();
+        }
+        drop(writer);
+        bam::index::build(&bam_path, None, bam::index::Type::Bai, 1).unwrap();
+
+        fs::write(&bed_path, "chr1\t25\t26\nchr1\t105\t106\n").unwrap();
+        let position_filter = StrandedPositionFilter::from_bam_and_bed(
+            &bam_path, &bed_path, true,
+        )
+        .unwrap();
+
+        (temp_dir, bam_path, position_filter, records)
+    }
+
+    fn assert_sparse_fraction_is_interval_invariant(
+        fraction: f64,
+        seed: u64,
+        expected_names: &[&str],
+    ) {
+        let (_temp_dir, bam_path, position_filter, _) =
+            sparse_position_fixture();
+        let sample = |threads, interval_size| {
+            get_sampled_read_ids_to_base_mod_probs::<ReadIdsToBaseModProbs>(
+                &bam_path,
+                threads,
+                interval_size,
+                Some(fraction),
+                None,
+                Some(seed),
+                None,
+                None,
+                None,
+                Some(&position_filter),
+                true,
+                true,
+            )
+            .unwrap()
+        };
+
+        let small_intervals = sample(2, 20);
+        let whole_contig = sample(4, 160);
+        assert_eq!(small_intervals.inner, whole_contig.inner);
+
+        let sampled_names =
+            small_intervals.inner.keys().cloned().collect::<HashSet<_>>();
+        let expected_names = expected_names
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<HashSet<_>>();
+        assert_eq!(sampled_names, expected_names);
+
+        let threshold = |threads, interval_size| {
+            calc_threshold_from_bam(
+                &bam_path,
+                threads,
+                interval_size,
+                Some(fraction),
+                None,
+                0.25,
+                Some(seed),
+                None,
+                None,
+                None,
+                Some(&position_filter),
+                true,
+                true,
+            )
+            .unwrap()
+        };
+        let small_threshold = threshold(2, 20);
+        let whole_contig_threshold = threshold(4, 160);
+        assert_eq!(small_threshold, whole_contig_threshold);
+        assert!(small_threshold.contains_key(&DnaBase::C));
     }
 
     #[test]
@@ -530,5 +705,40 @@ mod tests {
 
         assert_eq!(sampled.inner.len(), 1);
         assert!(sampled.inner.contains_key("read-tiny-1"));
+    }
+
+    #[test]
+    fn sparse_position_filter_fraction_one_is_interval_invariant() {
+        assert_sparse_fraction_is_interval_invariant(
+            1.0,
+            7,
+            &[
+                "spans-retained-chunks",
+                "starts-in-skipped-gap",
+                "starts-in-retained-chunk",
+            ],
+        );
+    }
+
+    #[test]
+    fn sparse_position_filter_seeded_fraction_is_interval_invariant() {
+        const FRACTION: f64 = 0.5;
+        let (_temp_dir, _bam_path, _position_filter, records) =
+            sparse_position_fixture();
+        let seed = (0_u64..100_000)
+            .find(|seed| {
+                let sampler =
+                    DeterministicFractionSampler::new(*seed, FRACTION).unwrap();
+                sampler.include(&records[0])
+                    && sampler.include(&records[1])
+                    && !sampler.include(&records[2])
+            })
+            .expect("expected a seed selecting the spanning and gap reads");
+
+        assert_sparse_fraction_is_interval_invariant(
+            FRACTION,
+            seed,
+            &["spans-retained-chunks", "starts-in-skipped-gap"],
+        );
     }
 }
