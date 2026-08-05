@@ -282,6 +282,29 @@ impl EntryMergeBedMethyl {
         }
         let min_sample_coverage: u64 = self.min_sample_coverage.unwrap_or(0);
 
+        // Validate every requested input before opening the output. In
+        // particular, do not silently shrink the reader list: --min-samples
+        // is resolved against the requested input cardinality above.
+        let readers = self
+            .in_bedmethyl
+            .iter()
+            .map(|bedmethyl| {
+                File::open(bedmethyl).with_context(|| {
+                    format!(
+                        "failed to open input bedMethyl file {}",
+                        bedmethyl.display()
+                    )
+                })?;
+
+                HtsTabixHandler::from_path(bedmethyl).with_context(|| {
+                    format!(
+                        "failed to read indexed input bedMethyl file {}",
+                        bedmethyl.display()
+                    )
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()?;
@@ -308,22 +331,6 @@ impl EntryMergeBedMethyl {
         if self.with_header {
             writer.write(bedmethyl_header().as_bytes())?;
         }
-
-        let readers = self
-            .in_bedmethyl
-            .iter()
-            .filter_map(|bedmethyl| {
-                let index: HtsTabixHandler<BedMethylLine> =
-                    match HtsTabixHandler::from_path(&bedmethyl) {
-                        Ok(reader) => reader,
-                        Err(_) => {
-                            return None;
-                        }
-                    };
-
-                Some(index)
-            })
-            .collect::<Vec<HtsTabixHandler<BedMethylLine>>>();
 
         // get set of contigs from all files
         // done this way in case one file has a set of contigs that the other
