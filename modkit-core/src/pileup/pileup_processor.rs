@@ -1030,6 +1030,15 @@ fn dynamic_other_mod_offset(canonical_base: DnaBase) -> usize {
     }
 }
 
+#[inline]
+fn dynamic_anchor_rpos(rpos: u32, reverse: bool, motif_offset: u32) -> u32 {
+    if reverse {
+        rpos.saturating_sub(motif_offset)
+    } else {
+        rpos
+    }
+}
+
 fn dynamic_mod_offset(
     mod_codes: &[(DnaBase, ModCodeRepr)],
     canonical_base: DnaBase,
@@ -1855,6 +1864,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
             return;
         }
 
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1878,8 +1888,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         if base != reference_base {
             return;
         }
-        let rpos =
-            if reverse { rpos.saturating_sub(self.motif_offset) } else { rpos };
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1902,8 +1911,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         haplotype: u8,
         combine_mods: bool,
     ) {
-        let rpos =
-            if reverse { rpos.saturating_sub(self.motif_offset) } else { rpos };
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1929,6 +1937,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         reverse: bool,
         haplotype: u8,
     ) {
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1952,6 +1961,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         if <CountsMatrix as ACountsMatrix<Dynamic, STRANDS, CHECK_DEPTH>>::reached_max_depth(self, rpos, reverse, haplotype) {
             return;
         }
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1977,8 +1987,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         reverse: bool,
         haplotype: u8,
     ) -> bool {
-        let rpos =
-            if reverse { rpos.saturating_sub(self.motif_offset) } else { rpos };
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,

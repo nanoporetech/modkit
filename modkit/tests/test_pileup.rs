@@ -88,6 +88,145 @@ fn write_dynamic_slot_fixture(root: &Path) -> (PathBuf, PathBuf) {
     )
 }
 
+fn write_reverse_motif_record(
+    writer: &mut BamWriter,
+    name: &str,
+    sequence: &[u8],
+    cigar: CigarString,
+    mm_tag: &str,
+    probability: u8,
+    edit_distance: u32,
+) {
+    let qualities = vec![30; sequence.len()];
+    let probabilities = [probability];
+    let mut record = Record::new();
+    record.set(name.as_bytes(), Some(&cigar), sequence, &qualities);
+    record.set_tid(0);
+    record.set_pos(0);
+    record.set_mapq(60);
+    record.set_flags(16);
+    record.push_aux(b"MM", Aux::String(mm_tag)).unwrap();
+    record.push_aux(b"ML", Aux::ArrayU8((&probabilities[..]).into())).unwrap();
+    record.push_aux(b"MN", Aux::U32(sequence.len() as u32)).unwrap();
+    record.push_aux(b"NM", Aux::U32(edit_distance)).unwrap();
+    writer.write(&record).unwrap();
+}
+
+fn write_combined_non_cpg_anchor_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    let bam_path = root.join("combined-non-cpg-anchor.bam");
+    let fasta_path = root.join("combined-non-cpg-anchor.fa");
+
+    let mut header = Header::new();
+    let mut sq = HeaderRecord::new(b"SQ");
+    sq.push_tag(b"SN", "chr1");
+    sq.push_tag(b"LN", 4);
+    header.push_record(&sq);
+
+    let mut writer =
+        BamWriter::from_path(&bam_path, &header, Format::Bam).unwrap();
+    let full_match = || CigarString(vec![Cigar::Match(4)]);
+
+    // GATC is reverse-complement palindromic. Focusing offset 1 makes the
+    // forward A anchor position 1 and the reverse T anchor position 2.
+    for (name, probability) in
+        [("modified", 255), ("canonical", 0), ("filtered", 128)]
+    {
+        write_reverse_motif_record(
+            &mut writer,
+            name,
+            b"GATC",
+            full_match(),
+            "A+m?,0;",
+            probability,
+            0,
+        );
+    }
+    write_reverse_motif_record(
+        &mut writer,
+        "no-call",
+        b"GATC",
+        full_match(),
+        "C+m?,0;",
+        255,
+        0,
+    );
+    write_reverse_motif_record(
+        &mut writer,
+        "mismatch",
+        b"GACC",
+        full_match(),
+        "C+m?,0;",
+        255,
+        1,
+    );
+    write_reverse_motif_record(
+        &mut writer,
+        "deletion",
+        b"GAC",
+        CigarString(vec![Cigar::Match(2), Cigar::Del(1), Cigar::Match(1)]),
+        "C+m?,0;",
+        255,
+        1,
+    );
+    drop(writer);
+    bam::index::build(bam_path.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    File::create(&fasta_path).unwrap().write_all(b">chr1\nGATC\n").unwrap();
+    File::create(root.join("combined-non-cpg-anchor.fa.fai"))
+        .unwrap()
+        .write_all(b"chr1\t4\t6\t4\t5\n")
+        .unwrap();
+
+    (bam_path, fasta_path)
+}
+
+fn run_combined_non_cpg_anchor_pileup(
+    root: &Path,
+    bam_path: &Path,
+    fasta_path: &Path,
+    high_depth: bool,
+    threads: usize,
+) -> Vec<u8> {
+    let mode = if high_depth { "high" } else { "normal" };
+    let output_path =
+        root.join(format!("combined-non-cpg-{mode}-{threads}.bed"));
+    let threads = threads.to_string();
+    let mut args = vec![
+        "pileup",
+        bam_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--motif",
+        "GATC",
+        "1",
+        "--combine-strands",
+        "--modified-bases",
+        "A:m",
+        "--filter-threshold",
+        "0.9",
+        "--interval-size",
+        "4",
+        "--threads",
+        &threads,
+        "--suppress-progress",
+    ];
+    if high_depth {
+        args.extend_from_slice(&["--high-depth", "--max-depth", "10"]);
+    }
+
+    run_modkit(&args)
+        .with_context(|| {
+            format!(
+                "combined non-CpG pileup failed for mode {mode}, threads \
+                 {threads}"
+            )
+        })
+        .unwrap();
+    std::fs::read(output_path).unwrap()
+}
+
 fn run_combined_slot_pileup(
     root: &Path,
     bam_path: &Path,
@@ -515,6 +654,31 @@ fn test_pileup_explicit_same_code_slots_are_keyed_by_base() {
             assert_eq!(
                 observed,
                 expected.as_bytes(),
+                "high_depth {high_depth}, threads {threads}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_pileup_combined_non_cpg_reverse_statuses_share_anchor() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_combined_non_cpg_anchor_fixture(root);
+    let expected =
+        b"chr1\t1\t2\tm\t2\t.\t1\t2\t255,0,0\t2\t50.00\t1\t1\t0\t1\t1\t1\t1\n";
+
+    for threads in [1, 2] {
+        for high_depth in [false, true] {
+            let observed = run_combined_non_cpg_anchor_pileup(
+                root,
+                &bam_path,
+                &fasta_path,
+                high_depth,
+                threads,
+            );
+            assert_eq!(
+                observed, expected,
                 "high_depth {high_depth}, threads {threads}"
             );
         }
