@@ -1,8 +1,10 @@
 use std::cmp::Ordering;
+use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
+use std::ops::Range;
 use std::path::PathBuf;
 use std::string::FromUtf8Error;
 
@@ -138,7 +140,7 @@ struct GroundTruthSite {
     pub chrom: String,
     pub strand: Strand,
     pub base_status: BaseStatus,
-    pub positions: Vec<i64>,
+    pub positions: Range<i64>,
 }
 
 fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
@@ -179,7 +181,7 @@ fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
             )
         }
     }
-    let positions = (start..end).collect();
+    let positions = start..end;
 
     Ok(GroundTruthSite { chrom, strand, base_status, positions })
 }
@@ -188,6 +190,17 @@ type TidToChrom = HashMap<u32, String>;
 
 type ChromStrandPositionNames =
     HashMap<String, HashMap<Strand, BTreeMap<i64, BaseStatus>>>;
+
+#[derive(Debug, Copy, Clone)]
+struct GroundTruthIntervalProvenance {
+    start: i64,
+    end: i64,
+    base_status: BaseStatus,
+    line_number: usize,
+}
+
+type ChromStrandIntervalProvenance =
+    HashMap<String, HashMap<Strand, Vec<GroundTruthIntervalProvenance>>>;
 
 fn get_tid_to_chrom(reader: &Reader) -> anyhow::Result<TidToChrom> {
     let header = reader.header().to_owned();
@@ -209,6 +222,7 @@ fn parse_ground_truth_bed_file(
 ) -> anyhow::Result<ChromStrandPositionNames> {
     info!("Parsing BED at {}", file_path.to_str().unwrap_or("invalid-UTF-8"));
     let mut result = HashMap::new();
+    let mut provenance: ChromStrandIntervalProvenance = HashMap::new();
     let lines_processed = get_ticker();
     if suppress_pb {
         lines_processed
@@ -239,14 +253,61 @@ fn parse_ground_truth_bed_file(
                     file_path.display()
                 )
             })?;
+        let interval_start = ground_truth_site.positions.start;
+        let interval_end = ground_truth_site.positions.end;
         let cs_res = result
-            .entry(ground_truth_site.chrom)
+            .entry(ground_truth_site.chrom.clone())
             .or_insert_with(HashMap::new)
             .entry(ground_truth_site.strand)
             .or_insert_with(BTreeMap::new);
+        let prior_intervals = provenance
+            .entry(ground_truth_site.chrom.clone())
+            .or_insert_with(HashMap::new)
+            .entry(ground_truth_site.strand)
+            .or_insert_with(Vec::new);
         for pos in ground_truth_site.positions {
-            cs_res.insert(pos, ground_truth_site.base_status);
+            match cs_res.entry(pos) {
+                BTreeMapEntry::Vacant(entry) => {
+                    entry.insert(ground_truth_site.base_status);
+                }
+                BTreeMapEntry::Occupied(entry) => {
+                    let existing_status = *entry.get();
+                    if existing_status == ground_truth_site.base_status {
+                        continue;
+                    }
+                    let first_line = prior_intervals
+                        .iter()
+                        .find(|assignment| {
+                            assignment.start <= pos
+                                && pos < assignment.end
+                                && assignment.base_status == existing_status
+                        })
+                        .map(|assignment| assignment.line_number)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "missing provenance for existing ground truth \
+                                 assignment"
+                            )
+                        })?;
+                    bail!(
+                        "conflicting ground truth labels in BED {} at line \
+                         {line_number} for {}:{pos} strand {}: existing \
+                         `{existing_status}` from line {first_line}, new \
+                         `{}`",
+                        file_path.display(),
+                        ground_truth_site.chrom,
+                        ground_truth_site.strand,
+                        ground_truth_site.base_status
+                    );
+                }
+            }
         }
+        prior_intervals.push(GroundTruthIntervalProvenance {
+            start: interval_start,
+            end: interval_end,
+            base_status: ground_truth_site.base_status,
+            line_number,
+        });
         lines_processed.inc(1);
     }
     if result.is_empty() {
@@ -1560,6 +1621,81 @@ mod tests {
                 "token {raw_code}"
             );
         }
+    }
+
+    #[test]
+    fn ground_truth_bed_rejects_conflicting_overlap_in_both_orders() {
+        let cases = [("m", "h"), ("h", "m")];
+
+        for (existing_label, new_label) in cases {
+            let mut bed = NamedTempFile::new().unwrap();
+            writeln!(bed, "chr1\t4\t7\t{existing_label}\t.\t+").unwrap();
+            writeln!(bed, "chr1\t6\t8\t{new_label}\t.\t+").unwrap();
+
+            let error =
+                parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                    .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(&bed.path().display().to_string()),
+                "{message}"
+            );
+            assert!(message.contains("line 2"), "{message}");
+            assert!(message.contains("chr1:6 strand +"), "{message}");
+            assert!(
+                message.contains(&format!(
+                    "existing `{existing_label}` from line 1"
+                )),
+                "{message}"
+            );
+            assert!(
+                message.contains(&format!("new `{new_label}`")),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn ground_truth_bed_retains_first_line_for_later_conflict() {
+        let mut bed = NamedTempFile::new().unwrap();
+        writeln!(bed, "chr1\t4\t8\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t6\t9\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t7\t8\th\t.\t+").unwrap();
+
+        let error =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("line 3"), "{message}");
+        assert!(message.contains("chr1:7 strand +"), "{message}");
+        assert!(message.contains("existing `m` from line 1"), "{message}");
+        assert!(message.contains("new `h`"), "{message}");
+    }
+
+    #[test]
+    fn ground_truth_bed_accepts_identical_duplicate_and_overlap() {
+        let mut bed = NamedTempFile::new().unwrap();
+        writeln!(bed, "chr1\t4\t8\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t4\t8\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t6\t9\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t6\t7\th\t.\t-").unwrap();
+
+        let parsed =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap();
+        let positive = &parsed["chr1"][&Strand::Positive];
+        assert_eq!(positive.len(), 5);
+        assert_eq!(
+            positive.keys().copied().collect::<Vec<_>>(),
+            vec![4, 5, 6, 7, 8]
+        );
+        assert!(positive
+            .values()
+            .all(|status| *status == BaseStatus::Modified('m'.into())));
+        assert_eq!(
+            parsed["chr1"][&Strand::Negative][&6],
+            BaseStatus::Modified('h'.into())
+        );
     }
 
     #[test]

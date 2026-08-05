@@ -533,6 +533,11 @@ fn test_validate_bed_errors_preserve_output_and_report_line() {
         ),
         ("strand", "chr1\t5\t6\tm\t.\t+junk", "expected `+` or `-`"),
         ("mod-code", "chr1\t5\t6\t.\t.\t+", "failed to parse mod code"),
+        (
+            "conflicting-label",
+            "chr1\t4\t6\th\t.\t+",
+            "conflicting ground truth labels",
+        ),
     ];
 
     for (case_name, invalid_line, expected_error) in cases {
