@@ -459,7 +459,7 @@ fn zero_coverage_site_does_not_abort_at_boundary_prior() {
     }
 }
 
-fn run_matched_replicate_dmr(
+fn run_replicate_dmr(
     output_path: &Path,
     samples_a: &[&str],
     samples_b: &[&str],
@@ -467,7 +467,6 @@ fn run_matched_replicate_dmr(
     threads: &str,
     io_threads: &str,
 ) -> Output {
-    assert_eq!(samples_a.len(), samples_b.len());
     let mut command = Command::new(env!("CARGO_BIN_EXE_modkit"));
     command.args(["dmr", "pair"]);
     for sample in samples_a {
@@ -545,7 +544,7 @@ fn complete_matched_replicates_follow_cli_order_and_independent_oracles() {
     {
         let output_path =
             temp_dir.path().join(format!("independent-{pair_index}.bed"));
-        let output = run_matched_replicate_dmr(
+        let output = run_replicate_dmr(
             &output_path,
             &[*sample_a],
             &[*sample_b],
@@ -565,7 +564,7 @@ fn complete_matched_replicates_follow_cli_order_and_independent_oracles() {
         let output_path = temp_dir
             .path()
             .join(format!("complete-{threads}-{io_threads}.bed"));
-        let output = run_matched_replicate_dmr(
+        let output = run_replicate_dmr(
             &output_path,
             &samples_a,
             &samples_b,
@@ -638,7 +637,7 @@ fn incomplete_matched_replicates_suppress_both_fields_and_keep_group_row() {
             let output_path = temp_dir
                 .path()
                 .join(format!("{label}-{threads}-{io_threads}.bed"));
-            let output = run_matched_replicate_dmr(
+            let output = run_replicate_dmr(
                 &output_path,
                 &samples_a,
                 &samples_b,
@@ -660,6 +659,54 @@ fn incomplete_matched_replicates_suppress_both_fields_and_keep_group_row() {
             outputs.push(output);
         }
         assert_eq!(outputs[0].as_bytes(), outputs[1].as_bytes(), "{label}");
+    }
+}
+
+#[test]
+fn positive_coverage_oracle_is_filter_and_thread_invariant() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let scenarios = [
+        ("zero", [ZERO_COVERAGE_BED, MODIFIED_10X_BED], "0"),
+        ("min-one", [ZERO_COVERAGE_BED, MODIFIED_10X_BED], "1"),
+        ("absent", [EMPTY_BED, MODIFIED_10X_BED], "0"),
+    ];
+    let mut outputs = Vec::new();
+
+    for (label, samples_a, min_coverage) in scenarios {
+        for (threads, io_threads) in [("1", "1"), ("4", "2")] {
+            let output_path = temp_dir
+                .path()
+                .join(format!("{label}-{threads}-{io_threads}.bed"));
+            let output = run_replicate_dmr(
+                &output_path,
+                &samples_a,
+                &[CANONICAL_10X_BED],
+                min_coverage,
+                threads,
+                io_threads,
+            );
+            let output = read_single_successful_dmr_row(output, &output_path);
+            for (field, expected) in [
+                ("a_counts", "m:10"),
+                ("a_total", "10"),
+                ("b_counts", "m:0"),
+                ("b_total", "10"),
+                ("map_pvalue", "0.0000006230948043897833"),
+                ("effect_size", "1"),
+                ("balanced_map_pvalue", "0.0000006230948043897833"),
+                ("balanced_effect_size", "1"),
+                ("pct_a_samples", "50"),
+                ("pct_b_samples", "100"),
+            ] {
+                assert_eq!(dmr_field(&output, field), expected);
+            }
+            assert!(!output.contains("h:0"), "{label}: {output}");
+            outputs.push(output);
+        }
+    }
+
+    for output in &outputs[1..] {
+        assert_eq!(&outputs[0], output);
     }
 }
 
