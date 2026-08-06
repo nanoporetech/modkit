@@ -1,3 +1,6 @@
+use crate::common::regional_query::{
+    make_indexed_bedmethyl, GENOME_SIZES, OUTPUT_SENTINEL, REGIONS,
+};
 use crate::common::run_modkit;
 use std::fs::{read_to_string, write};
 use std::path::Path;
@@ -35,6 +38,53 @@ fn run_localize(
         command.arg("--force");
     }
     command.output().unwrap()
+}
+
+fn run_localize_query(
+    bedmethyl: &Path,
+    regions: &Path,
+    genome_sizes: &Path,
+    output: &Path,
+    threads: usize,
+    force: bool,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_modkit"));
+    command
+        .arg("localize")
+        .arg(bedmethyl)
+        .arg("--regions")
+        .arg(regions)
+        .arg("--genome-sizes")
+        .arg(genome_sizes)
+        .arg("--out-file")
+        .arg(output)
+        .args([
+            "--window",
+            "1",
+            "--min-coverage",
+            "1",
+            "--threads",
+            &threads.to_string(),
+            "--io-threads",
+            "1",
+        ]);
+    if force {
+        command.arg("--force");
+    }
+    command.output().unwrap()
+}
+
+fn assert_query_failure(output: &Output) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "localize unexpectedly succeeded: {stderr}"
+    );
+    assert!(
+        stderr.contains("failed to localize region chr1:")
+            && stderr.contains("invalid-bedmethyl-data"),
+        "localize error lacks region/decode context: {stderr}"
+    );
 }
 
 #[test]
@@ -114,4 +164,75 @@ fn test_localize_accepts_valid_regions() {
     assert!(read_to_string(output)
         .unwrap()
         .starts_with("mod_code\toffset\tn_valid\tn_mod\tpercent_modified\n"));
+}
+
+#[test]
+fn localize_propagates_regional_query_errors_without_mutating_output() {
+    for threads in [1usize, 4] {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let bedmethyl = make_indexed_bedmethyl(temp_dir.path(), true);
+        let regions = temp_dir.path().join("regions.bed");
+        let genome_sizes = temp_dir.path().join("genome-sizes.tsv");
+        write(&regions, REGIONS).unwrap();
+        write(&genome_sizes, GENOME_SIZES).unwrap();
+
+        let absent_output = temp_dir.path().join("absent.tsv");
+        assert_query_failure(&run_localize_query(
+            &bedmethyl,
+            &regions,
+            &genome_sizes,
+            &absent_output,
+            threads,
+            false,
+        ));
+        assert!(
+            !absent_output.exists(),
+            "failed localize run created output with {threads} threads"
+        );
+
+        let existing_output = temp_dir.path().join("existing.tsv");
+        write(&existing_output, OUTPUT_SENTINEL).unwrap();
+        assert_query_failure(&run_localize_query(
+            &bedmethyl,
+            &regions,
+            &genome_sizes,
+            &existing_output,
+            threads,
+            true,
+        ));
+        assert_eq!(std::fs::read(existing_output).unwrap(), OUTPUT_SENTINEL);
+    }
+}
+
+#[test]
+fn localize_valid_output_is_byte_identical_across_thread_counts() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let bedmethyl = make_indexed_bedmethyl(temp_dir.path(), false);
+    let regions = temp_dir.path().join("regions.bed");
+    let genome_sizes = temp_dir.path().join("genome-sizes.tsv");
+    write(&regions, REGIONS).unwrap();
+    write(&genome_sizes, GENOME_SIZES).unwrap();
+
+    let one_thread = temp_dir.path().join("one.tsv");
+    let many_threads = temp_dir.path().join("many.tsv");
+    for (threads, output) in [(1usize, &one_thread), (4, &many_threads)] {
+        let result = run_localize_query(
+            &bedmethyl,
+            &regions,
+            &genome_sizes,
+            output,
+            threads,
+            false,
+        );
+        assert!(
+            result.status.success(),
+            "valid localize run failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+
+    let expected = b"mod_code\toffset\tn_valid\tn_mod\tpercent_modified\n\
+m\t-1\t28\t10\t35.714287\n";
+    assert_eq!(std::fs::read(one_thread).unwrap(), expected);
+    assert_eq!(std::fs::read(many_threads).unwrap(), expected);
 }

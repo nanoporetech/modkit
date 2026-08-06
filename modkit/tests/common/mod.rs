@@ -12,6 +12,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+pub mod regional_query;
+
 pub fn run_modkit(args: &[&str]) -> AnyhowResult<Output> {
     let exe = Path::new(env!("CARGO_BIN_EXE_modkit"));
     assert!(exe.exists());
