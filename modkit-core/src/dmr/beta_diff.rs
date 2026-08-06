@@ -278,9 +278,58 @@ impl PMapEstimator {
 
 #[cfg(test)]
 mod tests {
-    use crate::dmr::beta_diff::{appell_f1_stable, LOWER, UPPER};
+    use crate::dmr::beta_diff::{
+        appell_f1_stable, BetaParams, PMapEstimator, LOWER, UPPER,
+    };
     use assert_approx_eq::assert_approx_eq;
     use rv::misc::gauss_legendre_quadrature;
+
+    fn estimator() -> PMapEstimator {
+        PMapEstimator::new(
+            [10, 10],
+            1,
+            1,
+            BetaParams::new(1.0, 1.0).unwrap(),
+            0.05,
+            true,
+        )
+    }
+
+    #[test]
+    fn beta_diff_at_zero_rejects_exact_posterior_pair_sum_boundaries() {
+        let estimator = estimator();
+        let boundary_pairs = [
+            (
+                BetaParams::new(0.4, 2.0).unwrap(),
+                BetaParams::new(0.6, 3.0).unwrap(),
+            ),
+            (
+                BetaParams::new(2.0, 0.4).unwrap(),
+                BetaParams::new(3.0, 0.6).unwrap(),
+            ),
+        ];
+
+        for (params1, params2) in boundary_pairs {
+            let err = estimator
+                .calc_beta_diff(0.0, &params1, &params2)
+                .expect_err("pair-sum boundary must be rejected");
+            assert!(err
+                .to_string()
+                .starts_with("alpha1 + alpha2 <= 1 or beta1 + beta2 <= 1,"));
+        }
+    }
+
+    #[test]
+    fn beta_diff_at_zero_matches_interior_closed_form_value() {
+        let estimator = estimator();
+        let params1 = BetaParams::new(2.0, 3.0).unwrap();
+        let params2 = BetaParams::new(4.0, 5.0).unwrap();
+
+        let actual = estimator.calc_beta_diff(0.0, &params1, &params2).unwrap();
+
+        // B(5, 7) / (B(2, 3) * B(4, 5)) = 16 / 11.
+        assert_approx_eq!(actual, (16f64 / 11f64).ln(), 1e-12);
+    }
 
     #[test]
     fn test_appell_f1_stable() {
