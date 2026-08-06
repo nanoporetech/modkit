@@ -13,8 +13,11 @@ const CANONICAL_ONLY_BED: &str =
     "../tests/resources/dmr_canonical_only_chr1.bed.gz";
 const MODIFIED_10X_BED: &str =
     "../tests/resources/dmr_10x_modified_chr1.bed.gz";
+const HALF_MODIFIED_10X_BED: &str =
+    "../tests/resources/dmr_10x_half_modified_chr1.bed.gz";
 const CANONICAL_10X_BED: &str =
     "../tests/resources/dmr_10x_canonical_chr1.bed.gz";
+const EMPTY_BED: &str = "../tests/resources/dmr_empty_chr1.bed.gz";
 const ZERO_COVERAGE_REF: &str = "../tests/resources/dmr_zero_coverage_chr1.fa";
 const ZERO_PERCENTILE_BED: &str =
     "../tests/resources/dmr_zero_percentile_21_sites_chr1.bed.gz";
@@ -453,6 +456,210 @@ fn zero_coverage_site_does_not_abort_at_boundary_prior() {
             run_zero_coverage_dmr(&output_path, Some(("0.5", "0.5")), delta);
 
         assert_zero_coverage_is_failed(output, &output_path);
+    }
+}
+
+fn run_matched_replicate_dmr(
+    output_path: &Path,
+    samples_a: &[&str],
+    samples_b: &[&str],
+    min_coverage: &str,
+    threads: &str,
+    io_threads: &str,
+) -> Output {
+    assert_eq!(samples_a.len(), samples_b.len());
+    let mut command = Command::new(env!("CARGO_BIN_EXE_modkit"));
+    command.args(["dmr", "pair"]);
+    for sample in samples_a {
+        command.args(["-a", sample]);
+    }
+    for sample in samples_b {
+        command.args(["-b", sample]);
+    }
+    command.args([
+        "-o",
+        output_path.to_str().unwrap(),
+        "--ref",
+        ZERO_COVERAGE_REF,
+        "--base",
+        "C",
+        "--header",
+        "--max-coverages",
+        "10",
+        "10",
+        "--min-valid-coverage",
+        min_coverage,
+        "--threads",
+        threads,
+        "--io-threads",
+        io_threads,
+        "--suppress-progress",
+        "--force",
+    ]);
+    command.output().unwrap()
+}
+
+fn read_single_successful_dmr_row(
+    output: Output,
+    output_path: &Path,
+) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("processed 1 sites successfully, 0 failed"),
+        "{stderr}"
+    );
+    let output = fs::read_to_string(output_path).unwrap();
+    assert_eq!(output.lines().count(), 2, "{output}");
+    output
+}
+
+fn dmr_field<'a>(output: &'a str, field_name: &str) -> &'a str {
+    let mut lines = output.lines();
+    let header = lines.next().unwrap().split('\t').collect::<Vec<_>>();
+    let row = lines.next().unwrap().split('\t').collect::<Vec<_>>();
+    assert_eq!(header.len(), row.len(), "{output}");
+    let index = header.iter().position(|field| *field == field_name).unwrap();
+    row[index]
+}
+
+#[test]
+fn complete_matched_replicates_follow_cli_order_and_independent_oracles() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let samples_a =
+        [MODIFIED_10X_BED, CANONICAL_10X_BED, HALF_MODIFIED_10X_BED];
+    let samples_b =
+        [CANONICAL_10X_BED, HALF_MODIFIED_10X_BED, MODIFIED_10X_BED];
+    let expected_maps = [
+        "0.0000006230948043897833",
+        "0.020888505198542493",
+        "0.01995939262165838",
+    ];
+    let expected_effects = ["1", "-0.5", "-0.5"];
+
+    for (pair_index, ((sample_a, sample_b), (map, effect))) in samples_a
+        .iter()
+        .zip(samples_b.iter())
+        .zip(expected_maps.iter().zip(expected_effects.iter()))
+        .enumerate()
+    {
+        let output_path =
+            temp_dir.path().join(format!("independent-{pair_index}.bed"));
+        let output = run_matched_replicate_dmr(
+            &output_path,
+            &[*sample_a],
+            &[*sample_b],
+            "0",
+            "1",
+            "1",
+        );
+        let output = read_single_successful_dmr_row(output, &output_path);
+        assert_eq!(dmr_field(&output, "map_pvalue"), *map);
+        assert_eq!(dmr_field(&output, "effect_size"), *effect);
+    }
+
+    let expected_maps = expected_maps.join(",");
+    let expected_effects = expected_effects.join(",");
+    let mut outputs = Vec::new();
+    for (threads, io_threads) in [("1", "1"), ("4", "2")] {
+        let output_path = temp_dir
+            .path()
+            .join(format!("complete-{threads}-{io_threads}.bed"));
+        let output = run_matched_replicate_dmr(
+            &output_path,
+            &samples_a,
+            &samples_b,
+            "0",
+            threads,
+            io_threads,
+        );
+        let output = read_single_successful_dmr_row(output, &output_path);
+        assert_eq!(dmr_field(&output, "replicate_map_pvalues"), expected_maps);
+        assert_eq!(
+            dmr_field(&output, "replicate_effect_sizes"),
+            expected_effects
+        );
+        for (field, expected) in [
+            ("a_counts", "m:15"),
+            ("a_total", "30"),
+            ("b_counts", "m:15"),
+            ("b_total", "30"),
+            ("a_pct_modified", "0.5"),
+            ("b_pct_modified", "0.5"),
+            ("map_pvalue", "1"),
+            ("effect_size", "0"),
+            ("balanced_map_pvalue", "1"),
+            ("balanced_effect_size", "0"),
+            ("pct_a_samples", "100"),
+            ("pct_b_samples", "100"),
+        ] {
+            assert_eq!(dmr_field(&output, field), expected);
+        }
+        outputs.push(output);
+    }
+    assert_eq!(outputs[0].as_bytes(), outputs[1].as_bytes());
+}
+
+#[test]
+fn incomplete_matched_replicates_suppress_both_fields_and_keep_group_row() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let complete_b =
+        [CANONICAL_10X_BED, HALF_MODIFIED_10X_BED, MODIFIED_10X_BED];
+    let scenarios = [
+        (
+            "aligned-missing",
+            [MODIFIED_10X_BED, EMPTY_BED, HALF_MODIFIED_10X_BED],
+            [CANONICAL_10X_BED, EMPTY_BED, MODIFIED_10X_BED],
+            "0",
+        ),
+        (
+            "crossed-missing",
+            [EMPTY_BED, CANONICAL_10X_BED, HALF_MODIFIED_10X_BED],
+            [CANONICAL_10X_BED, EMPTY_BED, MODIFIED_10X_BED],
+            "0",
+        ),
+        (
+            "zero-member",
+            [MODIFIED_10X_BED, ZERO_COVERAGE_BED, HALF_MODIFIED_10X_BED],
+            complete_b,
+            "0",
+        ),
+        (
+            "threshold-filtered",
+            [MODIFIED_10X_BED, CANONICAL_ONLY_BED, HALF_MODIFIED_10X_BED],
+            complete_b,
+            "2",
+        ),
+    ];
+
+    for (label, samples_a, samples_b, min_coverage) in scenarios {
+        let mut outputs = Vec::new();
+        for (threads, io_threads) in [("1", "1"), ("4", "2")] {
+            let output_path = temp_dir
+                .path()
+                .join(format!("{label}-{threads}-{io_threads}.bed"));
+            let output = run_matched_replicate_dmr(
+                &output_path,
+                &samples_a,
+                &samples_b,
+                min_coverage,
+                threads,
+                io_threads,
+            );
+            let output = read_single_successful_dmr_row(output, &output_path);
+            assert_eq!(
+                dmr_field(&output, "replicate_map_pvalues"),
+                "-",
+                "{label}: {output}"
+            );
+            assert_eq!(
+                dmr_field(&output, "replicate_effect_sizes"),
+                "-",
+                "{label}: {output}"
+            );
+            outputs.push(output);
+        }
+        assert_eq!(outputs[0].as_bytes(), outputs[1].as_bytes(), "{label}");
     }
 }
 

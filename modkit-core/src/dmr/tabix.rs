@@ -372,3 +372,59 @@ impl SingleSiteSampleIndex {
         self.num_a_samples() > 1 || self.num_b_samples() > 1
     }
 }
+
+#[cfg(test)]
+mod sample_identity_tests {
+    use rustc_hash::FxHashMap;
+
+    use super::{
+        MultiSampleIndex, SampleToChromBMLines, SingleSiteSampleIndex,
+    };
+    use crate::dmr::bedmethyl::BedMethylLine;
+    use crate::mod_base_code::{DnaBase, ModCodeRepr};
+
+    fn line(modified: usize) -> BedMethylLine {
+        BedMethylLine::parse(&format!(
+            "chr1\t0\t1\tm\t10\t+\t0\t1\t255,0,0\t10\t0.00\t{}\t{}\t0\t0\t0\t0\t0",
+            modified,
+            10 - modified
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn organizer_preserves_configured_sample_order() {
+        let mut code_lookup = FxHashMap::default();
+        code_lookup.insert(ModCodeRepr::Code('m'), DnaBase::C);
+        let sample_index = SingleSiteSampleIndex::new(
+            MultiSampleIndex::new(Vec::new(), code_lookup.clone(), 0, 1),
+            1,
+            3,
+            None,
+        )
+        .unwrap();
+        let mut samples = SampleToChromBMLines::default();
+        for (sample_id, modified) in [(5, 9), (3, 1), (4, 5)] {
+            samples.insert(
+                sample_id,
+                FxHashMap::from_iter([(
+                    "chr1".to_string(),
+                    vec![line(modified)],
+                )]),
+            );
+        }
+
+        let organized = sample_index
+            .organize_bedmethy_lines(samples, &code_lookup)
+            .unwrap();
+        let counts = organized.get("chr1").unwrap().values().next().unwrap();
+
+        assert_eq!(
+            counts
+                .iter()
+                .map(|counts| counts.modified_counts())
+                .collect::<Vec<_>>(),
+            vec![1, 5, 9]
+        );
+    }
+}
