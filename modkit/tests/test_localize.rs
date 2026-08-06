@@ -268,3 +268,47 @@ fn test_localize_zero_window_includes_anchor() {
         "mod_code\toffset\tn_valid\tn_mod\tpercent_modified\nC\t0\t1\t1\t100\n"
     );
 }
+
+#[test]
+fn test_localize_offsets_use_reference_axis_for_all_feature_strands() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let genome_sizes = temp_dir.path().join("genome-sizes.tsv");
+    write(&genome_sizes, "chr20\t100000000\n").unwrap();
+
+    let expected = concat!(
+        "mod_code\toffset\tn_valid\tn_mod\tpercent_modified\n",
+        "C\t-7\t1\t1\t100\n",
+        "C\t8\t1\t1\t100\n",
+    );
+    let feature_strands = [
+        ("positive", "chr20\t9682005\t9682006\tfeature\t0\t+\n"),
+        ("negative", "chr20\t9682005\t9682006\tfeature\t0\t-\n"),
+        ("both", "chr20\t9682005\t9682006\n"),
+    ];
+
+    for (label, region_line) in feature_strands {
+        let regions = temp_dir.path().join(format!("regions-{label}.bed"));
+        let output = temp_dir.path().join(format!("localize-{label}.tsv"));
+        write(&regions, region_line).unwrap();
+
+        run_modkit(&[
+            "localize",
+            "../tests/resources/lung_00733-m_adjacent-normal_5mc-5hmc_chr20_cpg_pileup.bed.gz",
+            "--regions",
+            regions.to_str().unwrap(),
+            "--genome-sizes",
+            genome_sizes.to_str().unwrap(),
+            "--window",
+            "8",
+            "--stranded-features",
+            "both",
+            "--min-coverage",
+            "1",
+            "--out-file",
+            output.to_str().unwrap(),
+        ])
+        .expect("failed to run modkit localize");
+
+        assert_eq!(read_to_string(output).unwrap(), expected, "{label}");
+    }
+}
