@@ -968,7 +968,12 @@ mod positive_coverage_tests {
 
 type ChromToSingleScores = (String, Vec<MkResult<SingleSiteDmrScore>>);
 
-fn sort_chrom_to_site_scores(_: &mut [ChromToSingleScores]) {}
+fn sort_chrom_to_site_scores(chrom_to_site_scores: &mut [ChromToSingleScores]) {
+    // The batch maps use hash iteration order, while the writer and stateful
+    // segmenter require the lexical contig order used by SingleSiteBatches.
+    chrom_to_site_scores
+        .sort_unstable_by(|(a_chrom, _), (b_chrom, _)| a_chrom.cmp(b_chrom));
+}
 
 fn process_batch_of_positions(
     batch: DmrBatchOfPositions,
