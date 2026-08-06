@@ -183,8 +183,11 @@ pub(super) fn run_pairwise_dmr(
     multi_progress: MultiProgress,
 ) -> anyhow::Result<(usize, FxHashMap<String, usize>)> {
     if header {
-        writer
-            .write_all(ModificationCounts::header(a_name, b_name).as_bytes())?;
+        if let Err(error) = writer
+            .write_all(ModificationCounts::header(a_name, b_name).as_bytes())
+        {
+            finish_pairwise_output(Some(error.into()), writer.as_mut())?;
+        }
     }
 
     let (snd, rcv) = crossbeam_channel::bounded(1000);
@@ -248,14 +251,25 @@ pub(super) fn run_pairwise_dmr(
 
     let mut success_count = 0;
     let mut region_error_counts = FxHashMap::<String, usize>::default();
-    let mut err: Option<MkError> = None;
+    let mut err: Option<anyhow::Error> = None;
     'rcv_loop: for batch_result in rcv {
         match batch_result {
             BatchResult::Results(results) => {
                 for result in results {
                     match result {
                         Ok(counts) => {
-                            writer.write_all(counts.to_row()?.as_bytes())?;
+                            let row = match counts.to_row() {
+                                Ok(row) => row,
+                                Err(error) => {
+                                    err = Some(error);
+                                    break 'rcv_loop;
+                                }
+                            };
+                            if let Err(error) = writer.write_all(row.as_bytes())
+                            {
+                                err = Some(error.into());
+                                break 'rcv_loop;
+                            }
                             success_count += 1;
                             pb.inc(1);
                         }
@@ -272,7 +286,7 @@ pub(super) fn run_pairwise_dmr(
                                              record(s), {message}, stopping"
                                         );
                                     });
-                                    err = Some(e);
+                                    err = Some(e.into());
                                     break 'rcv_loop;
                                 }
                                 _ => {}
@@ -295,7 +309,7 @@ pub(super) fn run_pairwise_dmr(
                     }
                 });
                 batch_failures.inc(1u64);
-                err = Some(error);
+                err = Some(error.into());
                 break 'rcv_loop;
             }
         }
@@ -303,7 +317,7 @@ pub(super) fn run_pairwise_dmr(
 
     pb.finish_and_clear();
 
-    finish_pairwise_output(err.map(anyhow::Error::from), writer.as_mut())?;
+    finish_pairwise_output(err, writer.as_mut())?;
     Ok((success_count, region_error_counts))
 }
 
@@ -311,11 +325,11 @@ fn finish_pairwise_output(
     first_error: Option<anyhow::Error>,
     writer: &mut dyn std::io::Write,
 ) -> anyhow::Result<()> {
-    if let Some(error) = first_error {
-        return Err(error);
+    let flush_result = writer.flush().map_err(anyhow::Error::from);
+    match first_error {
+        Some(error) => Err(error),
+        None => flush_result,
     }
-    writer.flush()?;
-    Ok(())
 }
 
 #[cfg(test)]

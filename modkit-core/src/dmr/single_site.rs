@@ -30,7 +30,7 @@ use crate::util::{
     format_errors_table, get_subroutine_progress_bar, get_ticker, Region,
     Strand, StrandRule,
 };
-use crate::writers::TsvWriter;
+use crate::writers::{finish_with_first_error, TsvWriter};
 
 pub(super) struct SingleSiteDmrAnalysis {
     sample_index: Arc<SingleSiteSampleIndex>,
@@ -154,16 +154,9 @@ impl SingleSiteDmrAnalysis {
             info!("running with replicates, but not matched samples");
         }
 
-        if self.header {
-            writer.write_all(
-                SingleSiteDmrScore::header(multiple_samples, matched_samples)
-                    .as_bytes(),
-            )?;
-        }
-
         let mut segmenter: Box<dyn DmrSegmenter> =
             if let Some(segmentation_fp) = &self.segmentation_fp {
-                Box::new(HmmDmrSegmenter::new(
+                match HmmDmrSegmenter::new(
                     segmentation_fp,
                     max_gap_size,
                     dmr_prior,
@@ -175,10 +168,34 @@ impl SingleSiteDmrAnalysis {
                     decay_distance,
                     &self.multi_progress,
                     self.header,
-                )?)
+                ) {
+                    Ok(segmenter) => Box::new(segmenter),
+                    Err(error) => {
+                        return finish_with_first_error(
+                            Some(error),
+                            || writer.flush().map_err(anyhow::Error::from),
+                            "failed to flush single-site DMR output",
+                        )
+                    }
+                }
             } else {
                 Box::new(DummySegmenter::new())
             };
+
+        if self.header {
+            if let Err(error) = writer.write_all(
+                SingleSiteDmrScore::header(multiple_samples, matched_samples)
+                    .as_bytes(),
+            ) {
+                return finish_single_site_outputs(
+                    Some(error.into()),
+                    true,
+                    segmenter.as_mut(),
+                    writer.as_mut(),
+                    &self.multi_progress,
+                );
+            }
+        }
 
         let (scores_snd, scores_rcv) = crossbeam::channel::bounded(1000);
         let processed_batches = self.multi_progress.add(get_ticker());
@@ -189,12 +206,23 @@ impl SingleSiteDmrAnalysis {
         failure_counter.set_message("sites failed");
         success_counter.set_message("sites processed successfully");
 
-        let batch_iter = SingleSiteBatches::new(
+        let batch_iter = match SingleSiteBatches::new(
             self.sample_index.clone(),
             self.genome_positions.clone(),
             self.batch_size,
             self.interval_size,
-        )?;
+        ) {
+            Ok(batch_iter) => batch_iter,
+            Err(error) => {
+                return finish_single_site_outputs(
+                    Some(error),
+                    true,
+                    segmenter.as_mut(),
+                    writer.as_mut(),
+                    &self.multi_progress,
+                )
+            }
+        };
 
         let sample_index = self.sample_index.clone();
         let pmap_estimator = self.pmap_estimator.clone();
@@ -278,7 +306,8 @@ impl SingleSiteDmrAnalysis {
 
         let mut success_count = 0usize;
         let mut error_counts = FxHashMap::<String, usize>::default();
-        let mut err: Option<MkError> = None;
+        let mut err: Option<anyhow::Error> = None;
+        let mut run_final_chunk = true;
         'rcv_loop: for batch_result in scores_rcv {
             match batch_result {
                 Err(e) => {
@@ -294,20 +323,27 @@ impl SingleSiteDmrAnalysis {
                             });
                         }
                     }
-                    err = Some(e);
+                    err = Some(e.into());
                     break 'rcv_loop;
                 }
                 Ok(scores) => {
-                    add_scores_to_segmenter(
+                    if let Err(error) = add_scores_to_segmenter(
                         segmenter.as_mut(),
                         &scores,
                         &self.multi_progress,
-                    )?;
+                    ) {
+                        err = Some(error);
+                        // `add` may have failed after partially emitting a
+                        // chunk. Retrying it during finalization could
+                        // duplicate rows that were already written.
+                        run_final_chunk = false;
+                        break 'rcv_loop;
+                    }
                     for (chrom, results) in scores {
                         for result in results {
                             match result {
                                 Ok(scores) => {
-                                    writer.write_all(
+                                    if let Err(error) = writer.write_all(
                                         scores
                                             .to_row(
                                                 multiple_samples,
@@ -315,7 +351,10 @@ impl SingleSiteDmrAnalysis {
                                                 &chrom,
                                             )
                                             .as_bytes(),
-                                    )?;
+                                    ) {
+                                        err = Some(error.into());
+                                        break 'rcv_loop;
+                                    }
                                     success_counter.inc(1);
                                     success_count += 1;
                                 }
@@ -336,7 +375,7 @@ impl SingleSiteDmrAnalysis {
                                                  {message}, stopping"
                                             );
                                         });
-                                        err = Some(e);
+                                        err = Some(e.into());
                                         break 'rcv_loop;
                                     }
                                 }
@@ -350,8 +389,8 @@ impl SingleSiteDmrAnalysis {
         success_counter.finish_and_clear();
         failure_counter.finish_and_clear();
         finish_single_site_outputs(
-            err.map(anyhow::Error::from),
-            true,
+            err,
+            run_final_chunk,
             segmenter.as_mut(),
             writer.as_mut(),
             &self.multi_progress,
@@ -1016,16 +1055,20 @@ fn finish_single_site_outputs(
     writer: &mut dyn Write,
     multi_progress: &MultiProgress,
 ) -> anyhow::Result<()> {
-    if run_final_chunk {
-        finish_segmenter(segmenter, multi_progress)?;
+    let segmenter_result = if run_final_chunk {
+        finish_segmenter(segmenter, multi_progress)
     } else {
-        segmenter.clean_up()?;
+        segmenter.clean_up()
+    };
+    let finalization_result = finish_with_first_error(
+        segmenter_result.err(),
+        || writer.flush().map_err(anyhow::Error::from),
+        "failed to flush single-site DMR output",
+    );
+    match first_error {
+        Some(error) => Err(error),
+        None => finalization_result,
     }
-    if let Some(error) = first_error {
-        return Err(error);
-    }
-    writer.flush()?;
-    Ok(())
 }
 
 #[derive(new)]
