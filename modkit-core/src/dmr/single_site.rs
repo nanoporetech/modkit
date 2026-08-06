@@ -75,7 +75,7 @@ impl SingleSiteDmrAnalysis {
         }
         let prior = if let Some(raw_prior_params) = prior {
             if raw_prior_params[0] + raw_prior_params[1] < 1.0 {
-                bail!("alpha + beta must be > 1.0 for numerical stability")
+                bail!("alpha + beta must be >= 1.0 for numerical stability")
             }
             let prior =
                 BetaParams::new(raw_prior_params[0], raw_prior_params[1])?;
@@ -121,7 +121,7 @@ impl SingleSiteDmrAnalysis {
             prior,
             rope,
             cap_coverages,
-        ));
+        )?);
 
         Ok(Self {
             sample_index,

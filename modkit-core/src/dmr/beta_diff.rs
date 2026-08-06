@@ -33,6 +33,8 @@ impl Counts {
     pub fn new(n_mod: usize, coverage: usize) -> anyhow::Result<Self> {
         if n_mod > coverage {
             bail!("n_mod cannot be > coverage")
+        } else if coverage == 0 {
+            bail!("coverage must be > 0")
         } else {
             let frac_modified = n_mod as f64 / coverage as f64;
             Ok(Self { n_mod, coverage, frac_modified })
@@ -44,6 +46,7 @@ impl Counts {
     }
 
     fn resize(&self, max_coverage: usize) -> Self {
+        assert!(max_coverage > 0, "max coverage must be greater than zero");
         if self.coverage > max_coverage {
             let n_mod = (self.frac_modified * max_coverage as f64).round();
             let frac_modified = n_mod / max_coverage as f64;
@@ -138,12 +141,37 @@ impl PMapEstimator {
         prior: BetaParams,
         rope: f64,
         cap_coverages: bool,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let mut max_coverages = if cap_coverages {
             max_coverages
         } else {
-            [max_coverages[0] * a_num_reps, max_coverages[1] * b_num_reps]
+            [
+                max_coverages[0].checked_mul(a_num_reps).ok_or_else(|| {
+                    anyhow!(
+                        "maximum coverage overflow while scaling control \
+                         coverage {} by {} replicates",
+                        max_coverages[0],
+                        a_num_reps
+                    )
+                })?,
+                max_coverages[1].checked_mul(b_num_reps).ok_or_else(|| {
+                    anyhow!(
+                        "maximum coverage overflow while scaling experiment \
+                         coverage {} by {} replicates",
+                        max_coverages[1],
+                        b_num_reps
+                    )
+                })?,
+            ]
         };
+        if max_coverages.iter().any(|coverage| *coverage == 0) {
+            bail!(
+                "resolved maximum coverage must be greater than zero for both \
+                 conditions, got control {} and experiment {}",
+                max_coverages[0],
+                max_coverages[1]
+            )
+        }
         for x in max_coverages.iter_mut() {
             if *x > MAX_COV_ALLOWED {
                 info!(
@@ -154,7 +182,7 @@ impl PMapEstimator {
             }
         }
 
-        Self { max_coverages, prior, rope }
+        Ok(Self { max_coverages, prior, rope })
     }
 
     fn calc_posterior_params(&self, counts: &Counts) -> BetaParams {
@@ -174,8 +202,8 @@ impl PMapEstimator {
         let ln_A = ln_beta(params1.alpha, params1.beta)
             + ln_beta(params2.alpha, params2.beta);
         if d.abs() < self.rope {
-            if (params1.alpha + params2.alpha < 1f64)
-                || (params1.beta + params2.beta < 1f64)
+            if (params1.alpha + params2.alpha <= 1f64)
+                || (params1.beta + params2.beta <= 1f64)
             {
                 bail!(
                     "alpha1 + alpha2 <= 1 or beta1 + beta2 <= 1, params1 \
@@ -293,6 +321,86 @@ mod tests {
             0.05,
             true,
         )
+        .unwrap()
+    }
+
+    fn make_estimator(
+        max_coverages: [usize; 2],
+        a_num_reps: usize,
+        b_num_reps: usize,
+        cap_coverages: bool,
+    ) -> anyhow::Result<PMapEstimator> {
+        PMapEstimator::new(
+            max_coverages,
+            a_num_reps,
+            b_num_reps,
+            BetaParams::new(1.0, 1.0).unwrap(),
+            0.05,
+            cap_coverages,
+        )
+    }
+
+    #[test]
+    fn estimator_rejects_zero_resolved_max_coverages() {
+        for max_coverages in [[0, 0], [0, 10], [10, 0]] {
+            let error = make_estimator(max_coverages, 1, 1, true)
+                .err()
+                .expect("zero maximum coverage must be rejected");
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "resolved maximum coverage must be greater than zero for \
+                     both conditions, got control {} and experiment {}",
+                    max_coverages[0], max_coverages[1]
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn estimator_accepts_and_preserves_positive_max_coverages() {
+        for max_coverages in [[1, 1], [10, 10]] {
+            let estimator = make_estimator(max_coverages, 1, 1, true).unwrap();
+            assert_eq!(estimator.max_coverages, max_coverages);
+        }
+    }
+
+    #[test]
+    fn estimator_rejects_replicate_scaling_overflow() {
+        for (max_coverages, a_num_reps, b_num_reps, expected) in [
+            (
+                [usize::MAX, 10],
+                2,
+                1,
+                format!(
+                    "maximum coverage overflow while scaling control \
+                     coverage {} by 2 replicates",
+                    usize::MAX
+                ),
+            ),
+            (
+                [10, usize::MAX],
+                1,
+                2,
+                format!(
+                    "maximum coverage overflow while scaling experiment \
+                     coverage {} by 2 replicates",
+                    usize::MAX
+                ),
+            ),
+        ] {
+            let error =
+                make_estimator(max_coverages, a_num_reps, b_num_reps, false)
+                    .err()
+                    .expect("overflowing maximum coverage must be rejected");
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "max coverage must be greater than zero")]
+    fn counts_resize_requires_positive_max_coverage() {
+        super::Counts::new(1, 1).unwrap().resize(0);
     }
 
     #[test]
