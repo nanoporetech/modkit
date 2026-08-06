@@ -306,7 +306,7 @@ impl EntryMergeBedMethyl {
             }
         };
         if self.with_header {
-            writer.write(bedmethyl_header().as_bytes())?;
+            writer.write_all(bedmethyl_header().as_bytes())?;
         }
 
         let readers = self
@@ -444,7 +444,7 @@ impl EntryMergeBedMethyl {
                                 .collect::<Vec<String>>()
                         });
                         for row in rows {
-                            writer.write(row.as_bytes())?;
+                            writer.write_all(row.as_bytes())?;
                             rows_written.inc(1);
                         }
                     }
@@ -456,6 +456,7 @@ impl EntryMergeBedMethyl {
             }
         }
 
+        writer.flush()?;
         Ok(())
     }
 }
@@ -745,7 +746,7 @@ impl EntryMapToGenome {
             p @ _ => Box::new(BufWriter::new(File::create(p)?)),
         };
         if self.header {
-            writer.write(bedmethyl_header().as_bytes())?;
+            writer.write_all(bedmethyl_header().as_bytes())?;
         }
 
         reader.fetch(tid, 0, tm.transcript_len)?;
@@ -777,7 +778,7 @@ impl EntryMapToGenome {
             bml.chrom = tm.chrom.clone();
             bml.interval =
                 Iv { start: genome_start, stop: genome_stop, val: () };
-            writer.write(bml.to_line().as_bytes())?;
+            writer.write_all(bml.to_line().as_bytes())?;
             processed_records.inc(1);
         }
 
@@ -789,6 +790,7 @@ impl EntryMapToGenome {
             );
         });
 
+        writer.flush()?;
         Ok(())
     }
 }

@@ -42,7 +42,7 @@ use crate::record_processor::WithRecords;
 use crate::sample_probs::calc_per_base_thresholds_from_indexed_hts_file;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::util::{format_errors_table, get_ticker, Region, KMER_SIZE};
-use crate::writers::TsvWriter;
+use crate::writers::{finish_with_first_error, TsvWriter};
 
 #[derive(Subcommand)]
 pub enum ExtractMods {
@@ -285,7 +285,7 @@ impl EntryExtractFull {
         let mut writer: Box<dyn OutwriterWithMemory<ReadsBaseModProfile>> =
             match self.input_args.out_path.as_str() {
                 "stdout" | "-" => {
-                    let tsv_writer = TsvWriter::new_stdout(output_header);
+                    let tsv_writer = TsvWriter::new_stdout(output_header)?;
                     let writer = TsvWriterWithContigNames::new(
                         tsv_writer,
                         tid_to_name,
@@ -326,29 +326,46 @@ impl EntryExtractFull {
                 }
             };
 
+        let mut output_error = None;
         for result in rcv {
             match result {
                 Ok(mod_profile) => {
                     n_used.inc(mod_profile.num_reads() as u64);
                     n_failed.inc(mod_profile.num_fails as u64);
                     n_skipped.inc(mod_profile.num_skips as u64);
-                    match writer
-                        .write(mod_profile, motif_position_lookup.as_ref())
-                    {
-                        Ok(n) => n_rows.inc(n),
-                        Err(e) => {
-                            error!("failed to write {}", e.to_string());
+                    if output_error.is_none() {
+                        match writer
+                            .write(mod_profile, motif_position_lookup.as_ref())
+                        {
+                            Ok(n) => n_rows.inc(n),
+                            Err(error) => {
+                                output_error =
+                                    Some(error.context(
+                                        "failed to write extract output",
+                                    ));
+                            }
                         }
                     }
                 }
-                Err(e) => {
+                Err(error) => {
                     debug!(
                         "failed to calculate read-level mod probs, {}",
-                        e.to_string()
+                        error.to_string()
                     );
+                    if output_error.is_none() {
+                        output_error = Some(error.context(
+                            "failed to calculate read-level mod probabilities",
+                        ));
+                    }
                 }
             }
         }
+
+        let output_result = finish_with_first_error(
+            output_error,
+            || writer.finish(),
+            "failed to flush extract output",
+        );
 
         n_failed.finish_and_clear();
         n_skipped.finish_and_clear();
@@ -361,7 +378,7 @@ impl EntryExtractFull {
             n_skipped.position(),
             n_failed.position()
         );
-        Ok(())
+        output_result
     }
 }
 
@@ -725,7 +742,7 @@ impl EntryExtractCalls {
         let mut writer: Box<dyn OutwriterWithMemory<ReadsBaseModProfile>> =
             match self.input_args.out_path.as_str() {
                 "stdout" | "-" => {
-                    let tsv_writer = TsvWriter::new_stdout(output_header);
+                    let tsv_writer = TsvWriter::new_stdout(output_header)?;
                     let writer = TsvWriterWithContigNames::new_with_caller(
                         tsv_writer,
                         tid_to_name,
@@ -836,29 +853,46 @@ impl EntryExtractCalls {
             );
         });
 
+        let mut output_error = None;
         for result in rcv {
             match result {
                 Ok(mod_profile) => {
                     n_used.inc(mod_profile.num_reads() as u64);
                     n_failed.inc(mod_profile.num_fails as u64);
                     n_skipped.inc(mod_profile.num_skips as u64);
-                    match writer
-                        .write(mod_profile, motif_position_lookup.as_ref())
-                    {
-                        Ok(n) => n_rows.inc(n),
-                        Err(e) => {
-                            error!("failed to write {}", e.to_string());
+                    if output_error.is_none() {
+                        match writer
+                            .write(mod_profile, motif_position_lookup.as_ref())
+                        {
+                            Ok(n) => n_rows.inc(n),
+                            Err(error) => {
+                                output_error =
+                                    Some(error.context(
+                                        "failed to write extract output",
+                                    ));
+                            }
                         }
                     }
                 }
-                Err(e) => {
+                Err(error) => {
                     debug!(
                         "failed to calculate read-level mod probs, {}",
-                        e.to_string()
+                        error.to_string()
                     );
+                    if output_error.is_none() {
+                        output_error = Some(error.context(
+                            "failed to calculate read-level mod probabilities",
+                        ));
+                    }
                 }
             }
         }
+
+        let output_result = finish_with_first_error(
+            output_error,
+            || writer.finish(),
+            "failed to flush extract output",
+        );
 
         n_failed.finish_and_clear();
         n_skipped.finish_and_clear();
@@ -871,7 +905,7 @@ impl EntryExtractCalls {
             n_skipped.position(),
             n_failed.position()
         );
-        Ok(())
+        output_result
     }
 }
 

@@ -1294,7 +1294,7 @@ impl GeneIsoformDmr {
                     self.gene.gene_name.as_ref(),
                     emit_full_results,
                 );
-                writer.write(row.as_bytes())?;
+                writer.write_all(row.as_bytes())?;
                 records_written = records_written.saturating_add(1);
             }
         }
@@ -2059,7 +2059,7 @@ impl GeneTxDmr {
                     single_mod_code,
                     emit_full_results,
                 );
-                writer.write(row.as_bytes())?;
+                writer.write_all(row.as_bytes())?;
                 records_written = records_written.saturating_add(1);
             }
         }

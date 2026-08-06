@@ -183,7 +183,11 @@ pub(super) fn run_pairwise_dmr(
     multi_progress: MultiProgress,
 ) -> anyhow::Result<(usize, FxHashMap<String, usize>)> {
     if header {
-        writer.write(ModificationCounts::header(a_name, b_name).as_bytes())?;
+        if let Err(error) = writer
+            .write_all(ModificationCounts::header(a_name, b_name).as_bytes())
+        {
+            finish_pairwise_output(Some(error.into()), writer.as_mut())?;
+        }
     }
 
     let (snd, rcv) = crossbeam_channel::bounded(1000);
@@ -247,14 +251,25 @@ pub(super) fn run_pairwise_dmr(
 
     let mut success_count = 0;
     let mut region_error_counts = FxHashMap::<String, usize>::default();
-    let mut err: Option<MkError> = None;
+    let mut err: Option<anyhow::Error> = None;
     'rcv_loop: for batch_result in rcv {
         match batch_result {
             BatchResult::Results(results) => {
                 for result in results {
                     match result {
                         Ok(counts) => {
-                            writer.write(counts.to_row()?.as_bytes())?;
+                            let row = match counts.to_row() {
+                                Ok(row) => row,
+                                Err(error) => {
+                                    err = Some(error);
+                                    break 'rcv_loop;
+                                }
+                            };
+                            if let Err(error) = writer.write_all(row.as_bytes())
+                            {
+                                err = Some(error.into());
+                                break 'rcv_loop;
+                            }
                             success_count += 1;
                             pb.inc(1);
                         }
@@ -271,7 +286,7 @@ pub(super) fn run_pairwise_dmr(
                                              record(s), {message}, stopping"
                                         );
                                     });
-                                    err = Some(e);
+                                    err = Some(e.into());
                                     break 'rcv_loop;
                                 }
                                 _ => {}
@@ -294,7 +309,7 @@ pub(super) fn run_pairwise_dmr(
                     }
                 });
                 batch_failures.inc(1u64);
-                err = Some(error);
+                err = Some(error.into());
                 break 'rcv_loop;
             }
         }
@@ -302,9 +317,75 @@ pub(super) fn run_pairwise_dmr(
 
     pb.finish_and_clear();
 
-    if let Some(e) = err {
-        Err(e.into())
-    } else {
-        Ok((success_count, region_error_counts))
+    finish_pairwise_output(err, writer.as_mut())?;
+    Ok((success_count, region_error_counts))
+}
+
+fn finish_pairwise_output(
+    first_error: Option<anyhow::Error>,
+    writer: &mut dyn std::io::Write,
+) -> anyhow::Result<()> {
+    let flush_result = writer.flush().map_err(anyhow::Error::from);
+    match first_error {
+        Some(error) => Err(error),
+        None => flush_result,
+    }
+}
+
+#[cfg(test)]
+mod output_finalization_tests {
+    use super::finish_pairwise_output;
+    use anyhow::anyhow;
+    use std::io::{self, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct FlushWriter {
+        flushes: Arc<AtomicUsize>,
+        fail_flush: bool,
+    }
+
+    impl Write for FlushWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes.fetch_add(1, Ordering::SeqCst);
+            if self.fail_flush {
+                Err(io::Error::other("pairwise flush failed later"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn earlier_pairwise_error_is_retained_and_flush_is_attempted() {
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let mut writer =
+            FlushWriter { flushes: flushes.clone(), fail_flush: true };
+
+        let error = finish_pairwise_output(
+            Some(anyhow!("pairwise processing failed first")),
+            &mut writer,
+        )
+        .expect_err("the first error must be returned");
+
+        assert_eq!(error.to_string(), "pairwise processing failed first");
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn pairwise_flush_error_is_returned_when_it_is_first() {
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let mut writer =
+            FlushWriter { flushes: flushes.clone(), fail_flush: true };
+
+        let error = finish_pairwise_output(None, &mut writer)
+            .expect_err("flush failure must be returned");
+
+        assert_eq!(error.to_string(), "pairwise flush failed later");
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
     }
 }

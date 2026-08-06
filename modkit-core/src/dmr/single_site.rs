@@ -30,7 +30,7 @@ use crate::util::{
     format_errors_table, get_subroutine_progress_bar, get_ticker, Region,
     Strand, StrandRule,
 };
-use crate::writers::TsvWriter;
+use crate::writers::{finish_with_first_error, TsvWriter};
 
 pub(super) struct SingleSiteDmrAnalysis {
     sample_index: Arc<SingleSiteSampleIndex>,
@@ -154,16 +154,9 @@ impl SingleSiteDmrAnalysis {
             info!("running with replicates, but not matched samples");
         }
 
-        if self.header {
-            writer.write(
-                SingleSiteDmrScore::header(multiple_samples, matched_samples)
-                    .as_bytes(),
-            )?;
-        }
-
         let mut segmenter: Box<dyn DmrSegmenter> =
             if let Some(segmentation_fp) = &self.segmentation_fp {
-                Box::new(HmmDmrSegmenter::new(
+                match HmmDmrSegmenter::new(
                     segmentation_fp,
                     max_gap_size,
                     dmr_prior,
@@ -175,10 +168,34 @@ impl SingleSiteDmrAnalysis {
                     decay_distance,
                     &self.multi_progress,
                     self.header,
-                )?)
+                ) {
+                    Ok(segmenter) => Box::new(segmenter),
+                    Err(error) => {
+                        return finish_with_first_error(
+                            Some(error),
+                            || writer.flush().map_err(anyhow::Error::from),
+                            "failed to flush single-site DMR output",
+                        )
+                    }
+                }
             } else {
                 Box::new(DummySegmenter::new())
             };
+
+        if self.header {
+            if let Err(error) = writer.write_all(
+                SingleSiteDmrScore::header(multiple_samples, matched_samples)
+                    .as_bytes(),
+            ) {
+                return finish_single_site_outputs(
+                    Some(error.into()),
+                    true,
+                    segmenter.as_mut(),
+                    writer.as_mut(),
+                    &self.multi_progress,
+                );
+            }
+        }
 
         let (scores_snd, scores_rcv) = crossbeam::channel::bounded(1000);
         let processed_batches = self.multi_progress.add(get_ticker());
@@ -189,12 +206,23 @@ impl SingleSiteDmrAnalysis {
         failure_counter.set_message("sites failed");
         success_counter.set_message("sites processed successfully");
 
-        let batch_iter = SingleSiteBatches::new(
+        let batch_iter = match SingleSiteBatches::new(
             self.sample_index.clone(),
             self.genome_positions.clone(),
             self.batch_size,
             self.interval_size,
-        )?;
+        ) {
+            Ok(batch_iter) => batch_iter,
+            Err(error) => {
+                return finish_single_site_outputs(
+                    Some(error),
+                    true,
+                    segmenter.as_mut(),
+                    writer.as_mut(),
+                    &self.multi_progress,
+                )
+            }
+        };
 
         let sample_index = self.sample_index.clone();
         let pmap_estimator = self.pmap_estimator.clone();
@@ -278,7 +306,8 @@ impl SingleSiteDmrAnalysis {
 
         let mut success_count = 0usize;
         let mut error_counts = FxHashMap::<String, usize>::default();
-        let mut err: Option<MkError> = None;
+        let mut err: Option<anyhow::Error> = None;
+        let mut run_final_chunk = true;
         'rcv_loop: for batch_result in scores_rcv {
             match batch_result {
                 Err(e) => {
@@ -294,20 +323,27 @@ impl SingleSiteDmrAnalysis {
                             });
                         }
                     }
-                    err = Some(e);
+                    err = Some(e.into());
                     break 'rcv_loop;
                 }
                 Ok(scores) => {
-                    if let Err(e) = segmenter.add(&scores) {
-                        self.multi_progress.suspend(|| {
-                            error!("segmentation error, {e}");
-                        })
+                    if let Err(error) = add_scores_to_segmenter(
+                        segmenter.as_mut(),
+                        &scores,
+                        &self.multi_progress,
+                    ) {
+                        err = Some(error);
+                        // `add` may have failed after partially emitting a
+                        // chunk. Retrying it during finalization could
+                        // duplicate rows that were already written.
+                        run_final_chunk = false;
+                        break 'rcv_loop;
                     }
                     for (chrom, results) in scores {
                         for result in results {
                             match result {
                                 Ok(scores) => {
-                                    writer.write(
+                                    if let Err(error) = writer.write_all(
                                         scores
                                             .to_row(
                                                 multiple_samples,
@@ -315,7 +351,10 @@ impl SingleSiteDmrAnalysis {
                                                 &chrom,
                                             )
                                             .as_bytes(),
-                                    )?;
+                                    ) {
+                                        err = Some(error.into());
+                                        break 'rcv_loop;
+                                    }
                                     success_counter.inc(1);
                                     success_count += 1;
                                 }
@@ -336,7 +375,7 @@ impl SingleSiteDmrAnalysis {
                                                  {message}, stopping"
                                             );
                                         });
-                                        err = Some(e);
+                                        err = Some(e.into());
                                         break 'rcv_loop;
                                     }
                                 }
@@ -347,16 +386,15 @@ impl SingleSiteDmrAnalysis {
             }
         }
 
-        if let Err(e) = segmenter.run_current_chunk() {
-            self.multi_progress.suspend(|| error!("segmentation error, {e}"));
-        }
         success_counter.finish_and_clear();
         failure_counter.finish_and_clear();
-        segmenter.clean_up()?;
-
-        if let Some(e) = err {
-            return Err(e.into());
-        }
+        finish_single_site_outputs(
+            err,
+            run_final_chunk,
+            segmenter.as_mut(),
+            writer.as_mut(),
+            &self.multi_progress,
+        )?;
 
         if !error_counts.is_empty() {
             self.multi_progress.suspend(|| {
@@ -984,6 +1022,55 @@ trait DmrSegmenter {
     fn clean_up(&mut self) -> anyhow::Result<()>;
 }
 
+fn add_scores_to_segmenter(
+    segmenter: &mut dyn DmrSegmenter,
+    scores: &[ChromToSingleScores],
+    multi_progress: &MultiProgress,
+) -> anyhow::Result<()> {
+    let result = segmenter.add(scores);
+    if let Err(e) = &result {
+        multi_progress.suspend(|| error!("segmentation error, {e}"));
+    }
+    result?;
+    Ok(())
+}
+
+fn finish_segmenter(
+    segmenter: &mut dyn DmrSegmenter,
+    multi_progress: &MultiProgress,
+) -> anyhow::Result<()> {
+    let result = segmenter.run_current_chunk();
+    if let Err(e) = &result {
+        multi_progress.suspend(|| error!("segmentation error, {e}"));
+    }
+    let clean_up_result = segmenter.clean_up();
+    result?;
+    clean_up_result
+}
+
+fn finish_single_site_outputs(
+    first_error: Option<anyhow::Error>,
+    run_final_chunk: bool,
+    segmenter: &mut dyn DmrSegmenter,
+    writer: &mut dyn Write,
+    multi_progress: &MultiProgress,
+) -> anyhow::Result<()> {
+    let segmenter_result = if run_final_chunk {
+        finish_segmenter(segmenter, multi_progress)
+    } else {
+        segmenter.clean_up()
+    };
+    let finalization_result = finish_with_first_error(
+        segmenter_result.err(),
+        || writer.flush().map_err(anyhow::Error::from),
+        "failed to flush single-site DMR output",
+    );
+    match first_error {
+        Some(error) => Err(error),
+        None => finalization_result,
+    }
+}
+
 #[derive(new)]
 struct DummySegmenter {}
 
@@ -1174,6 +1261,7 @@ impl DmrSegmenter for HmmDmrSegmenter {
             "HMM segmenter finished, wrote {} segments",
             self.segments_written.position()
         );
+        self.writer.flush()?;
         Ok(())
     }
 }
@@ -1343,5 +1431,219 @@ fn path_to_region_labels(
         agg.push(final_bedline);
 
         agg
+    }
+}
+
+#[cfg(test)]
+mod segmenter_error_tests {
+    use super::{
+        add_scores_to_segmenter, finish_segmenter, finish_single_site_outputs,
+        ChromToSingleScores, DmrSegmenter,
+    };
+    use anyhow::anyhow;
+    use indicatif::MultiProgress;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    const ADDED_ROW: &[u8] = b"chr1\t10\t11\tSAME\n";
+    const FINAL_ROW: &[u8] = b"chr1\t20\t21\tDIFF\n";
+
+    #[derive(Default)]
+    struct StubSegmenter {
+        output: Vec<u8>,
+        add_error: Option<&'static str>,
+        final_error: Option<&'static str>,
+        cleanup_error: Option<&'static str>,
+        cleaned_up: bool,
+        events: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl DmrSegmenter for StubSegmenter {
+        fn add(
+            &mut self,
+            _dmr_scores: &[ChromToSingleScores],
+        ) -> anyhow::Result<()> {
+            if let Some(message) = self.add_error {
+                return Err(anyhow!(message));
+            }
+            self.output.extend_from_slice(ADDED_ROW);
+            Ok(())
+        }
+
+        fn run_current_chunk(&mut self) -> anyhow::Result<()> {
+            self.events.lock().unwrap().push("final chunk");
+            if let Some(message) = self.final_error {
+                return Err(anyhow!(message));
+            }
+            self.output.extend_from_slice(FINAL_ROW);
+            Ok(())
+        }
+
+        fn clean_up(&mut self) -> anyhow::Result<()> {
+            self.events.lock().unwrap().push("segmenter cleanup");
+            self.cleaned_up = true;
+            if let Some(message) = self.cleanup_error {
+                return Err(anyhow!(message));
+            }
+            Ok(())
+        }
+    }
+
+    struct TrackingWriter {
+        events: Arc<Mutex<Vec<&'static str>>>,
+        flush_error: Option<&'static str>,
+    }
+
+    impl Write for TrackingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.events.lock().unwrap().push("main writer flush");
+            match self.flush_error {
+                Some(message) => Err(io::Error::other(message)),
+                None => Ok(()),
+            }
+        }
+    }
+
+    fn lifecycle(
+        first_error: Option<anyhow::Error>,
+        run_final_chunk: bool,
+        final_error: Option<&'static str>,
+        cleanup_error: Option<&'static str>,
+        flush_error: Option<&'static str>,
+    ) -> (anyhow::Result<()>, Vec<&'static str>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut segmenter = StubSegmenter {
+            final_error,
+            cleanup_error,
+            events: events.clone(),
+            ..StubSegmenter::default()
+        };
+        let mut writer = TrackingWriter { events: events.clone(), flush_error };
+        let result = finish_single_site_outputs(
+            first_error,
+            run_final_chunk,
+            &mut segmenter,
+            &mut writer,
+            &MultiProgress::new(),
+        );
+        let observed = events.lock().unwrap().clone();
+        (result, observed)
+    }
+
+    #[test]
+    fn segmenter_add_error_is_returned_exactly() {
+        let mut segmenter = StubSegmenter {
+            add_error: Some("stub segmenter add failed"),
+            ..StubSegmenter::default()
+        };
+
+        let error =
+            add_scores_to_segmenter(&mut segmenter, &[], &MultiProgress::new())
+                .expect_err("add failure must be returned");
+
+        assert_eq!(error.to_string(), "stub segmenter add failed");
+        assert!(segmenter.output.is_empty());
+        assert!(!segmenter.cleaned_up);
+    }
+
+    #[test]
+    fn segmenter_final_chunk_error_is_returned_exactly() {
+        let mut segmenter = StubSegmenter {
+            final_error: Some("stub segmenter final chunk failed"),
+            ..StubSegmenter::default()
+        };
+        add_scores_to_segmenter(&mut segmenter, &[], &MultiProgress::new())
+            .unwrap();
+
+        let error = finish_segmenter(&mut segmenter, &MultiProgress::new())
+            .expect_err("final chunk failure must be returned");
+
+        assert_eq!(error.to_string(), "stub segmenter final chunk failed");
+        assert_eq!(segmenter.output, ADDED_ROW);
+        assert!(segmenter.cleaned_up);
+    }
+
+    #[test]
+    fn successful_segmenter_bytes_and_lifecycle_are_unchanged() {
+        let mut segmenter = StubSegmenter::default();
+        let progress = MultiProgress::new();
+
+        add_scores_to_segmenter(&mut segmenter, &[], &progress).unwrap();
+        finish_segmenter(&mut segmenter, &progress).unwrap();
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(ADDED_ROW);
+        expected.extend_from_slice(FINAL_ROW);
+        assert_eq!(segmenter.output, expected);
+        assert!(segmenter.cleaned_up);
+    }
+
+    #[test]
+    fn add_error_skips_chunk_retry_but_attempts_cleanup_and_main_flush() {
+        let (result, events) = lifecycle(
+            Some(anyhow!("segmenter add failed")),
+            false,
+            Some("must not retry final chunk"),
+            None,
+            Some("main flush failed"),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "segmenter add failed");
+        assert_eq!(events, ["segmenter cleanup", "main writer flush"]);
+    }
+
+    #[test]
+    fn batch_error_runs_pending_chunk_and_retains_first_error() {
+        let (result, events) = lifecycle(
+            Some(anyhow!("batch failed first")),
+            true,
+            Some("final chunk failed later"),
+            Some("cleanup failed later"),
+            Some("main flush failed later"),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "batch failed first");
+        assert_eq!(
+            events,
+            ["final chunk", "segmenter cleanup", "main writer flush"]
+        );
+    }
+
+    #[test]
+    fn main_write_error_still_attempts_all_finalization() {
+        let (result, events) = lifecycle(
+            Some(anyhow!("main write failed first")),
+            true,
+            None,
+            Some("cleanup failed later"),
+            Some("main flush failed later"),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "main write failed first");
+        assert_eq!(
+            events,
+            ["final chunk", "segmenter cleanup", "main writer flush"]
+        );
+    }
+
+    #[test]
+    fn final_chunk_error_wins_but_cleanup_and_main_flush_are_attempted() {
+        let (result, events) = lifecycle(
+            None,
+            true,
+            Some("final chunk failed first"),
+            Some("cleanup failed later"),
+            Some("main flush failed later"),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "final chunk failed first");
+        assert_eq!(
+            events,
+            ["final chunk", "segmenter cleanup", "main writer flush"]
+        );
     }
 }

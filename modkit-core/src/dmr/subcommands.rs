@@ -38,6 +38,66 @@ use crate::util::{
 };
 use modkit_logging::init_logging;
 
+fn finish_threaded_dmr_output<F>(
+    first_error: Option<anyhow::Error>,
+    join_pipeline: F,
+    writer: &mut dyn Write,
+) -> anyhow::Result<()>
+where
+    F: FnOnce() -> anyhow::Result<()>,
+{
+    let join_result = join_pipeline();
+    let flush_result = writer.flush().map_err(anyhow::Error::from);
+    match first_error {
+        Some(error) => Err(error),
+        None => {
+            join_result?;
+            flush_result
+        }
+    }
+}
+
+fn write_dmr_header(
+    writer: &mut dyn Write,
+    header: &str,
+) -> anyhow::Result<()> {
+    if let Err(error) = writer.write_all(header.as_bytes()) {
+        // The write failure happened first, but still try to flush any bytes
+        // the writer accepted before failing.
+        let _ = writer.flush();
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+fn join_threaded_dmr_pipeline(
+    source_thread: std::thread::JoinHandle<()>,
+    worker_threads: Vec<std::thread::JoinHandle<()>>,
+    aggregator: std::thread::JoinHandle<()>,
+) -> anyhow::Result<()> {
+    // Join every owned thread before selecting an error. This prevents one
+    // panic from detaching the rest of the pipeline during output cleanup.
+    let source_result =
+        source_thread.join().map_err(|_| anyhow!("source thread panicked"));
+    let worker_results = worker_threads
+        .into_iter()
+        .enumerate()
+        .map(|(i, worker_thread)| {
+            worker_thread
+                .join()
+                .map_err(|_| anyhow!("worker thread {i} panicked"))
+        })
+        .collect::<Vec<anyhow::Result<()>>>();
+    let aggregator_result =
+        aggregator.join().map_err(|_| anyhow!("aggregator thread panicked"));
+
+    source_result?;
+    for worker_result in worker_results {
+        worker_result?;
+    }
+    aggregator_result
+}
+
 #[derive(Subcommand)]
 pub enum BedMethylDmr {
     /// Compare regions in a pair of samples (for example, tumor and normal or
@@ -1207,7 +1267,7 @@ impl EntryDmrIsoform {
                 self.emit_full_results,
             )
         }) {
-            writer.write(row.as_bytes())?;
+            writer.write_all(row.as_bytes())?;
         }
         if let Some(plot_dir) = self.plot.as_ref() {
             if !plot_dir.exists() {
@@ -1294,6 +1354,7 @@ impl EntryDmrIsoform {
                 }
             }
         }
+        writer.flush()?;
         Ok(())
     }
 
@@ -1311,7 +1372,6 @@ impl EntryDmrIsoform {
                 sorted_gene_common_coords.len()
             );
         });
-        let mut writer = self.get_writer(&multi_progress)?;
         let transcript_models = Arc::new(transcript_models);
 
         let (empties_tx, empties_rx) = crossbeam_channel::unbounded();
@@ -1346,6 +1406,8 @@ impl EntryDmrIsoform {
         }
         multi_progress
             .suspend(|| info!("workers staged, starting processing.."));
+
+        let mut writer = self.get_writer(&multi_progress)?;
 
         let source_thread = std::thread::spawn({
             let results_handle = results_tx.clone();
@@ -1406,15 +1468,27 @@ impl EntryDmrIsoform {
             drop(records_tx);
         });
         let mut errs = HashMap::new();
-        for result in records_rx {
+        let mut output_error = None;
+        for result in records_rx.iter() {
             match result {
                 Ok(mut gene_isoform_dmr) => {
-                    let records_written = gene_isoform_dmr
-                        .write(&mut writer, self.emit_full_results)?;
-                    gene_isoform_dmr.clear();
-                    let _ = empties_tx.send(gene_isoform_dmr);
-                    records_counter.inc(records_written as u64);
-                    pb.inc(1);
+                    match gene_isoform_dmr
+                        .write(&mut writer, self.emit_full_results)
+                    {
+                        Ok(records_written) => {
+                            gene_isoform_dmr.clear();
+                            let _ = empties_tx.send(gene_isoform_dmr);
+                            records_counter.inc(records_written as u64);
+                            pb.inc(1);
+                        }
+                        Err(error) => {
+                            output_error =
+                                Some(error.context(
+                                    "failed to write isoform DMR output",
+                                ));
+                            break;
+                        }
+                    }
                 }
                 Err(e) => {
                     let c = errs.entry(e.to_string()).or_insert(0usize);
@@ -1422,11 +1496,13 @@ impl EntryDmrIsoform {
                 }
             }
         }
-        source_thread.join().expect("source thread paniced");
-        for (i, worker_thread) in handles.into_iter().enumerate() {
-            worker_thread.join().expect(&format!("worker {i} paniced"));
-        }
-        aggregator.join().expect("aggregator theread paniced");
+        drop(records_rx);
+        drop(empties_tx);
+        finish_threaded_dmr_output(
+            output_error,
+            || join_threaded_dmr_pipeline(source_thread, handles, aggregator),
+            writer.as_mut(),
+        )?;
 
         multi_progress.suspend(|| {
             info!("finished, processed {} genes", pb.position());
@@ -1451,11 +1527,11 @@ impl EntryDmrIsoform {
                 Box::new(BufWriter::new(fh))
             }
         };
-        writer.write(
-            GeneIsoformDmrRecord::<GeneIsoformDmrScore>::header(
+        write_dmr_header(
+            writer.as_mut(),
+            &GeneIsoformDmrRecord::<GeneIsoformDmrScore>::header(
                 self.emit_full_results,
-            )
-            .as_bytes(),
+            ),
         )?;
         Ok(writer)
     }
@@ -1698,7 +1774,7 @@ impl EntryGeneTx {
             &mut sorted_by_gene_common_coordinates,
         )?;
 
-        let mut writer = self.get_writer(single_mod_code, &multi_progress)?;
+        let mut gene_labels = self.get_gene_labels(&multi_progress)?;
         let transcript_models = Arc::new(transcript_models);
 
         let (empties_tx, empties_rx) = crossbeam_channel::unbounded();
@@ -1735,6 +1811,8 @@ impl EntryGeneTx {
 
         multi_progress
             .suspend(|| info!("workers staged, starting processing.."));
+
+        let mut writer = self.get_writer(single_mod_code, &multi_progress)?;
 
         let source_thread = std::thread::spawn({
             let results_handle = results_tx.clone();
@@ -1796,15 +1874,23 @@ impl EntryGeneTx {
 
         let mut errs = FxHashMap::default();
         let mut plot_points = Vec::with_capacity(n_genes * self.top_k);
-        let mut gene_labels = self.get_gene_labels(&multi_progress)?;
-        for result in records_rx {
+        let mut output_error = None;
+        for result in records_rx.iter() {
             match result {
                 Ok(mut gene_tx_dmr) => {
-                    let records_written = gene_tx_dmr.write(
+                    let records_written = match gene_tx_dmr.write(
                         &mut writer,
                         single_mod_code,
                         self.emit_full_results,
-                    )?;
+                    ) {
+                        Ok(records_written) => records_written,
+                        Err(error) => {
+                            output_error = Some(error.context(
+                                "failed to write gene-transcript DMR output",
+                            ));
+                            break;
+                        }
+                    };
                     if self.plot.is_some() {
                         let points = gene_tx_dmr.topk_records(
                             self.top_k,
@@ -1826,53 +1912,65 @@ impl EntryGeneTx {
             }
         }
 
-        if let Some(fp) = self.plot.as_ref() {
-            multi_progress.suspend(|| {
-                info!("plotting {} points to {fp:?}", plot_points.len())
-            });
-            if let Some(label_top_k_genes) = self.label_top_k_genes {
-                plot_points.sort_by(|a, b| {
-                    b.neg_log_pvalue
-                        .partial_cmp(&a.neg_log_pvalue)
-                        .unwrap_or(std::cmp::Ordering::Equal)
+        if output_error.is_none() {
+            if let Some(fp) = self.plot.as_ref() {
+                multi_progress.suspend(|| {
+                    info!("plotting {} points to {fp:?}", plot_points.len())
                 });
-                for pp in plot_points.iter() {
-                    let gene_label =
-                        pp.gene_name.clone().unwrap_or_else(|| pp.gene.clone());
-                    gene_labels.insert(gene_label);
-                    if gene_labels.len() >= label_top_k_genes {
-                        break;
+                if let Some(label_top_k_genes) = self.label_top_k_genes {
+                    plot_points.sort_by(|a, b| {
+                        b.neg_log_pvalue
+                            .partial_cmp(&a.neg_log_pvalue)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    for pp in plot_points.iter() {
+                        let gene_label = pp
+                            .gene_name
+                            .clone()
+                            .unwrap_or_else(|| pp.gene.clone());
+                        gene_labels.insert(gene_label);
+                        if gene_labels.len() >= label_top_k_genes {
+                            break;
+                        }
+                    }
+                    for pp in plot_points.iter_mut() {
+                        let gene_label =
+                            pp.gene_name.as_ref().unwrap_or(&pp.gene);
+                        if gene_labels.contains(gene_label) {
+                            pp.label_point = true;
+                        }
                     }
                 }
-                for pp in plot_points.iter_mut() {
-                    let gene_label = pp.gene_name.as_ref().unwrap_or(&pp.gene);
-                    if gene_labels.contains(gene_label) {
-                        pp.label_point = true;
-                    }
+
+                multi_progress.suspend(|| {
+                    let sorted_by = if self.sort_by_effect_size {
+                        "effect size"
+                    } else {
+                        "p-value"
+                    };
+                    info!(
+                        "plotting the top {} points from each gene, sorted by \
+                     {sorted_by}",
+                        self.top_k
+                    );
+                });
+                let svg = volcano_svg(&plot_points, self.plot_title.as_ref());
+                if let Err(error) = std::fs::write(fp, svg) {
+                    output_error =
+                        Some(anyhow::Error::from(error).context(
+                            "failed to write gene-transcript DMR plot",
+                        ));
                 }
             }
-
-            multi_progress.suspend(|| {
-                let sorted_by = if self.sort_by_effect_size {
-                    "effect size"
-                } else {
-                    "p-value"
-                };
-                info!(
-                    "plotting the top {} points from each gene, sorted by \
-                     {sorted_by}",
-                    self.top_k
-                );
-            });
-            let svg = volcano_svg(&plot_points, self.plot_title.as_ref());
-            std::fs::write(fp, svg)?;
         }
 
-        source_thread.join().expect("source thread paniced");
-        for (i, worker_thread) in handles.into_iter().enumerate() {
-            worker_thread.join().expect(&format!("worker {i} paniced"));
-        }
-        aggregator.join().expect("aggregator theread paniced");
+        drop(records_rx);
+        drop(empties_tx);
+        finish_threaded_dmr_output(
+            output_error,
+            || join_threaded_dmr_pipeline(source_thread, handles, aggregator),
+            writer.as_mut(),
+        )?;
 
         multi_progress.suspend(|| {
             info!("finished, {} errors", errs.len());
@@ -1903,12 +2001,12 @@ impl EntryGeneTx {
                 Box::new(BufWriter::new(fh))
             }
         };
-        writer.write(
-            GeneIsoformDmrRecord::<GeneDmrScore>::header(
+        write_dmr_header(
+            writer.as_mut(),
+            &GeneIsoformDmrRecord::<GeneDmrScore>::header(
                 single_mod_code,
                 self.emit_full_results,
-            )
-            .as_bytes(),
+            ),
         )?;
         Ok(writer)
     }
@@ -1936,5 +2034,147 @@ impl EntryGeneTx {
         } else {
             Ok(HashSet::new())
         }
+    }
+}
+
+#[cfg(test)]
+mod output_finalization_tests {
+    use super::{
+        finish_threaded_dmr_output, join_threaded_dmr_pipeline,
+        write_dmr_header,
+    };
+    use anyhow::anyhow;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    struct EventWriter {
+        events: Arc<Mutex<Vec<&'static str>>>,
+        fail_write: bool,
+        fail_flush: bool,
+    }
+
+    impl Write for EventWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.events.lock().unwrap().push("writer write");
+            if self.fail_write {
+                Err(io::Error::other("writer write failed first"))
+            } else {
+                Ok(buf.len())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.events.lock().unwrap().push("writer flush");
+            if self.fail_flush {
+                Err(io::Error::other("writer flush failed later"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn lifecycle(
+        first_error: Option<anyhow::Error>,
+        join_error: Option<&'static str>,
+        fail_flush: bool,
+    ) -> (anyhow::Result<()>, Vec<&'static str>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let join_events = events.clone();
+        let mut writer = EventWriter {
+            events: events.clone(),
+            fail_write: false,
+            fail_flush,
+        };
+        let result = finish_threaded_dmr_output(
+            first_error,
+            move || {
+                join_events.lock().unwrap().push("pipeline joins");
+                match join_error {
+                    Some(message) => Err(anyhow!(message)),
+                    None => Ok(()),
+                }
+            },
+            &mut writer,
+        );
+        let observed = events.lock().unwrap().clone();
+        (result, observed)
+    }
+
+    #[test]
+    fn all_gene_write_error_still_joins_and_flushes_preserving_first_error() {
+        let (result, events) = lifecycle(
+            Some(anyhow!("all-gene write failed first")),
+            Some("pipeline join failed later"),
+            true,
+        );
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "all-gene write failed first"
+        );
+        assert_eq!(events, ["pipeline joins", "writer flush"]);
+    }
+
+    #[test]
+    fn gene_transcript_join_error_still_flushes_and_is_retained() {
+        let (result, events) =
+            lifecycle(None, Some("pipeline join failed first"), true);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "pipeline join failed first"
+        );
+        assert_eq!(events, ["pipeline joins", "writer flush"]);
+    }
+
+    #[test]
+    fn successful_threaded_dmr_finalization_order_is_join_then_flush() {
+        let (result, events) = lifecycle(None, None, false);
+
+        result.unwrap();
+        assert_eq!(events, ["pipeline joins", "writer flush"]);
+    }
+
+    #[test]
+    fn header_write_error_is_retained_and_flush_is_attempted() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut writer = EventWriter {
+            events: events.clone(),
+            fail_write: true,
+            fail_flush: true,
+        };
+
+        let error = write_dmr_header(&mut writer, "header\n")
+            .expect_err("header write failure must be returned");
+
+        assert_eq!(error.to_string(), "writer write failed first");
+        assert_eq!(*events.lock().unwrap(), ["writer write", "writer flush"]);
+    }
+
+    #[test]
+    fn pipeline_panics_are_fallible_and_every_thread_is_joined() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let source_events = events.clone();
+        let source = std::thread::spawn(move || {
+            source_events.lock().unwrap().push("source");
+            panic!("source test panic");
+        });
+        let worker_events = events.clone();
+        let worker = std::thread::spawn(move || {
+            worker_events.lock().unwrap().push("worker");
+        });
+        let aggregator_events = events.clone();
+        let aggregator = std::thread::spawn(move || {
+            aggregator_events.lock().unwrap().push("aggregator");
+        });
+
+        let error =
+            join_threaded_dmr_pipeline(source, vec![worker], aggregator)
+                .expect_err("thread panic must be returned as an error");
+
+        assert_eq!(error.to_string(), "source thread panicked");
+        let mut observed = events.lock().unwrap().clone();
+        observed.sort_unstable();
+        assert_eq!(observed, ["aggregator", "source", "worker"]);
     }
 }

@@ -57,7 +57,8 @@ use crate::util::{
     get_ticker, ReferenceRecord, Region, DEFAULT_NUM_READS,
 };
 use crate::writers::{
-    MultiTableWriter, OutWriter, SampledProbs, TableWriter, TsvWriter,
+    finish_with_first_error, MultiTableWriter, OutWriter, SampledProbs,
+    TableWriter, TsvWriter,
 };
 
 #[derive(Subcommand)]
@@ -1555,12 +1556,19 @@ impl SampleModBaseProbs {
                 sampled_probs.check_path(p, self.force)?;
                 Box::new(MultiTableWriter::new(p.clone()))
             } else {
-                Box::new(TsvWriter::new_stdout(None))
+                Box::new(TsvWriter::new_stdout(None)?)
             };
 
-        writer.write(sampled_probs)?;
-
-        Ok(())
+        let output_error = writer
+            .write(sampled_probs)
+            .map(|_| ())
+            .context("failed to write sampled probabilities output")
+            .err();
+        finish_with_first_error(
+            output_error,
+            || writer.finish(),
+            "failed to flush sampled probabilities output",
+        )
     }
 }
 
@@ -2015,12 +2023,20 @@ impl ModSummarize {
         )?;
 
         let mut writer: Box<dyn OutWriter<ModSummary>> = if self.tsv_format {
-            Box::new(TsvWriter::new_stdout(None))
+            Box::new(TsvWriter::new_stdout(None)?)
         } else {
             Box::new(TableWriter::new())
         };
-        writer.write(mod_summary)?;
-        Ok(())
+        let output_error = writer
+            .write(mod_summary)
+            .map(|_| ())
+            .context("failed to write summary output")
+            .err();
+        finish_with_first_error(
+            output_error,
+            || writer.finish(),
+            "failed to flush summary output",
+        )
     }
 }
 

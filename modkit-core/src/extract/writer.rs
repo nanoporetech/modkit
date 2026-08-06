@@ -182,6 +182,7 @@ pub(crate) trait OutwriterWithMemory<T> {
         motif_position_lookup: Option<&MotifPositionLookup>,
     ) -> anyhow::Result<u64>;
     fn num_reads(&self) -> usize;
+    fn finish(&mut self) -> anyhow::Result<()>;
 }
 
 pub struct TsvWriterWithContigNames<W: Write, C> {
@@ -251,6 +252,11 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
     fn num_reads(&self) -> usize {
         self.number_of_written_reads
     }
+
+    fn finish(&mut self) -> anyhow::Result<()> {
+        self.tsv_writer.flush()?;
+        Ok(())
+    }
 }
 
 impl<W: Write> TsvWriterWithContigNames<W, MultipleThresholdModCaller> {
@@ -310,6 +316,11 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
 
     fn num_reads(&self) -> usize {
         self.number_of_written_reads
+    }
+
+    fn finish(&mut self) -> anyhow::Result<()> {
+        self.tsv_writer.flush()?;
+        Ok(())
     }
 }
 
