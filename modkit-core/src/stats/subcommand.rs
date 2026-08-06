@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{stdout, BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use clap::Args;
 use indicatif::{ParallelProgressIterator, ProgressIterator};
 use itertools::Itertools;
@@ -69,17 +69,6 @@ impl EntryStats {
         let _ = init_logging(self.log_filepath.as_ref());
         let index: HtsTabixHandler<BedMethylLine> =
             HtsTabixHandler::from_path(&self.in_bedmethyl)?;
-        let handle: Box<dyn Write> = match self.out_table.as_str() {
-            "-" | "stdout" => Box::new(BufWriter::new(stdout())),
-            p @ _ => {
-                let fp = std::path::Path::new(p);
-                if self.force {
-                    Box::new(BufWriter::new(File::create(fp)?))
-                } else {
-                    Box::new(BufWriter::new(File::create_new(fp)?))
-                }
-            }
-        };
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
             .build()?;
@@ -159,37 +148,37 @@ impl EntryStats {
             genome_regions
                 .into_par_iter()
                 .progress_with(stats_pb)
-                .filter_map(|gr| {
-                    match gr.into_stats(
+                .map(|gr| {
+                    let region =
+                        format!("{}:{}-{}", gr.chrom, gr.start, gr.end);
+                    gr.into_stats(
                         &index,
                         self.min_coverage,
                         mod_codes.as_ref(),
                         self.io_threads,
-                    ) {
-                        Ok(stats) => Some(stats),
-                        Err(e) => {
-                            debug!("failed to get stats, {e}");
-                            None
-                        }
-                    }
+                    )
+                    .with_context(|| {
+                        format!("failed to calculate stats for region {region}")
+                    })
                 })
-                .fold(
+                .try_fold(
                     || (Vec::new(), FxHashSet::default()),
-                    |(mut agg, mut codes), next| {
+                    |(mut agg, mut codes), next| -> anyhow::Result<_> {
+                        let next = next?;
                         if mod_codes.is_none() {
                             codes.extend(
                                 next.per_mod_methylation.keys().copied(),
                             );
                         }
                         agg.push(next);
-                        (agg, codes)
+                        Ok((agg, codes))
                     },
                 )
-                .reduce(
+                .try_reduce(
                     || (Vec::new(), FxHashSet::default()),
-                    |(a, b), (c, d)| (a.op(c), b.op(d)),
+                    |(a, b), (c, d)| Ok((a.op(c), b.op(d))),
                 )
-        });
+        })?;
 
         let mod_codes =
             if let Some(codes) = mod_codes { codes } else { obs_codes }
@@ -209,6 +198,17 @@ impl EntryStats {
             table.add_row(x.into_row(&mod_codes));
         });
 
+        let handle: Box<dyn Write> = match self.out_table.as_str() {
+            "-" | "stdout" => Box::new(BufWriter::new(stdout())),
+            p @ _ => {
+                let fp = std::path::Path::new(p);
+                if self.force {
+                    Box::new(BufWriter::new(File::create(fp)?))
+                } else {
+                    Box::new(BufWriter::new(File::create_new(fp)?))
+                }
+            }
+        };
         let csv_writer =
             csv::WriterBuilder::new().delimiter('\t' as u8).from_writer(handle);
         table.to_csv_writer(csv_writer)?;

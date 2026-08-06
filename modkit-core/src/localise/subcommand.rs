@@ -3,7 +3,7 @@ use std::io::{stdout, BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use clap::Args;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressIterator};
 use log::{debug, info};
@@ -369,6 +369,39 @@ impl EntryLocalize {
             &tabix_index,
             &multi_progress,
         )?;
+        info!("loaded {} regions", genome_regions.len());
+
+        let successes =
+            multi_progress.add(get_master_progress_bar(genome_regions.len()));
+
+        let stranded_features = self.stranded;
+        let counts = pool.install(|| {
+            genome_regions
+                .into_par_iter()
+                .progress_with(successes)
+                .map(|gr| {
+                    let region =
+                        format!("{}:{}-{}", gr.chrom, gr.start, gr.end);
+                    gr.into_localized_mod_counts(
+                        &tabix_index,
+                        self.stranded_features,
+                        stranded_features,
+                        self.io_threads,
+                    )
+                    .with_context(|| {
+                        format!("failed to localize region {region}")
+                    })
+                })
+                .try_fold(
+                    || LocalizedModCounts::zero(),
+                    |counts, next| -> anyhow::Result<_> {
+                        Ok(counts.op(next?))
+                    },
+                )
+                .try_reduce(|| LocalizedModCounts::zero(), |a, b| Ok(a.op(b)))
+        })?;
+
+        let table = counts.get_table(&multi_progress);
         let writer: Box<dyn Write> =
             if let Some(out_fp) = self.out_file.as_ref() {
                 if self.force {
@@ -381,38 +414,6 @@ impl EntryLocalize {
             };
         let writer =
             csv::WriterBuilder::new().delimiter('\t' as u8).from_writer(writer);
-        info!("loaded {} regions", genome_regions.len());
-
-        let successes =
-            multi_progress.add(get_master_progress_bar(genome_regions.len()));
-
-        let stranded_features = self.stranded;
-        let counts = pool.install(|| {
-            genome_regions
-                .into_par_iter()
-                .progress_with(successes)
-                .map(|gr| {
-                    gr.into_localized_mod_counts(
-                        &tabix_index,
-                        self.stranded_features,
-                        stranded_features,
-                        self.io_threads,
-                    )
-                })
-                .fold(
-                    || LocalizedModCounts::zero(),
-                    |counts, next| match next {
-                        Ok(lc) => counts.op(lc),
-                        Err(e) => {
-                            debug!("region failed, {e}");
-                            counts
-                        }
-                    },
-                )
-                .reduce(|| LocalizedModCounts::zero(), |a, b| a.op(b))
-        });
-
-        let table = counts.get_table(&multi_progress);
         table.to_csv_writer(writer)?;
 
         if let Some(p) = self.chart_filepath.as_ref() {
