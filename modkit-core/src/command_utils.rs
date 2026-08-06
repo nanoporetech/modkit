@@ -16,6 +16,23 @@ use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::calc_threshold_from_bam;
 use crate::util::{create_out_directory, Region};
 
+pub(crate) fn parse_sampling_fraction(raw: &str) -> Result<f64, String> {
+    let fraction = raw.parse::<f64>().map_err(|_| {
+        format!(
+            "sampling fraction must be a finite number in the inclusive \
+             range [0, 1]; got '{raw}'"
+        )
+    })?;
+    if fraction.is_finite() && (0.0..=1.0).contains(&fraction) {
+        Ok(fraction)
+    } else {
+        Err(format!(
+            "sampling fraction must be a finite number in the inclusive \
+             range [0, 1]; got '{raw}'"
+        ))
+    }
+}
+
 pub fn parse_per_mod_thresholds(
     raw_per_mod_thresholds: &[String],
 ) -> anyhow::Result<HashMap<ModCodeRepr, f32>> {
@@ -452,5 +469,43 @@ pub(crate) fn parse_raw_motifs(
             Ok(regex_motifs)
         }
         e @ _ => e,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_sampling_fraction;
+
+    #[test]
+    fn parse_sampling_fraction_matrix() {
+        for (raw, expected) in [
+            ("0", 0.0),
+            ("-0.0", -0.0),
+            ("0.25", 0.25),
+            ("1e-3", 0.001),
+            ("1", 1.0),
+            ("1e0", 1.0),
+        ] {
+            assert_eq!(parse_sampling_fraction(raw).unwrap(), expected);
+        }
+        assert!(parse_sampling_fraction("-0.0").unwrap().is_sign_negative());
+
+        for raw in [
+            "-0.0000001",
+            "1.0000001",
+            "NaN",
+            "nan",
+            "inf",
+            "+inf",
+            "-inf",
+            "1e309",
+            "not-a-number",
+            "",
+        ] {
+            assert!(
+                parse_sampling_fraction(raw).is_err(),
+                "expected {raw:?} to be rejected"
+            );
+        }
     }
 }

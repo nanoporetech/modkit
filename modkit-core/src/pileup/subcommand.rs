@@ -19,8 +19,8 @@ use crate::command_utils::{
     get_motif_lookup_from_parts, get_threshold_from_options,
     parse_edge_filter_input, parse_per_base_thresholds,
     parse_per_mod_thresholds, parse_raw_motifs,
-    parse_raw_thresholds_string_with_default, parse_thresholds,
-    parse_thresholds_values,
+    parse_raw_thresholds_string_with_default, parse_sampling_fraction,
+    parse_thresholds, parse_thresholds_values,
 };
 use crate::fasta::MotifLocationsLookup;
 use crate::interval_chunks::{
@@ -41,6 +41,7 @@ use crate::pileup::pileup_processor::{
 };
 use crate::pileup::{ModBasePileup2, PileupNumericOptions};
 use crate::position_filter::StrandedPositionFilter;
+use crate::reads_sampler::deterministic_sampler::resolve_master_seed;
 use crate::reads_sampler::sampling_schedule::IdxStats;
 use crate::sample_probs::{
     calculate_reads_per_contig, run_extract_probs_workers,
@@ -172,12 +173,14 @@ pub struct ModBamPileup {
     /// In practice, 10-100 thousand reads is sufficient to estimate the model
     /// output distribution and determine the filtering threshold. See
     /// filtering.md for details on filtering.
+    /// Must be a finite value in the inclusive range [0, 1].
     #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'f',
         long,
-        hide_short_help = true
+        hide_short_help = true,
+        value_parser = parse_sampling_fraction
     )]
     sampling_frac: Option<f64>,
     /// Set a random seed for deterministic running, the default is
@@ -776,6 +779,11 @@ impl ModBamPileup {
                 self.sampling_interval_size,
                 sampling_region,
             )?;
+        let master_seed = if rng_sample {
+            resolve_master_seed(self.seed)
+        } else {
+            self.seed.unwrap_or_default()
+        };
         let chrom_to_counts = chrom_to_counts.map(|x| Arc::new(x));
 
         if let Some(preset) = preset {
@@ -806,7 +814,7 @@ impl ModBamPileup {
                     *motif_bases
                 }
             };
-            for i in 0..n_workers {
+            for _ in 0..n_workers {
                 let worker = RegionMleProbs::<
                     AlignedBaseArgmaxProbs,
                     ProbsExtractor,
@@ -817,7 +825,7 @@ impl ModBamPileup {
                     motif_bases,
                     edge_filter,
                     thread_pool,
-                    self.seed.unwrap_or(i as u64),
+                    master_seed,
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
@@ -832,7 +840,7 @@ impl ModBamPileup {
                     motif_bases.iter().unique().join(",")
                 )
             });
-            for i in 0..n_workers {
+            for _ in 0..n_workers {
                 let worker = RegionMleProbs::<
                     AlignedBaseArgmaxProbs,
                     ProbsExtractor,
@@ -843,7 +851,7 @@ impl ModBamPileup {
                     motif_bases,
                     edge_filter,
                     thread_pool,
-                    self.seed.unwrap_or(i as u64),
+                    master_seed,
                     rng_sample,
                     sample_frac,
                     chrom_to_counts.clone(),
@@ -856,7 +864,7 @@ impl ModBamPileup {
                     "calculating threshold value with probabilites from reads",
                 )
             });
-            for i in 0..n_workers {
+            for _ in 0..n_workers {
                 let worker =
                     RegionMleProbs::<BaseArgmaxProbs, ProbsExtractor>::new(
                         &self.in_bam,
@@ -865,7 +873,7 @@ impl ModBamPileup {
                         [DnaBase::A; 4],
                         edge_filter,
                         thread_pool,
-                        self.seed.unwrap_or(i as u64),
+                        master_seed,
                         rng_sample,
                         sample_frac,
                         chrom_to_counts.clone(),
@@ -1787,12 +1795,14 @@ pub struct DuplexModBamPileup {
     /// filter-percentile. In practice, 50-100 thousand reads is sufficient
     /// to estimate the model output distribution and determine the
     /// filtering threshold. See filtering.md for details on filtering.
+    /// Must be a finite value in the inclusive range [0, 1].
     #[clap(help_heading = "Sampling Options")]
     #[arg(
         group = "sampling_options",
         short = 'f',
         long,
-        hide_short_help = true
+        hide_short_help = true,
+        value_parser = parse_sampling_fraction
     )]
     sampling_frac: Option<f64>,
     /// Set a random seed for deterministic running, the default is

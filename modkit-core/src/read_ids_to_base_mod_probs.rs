@@ -131,7 +131,14 @@ impl ReadIdsToBaseModProbs {
                             }
                         }
                         if let Some(p) = explicit_prob {
-                            canonical_probs.insert(*dna_base, p);
+                            canonical_probs
+                                .entry(*dna_base)
+                                .and_modify(|current| {
+                                    if p > *current {
+                                        *current = p;
+                                    }
+                                })
+                                .or_insert(p);
                         }
                     }
                     (calls_per_base, canonical_probs)
@@ -276,7 +283,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         position_filter: Option<&StrandedPositionFilter<()>>,
         only_mapped: bool,
         allow_non_primary: bool,
-        _cut: Option<u32>,
+        cut: Option<u32>,
         _kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
         let spinner = if with_progress {
@@ -285,6 +292,15 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
             None
         };
         let mod_base_info_iter = records
+            .filter(|result| {
+                result
+                    .as_ref()
+                    .map(|record| {
+                        cut.map(|cut| record.reference_start() >= cut as i64)
+                            .unwrap_or(true)
+                    })
+                    .unwrap_or(true)
+            })
             .with_mod_base_info()
             .filter(|(record, _)| {
                 if only_mapped || edge_filter.is_some() {
@@ -302,7 +318,7 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
             });
         let mut read_ids_to_mod_base_probs = Self::zero();
         for (record, mod_base_info) in mod_base_info_iter {
-            match record_sampler.ask() {
+            match record_sampler.ask_record(&record) {
                 Indicator::Use(token) => {
                     let record_name = get_query_name_string(&record);
                     let aligned_pairs = if only_mapped {
@@ -1293,9 +1309,35 @@ mod read_ids_to_base_mod_probs_tests {
     use rust_htslib::bam::{self, Read};
     use rustc_hash::{FxHashMap, FxHashSet};
 
-    use crate::mod_bam::filter_records_iter;
+    use crate::mod_bam::{filter_records_iter, BaseModProbs};
+    use crate::mod_base_code::DnaBase;
     use crate::position_filter::StrandedPositionFilter;
     use crate::util::get_aligned_pairs_forward;
+
+    use super::ReadIdsToBaseModProbs;
+
+    #[test]
+    fn explicit_canonical_probability_is_global_max_across_reads() {
+        let pool =
+            rayon::ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+
+        for repetition in 0..8 {
+            let mut reads = ReadIdsToBaseModProbs { inner: HashMap::new() };
+            for index in 1..100 {
+                // The canonical probability is 1 - modified probability, so
+                // the maximum explicit canonical probability is 0.99.
+                reads.add_mod_probs_for_read(
+                    &format!("read-{repetition}-{index}"),
+                    DnaBase::C,
+                    vec![BaseModProbs::new_init('m', index as f32 / 100.0)],
+                );
+            }
+
+            let (_, explicit_canonical) =
+                pool.install(|| reads.mle_probs_per_base());
+            assert_eq!(explicit_canonical[&DnaBase::C], 0.99);
+        }
+    }
 
     #[test]
     fn test_seq_pos_base_mod_probs_filter_positions() {
