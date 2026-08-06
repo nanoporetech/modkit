@@ -9,7 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::dmr::bedmethyl::{aggregate_counts2, BedMethylLine};
 use crate::dmr::llr_model::AggregatedCounts;
 use crate::dmr::util::{n_choose_2, DmrBatch, DmrBatchOfPositions};
-use crate::errs::MkResult;
+use crate::errs::{MkError, MkResult};
 use crate::genome_positions::StrandedPosition;
 use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::monoid::Moniod;
@@ -21,11 +21,14 @@ pub(super) type ChromToSampleBMLines =
 /// Sample id -> {Chrom -> <BedMethyl_records>}
 pub(super) type SampleToChromBMLines =
     FxHashMap<usize, FxHashMap<String, Vec<BedMethylLine>>>;
+#[derive(Debug)]
+pub(super) struct SampleCount {
+    pub(super) sample_id: usize,
+    pub(super) counts: AggregatedCounts,
+}
 /// Chrom -> {StrandedPosition -> <X_i>} for all i in samples
-pub(super) type ChromToPosAggregatedCounts = FxHashMap<
-    String,
-    BTreeMap<StrandedPosition<DnaBase>, Vec<AggregatedCounts>>,
->;
+pub(super) type ChromToPosAggregatedCounts =
+    FxHashMap<String, BTreeMap<StrandedPosition<DnaBase>, Vec<SampleCount>>>;
 /// Usually (control, experiment)
 pub(super) type BedMethylLinesResult<T> = MkResult<(T, T)>;
 
@@ -206,13 +209,21 @@ impl SingleSiteSampleIndex {
 
     fn organize_bedmethy_lines(
         &self,
-        sample: SampleToChromBMLines,
+        mut sample: SampleToChromBMLines,
+        configured_sample_ids: &[usize],
         code_lookup: &FxHashMap<ModCodeRepr, DnaBase>,
     ) -> MkResult<ChromToPosAggregatedCounts> {
         let mut agg = FxHashMap::default();
 
         // samples should be length ~1-5
-        for chrom_to_filtered_bm_records in sample.into_values() {
+        for sample_id in configured_sample_ids {
+            let chrom_to_filtered_bm_records =
+                sample.remove(sample_id).ok_or_else(|| {
+                    MkError::InvalidBedMethyl(format!(
+                        "missing configured sample ID {sample_id} while \
+                         organizing bedMethyl records"
+                    ))
+                })?;
             let chrom_to_counts = chrom_to_filtered_bm_records
                 .into_iter()
                 .map(|(chrom, lines)| {
@@ -264,11 +275,22 @@ impl SingleSiteSampleIndex {
                         Ok(aggregated_counts) => chrom_agg
                             .entry(position)
                             .or_insert(Vec::new())
-                            .push(aggregated_counts),
+                            .push(SampleCount {
+                                sample_id: *sample_id,
+                                counts: aggregated_counts,
+                            }),
                         Err(e) => return Err(e),
                     }
                 }
             }
+        }
+        if !sample.is_empty() {
+            let mut unexpected_ids = sample.keys().copied().collect::<Vec<_>>();
+            unexpected_ids.sort_unstable();
+            return Err(MkError::InvalidBedMethyl(format!(
+                "found unexpected sample IDs while organizing bedMethyl \
+                 records: {unexpected_ids:?}"
+            )));
         }
         Ok(agg)
     }
@@ -341,10 +363,12 @@ impl SingleSiteSampleIndex {
         // group by chrom, this can fail if the records are deemed invalid
         let counts_a = self.organize_bedmethy_lines(
             bedmethyl_lines_a,
+            &self.control_idxs,
             &self.multi_sample_index.code_lookup,
         )?;
         let counts_b = self.organize_bedmethy_lines(
             bedmethyl_lines_b,
+            &self.exp_idxs,
             &self.multi_sample_index.code_lookup,
         )?;
         Ok((counts_a, counts_b))
@@ -365,6 +389,26 @@ impl SingleSiteSampleIndex {
     #[inline]
     pub(super) fn matched_replicate_samples(&self) -> bool {
         self.num_a_samples() == self.num_b_samples() && self.num_a_samples() > 1
+    }
+
+    pub(super) fn has_complete_positive_matched_counts(
+        &self,
+        counts_a: &[SampleCount],
+        counts_b: &[SampleCount],
+    ) -> bool {
+        let aligned_and_positive =
+            |expected_ids: &[usize], counts: &[SampleCount]| {
+                expected_ids.len() == counts.len()
+                    && expected_ids.iter().zip(counts).all(
+                        |(expected_id, sample_count)| {
+                            expected_id == &sample_count.sample_id
+                                && sample_count.counts.total > 0
+                        },
+                    )
+            };
+        self.matched_replicate_samples()
+            && aligned_and_positive(&self.control_idxs, counts_a)
+            && aligned_and_positive(&self.exp_idxs, counts_b)
     }
 
     #[inline]
@@ -398,7 +442,7 @@ mod sample_identity_tests {
         code_lookup.insert(ModCodeRepr::Code('m'), DnaBase::C);
         let sample_index = SingleSiteSampleIndex::new(
             MultiSampleIndex::new(Vec::new(), code_lookup.clone(), 0, 1),
-            1,
+            3,
             3,
             None,
         )
@@ -415,16 +459,25 @@ mod sample_identity_tests {
         }
 
         let organized = sample_index
-            .organize_bedmethy_lines(samples, &code_lookup)
+            .organize_bedmethy_lines(
+                samples,
+                &sample_index.exp_idxs,
+                &code_lookup,
+            )
             .unwrap();
         let counts = organized.get("chr1").unwrap().values().next().unwrap();
 
         assert_eq!(
             counts
                 .iter()
-                .map(|counts| counts.modified_counts())
+                .map(|sample_count| {
+                    (
+                        sample_count.sample_id,
+                        sample_count.counts.modified_counts(),
+                    )
+                })
                 .collect::<Vec<_>>(),
-            vec![1, 5, 9]
+            vec![(3, 1), (4, 5), (5, 9)]
         );
     }
 }

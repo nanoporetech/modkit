@@ -17,7 +17,7 @@ use rustc_hash::FxHashMap;
 use crate::dmr::beta_diff::{BetaParams, PMapEstimator};
 use crate::dmr::llr_model::{llk_ratio, AggregatedCounts};
 use crate::dmr::tabix::{
-    MultiSampleIndex, SampleToChromBMLines, SingleSiteSampleIndex,
+    MultiSampleIndex, SampleCount, SampleToChromBMLines, SingleSiteSampleIndex,
 };
 use crate::dmr::util::{cohen_h, DmrBatchOfPositions};
 use crate::errs::{MkError, MkResult};
@@ -570,25 +570,25 @@ impl SingleSiteDmrScore {
     }
 
     fn new_multi(
-        counts_a: &[AggregatedCounts],
-        counts_b: &[AggregatedCounts],
+        counts_a: &[SampleCount],
+        counts_b: &[SampleCount],
         sample_index: &SingleSiteSampleIndex,
         position: u64,
         strand: Strand,
         estimator: &PMapEstimator,
     ) -> MkResult<Self> {
         let (replicate_epmap, replicate_effect_sizes) = if sample_index
-            .matched_replicate_samples()
-            && counts_a.len() == counts_b.len()
+            .has_complete_positive_matched_counts(counts_a, counts_b)
         {
             let n_samples = counts_a.len();
             let mut replicate_epmap = Vec::with_capacity(n_samples);
             let mut replicate_effect_size = Vec::with_capacity(n_samples);
             for (a, b) in counts_a.iter().zip(counts_b) {
-                let epmap = estimator.predict(a, b).map_err(|e| {
-                    debug!("failed to calculate MAP-based p-value, {e}");
-                    MkError::BetaDiffCalcError
-                })?;
+                let epmap =
+                    estimator.predict(&a.counts, &b.counts).map_err(|e| {
+                        debug!("failed to calculate MAP-based p-value, {e}");
+                        MkError::BetaDiffCalcError
+                    })?;
                 replicate_epmap.push(epmap.e_pmap);
                 replicate_effect_size.push(epmap.effect_size);
             }
@@ -781,18 +781,19 @@ impl SingleSiteDmrScore {
     }
 }
 
-fn collapse_counts(
-    counts: &[AggregatedCounts],
-    balance: bool,
-) -> AggregatedCounts {
+fn collapse_counts(counts: &[SampleCount], balance: bool) -> AggregatedCounts {
     if counts.len() == 1 {
-        counts[0].clone()
+        counts[0].counts.clone()
     } else if balance {
-        let total_cov = counts.iter().map(|ac| ac.total).sum::<usize>();
+        let total_cov = counts
+            .iter()
+            .map(|sample_count| sample_count.counts.total)
+            .sum::<usize>();
         let n = counts.len();
         let target_cov = total_cov as f32 / n as f32;
         counts.iter().fold(AggregatedCounts::zero(), |agg, next| {
             let counts = next
+                .counts
                 .iter_mod_fractions()
                 .map(|(code, frac)| {
                     (code, (frac * target_cov).floor() as usize)
@@ -803,7 +804,9 @@ fn collapse_counts(
             agg.op(&ac)
         })
     } else {
-        counts.iter().fold(AggregatedCounts::zero(), |agg, next| agg.op(next))
+        counts
+            .iter()
+            .fold(AggregatedCounts::zero(), |agg, next| agg.op(&next.counts))
     }
 }
 
