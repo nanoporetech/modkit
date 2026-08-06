@@ -44,6 +44,8 @@ random_color = "1.0.0"
 rayon = "1.8.0"
 regex = "1.4"
 rust-htslib = "0.46.0"
+# rust-htslib 0.46 does not compile with the bindings shipped by hts-sys 2.2.1.
+hts-sys = "=2.2.0"
 rust-lapper = "1.1.0"
 rustc-hash = "1.1.0"
 rv = "=0.16.0"
