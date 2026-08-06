@@ -1029,6 +1029,9 @@ impl ModBamPileup {
                 Presets::DnaCpGCombineStrands { .. } => {
                     (PileupNumericOptions::Passthrough, true)
                 }
+                Presets::DynamicAllContext {
+                    motif_offset: Some(_), ..
+                } => (PileupNumericOptions::Passthrough, true),
                 _ => (PileupNumericOptions::Passthrough, false),
             },
             None => {

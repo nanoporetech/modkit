@@ -1,17 +1,200 @@
 use anyhow::Context;
 use itertools::Itertools;
 use rust_htslib::bam;
+use rust_htslib::bam::header::HeaderRecord;
+use rust_htslib::bam::record::{Aux, Cigar, CigarString};
+use rust_htslib::bam::{Format, Header, Record, Writer as BamWriter};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 
 use common::{check_against_expected_text_file, run_modkit};
 use mod_kit::dmr::bedmethyl::BedMethylLine;
 use mod_kit::mod_base_code::{ModCodeRepr, METHYL_CYTOSINE};
 
 mod common;
+
+fn write_motif_boundary_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    let bam_path = root.join("motif-boundaries.bam");
+    let fasta_path = root.join("motif-boundaries.fa");
+
+    let mut header = Header::new();
+    let mut sq = HeaderRecord::new(b"SQ");
+    sq.push_tag(b"SN", "chr1");
+    sq.push_tag(b"LN", 6);
+    header.push_record(&sq);
+
+    let mut writer =
+        BamWriter::from_path(&bam_path, &header, Format::Bam).unwrap();
+    for (name, reverse) in [("forward", false), ("reverse", true)] {
+        let cigar = CigarString(vec![Cigar::Match(6)]);
+        let mut record = Record::new();
+        record.set(name.as_bytes(), Some(&cigar), b"ACGTCG", &[30; 6]);
+        record.set_tid(0);
+        record.set_pos(0);
+        record.set_mapq(60);
+        if reverse {
+            record.set_flags(16);
+        }
+        record.push_aux(b"MM", Aux::String("C+m?,0,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[255, 255][..]).into())).unwrap();
+        record.push_aux(b"MN", Aux::U32(6)).unwrap();
+        record.push_aux(b"NM", Aux::U32(0)).unwrap();
+        writer.write(&record).unwrap();
+    }
+    drop(writer);
+    bam::index::build(bam_path.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    File::create(&fasta_path).unwrap().write_all(b">chr1\nACGTCG\n").unwrap();
+    File::create(root.join("motif-boundaries.fa.fai"))
+        .unwrap()
+        .write_all(b"chr1\t6\t6\t6\t7\n")
+        .unwrap();
+
+    (bam_path, fasta_path)
+}
+
+fn run_motif_boundary_pileup(
+    root: &Path,
+    bam_path: &Path,
+    fasta_path: &Path,
+    preload: bool,
+    interval_size: usize,
+) -> Vec<u8> {
+    let preload_name = if preload { "preload" } else { "faidx" };
+    let output_path =
+        root.join(format!("motif-{preload_name}-{interval_size}.bed"));
+    let interval_size = interval_size.to_string();
+    let mut args = vec![
+        "pileup",
+        bam_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--motif",
+        "CG",
+        "0",
+        "--modified-bases",
+        "C:m",
+        "--no-filtering",
+        "--interval-size",
+        &interval_size,
+        "--threads",
+        "1",
+        "--suppress-progress",
+    ];
+    if preload {
+        args.push("--preload-references");
+    }
+    run_modkit(&args).unwrap();
+    std::fs::read(output_path).unwrap()
+}
+
+fn run_cgcg0_combined_pileup(
+    root: &Path,
+    optimized: bool,
+    region: &str,
+    interval_size: usize,
+) -> Vec<u8> {
+    let processor = if optimized { "optimized" } else { "generic" };
+    let output_path = root.join(format!(
+        "cgcg0-{processor}-{}-{interval_size}.bed",
+        region.replace(':', "-")
+    ));
+    let interval_size = interval_size.to_string();
+    let mut args = vec![
+        "pileup",
+        "../tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads.bam",
+        output_path.to_str().unwrap(),
+        "--motif",
+        "CGCG",
+        "0",
+        "--combine-strands",
+        "--no-filtering",
+        "--ref",
+        "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region",
+        region,
+        "--interval-size",
+        &interval_size,
+        "--threads",
+        "1",
+        "--suppress-progress",
+    ];
+    if optimized {
+        args.extend(["--modified-bases", "C:m"]);
+    }
+    run_modkit(&args).unwrap();
+    std::fs::read(output_path).unwrap()
+}
+
+#[test]
+fn test_pileup_motif_boundaries_are_preload_and_interval_invariant() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_motif_boundary_fixture(root);
+    let expected = concat!(
+        "chr1\t1\t2\tm\t1\t+\t1\t2\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+        "chr1\t2\t3\tm\t1\t-\t2\t3\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+        "chr1\t4\t5\tm\t1\t+\t4\t5\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+        "chr1\t5\t6\tm\t1\t-\t5\t6\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+    );
+
+    for preload in [false, true] {
+        for interval_size in [1, 2, 3, 6, 100] {
+            let observed = run_motif_boundary_pileup(
+                root,
+                &bam_path,
+                &fasta_path,
+                preload,
+                interval_size,
+            );
+            assert_eq!(
+                observed,
+                expected.as_bytes(),
+                "preload={preload}, interval_size={interval_size}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_cgcg0_combined_optimized_and_generic_are_interval_invariant() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let expected = b"oligo_741_adapters\t38\t39\tm\t11\t.\t38\t39\t255,0,0\t11\t100.00\t11\t0\t0\t1\t0\t0\t0\n";
+
+    for interval_size in [1, 2, 3, 40] {
+        let optimized = run_cgcg0_combined_pileup(
+            temp_dir.path(),
+            true,
+            "oligo_741_adapters:22-62",
+            interval_size,
+        );
+        let generic = run_cgcg0_combined_pileup(
+            temp_dir.path(),
+            false,
+            "oligo_741_adapters:22-62",
+            interval_size,
+        );
+        assert_eq!(optimized, expected, "optimized interval={interval_size}");
+        assert_eq!(generic, expected, "generic interval={interval_size}");
+    }
+
+    // The only CGCG0 pair in this span is +38/-41. Its positive owner is
+    // before the region, so neither processor may fabricate a row at 40.
+    for optimized in [false, true] {
+        let observed = run_cgcg0_combined_pileup(
+            temp_dir.path(),
+            optimized,
+            "oligo_741_adapters:40-62",
+            2,
+        );
+        assert!(observed.is_empty(), "optimized={optimized}");
+    }
+}
 
 #[test]
 fn test_pileup_help() {
