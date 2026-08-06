@@ -2,7 +2,7 @@ use std::{
     collections::HashMap, marker::PhantomData, path::PathBuf, sync::Arc, usize,
 };
 
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use bitvec::{order::Lsb0, view::BitView};
 use derive_new::new;
 use indicatif::MultiProgress;
@@ -16,7 +16,6 @@ use rust_htslib::{
     htslib,
 };
 use rustc_hash::FxHashMap;
-use tracing::error;
 
 use crate::{
     command_utils::get_motif_lookup_from_parts,
@@ -391,8 +390,8 @@ impl QualHist {
         let _ = std::mem::replace(&mut self.mods_hists, mod_hists);
     }
 
-    pub(crate) fn from_records<R: bam::Read>(
-        records: bam::Records<R>,
+    pub(crate) fn from_records<I, E>(
+        records: I,
         stranded_position_filter: Option<StrandedPositionFilter<()>>,
         num_reads: Option<usize>,
         sampling_frac: Option<f64>,
@@ -402,7 +401,11 @@ impl QualHist {
         allow_non_primary: bool,
         mapped_only: bool,
         multi_progress: &MultiProgress,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Self>
+    where
+        I: IntoIterator<Item = Result<bam::Record, E>>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
         let edge_filter_start =
             edge_filter.map(|ef| ef.edge_filter_start).unwrap_or(0usize);
         let edge_filter_end =
@@ -421,10 +424,8 @@ impl QualHist {
                     return Ok(mem);
                 }
             }
-            let Ok(record) = res else {
-                mem.erred_records = mem.erred_records.saturating_add(1);
-                continue 'records;
-            };
+            let record =
+                res.context("failed to read alignment record while collecting probabilities")?;
             if record_is_not_primary(&record) {
                 if !allow_non_primary {
                     continue 'records;
@@ -756,6 +757,63 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T>> RegionMleProbs<T, H> {
     }
 }
 
+fn process_region_records<T, H, I, E>(
+    records: I,
+    hist: &mut H,
+    item: &ChromCoordinates,
+    mem: &mut QualHist,
+    num_records: Option<usize>,
+    allow_non_primary: bool,
+) -> anyhow::Result<()>
+where
+    H: ExtractsMleProbs<T>,
+    I: IntoIterator<Item = Result<bam::Record, E>>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    'records: for res in records {
+        if let Some(num_records) = num_records {
+            if mem.ok_records >= num_records {
+                break 'records;
+            }
+        }
+        let record = res.with_context(|| {
+            format!(
+                "failed to read BAM record in interval {}:{}-{}",
+                item.chrom_tid, item.start_pos, item.end_pos
+            )
+        })?;
+
+        if record_is_not_primary(&record) {
+            if !allow_non_primary {
+                continue 'records;
+            }
+            if validate_mn_tag_on_record(&record).is_err() {
+                mem.erred_records = mem.erred_records.saturating_add(1);
+                continue 'records;
+            }
+        }
+        match hist.process_record(
+            &record,
+            item,
+            &mut mem.explicit_canonical_probs,
+            &mut mem.hist,
+            &mut mem.base_totals,
+            &mut mem.mods_hists,
+            &mut mem.num_records_with_base_mods,
+        ) {
+            Ok(true) => {
+                mem.ok_records = mem.ok_records.saturating_add(1);
+            }
+            Ok(false) => {}
+            Err(_) => {
+                mem.erred_records = mem.erred_records.saturating_add(1);
+                continue 'records;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
     for RegionMleProbs<T, H>
 {
@@ -783,50 +841,14 @@ impl<T: Send + Sync, H: ExtractsMleProbs<T> + Send> ExtractProbsWorker
                 None
             };
 
-        'records: for res in self.reader.records() {
-            if let Some(num_records) = num_records {
-                if mem.ok_records >= num_records {
-                    // debug!(
-                    //     "worker {chrom_tid}:{start_pos}-{end_pos} sampled {}
-                    // \      records, done. {} records
-                    // failed",     mem.ok_records,
-                    // mem.erred_records );
-                    return Ok(mem);
-                }
-            }
-            let Ok(record) = res else {
-                mem.erred_records = mem.erred_records.saturating_add(1);
-                continue 'records;
-            };
-
-            if record_is_not_primary(&record) {
-                if !self.allow_non_primary {
-                    continue 'records;
-                }
-                if validate_mn_tag_on_record(&record).is_err() {
-                    mem.erred_records = mem.erred_records.saturating_add(1);
-                    continue 'records;
-                }
-            }
-            match self.hist.process_record(
-                &record,
-                &item,
-                &mut mem.explicit_canonical_probs,
-                &mut mem.hist,
-                &mut mem.base_totals,
-                &mut mem.mods_hists,
-                &mut mem.num_records_with_base_mods,
-            ) {
-                Ok(true) => {
-                    mem.ok_records = mem.ok_records.saturating_add(1);
-                }
-                Ok(false) => {}
-                Err(_) => {
-                    mem.erred_records = mem.erred_records.saturating_add(1);
-                    continue 'records;
-                }
-            }
-        }
+        process_region_records(
+            self.reader.records(),
+            &mut self.hist,
+            &item,
+            &mut mem,
+            num_records,
+            self.allow_non_primary,
+        )?;
         // debug!(
         //     "worker {chrom_tid}:{start_pos}-{end_pos} processed {} records, \
         //      done. {} records failed",
@@ -1355,70 +1377,82 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
     }
 }
 
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
 pub(crate) fn run_extract_probs_workers(
     workers: Vec<Box<dyn ExtractProbsWorker>>,
     multi_progress: MultiProgress,
     feeder: ChromCoordinatesFeeder,
 ) -> anyhow::Result<QualHist> {
+    if workers.is_empty() {
+        bail!("at least one extract-probability worker is required")
+    }
+
     let tid_progress =
         multi_progress.add(get_master_progress_bar(feeder.total_length()));
     let (snd_work, rcv_work) = crossbeam::channel::unbounded();
     let (snd_results, rcv_results) = crossbeam::channel::unbounded();
     let (return_mem, rcv_mem) = crossbeam::channel::unbounded();
     for _ in 0..workers.len() {
-        return_mem.send(QualHist::default()).expect("should stage memory 1");
-        return_mem.send(QualHist::default()).expect("should stage memory 2");
+        return_mem
+            .send(QualHist::default())
+            .map_err(|_| anyhow!("failed to stage worker memory"))?;
+        return_mem
+            .send(QualHist::default())
+            .map_err(|_| anyhow!("failed to stage worker memory"))?;
     }
 
     let source_thread = std::thread::spawn({
-        let results_tx = snd_results.clone();
-        let mpb_handle = multi_progress.clone();
-        let chrom_coord_feeder = feeder
-            .into_iter()
-            .inspect(move |r| match r {
-                Ok(_) => {}
-                Err(e) => {
-                    mpb_handle
-                        .suspend(|| error!("failed to fetch sequence, {e}"));
+        move || -> anyhow::Result<()> {
+            for chrom_coords in feeder {
+                let chrom_coords = chrom_coords
+                    .context("failed to fetch chromosome coordinates")?;
+                let has_focus = match &chrom_coords.focus_positions {
+                    FocusPositions2::MotifMask { mask, num_motifs: _ }
+                    | FocusPositions2::MaskedPositions { mask } => mask.any(),
+                    FocusPositions2::AllPositions => true,
+                };
+                if !has_focus {
+                    continue;
                 }
-            })
-            .filter_ok(|cc| match &cc.focus_positions {
-                FocusPositions2::MotifMask { mask, num_motifs: _ }
-                | FocusPositions2::MaskedPositions { mask } => mask.any(),
-                FocusPositions2::AllPositions => true,
-            })
-            .filter_map(|r| r.ok());
-        move || {
-            let get_mem = || -> Result<QualHist, ()> {
-                match rcv_mem.recv() {
-                    Ok(qh) => Ok(qh),
-                    Err(_) => Err(()),
-                }
-            };
 
-            for chrom_coords in chrom_coord_feeder {
-                match get_mem() {
-                    Ok(qh) => {
-                        if snd_work.send((chrom_coords, qh)).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+                let Ok(qh) = rcv_mem.recv() else {
+                    break;
+                };
+                if snd_work.send((chrom_coords, qh)).is_err() {
+                    break;
                 }
             }
-            drop(snd_work);
-            drop(results_tx);
+            Ok(())
         }
     });
 
     let mut worker_handles = Vec::with_capacity(workers.len());
-    for mut worker in workers {
+    for (worker_id, mut worker) in workers.into_iter().enumerate() {
         let rcv_work = rcv_work.clone();
         let snd_results = snd_results.clone();
         worker_handles.push(std::thread::spawn(move || {
             while let Ok((chrom_coords, mem)) = rcv_work.recv() {
-                let result = worker.process(chrom_coords, mem);
-                if snd_results.send(result).is_err() {
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                        || worker.process(chrom_coords, mem),
+                    ))
+                    .unwrap_or_else(|payload| {
+                        Err(anyhow!(
+                            "worker {worker_id} panicked: {}",
+                            panic_message(payload.as_ref())
+                        ))
+                    });
+                let worker_failed = result.is_err();
+                if snd_results.send(result).is_err() || worker_failed {
                     break;
                 }
             }
@@ -1428,27 +1462,61 @@ pub(crate) fn run_extract_probs_workers(
     drop(rcv_work);
 
     let mut qual_hist = QualHist::default();
-    for result in rcv_results {
+    let mut first_error = None;
+    while let Ok(result) = rcv_results.recv() {
         match result {
             Ok(mut qh) => {
-                qual_hist.combine(&qh, &multi_progress)?;
+                if let Err(error) = qual_hist.combine(&qh, &multi_progress) {
+                    first_error = Some(error);
+                    break;
+                }
                 tid_progress.inc(qh.interval_length as u64);
                 qh.clear();
                 let _ = return_mem.send(qh);
             }
-            Err(e) => {
-                debug!("received {e} from rcv_results, stopping");
+            Err(error) => {
+                debug!("received {error} from rcv_results, stopping");
+                first_error = Some(error);
                 break;
             }
         }
     }
 
-    source_thread.join().expect("panic on source thread");
+    drop(rcv_results);
+    drop(return_mem);
+
+    match source_thread.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+        }
+        Err(payload) => {
+            if first_error.is_none() {
+                first_error = Some(anyhow!(
+                    "chromosome-coordinate source thread panicked: {}",
+                    panic_message(payload.as_ref())
+                ));
+            }
+        }
+    }
     for (i, worker_thread) in worker_handles.into_iter().enumerate() {
-        worker_thread.join().expect(&format!("worker {i} paniced"));
+        if let Err(payload) = worker_thread.join() {
+            if first_error.is_none() {
+                first_error = Some(anyhow!(
+                    "worker {i} panicked: {}",
+                    panic_message(payload.as_ref())
+                ));
+            }
+        }
     }
 
-    Ok(qual_hist)
+    if let Some(error) = first_error {
+        Err(error)
+    } else {
+        Ok(qual_hist)
+    }
 }
 
 pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
@@ -1757,5 +1825,544 @@ fn byte_to_bool_positions<const SIZE: usize>(b: u8, agg: &mut [u32; SIZE]) {
     {
         let count = agg[i];
         agg[i] = count.saturating_add(1u32);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{Error, ErrorKind},
+        path::PathBuf,
+        process::{Command, Stdio},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Barrier,
+        },
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use anyhow::{anyhow, bail};
+    use indicatif::MultiProgress;
+    use rust_htslib::bam::{self, record::Aux};
+
+    use super::{
+        process_region_records, run_extract_probs_workers, ChromCoordinates,
+        ChromCoordinatesFeeder, ExtractProbsWorker, ExtractsMleProbs, ModHist,
+        QualHist, RegexMotif,
+    };
+    use crate::{
+        fasta::MotifLocationsLookup, interval_chunks::FocusPositions2,
+        mod_bam::EdgeFilter, mod_base_code::DnaBase, util::ReferenceRecord,
+    };
+
+    const CHILD_MODE_ENV: &str = "MODKIT_EXTRACT_PROBS_WORKER_CHILD_MODE";
+    const CHILD_TEST_NAME: &str =
+        "sample_probs::tests::run_extract_probs_workers_child";
+    const CHILD_TIMEOUT: Duration = Duration::from_secs(5);
+
+    struct SyntheticRecordProcessor {
+        calls: usize,
+        fail: bool,
+    }
+
+    impl ExtractsMleProbs<()> for SyntheticRecordProcessor {
+        fn new(
+            _seed: u64,
+            _sample: bool,
+            _sample_frac: f64,
+            _motif_bases: [DnaBase; 4],
+            _edge_filter: Option<&EdgeFilter>,
+        ) -> Self {
+            Self { calls: 0, fail: false }
+        }
+
+        fn process_record(
+            &mut self,
+            _record: &bam::Record,
+            _chrom_coords: &ChromCoordinates,
+            explicit_canonical_probs: &mut [u8; 4],
+            base_hist: &mut [[u64; 256]; 4],
+            base_totals: &mut [u64; 4],
+            _mods_hists: &mut Vec<ModHist>,
+            records_with_base_mods: &mut [u32; 4],
+        ) -> anyhow::Result<bool> {
+            self.calls += 1;
+            if self.fail {
+                bail!("synthetic record rejection")
+            }
+            explicit_canonical_probs[DnaBase::A as usize] += 1;
+            base_hist[DnaBase::A as usize][42] += 2;
+            base_totals[DnaBase::A as usize] += 2;
+            records_with_base_mods[DnaBase::A as usize] += 1;
+            Ok(true)
+        }
+    }
+
+    fn synthetic_coordinates() -> ChromCoordinates {
+        ChromCoordinates::new(7, 10, 20, FocusPositions2::AllPositions, true)
+    }
+
+    struct FailOnSecondCall {
+        calls: usize,
+    }
+
+    impl ExtractProbsWorker for FailOnSecondCall {
+        fn process(
+            &mut self,
+            _item: ChromCoordinates,
+            mut mem: QualHist,
+        ) -> anyhow::Result<QualHist> {
+            self.calls += 1;
+            if self.calls == 1 {
+                mem.ok_records = 1;
+                Ok(mem)
+            } else {
+                bail!("synthetic worker failure")
+            }
+        }
+    }
+
+    struct AlwaysFails;
+
+    impl ExtractProbsWorker for AlwaysFails {
+        fn process(
+            &mut self,
+            _item: ChromCoordinates,
+            _mem: QualHist,
+        ) -> anyhow::Result<QualHist> {
+            Err(anyhow!("synthetic worker failure"))
+        }
+    }
+
+    struct AlwaysPanics;
+
+    impl ExtractProbsWorker for AlwaysPanics {
+        fn process(
+            &mut self,
+            _item: ChromCoordinates,
+            _mem: QualHist,
+        ) -> anyhow::Result<QualHist> {
+            panic!("synthetic worker panic")
+        }
+    }
+
+    struct CoordinatedPanics {
+        start: Arc<Barrier>,
+    }
+
+    impl ExtractProbsWorker for CoordinatedPanics {
+        fn process(
+            &mut self,
+            _item: ChromCoordinates,
+            _mem: QualHist,
+        ) -> anyhow::Result<QualHist> {
+            self.start.wait();
+            panic!("synthetic coordinated worker panic")
+        }
+    }
+
+    struct CoordinatedSurvivor {
+        start: Arc<Barrier>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ExtractProbsWorker for CoordinatedSurvivor {
+        fn process(
+            &mut self,
+            _item: ChromCoordinates,
+            mut mem: QualHist,
+        ) -> anyhow::Result<QualHist> {
+            let call = self.calls.fetch_add(1, Ordering::Relaxed);
+            if call == 0 {
+                self.start.wait();
+            }
+            mem.interval_length = 1;
+            mem.ok_records = 1;
+            Ok(mem)
+        }
+    }
+
+    struct MustNotRun;
+
+    impl ExtractProbsWorker for MustNotRun {
+        fn process(
+            &mut self,
+            _item: ChromCoordinates,
+            _mem: QualHist,
+        ) -> anyhow::Result<QualHist> {
+            panic!("worker unexpectedly received coordinates")
+        }
+    }
+
+    fn synthetic_feeder(intervals: u32) -> ChromCoordinatesFeeder {
+        ChromCoordinatesFeeder::new(
+            &[ReferenceRecord::new(0, 0, intervals, "synthetic".to_string())],
+            1,
+            None,
+            false,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn feeder_that_errors() -> ChromCoordinatesFeeder {
+        let reference_path =
+            PathBuf::from("../tests/resources/CGI_ladder_3.6kb_ref.fa");
+        let motifs = vec![RegexMotif::parse_string("CG", 0).unwrap()];
+        let lookup = MotifLocationsLookup::from_paths(
+            &reference_path,
+            false,
+            None,
+            motifs,
+            true,
+        )
+        .unwrap();
+        ChromCoordinatesFeeder::new(
+            &[ReferenceRecord::new(
+                0,
+                0,
+                157,
+                "oligo_1512_adapters".to_string(),
+            )],
+            157,
+            Some(lookup),
+            false,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn run_in_child(mode: &str) {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg(CHILD_TEST_NAME)
+            .arg("--nocapture")
+            .env(CHILD_MODE_ENV, mode)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let start = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    assert!(
+                        status.success(),
+                        "child test failed with {status}"
+                    );
+                    return;
+                }
+                Ok(None) if start.elapsed() < CHILD_TIMEOUT => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("child test timed out in mode {mode}");
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("failed to wait for child test: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn indexed_reader_item_error_is_fatal_with_interval_context() {
+        let coordinates = synthetic_coordinates();
+        let records = vec![Err::<bam::Record, _>(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "synthetic decode failure",
+        ))];
+        let mut processor = SyntheticRecordProcessor { calls: 0, fail: false };
+        let mut mem = QualHist::default();
+
+        let error = process_region_records::<(), _, _, _>(
+            records,
+            &mut processor,
+            &coordinates,
+            &mut mem,
+            None,
+            false,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(message.contains("synthetic decode failure"), "{message}");
+        assert!(message.contains("7:10-20"), "{message}");
+        assert_eq!(processor.calls, 0);
+    }
+
+    #[test]
+    fn invalid_mn_record_remains_a_nonfatal_rejection() {
+        let coordinates = synthetic_coordinates();
+        let mut invalid_secondary = bam::Record::new();
+        invalid_secondary.set_flags(0x100);
+        let records = vec![Ok::<_, std::io::Error>(invalid_secondary)];
+        let mut processor = SyntheticRecordProcessor { calls: 0, fail: false };
+        let mut mem = QualHist::default();
+
+        process_region_records::<(), _, _, _>(
+            records,
+            &mut processor,
+            &coordinates,
+            &mut mem,
+            None,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(mem.ok_records, 0);
+        assert_eq!(mem.erred_records, 1);
+        assert_eq!(processor.calls, 0);
+    }
+
+    #[test]
+    fn process_record_error_remains_a_nonfatal_rejection() {
+        let coordinates = synthetic_coordinates();
+        let records = vec![Ok::<_, std::io::Error>(bam::Record::new())];
+        let mut processor = SyntheticRecordProcessor { calls: 0, fail: true };
+        let mut mem = QualHist::default();
+
+        process_region_records::<(), _, _, _>(
+            records,
+            &mut processor,
+            &coordinates,
+            &mut mem,
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(mem.ok_records, 0);
+        assert_eq!(mem.erred_records, 1);
+        assert_eq!(processor.calls, 1);
+    }
+
+    #[test]
+    fn valid_records_are_aggregated_exactly() {
+        let coordinates = synthetic_coordinates();
+        let records = vec![
+            Ok::<_, std::io::Error>(bam::Record::new()),
+            Ok::<_, std::io::Error>(bam::Record::new()),
+        ];
+        let mut processor = SyntheticRecordProcessor { calls: 0, fail: false };
+        let mut mem = QualHist::default();
+        mem.interval_length = coordinates.len();
+
+        process_region_records::<(), _, _, _>(
+            records,
+            &mut processor,
+            &coordinates,
+            &mut mem,
+            None,
+            false,
+        )
+        .unwrap();
+
+        let mut expected_hist = [[0u64; 256]; 4];
+        expected_hist[DnaBase::A as usize][42] = 4;
+        assert_eq!(mem.hist, expected_hist);
+        assert_eq!(mem.base_totals, [4, 0, 0, 0]);
+        assert_eq!(mem.explicit_canonical_probs, [2, 0, 0, 0]);
+        assert_eq!(mem.num_records_with_base_mods, [2, 0, 0, 0]);
+        assert!(mem.mods_hists.is_empty());
+        assert_eq!(mem.interval_length, 10);
+        assert_eq!(mem.ok_records, 2);
+        assert_eq!(mem.erred_records, 0);
+        assert_eq!(processor.calls, 2);
+    }
+
+    #[test]
+    fn worker_error_is_returned_instead_of_partial_success() {
+        let workers: Vec<Box<dyn ExtractProbsWorker>> =
+            vec![Box::new(FailOnSecondCall { calls: 0 })];
+        let error = run_extract_probs_workers(
+            workers,
+            MultiProgress::new(),
+            synthetic_feeder(2),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("synthetic worker failure"));
+    }
+
+    #[test]
+    fn worker_error_does_not_deadlock_when_credits_are_exhausted() {
+        run_in_child("worker_error");
+    }
+
+    #[test]
+    fn worker_panic_is_returned_without_deadlock() {
+        run_in_child("worker_panic");
+    }
+
+    #[test]
+    fn multi_worker_panic_cancels_long_feed_promptly() {
+        run_in_child("multi_worker_panic");
+    }
+
+    #[test]
+    fn zero_workers_are_rejected_without_deadlock() {
+        run_in_child("zero_workers");
+    }
+
+    #[test]
+    fn feeder_error_is_returned() {
+        run_in_child("feeder_error");
+    }
+
+    #[test]
+    fn run_extract_probs_workers_child() {
+        let Ok(mode) = std::env::var(CHILD_MODE_ENV) else {
+            return;
+        };
+        let survivor_calls = Arc::new(AtomicUsize::new(0));
+        let (workers, feeder): (
+            Vec<Box<dyn ExtractProbsWorker>>,
+            ChromCoordinatesFeeder,
+        ) = match mode.as_str() {
+            "worker_error" => {
+                (vec![Box::new(AlwaysFails)], synthetic_feeder(3))
+            }
+            "worker_panic" => {
+                (vec![Box::new(AlwaysPanics)], synthetic_feeder(3))
+            }
+            "multi_worker_panic" => {
+                let start = Arc::new(Barrier::new(2));
+                (
+                    vec![
+                        Box::new(CoordinatedPanics { start: start.clone() }),
+                        Box::new(CoordinatedSurvivor {
+                            start,
+                            calls: survivor_calls.clone(),
+                        }),
+                    ],
+                    synthetic_feeder(10_000_000),
+                )
+            }
+            "feeder_error" => {
+                (vec![Box::new(MustNotRun)], feeder_that_errors())
+            }
+            "zero_workers" => (Vec::new(), synthetic_feeder(1)),
+            _ => panic!("unknown child mode {mode}"),
+        };
+
+        let start = Instant::now();
+        let error =
+            run_extract_probs_workers(workers, MultiProgress::new(), feeder)
+                .unwrap_err();
+        let elapsed = start.elapsed();
+        let error = format!("{error:#}");
+        match mode.as_str() {
+            "worker_error" => {
+                assert!(error.contains("synthetic worker failure"))
+            }
+            "worker_panic" => assert!(error.contains("worker 0 panicked")),
+            "multi_worker_panic" => {
+                assert!(error.contains("worker 0 panicked"), "{error}");
+                assert!(
+                    elapsed < Duration::from_secs(2),
+                    "multi-worker panic cancellation took {elapsed:?}"
+                );
+                assert!(
+                    survivor_calls.load(Ordering::Relaxed) < 10_000,
+                    "surviving worker processed too many intervals before cancellation"
+                );
+            }
+            "feeder_error" => {
+                assert!(error.contains("invalid-reference-coordinates"))
+            }
+            "zero_workers" => assert!(error.contains("at least one")),
+            _ => unreachable!(),
+        }
+    }
+
+    fn valid_record() -> bam::Record {
+        let mut record = bam::Record::new();
+        record.set(b"valid", None, b"A", &[255]);
+        record.push_aux(b"MM", Aux::String("A+a.,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[42u8][..]).into())).unwrap();
+        record
+    }
+
+    fn collect_test_records(
+        records: Vec<Result<bam::Record, Error>>,
+        allow_non_primary: bool,
+    ) -> anyhow::Result<QualHist> {
+        QualHist::from_records(
+            records,
+            None,
+            None,
+            None,
+            Some(42),
+            None,
+            false,
+            allow_non_primary,
+            false,
+            &MultiProgress::new(),
+        )
+    }
+
+    #[test]
+    fn streaming_reader_error_is_fatal_instead_of_partial_success() {
+        let error = collect_test_records(
+            vec![
+                Ok(valid_record()),
+                Err(Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "synthetic BAM decode failure",
+                )),
+            ],
+            false,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(message.contains("synthetic BAM decode failure"), "{message}");
+        assert!(
+            message.contains("failed to read alignment record"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn malformed_mod_records_remain_nonfatal_rejections() {
+        let mut invalid_secondary = bam::Record::new();
+        invalid_secondary.set(b"secondary", None, b"A", &[255]);
+        invalid_secondary.set_flags(0x100);
+        let mut invalid_primary = bam::Record::new();
+        invalid_primary.set(b"primary", None, b"A", &[255]);
+
+        let hist = collect_test_records(
+            vec![Ok(invalid_secondary), Ok(invalid_primary)],
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(hist.ok_records, 0);
+        assert_eq!(hist.erred_records, 2);
+    }
+
+    #[test]
+    fn valid_streaming_records_are_aggregated_exactly() {
+        let hist = collect_test_records(
+            vec![Ok(valid_record()), Ok(valid_record())],
+            false,
+        )
+        .unwrap();
+        let mut expected = [[0u64; 256]; 4];
+        expected[0][213] = 2;
+
+        assert_eq!(hist.hist, expected);
+        assert_eq!(hist.base_totals, [2, 0, 0, 0]);
+        assert_eq!(hist.num_records_with_base_mods, [2, 0, 0, 0]);
+        assert_eq!(hist.explicit_canonical_probs, [213, 0, 0, 0]);
+        assert!(hist.mods_hists.is_empty());
+        assert_eq!(hist.ok_records, 2);
+        assert_eq!(hist.erred_records, 0);
     }
 }
