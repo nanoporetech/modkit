@@ -987,9 +987,11 @@ fn add_scores_to_segmenter(
     scores: &[ChromToSingleScores],
     multi_progress: &MultiProgress,
 ) -> anyhow::Result<()> {
-    if let Err(e) = segmenter.add(scores) {
+    let result = segmenter.add(scores);
+    if let Err(e) = &result {
         multi_progress.suspend(|| error!("segmentation error, {e}"));
     }
+    result?;
     Ok(())
 }
 
@@ -997,10 +999,13 @@ fn finish_segmenter(
     segmenter: &mut dyn DmrSegmenter,
     multi_progress: &MultiProgress,
 ) -> anyhow::Result<()> {
-    if let Err(e) = segmenter.run_current_chunk() {
+    let result = segmenter.run_current_chunk();
+    if let Err(e) = &result {
         multi_progress.suspend(|| error!("segmentation error, {e}"));
     }
-    segmenter.clean_up()
+    let clean_up_result = segmenter.clean_up();
+    result?;
+    clean_up_result
 }
 
 #[derive(new)]
@@ -1442,7 +1447,7 @@ mod segmenter_error_tests {
 
         assert_eq!(error.to_string(), "stub segmenter final chunk failed");
         assert_eq!(segmenter.output, ADDED_ROW);
-        assert!(!segmenter.cleaned_up);
+        assert!(segmenter.cleaned_up);
     }
 
     #[test]

@@ -53,8 +53,8 @@ use crate::util::{
     get_ticker, reader_is_bam, reader_is_cram, Region,
 };
 use crate::writers::{
-    BedMethylWriter, BedMethylWriter2, MultipleMotifBedmethylWriter,
-    PhasedBedMethylWriter, PileupWriter,
+    finish_with_first_error, BedMethylWriter, BedMethylWriter2,
+    MultipleMotifBedmethylWriter, PhasedBedMethylWriter, PileupWriter,
 };
 
 #[derive(Args)]
@@ -1623,20 +1623,37 @@ impl ModBamPileup {
             drop(records_tx);
         });
 
-        for result in records_rx.into_iter() {
+        let mut output_error = None;
+        for result in records_rx.iter() {
             match result {
                 Ok(mod_base_pileup) => {
                     tid_progress.inc(mod_base_pileup.interval_width as u64);
                     erred_reads.inc(mod_base_pileup.failed_records as u64);
-                    let rows_written =
-                        writer.write(mod_base_pileup, &motif_labels)?;
-                    write_progress.inc(rows_written);
+                    match writer.write(mod_base_pileup, &motif_labels) {
+                        Ok(rows_written) => write_progress.inc(rows_written),
+                        Err(error) => {
+                            output_error = Some(
+                                error.context("failed to write pileup output"),
+                            );
+                            break;
+                        }
+                    }
                 }
                 Err(message) => {
                     debug!("unexpected error {message}");
                 }
             }
         }
+        // If writing failed, disconnect the collector before joining the
+        // pipeline so workers do not remain blocked sending further records.
+        drop(records_rx);
+        let output_result = finish_with_first_error(
+            output_error,
+            || writer.finish(),
+            "failed to flush pileup output",
+        );
+        drop(writer);
+        drop(empties_tx);
 
         let rows_processed = write_progress.position();
         let n_failed_reads = erred_reads.position();
@@ -1660,7 +1677,7 @@ impl ModBamPileup {
         }
         aggregator.join().expect("aggregator theread paniced");
 
-        Ok(())
+        output_result
     }
 }
 
@@ -2343,20 +2360,36 @@ impl DuplexModBamPileup {
             tid_progress.finish_and_clear();
         });
 
+        let mut output_error = None;
         for result in rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {
                     processed_reads
                         .inc(mod_base_pileup.processed_records as u64);
                     skipped_reads.inc(mod_base_pileup.skipped_records as u64);
-                    let rows_written = writer.write(mod_base_pileup, &[])?;
-                    write_progress.inc(rows_written);
+                    if output_error.is_none() {
+                        match writer.write(mod_base_pileup, &[]) {
+                            Ok(rows_written) => {
+                                write_progress.inc(rows_written)
+                            }
+                            Err(error) => {
+                                output_error = Some(error.context(
+                                    "failed to write duplex pileup output",
+                                ));
+                            }
+                        }
+                    }
                 }
                 Err(message) => {
                     debug!("> unexpected error {message}");
                 }
             }
         }
+        let output_result = finish_with_first_error(
+            output_error,
+            || writer.finish(),
+            "failed to flush duplex pileup output",
+        );
         let rows_processed = write_progress.position();
         let n_skipped_reads = skipped_reads.position();
         let n_skipped_message = if n_skipped_reads == 0 {
@@ -2372,6 +2405,6 @@ impl DuplexModBamPileup {
             "Done, processed {rows_processed} rows. Processed \
              ~{n_processed_reads} reads and skipped {n_skipped_message}."
         );
-        Ok(())
+        output_result
     }
 }

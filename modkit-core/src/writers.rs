@@ -45,10 +45,32 @@ pub trait PileupWriter<T> {
         item: T,
         motif_labels: &[String],
     ) -> anyhow::Result<u64>;
+
+    /// Flush all command-visible output before reporting success.
+    fn finish(&mut self) -> anyhow::Result<()>;
 }
 
 pub trait OutWriter<T> {
     fn write(&mut self, item: T) -> AnyhowResult<u64>;
+    fn finish(&mut self) -> AnyhowResult<()>;
+}
+
+/// Always attempt output finalization, but do not let a later flush error
+/// replace an error that was already surfaced while producing or writing
+/// output.
+pub(crate) fn finish_with_first_error<F>(
+    first_error: Option<anyhow::Error>,
+    finish: F,
+    context: &'static str,
+) -> AnyhowResult<()>
+where
+    F: FnOnce() -> AnyhowResult<()>,
+{
+    let finish_result = finish().context(context);
+    match first_error {
+        Some(error) => Err(error),
+        None => finish_result,
+    }
 }
 
 pub struct BedMethylWriter<T: Write> {
@@ -209,6 +231,10 @@ impl<T: Write> PileupWriter<ModBasePileup2> for BedMethylWriter2<T> {
         let _ = self.return_mem.send(item);
         Ok(n_rows)
     }
+
+    fn finish(&mut self) -> anyhow::Result<()> {
+        self.inner.flush()
+    }
 }
 
 pub fn bedmethyl_header() -> String {
@@ -318,6 +344,11 @@ impl<T: Write> PileupWriter<ModBasePileup2> for BedMethylWriter<T> {
         std::thread::spawn(|| drop(item));
         Ok(rows_written)
     }
+
+    fn finish(&mut self) -> anyhow::Result<()> {
+        self.buf_writer.flush()?;
+        Ok(())
+    }
 }
 
 impl<T: Write> PileupWriter<DuplexModBasePileup> for BedMethylWriter<T> {
@@ -389,6 +420,11 @@ impl<T: Write> PileupWriter<DuplexModBasePileup> for BedMethylWriter<T> {
             }
         }
         Ok(rows_written)
+    }
+
+    fn finish(&mut self) -> anyhow::Result<()> {
+        self.buf_writer.flush()?;
+        Ok(())
     }
 }
 
@@ -560,6 +596,10 @@ impl<T: Write> PileupWriter<ModBasePileup2>
         let _ = self.return_mem.send(item);
         Ok(rows_written)
     }
+
+    fn finish(&mut self) -> anyhow::Result<()> {
+        self.writer.flush()
+    }
 }
 
 pub struct TableWriter<W: Write> {
@@ -711,6 +751,11 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TableWriter<W> {
         report_emitted += emitted;
         Ok(report_emitted as u64)
     }
+
+    fn finish(&mut self) -> AnyhowResult<()> {
+        self.writer.flush()?;
+        Ok(())
+    }
 }
 
 pub struct TsvWriter<W> {
@@ -736,13 +781,13 @@ impl TsvWriter<BufWriter<std::io::Sink>> {
 }
 
 impl TsvWriter<BufWriter<Stdout>> {
-    pub fn new_stdout(header: Option<String>) -> Self {
-        let out = BufWriter::new(std::io::stdout());
+    pub fn new_stdout(header: Option<String>) -> anyhow::Result<Self> {
+        let mut out = BufWriter::new(std::io::stdout());
         if let Some(header) = header {
-            println!("{header}");
+            out.write_all(format!("{header}\n").as_bytes())?;
         }
 
-        Self { writer: out }
+        Ok(Self { writer: out })
     }
 }
 
@@ -805,6 +850,11 @@ impl<W: Write> OutWriter<String> for TsvWriter<W> {
     fn write(&mut self, item: String) -> anyhow::Result<u64> {
         self.writer.write_all(item.as_bytes())?;
         Ok(item.len() as u64)
+    }
+
+    fn finish(&mut self) -> AnyhowResult<()> {
+        self.flush()?;
+        Ok(())
     }
 }
 
@@ -882,6 +932,11 @@ impl<'a, W: Write> OutWriter<ModSummary<'a>> for TsvWriter<W> {
 
         self.writer.write_all(report.as_bytes())?;
         Ok(1)
+    }
+
+    fn finish(&mut self) -> AnyhowResult<()> {
+        self.flush()?;
+        Ok(())
     }
 }
 
@@ -1144,6 +1199,84 @@ impl ProbHistogram {
     }
 }
 
+fn remember_first_error(
+    first_error: &mut Option<anyhow::Error>,
+    result: AnyhowResult<()>,
+) {
+    if let Err(error) = result {
+        if first_error.is_none() {
+            *first_error = Some(error);
+        }
+    }
+}
+
+fn write_probability_artifacts<P, C, R>(
+    table: &Table,
+    probabilities_writer: P,
+    counts_html: Option<&str>,
+    counts_writer: C,
+    proportions_html: Option<&str>,
+    proportions_writer: R,
+) -> AnyhowResult<()>
+where
+    P: Write,
+    C: Write,
+    R: Write,
+{
+    let mut first_error = None;
+
+    let csv_writer = csv::WriterBuilder::new()
+        .has_headers(true)
+        .delimiter(b'\t')
+        .from_writer(probabilities_writer);
+    let probabilities_result = table
+        .to_csv_writer(csv_writer)
+        .map_err(anyhow::Error::from)
+        .and_then(|writer| {
+            writer
+                .into_inner()
+                .map(|_| ())
+                .map_err(|error| anyhow::Error::new(error.into_error()))
+        })
+        .context("failed to finalize probabilities table");
+    remember_first_error(&mut first_error, probabilities_result);
+
+    let mut counts_writer = BufWriter::new(counts_writer);
+    if let Some(blob) = counts_html {
+        remember_first_error(
+            &mut first_error,
+            counts_writer
+                .write_all(blob.as_bytes())
+                .context("failed to write counts plot"),
+        );
+    }
+    remember_first_error(
+        &mut first_error,
+        counts_writer.flush().context("failed to finalize counts plot"),
+    );
+
+    let mut proportions_writer = BufWriter::new(proportions_writer);
+    if let Some(blob) = proportions_html {
+        remember_first_error(
+            &mut first_error,
+            proportions_writer
+                .write_all(blob.as_bytes())
+                .context("failed to write proportions plot"),
+        );
+    }
+    remember_first_error(
+        &mut first_error,
+        proportions_writer
+            .flush()
+            .context("failed to finalize proportions plot"),
+    );
+
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 impl OutWriter<SampledProbs> for MultiTableWriter {
     fn write(&mut self, item: SampledProbs) -> AnyhowResult<u64> {
         let mut rows_written = 0u64;
@@ -1151,7 +1284,19 @@ impl OutWriter<SampledProbs> for MultiTableWriter {
 
         let threshold_fn = self.out_dir.join(item.get_thresholds_filename());
         let mut fh = File::create(threshold_fn)?;
-        let n_written = thresh_table.print(&mut fh)?;
+        let threshold_write_result = thresh_table.print(&mut fh);
+        let threshold_finish_result = fh.flush();
+        let n_written = match threshold_write_result {
+            Ok(n_written) => {
+                threshold_finish_result
+                    .context("failed to finalize thresholds table")?;
+                n_written
+            }
+            Err(error) => {
+                let _ = threshold_finish_result;
+                return Err(error.into());
+            }
+        };
         rows_written += n_written as u64;
 
         if let Some(histograms) = &item.histograms {
@@ -1159,34 +1304,48 @@ impl OutWriter<SampledProbs> for MultiTableWriter {
                 SampledProbs::get_probabilities_filenames(item.prefix.as_ref());
             let probs_table_fh =
                 File::create(self.out_dir.join(probs_table_fn))?;
-            let mut counts_plot_fh = BufWriter::new(File::create(
-                self.out_dir.join(counts_plot_fn),
-            )?);
-            let mut prop_plot_fh =
-                BufWriter::new(File::create(self.out_dir.join(prop_plot_fn))?);
-
-            let csv_writer = csv::WriterBuilder::new()
-                .has_headers(true)
-                .delimiter('\t' as u8)
-                .from_writer(probs_table_fh);
+            let counts_plot_fh =
+                File::create(self.out_dir.join(counts_plot_fn))?;
+            let prop_plot_fh = File::create(self.out_dir.join(prop_plot_fn))?;
 
             let (tab, counts_chart, prop_chart) = histograms.get_artifacts(
                 &item.primary_base_colors,
                 &item.mod_base_colors,
             );
-            tab.to_csv_writer(csv_writer)?;
-            match HtmlRenderer::new("Counts", 800, 800).render(&counts_chart) {
-                Ok(blob) => counts_plot_fh.write_all(blob.as_bytes())?,
-                Err(e) => debug!("failed to render counts plot, {e:?}"),
-            }
-            match HtmlRenderer::new("Proportions", 800, 800).render(&prop_chart)
+            let counts_html = match HtmlRenderer::new("Counts", 800, 800)
+                .render(&counts_chart)
             {
-                Ok(blob) => prop_plot_fh.write_all(blob.as_bytes())?,
-                Err(e) => debug!("failed to render proportions plot, {e:?}"),
-            }
+                Ok(blob) => Some(blob),
+                Err(e) => {
+                    debug!("failed to render counts plot, {e:?}");
+                    None
+                }
+            };
+            let proportions_html =
+                match HtmlRenderer::new("Proportions", 800, 800)
+                    .render(&prop_chart)
+                {
+                    Ok(blob) => Some(blob),
+                    Err(e) => {
+                        debug!("failed to render proportions plot, {e:?}");
+                        None
+                    }
+                };
+            write_probability_artifacts(
+                &tab,
+                probs_table_fh,
+                counts_html.as_deref(),
+                counts_plot_fh,
+                proportions_html.as_deref(),
+                prop_plot_fh,
+            )?;
         }
 
         Ok(rows_written)
+    }
+
+    fn finish(&mut self) -> AnyhowResult<()> {
+        Ok(())
     }
 }
 
@@ -1197,6 +1356,11 @@ impl OutWriter<SampledProbs> for TsvWriter<BufWriter<Stdout>> {
         let n_written = thresholds_table.print(&mut self.writer)?;
         rows_written += n_written as u64;
         Ok(rows_written)
+    }
+
+    fn finish(&mut self) -> AnyhowResult<()> {
+        self.flush()?;
+        Ok(())
     }
 }
 
@@ -1283,7 +1447,6 @@ impl<T: Write> RecordingWriter<T> {
 impl<T: Write> Drop for RecordingWriter<T> {
     fn drop(&mut self) {
         self.pb.finish_and_clear();
-        let _ = self.inner.flush();
     }
 }
 
@@ -1483,17 +1646,29 @@ where
 
         Ok(total_rows as u64)
     }
+
+    fn finish(&mut self) -> anyhow::Result<()> {
+        // Attempt every output even if an earlier flush failed so no phased
+        // writer is left with command-visible bytes still buffered.
+        let hp1_result = self.hp1_writer.flush();
+        let hp2_result = self.hp2_writer.flush();
+        let combined_result = self.combined_writer.flush();
+        hp1_result?;
+        hp2_result?;
+        combined_result
+    }
 }
 
 #[cfg(test)]
 mod writer_tests {
     use super::{
-        BedMethylWriter, BedMethylWriter2, OutWriter, PileupWriter,
-        RecordingWriter, TsvWriter,
+        finish_with_first_error, write_probability_artifacts, BedMethylWriter,
+        BedMethylWriter2, OutWriter, PileupWriter, RecordingWriter, TsvWriter,
     };
     use crate::mod_base_code::ModCodeRepr;
     use crate::pileup::{ModBasePileup2, PileupFeatureCounts2};
     use indicatif::ProgressBar;
+    use prettytable::Table;
     use std::io::{self, BufWriter, Write};
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1625,8 +1800,7 @@ mod writer_tests {
     fn bedmethyl_writer_finish_propagates_buffered_flush_error() {
         let sink = ShortWriter::failing_flush(usize::MAX);
         let buf_writer = BufWriter::with_capacity(1024, sink);
-        let mut writer =
-            BedMethylWriter { buf_writer, tabs_and_spaces: false };
+        let mut writer = BedMethylWriter { buf_writer, tabs_and_spaces: false };
         PileupWriter::write(&mut writer, pileup(), &[]).unwrap();
 
         let result = catch_unwind(AssertUnwindSafe(|| {
@@ -1657,10 +1831,8 @@ mod writer_tests {
     fn recording_writer_does_not_retry_a_surfaced_flush_error_on_drop() {
         let sink = ShortWriter::failing_flush(usize::MAX);
         let observed = sink.clone();
-        let mut writer = RecordingWriter {
-            inner: sink,
-            pb: ProgressBar::hidden(),
-        };
+        let mut writer =
+            RecordingWriter { inner: sink, pb: ProgressBar::hidden() };
 
         let error = writer.write(b"row\n").expect_err("flush should fail");
         assert!(error.to_string().contains("flush failed"));
@@ -1668,4 +1840,53 @@ mod writer_tests {
         assert_eq!(observed.flush_count(), 1);
     }
 
+    #[test]
+    fn finish_is_attempted_without_replacing_an_earlier_output_error() {
+        let mut finish_attempts = 0;
+        let result = finish_with_first_error(
+            Some(anyhow::anyhow!("write failed first")),
+            || {
+                finish_attempts += 1;
+                anyhow::bail!("flush failed later")
+            },
+            "failed to finalize output",
+        );
+
+        assert_eq!(finish_attempts, 1);
+        assert_eq!(result.unwrap_err().to_string(), "write failed first");
+    }
+
+    #[test]
+    fn finish_error_is_returned_when_there_is_no_earlier_error() {
+        let result = finish_with_first_error(
+            None,
+            || anyhow::bail!("flush failed"),
+            "failed to finalize output",
+        );
+
+        let error = result.unwrap_err();
+        assert_eq!(error.to_string(), "failed to finalize output");
+        assert!(format!("{error:#}").contains("flush failed"));
+    }
+
+    #[test]
+    fn probability_artifacts_all_finalize_and_keep_the_first_error() {
+        let probabilities = ShortWriter::failing_flush(usize::MAX);
+        let counts = ShortWriter::failing_flush(usize::MAX);
+        let proportions = ShortWriter::failing_flush(usize::MAX);
+        let error = write_probability_artifacts(
+            &Table::new(),
+            probabilities.clone(),
+            Some("counts"),
+            counts.clone(),
+            Some("proportions"),
+            proportions.clone(),
+        )
+        .expect_err("artifact finalization should fail");
+
+        assert_eq!(error.to_string(), "failed to finalize probabilities table");
+        assert!(probabilities.flush_count() >= 1);
+        assert_eq!(counts.flush_count(), 1);
+        assert_eq!(proportions.flush_count(), 1);
+    }
 }
