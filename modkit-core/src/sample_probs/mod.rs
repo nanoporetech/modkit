@@ -1377,6 +1377,16 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
     }
 }
 
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
 pub(crate) fn run_extract_probs_workers(
     workers: Vec<Box<dyn ExtractProbsWorker>>,
     multi_progress: MultiProgress,
@@ -1426,12 +1436,21 @@ pub(crate) fn run_extract_probs_workers(
     });
 
     let mut worker_handles = Vec::with_capacity(workers.len());
-    for mut worker in workers {
+    for (worker_id, mut worker) in workers.into_iter().enumerate() {
         let rcv_work = rcv_work.clone();
         let snd_results = snd_results.clone();
         worker_handles.push(std::thread::spawn(move || {
             while let Ok((chrom_coords, mem)) = rcv_work.recv() {
-                let result = worker.process(chrom_coords, mem);
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                        || worker.process(chrom_coords, mem),
+                    ))
+                    .unwrap_or_else(|payload| {
+                        Err(anyhow!(
+                            "worker {worker_id} panicked: {}",
+                            panic_message(payload.as_ref())
+                        ))
+                    });
                 let worker_failed = result.is_err();
                 if snd_results.send(result).is_err() || worker_failed {
                     break;
@@ -1466,16 +1485,6 @@ pub(crate) fn run_extract_probs_workers(
     drop(rcv_results);
     drop(return_mem);
 
-    let panic_message = |payload: Box<dyn std::any::Any + Send>| {
-        if let Some(message) = payload.downcast_ref::<&str>() {
-            (*message).to_string()
-        } else if let Some(message) = payload.downcast_ref::<String>() {
-            message.clone()
-        } else {
-            "unknown panic payload".to_string()
-        }
-    };
-
     match source_thread.join() {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
@@ -1487,7 +1496,7 @@ pub(crate) fn run_extract_probs_workers(
             if first_error.is_none() {
                 first_error = Some(anyhow!(
                     "chromosome-coordinate source thread panicked: {}",
-                    panic_message(payload)
+                    panic_message(payload.as_ref())
                 ));
             }
         }
@@ -1497,7 +1506,7 @@ pub(crate) fn run_extract_probs_workers(
             if first_error.is_none() {
                 first_error = Some(anyhow!(
                     "worker {i} panicked: {}",
-                    panic_message(payload)
+                    panic_message(payload.as_ref())
                 ));
             }
         }
