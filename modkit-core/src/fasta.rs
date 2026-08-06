@@ -21,6 +21,10 @@ struct HtsFastaHandle {
     contigs: FxHashMap<String, u64>,
     preloaded: bool,
     sequences: FxHashMap<String, String>,
+    #[cfg(test)]
+    sequence_fetches: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(test)]
+    sequence_bases_fetched: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl HtsFastaHandle {
@@ -65,6 +69,10 @@ impl HtsFastaHandle {
             contigs,
             sequences,
             preloaded: preload,
+            #[cfg(test)]
+            sequence_fetches: Default::default(),
+            #[cfg(test)]
+            sequence_bases_fetched: Default::default(),
         })
     }
 
@@ -80,6 +88,15 @@ impl HtsFastaHandle {
             } else if start == end {
                 Ok(String::new())
             } else {
+                #[cfg(test)]
+                {
+                    self.sequence_fetches
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    self.sequence_bases_fetched.fetch_add(
+                        end - start,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                }
                 let seq = if self.preloaded
                     && self.sequences.get(contig).is_some()
                 {
@@ -105,6 +122,15 @@ impl HtsFastaHandle {
 
     fn has_sequence(&self, seq_name: &str) -> bool {
         self.contigs.contains_key(seq_name)
+    }
+
+    #[cfg(test)]
+    fn sequence_fetch_stats(&self) -> (usize, u64) {
+        (
+            self.sequence_fetches.load(std::sync::atomic::Ordering::Relaxed),
+            self.sequence_bases_fetched
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
     }
 }
 
@@ -771,6 +797,67 @@ mod fasta_mod_tests {
                     (3, Strand::Negative, 0),
                     (5, Strand::Negative, 0),
                 ]
+            );
+        }
+    }
+
+    #[test]
+    fn combined_strand_dense_overlap_scan_work_is_bounded() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repeat_count = 256usize;
+        let sequence = format!("{}NN", "CG".repeat(repeat_count));
+        let fasta_path = write_fasta(temp_dir.path(), &sequence);
+        let motif = RegexMotif::parse_string("CGCG", 0).unwrap();
+        let mut expected = (0..repeat_count - 1)
+            .flat_map(|i| {
+                [
+                    (2 * i as u64, Strand::Positive, 0),
+                    (2 * i as u64 + 3, Strand::Negative, 0),
+                ]
+            })
+            .collect::<Vec<_>>();
+        expected.sort_by_key(|(position, strand, motif_idx)| {
+            (*position, *strand, *motif_idx)
+        });
+
+        for preload in [false, true] {
+            let mut lookup = MotifLocationsLookup::from_paths(
+                &fasta_path,
+                false,
+                None,
+                vec![motif.clone()],
+                preload,
+            )
+            .unwrap();
+            let (focus_positions, actual_end) = lookup
+                .get_motif_positions(
+                    "chr1",
+                    0,
+                    sequence.len() as u32,
+                    0..1,
+                    None,
+                    true,
+                )
+                .unwrap();
+
+            assert_eq!(actual_end, (repeat_count * 2) as u32);
+            assert_eq!(
+                decode_motif_mask(focus_positions, 0..actual_end as u64, 1,),
+                expected,
+                "preload={preload}"
+            );
+
+            let (fetches, bases_fetched) = lookup.reader.sequence_fetch_stats();
+            assert!(
+                fetches <= 12,
+                "dense overlap required {fetches} sequence fetches with \
+                 preload={preload}"
+            );
+            assert!(
+                bases_fetched <= 3 * sequence.len() as u64,
+                "dense overlap fetched {bases_fetched} bases for a {}-base \
+                 reference with preload={preload}",
+                sequence.len()
             );
         }
     }
