@@ -1788,9 +1788,15 @@ fn byte_to_bool_positions<const SIZE: usize>(b: u8, agg: &mut [u32; SIZE]) {
 #[cfg(test)]
 mod tests {
     use bitvec::bitvec;
-    use rust_htslib::bam::record::{Aux, Cigar, CigarString};
+    use rust_htslib::bam::{
+        header::HeaderRecord,
+        record::{Aux, Cigar, CigarString},
+        Format, Header, Read, Writer,
+    };
+    use tempfile::tempdir;
 
     use super::*;
+    use crate::position_filter::{GenomeIntervals, Iv};
 
     fn make_five_base_record(reverse: bool) -> bam::Record {
         let mut record = bam::Record::new();
@@ -1844,6 +1850,10 @@ mod tests {
             .unwrap();
         assert!(processed);
 
+        qualities_from_hist(&hist)
+    }
+
+    fn qualities_from_hist(hist: &QualHist) -> Vec<u8> {
         let mut qualities = hist
             .hist
             .iter()
@@ -1856,6 +1866,55 @@ mod tests {
             .collect::<Vec<_>>();
         qualities.sort_unstable();
         qualities
+    }
+
+    fn write_bam(bam_path: &std::path::Path, record: &bam::Record) {
+        let mut header = Header::new();
+        let mut sq = HeaderRecord::new(b"SQ");
+        sq.push_tag(b"SN", &"chr1");
+        sq.push_tag(b"LN", &5);
+        header.push_record(&sq);
+
+        let mut writer =
+            Writer::from_path(bam_path, &header, Format::Bam).unwrap();
+        writer.write(record).unwrap();
+    }
+
+    fn all_positions_filter() -> StrandedPositionFilter<()> {
+        let intervals =
+            || GenomeIntervals::new(vec![Iv { start: 0, stop: 5, val: () }]);
+        let mut pos_positions = FxHashMap::default();
+        pos_positions.insert(0, intervals());
+        let mut neg_positions = FxHashMap::default();
+        neg_positions.insert(0, intervals());
+        StrandedPositionFilter { pos_positions, neg_positions }
+    }
+
+    fn serial_retained_qualities(
+        record: &bam::Record,
+        edge_filter: Option<&EdgeFilter>,
+        with_position_filter: bool,
+    ) -> Vec<u8> {
+        let temp_dir = tempdir().unwrap();
+        let bam_path = temp_dir.path().join("record.bam");
+        write_bam(&bam_path, record);
+        let mut reader = bam::Reader::from_path(&bam_path).unwrap();
+        let position_filter = with_position_filter.then(all_positions_filter);
+        let histogram = QualHist::from_records(
+            reader.records(),
+            position_filter,
+            None,
+            None,
+            None,
+            edge_filter,
+            false,
+            false,
+            false,
+            &MultiProgress::new(),
+        )
+        .unwrap();
+
+        qualities_from_hist(&histogram)
     }
 
     macro_rules! handler_results {
@@ -1910,46 +1969,130 @@ mod tests {
 
     #[test]
     fn indexed_handlers_treat_overlong_edge_filter_as_empty() {
-        let record = make_five_base_record(false);
-        let edge_filter = EdgeFilter::new(1, 6, false);
-        let actual = [
-            retained_qualities::<BaseArgmaxProbs>(&record, Some(&edge_filter)),
-            retained_qualities::<BaseAndModArgmaxProbs>(
-                &record,
-                Some(&edge_filter),
-            ),
-            retained_qualities::<AlignedBaseArgmaxProbs>(
-                &record,
-                Some(&edge_filter),
-            ),
-            retained_qualities::<AlignedBaseAndModArgmaxProbs>(
-                &record,
-                Some(&edge_filter),
-            ),
-        ];
+        for reverse in [false, true] {
+            let record = make_five_base_record(reverse);
+            for inverted in [false, true] {
+                let edge_filter = EdgeFilter::new(1, 6, inverted);
+                let actual = [
+                    retained_qualities::<BaseArgmaxProbs>(
+                        &record,
+                        Some(&edge_filter),
+                    ),
+                    retained_qualities::<BaseAndModArgmaxProbs>(
+                        &record,
+                        Some(&edge_filter),
+                    ),
+                    retained_qualities::<AlignedBaseArgmaxProbs>(
+                        &record,
+                        Some(&edge_filter),
+                    ),
+                    retained_qualities::<AlignedBaseAndModArgmaxProbs>(
+                        &record,
+                        Some(&edge_filter),
+                    ),
+                ];
 
-        for qualities in actual {
-            assert!(qualities.is_empty());
+                for qualities in actual {
+                    assert!(qualities.is_empty());
+                }
+            }
         }
     }
 
     #[test]
-    fn indexed_query_filter_preserves_inversion() {
+    fn indexed_handlers_preserve_asymmetric_filter_inversion() {
+        let forward = make_five_base_record(false);
+        let reverse = make_five_base_record(true);
         let edge_filter = EdgeFilter::new(1, 2, true);
-        let retained = |reverse| {
-            (0..5)
-                .filter(|qpos| {
-                    indexed_query_position_is_kept(
-                        Some(&edge_filter),
-                        *qpos,
-                        5,
-                        reverse,
-                    )
-                })
-                .collect::<Vec<_>>()
-        };
+        let actual = [
+            handler_results!(
+                AlignedBaseArgmaxProbs,
+                &forward,
+                &reverse,
+                &edge_filter
+            ),
+            handler_results!(
+                AlignedBaseAndModArgmaxProbs,
+                &forward,
+                &reverse,
+                &edge_filter
+            ),
+            handler_results!(BaseArgmaxProbs, &forward, &reverse, &edge_filter),
+            handler_results!(
+                BaseAndModArgmaxProbs,
+                &forward,
+                &reverse,
+                &edge_filter
+            ),
+        ];
+        let all_qualities = vec![201, 202, 203, 204, 205];
+        let retained_qualities = vec![201, 204, 205];
 
-        assert_eq!(retained(false), vec![0, 3, 4]);
-        assert_eq!(retained(true), vec![0, 1, 4]);
+        for (forward_all, forward_filtered, reverse_all, reverse_filtered) in
+            actual
+        {
+            assert_eq!(forward_all, all_qualities);
+            assert_eq!(forward_filtered, retained_qualities);
+            assert_eq!(reverse_all, all_qualities);
+            assert_eq!(reverse_filtered, retained_qualities);
+        }
+    }
+
+    #[test]
+    fn serial_sampling_applies_edge_filters_in_molecular_orientation() {
+        let all_qualities = vec![201, 202, 203, 204, 205];
+        let interior_qualities = vec![202, 203];
+        let edge_qualities = vec![201, 204, 205];
+        let normal = EdgeFilter::new(1, 2, false);
+        let inverted = EdgeFilter::new(1, 2, true);
+
+        for reverse in [false, true] {
+            let record = make_five_base_record(reverse);
+            for with_position_filter in [false, true] {
+                assert_eq!(
+                    serial_retained_qualities(
+                        &record,
+                        None,
+                        with_position_filter,
+                    ),
+                    all_qualities,
+                );
+                assert_eq!(
+                    serial_retained_qualities(
+                        &record,
+                        Some(&normal),
+                        with_position_filter,
+                    ),
+                    interior_qualities,
+                );
+                assert_eq!(
+                    serial_retained_qualities(
+                        &record,
+                        Some(&inverted),
+                        with_position_filter,
+                    ),
+                    edge_qualities,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn serial_sampling_treats_overlong_edge_filters_as_empty() {
+        for reverse in [false, true] {
+            let record = make_five_base_record(reverse);
+            for with_position_filter in [false, true] {
+                for inverted in [false, true] {
+                    let edge_filter = EdgeFilter::new(1, 6, inverted);
+                    let qualities = serial_retained_qualities(
+                        &record,
+                        Some(&edge_filter),
+                        with_position_filter,
+                    );
+
+                    assert!(qualities.is_empty());
+                }
+            }
+        }
     }
 }

@@ -3,11 +3,19 @@ use crate::common::{
 };
 use anyhow::{anyhow, Context};
 use common::{check_legal_csv, run_modkit, ExtractFullRecord};
+use rust_htslib::bam::{
+    self,
+    header::HeaderRecord,
+    record::{Aux, Cigar, CigarString},
+    Format, Header, Writer,
+};
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use tempfile::tempdir;
 
 mod common;
 
@@ -25,6 +33,137 @@ fn test_extract_help() {
     run_modkit(&["extract", "read-stats", "--help"])
         .context("modkit extract read-stats --help failed")
         .unwrap();
+}
+
+fn make_probability_edge_filter_record(
+    read_name: &[u8],
+    mapped: bool,
+) -> bam::Record {
+    let mut record = bam::Record::new();
+    let cigar = mapped.then(|| CigarString(vec![Cigar::Match(9)]));
+    record.set(read_name, cigar.as_ref(), b"AAAAAAAAA", &[30; 9]);
+    record.push_aux(b"MM", Aux::String("A+a?,0,0,0,0,0,0,0,0,0;")).unwrap();
+    let ml = vec![149u8, 150, 200, 200, 200, 200, 200, 150, 1];
+    record.push_aux(b"ML", Aux::ArrayU8((&ml).into())).unwrap();
+
+    if mapped {
+        record.set_tid(0);
+        record.set_pos(0);
+        record.set_mapq(60);
+    } else {
+        record.set_tid(-1);
+        record.set_pos(-1);
+        record.set_unmapped();
+    }
+    record
+}
+
+fn write_probability_edge_filter_bam(bam_path: &Path) {
+    let mut header = Header::new();
+    let mut hd = HeaderRecord::new(b"HD");
+    hd.push_tag(b"VN", &"1.6");
+    hd.push_tag(b"SO", &"coordinate");
+    header.push_record(&hd);
+    let mut sq = HeaderRecord::new(b"SQ");
+    sq.push_tag(b"SN", &"chr1");
+    sq.push_tag(b"LN", &9);
+    header.push_record(&sq);
+
+    let mut writer = Writer::from_path(bam_path, &header, Format::Bam).unwrap();
+    writer
+        .write(&make_probability_edge_filter_record(b"mapped", true))
+        .unwrap();
+    writer
+        .write(&make_probability_edge_filter_record(b"unmapped", false))
+        .unwrap();
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd)]
+struct ProbabilityEdgeFilterCall {
+    read_id: String,
+    forward_read_position: usize,
+    call_prob: String,
+    call_code: String,
+    fail: bool,
+}
+
+fn assert_probability_edge_filter_calls(input_bam: &Path, output_tsv: &Path) {
+    run_modkit(&[
+        "extract",
+        "calls",
+        input_bam.to_str().unwrap(),
+        output_tsv.to_str().unwrap(),
+        "--edge-filter",
+        "2",
+        "--invert-edge-filter",
+        "--filter-percentile",
+        "0.5",
+        "--threads",
+        "1",
+        "--io-threads",
+        "1",
+        "--suppress-progress",
+        "--force",
+    ])
+    .unwrap();
+
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_path(output_tsv)
+        .unwrap();
+    let mut calls = reader
+        .deserialize::<ProbabilityEdgeFilterCall>()
+        .map(|result| result.unwrap())
+        .collect::<Vec<_>>();
+    calls.sort_unstable();
+
+    let mut expected = ["mapped", "unmapped"]
+        .into_iter()
+        .flat_map(|read_id| {
+            [
+                (0, "0.5839844", "a", true),
+                (1, "0.5878906", "a", false),
+                (7, "0.5878906", "a", false),
+                (8, "0.9941406", "-", false),
+            ]
+            .into_iter()
+            .map(move |(position, call_prob, call_code, fail)| {
+                ProbabilityEdgeFilterCall {
+                    read_id: read_id.to_owned(),
+                    forward_read_position: position,
+                    call_prob: call_prob.to_owned(),
+                    call_code: call_code.to_owned(),
+                    fail,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+
+    assert_eq!(calls, expected);
+}
+
+#[test]
+fn test_extract_inverted_edge_filter_stream_threshold_matches_output() {
+    let temp_dir = tempdir().unwrap();
+    let unindexed_bam = temp_dir.path().join("unindexed.bam");
+    write_probability_edge_filter_bam(&unindexed_bam);
+    assert_probability_edge_filter_calls(
+        &unindexed_bam,
+        &temp_dir.path().join("unindexed.tsv"),
+    );
+}
+
+#[test]
+fn test_extract_inverted_edge_filter_indexed_unmapped_fallback_threshold() {
+    let temp_dir = tempdir().unwrap();
+    let indexed_bam = temp_dir.path().join("indexed.bam");
+    write_probability_edge_filter_bam(&indexed_bam);
+    bam::index::build(&indexed_bam, None, bam::index::Type::Bai, 1).unwrap();
+    assert_probability_edge_filter_calls(
+        &indexed_bam,
+        &temp_dir.path().join("indexed.tsv"),
+    );
 }
 
 fn parse_bed_file(fp: &PathBuf) -> HashMap<String, HashSet<(i64, char)>> {
