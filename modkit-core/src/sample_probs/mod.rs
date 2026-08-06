@@ -403,10 +403,6 @@ impl QualHist {
         mapped_only: bool,
         multi_progress: &MultiProgress,
     ) -> anyhow::Result<Self> {
-        let edge_filter_start =
-            edge_filter.map(|ef| ef.edge_filter_start).unwrap_or(0usize);
-        let edge_filter_end =
-            edge_filter.map(|ef| ef.edge_filter_end).unwrap_or(0usize);
         let record_counter = multi_progress.add(get_ticker());
         let mut rng = SmallRng::seed_from_u64(seed.unwrap_or(42u64));
         record_counter.set_message("records processed");
@@ -438,11 +434,7 @@ impl QualHist {
                 continue 'records;
             }
             let read_length = record.seq_len();
-            let (left_edge_filter, right_edge_filter) = if record.is_reverse() {
-                (edge_filter_end, read_length.saturating_sub(edge_filter_start))
-            } else {
-                (edge_filter_start, read_length.saturating_sub(edge_filter_end))
-            };
+            let reverse = record.is_reverse();
             if let Some(sampling_frac) = sampling_frac {
                 if !rng.gen_bool(sampling_frac) {
                     continue 'records;
@@ -475,8 +467,12 @@ impl QualHist {
                 let aligned_pairs_iter = aligned_pairs_iter
                     .into_iter()
                     .filter_ok(move |(qpos, _rpos, _mod_state)| {
-                        (*qpos as usize) >= left_edge_filter
-                            && (*qpos as usize) < right_edge_filter
+                        edge_filter_keeps_query_position(
+                            edge_filter,
+                            *qpos as usize,
+                            read_length,
+                            reverse,
+                        )
                     })
                     .filter_ok(|(_, rpos, _)| {
                         spf.contains(chrom_id, *rpos as u64, strand)
@@ -525,9 +521,12 @@ impl QualHist {
                 'mods: loop {
                     match modbase_iter.next_modified_position_no_thresh() {
                         Ok(Some(mod_state)) => {
-                            if mod_state.mod_position >= left_edge_filter
-                                && mod_state.mod_position < right_edge_filter
-                            {
+                            if edge_filter_keeps_query_position(
+                                edge_filter,
+                                mod_state.mod_position,
+                                read_length,
+                                reverse,
+                            ) {
                                 if collect_mod_probs {
                                     increment_mods_counts(
                                         mod_state,
@@ -845,7 +844,7 @@ pub(crate) struct ProbsExtractor {
 }
 
 #[inline]
-fn indexed_query_position_is_kept(
+fn edge_filter_keeps_query_position(
     edge_filter: Option<&EdgeFilter>,
     query_position: usize,
     read_length: usize,
@@ -889,7 +888,7 @@ impl ProbsExtractor {
                 *rpos >= start_pos && *rpos < end_pos
             })
             .filter_ok(move |(qpos, _rpos, _mod_state)| {
-                indexed_query_position_is_kept(
+                edge_filter_keeps_query_position(
                     edge_filter.as_ref(),
                     *qpos as usize,
                     read_length,
@@ -1124,7 +1123,7 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
         loop {
             match modbase_iter.next_modified_position_no_thresh() {
                 Ok(Some(mod_state)) => {
-                    if indexed_query_position_is_kept(
+                    if edge_filter_keeps_query_position(
                         self.edge_filter.as_ref(),
                         mod_state.mod_position,
                         read_length,
@@ -1198,7 +1197,7 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
         loop {
             match modbase_iter.next_modified_position_no_thresh() {
                 Ok(Some(mod_state)) => {
-                    if indexed_query_position_is_kept(
+                    if edge_filter_keeps_query_position(
                         self.edge_filter.as_ref(),
                         mod_state.mod_position,
                         read_length,
