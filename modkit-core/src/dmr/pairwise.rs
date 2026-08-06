@@ -303,10 +303,75 @@ pub(super) fn run_pairwise_dmr(
 
     pb.finish_and_clear();
 
-    if let Some(e) = err {
-        Err(e.into())
-    } else {
-        writer.flush()?;
-        Ok((success_count, region_error_counts))
+    finish_pairwise_output(err.map(anyhow::Error::from), writer.as_mut())?;
+    Ok((success_count, region_error_counts))
+}
+
+fn finish_pairwise_output(
+    first_error: Option<anyhow::Error>,
+    writer: &mut dyn std::io::Write,
+) -> anyhow::Result<()> {
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    writer.flush()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod output_finalization_tests {
+    use super::finish_pairwise_output;
+    use anyhow::anyhow;
+    use std::io::{self, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct FlushWriter {
+        flushes: Arc<AtomicUsize>,
+        fail_flush: bool,
+    }
+
+    impl Write for FlushWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes.fetch_add(1, Ordering::SeqCst);
+            if self.fail_flush {
+                Err(io::Error::other("pairwise flush failed later"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn earlier_pairwise_error_is_retained_and_flush_is_attempted() {
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let mut writer =
+            FlushWriter { flushes: flushes.clone(), fail_flush: true };
+
+        let error = finish_pairwise_output(
+            Some(anyhow!("pairwise processing failed first")),
+            &mut writer,
+        )
+        .expect_err("the first error must be returned");
+
+        assert_eq!(error.to_string(), "pairwise processing failed first");
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn pairwise_flush_error_is_returned_when_it_is_first() {
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let mut writer =
+            FlushWriter { flushes: flushes.clone(), fail_flush: true };
+
+        let error = finish_pairwise_output(None, &mut writer)
+            .expect_err("flush failure must be returned");
+
+        assert_eq!(error.to_string(), "pairwise flush failed later");
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
     }
 }

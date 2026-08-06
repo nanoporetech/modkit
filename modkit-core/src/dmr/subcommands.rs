@@ -38,6 +38,22 @@ use crate::util::{
 };
 use modkit_logging::init_logging;
 
+fn finish_threaded_dmr_output<F>(
+    first_error: Option<anyhow::Error>,
+    join_pipeline: F,
+    writer: &mut dyn Write,
+) -> anyhow::Result<()>
+where
+    F: FnOnce() -> anyhow::Result<()>,
+{
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    join_pipeline()?;
+    writer.flush()?;
+    Ok(())
+}
+
 #[derive(Subcommand)]
 pub enum BedMethylDmr {
     /// Compare regions in a pair of samples (for example, tumor and normal or
@@ -1423,17 +1439,23 @@ impl EntryDmrIsoform {
                 }
             }
         }
-        source_thread.join().expect("source thread paniced");
-        for (i, worker_thread) in handles.into_iter().enumerate() {
-            worker_thread.join().expect(&format!("worker {i} paniced"));
-        }
-        aggregator.join().expect("aggregator theread paniced");
+        finish_threaded_dmr_output(
+            None,
+            || {
+                source_thread.join().expect("source thread paniced");
+                for (i, worker_thread) in handles.into_iter().enumerate() {
+                    worker_thread.join().expect(&format!("worker {i} paniced"));
+                }
+                aggregator.join().expect("aggregator theread paniced");
+                Ok(())
+            },
+            writer.as_mut(),
+        )?;
 
         multi_progress.suspend(|| {
             info!("finished, processed {} genes", pb.position());
         });
 
-        writer.flush()?;
         Ok(())
     }
 
@@ -1870,11 +1892,18 @@ impl EntryGeneTx {
             std::fs::write(fp, svg)?;
         }
 
-        source_thread.join().expect("source thread paniced");
-        for (i, worker_thread) in handles.into_iter().enumerate() {
-            worker_thread.join().expect(&format!("worker {i} paniced"));
-        }
-        aggregator.join().expect("aggregator theread paniced");
+        finish_threaded_dmr_output(
+            None,
+            || {
+                source_thread.join().expect("source thread paniced");
+                for (i, worker_thread) in handles.into_iter().enumerate() {
+                    worker_thread.join().expect(&format!("worker {i} paniced"));
+                }
+                aggregator.join().expect("aggregator theread paniced");
+                Ok(())
+            },
+            writer.as_mut(),
+        )?;
 
         multi_progress.suspend(|| {
             info!("finished, {} errors", errs.len());
@@ -1885,7 +1914,6 @@ impl EntryGeneTx {
             multi_progress.suspend(|| info!("{err_table}"));
         }
 
-        writer.flush()?;
         Ok(())
     }
 
@@ -1939,5 +1967,91 @@ impl EntryGeneTx {
         } else {
             Ok(HashSet::new())
         }
+    }
+}
+
+#[cfg(test)]
+mod output_finalization_tests {
+    use super::finish_threaded_dmr_output;
+    use anyhow::anyhow;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    struct EventWriter {
+        events: Arc<Mutex<Vec<&'static str>>>,
+        fail_flush: bool,
+    }
+
+    impl Write for EventWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.events.lock().unwrap().push("writer flush");
+            if self.fail_flush {
+                Err(io::Error::other("writer flush failed later"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn lifecycle(
+        first_error: Option<anyhow::Error>,
+        join_error: Option<&'static str>,
+        fail_flush: bool,
+    ) -> (anyhow::Result<()>, Vec<&'static str>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let join_events = events.clone();
+        let mut writer = EventWriter { events: events.clone(), fail_flush };
+        let result = finish_threaded_dmr_output(
+            first_error,
+            move || {
+                join_events.lock().unwrap().push("pipeline joins");
+                match join_error {
+                    Some(message) => Err(anyhow!(message)),
+                    None => Ok(()),
+                }
+            },
+            &mut writer,
+        );
+        let observed = events.lock().unwrap().clone();
+        (result, observed)
+    }
+
+    #[test]
+    fn all_gene_write_error_still_joins_and_flushes_preserving_first_error() {
+        let (result, events) = lifecycle(
+            Some(anyhow!("all-gene write failed first")),
+            Some("pipeline join failed later"),
+            true,
+        );
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "all-gene write failed first"
+        );
+        assert_eq!(events, ["pipeline joins", "writer flush"]);
+    }
+
+    #[test]
+    fn gene_transcript_join_error_still_flushes_and_is_retained() {
+        let (result, events) =
+            lifecycle(None, Some("pipeline join failed first"), true);
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "pipeline join failed first"
+        );
+        assert_eq!(events, ["pipeline joins", "writer flush"]);
+    }
+
+    #[test]
+    fn successful_threaded_dmr_finalization_order_is_join_then_flush() {
+        let (result, events) = lifecycle(None, None, false);
+
+        result.unwrap();
+        assert_eq!(events, ["pipeline joins", "writer flush"]);
     }
 }

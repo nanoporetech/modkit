@@ -349,11 +349,13 @@ impl SingleSiteDmrAnalysis {
 
         success_counter.finish_and_clear();
         failure_counter.finish_and_clear();
-        finish_segmenter(segmenter.as_mut(), &self.multi_progress)?;
-
-        if let Some(e) = err {
-            return Err(e.into());
-        }
+        finish_single_site_outputs(
+            err.map(anyhow::Error::from),
+            true,
+            segmenter.as_mut(),
+            writer.as_mut(),
+            &self.multi_progress,
+        )?;
 
         if !error_counts.is_empty() {
             self.multi_progress.suspend(|| {
@@ -367,7 +369,6 @@ impl SingleSiteDmrAnalysis {
             success_count,
             failure_counter.position(),
         );
-        writer.flush()?;
         Ok(())
     }
 }
@@ -1008,6 +1009,25 @@ fn finish_segmenter(
     clean_up_result
 }
 
+fn finish_single_site_outputs(
+    first_error: Option<anyhow::Error>,
+    run_final_chunk: bool,
+    segmenter: &mut dyn DmrSegmenter,
+    writer: &mut dyn Write,
+    multi_progress: &MultiProgress,
+) -> anyhow::Result<()> {
+    if run_final_chunk {
+        finish_segmenter(segmenter, multi_progress)?;
+    } else {
+        segmenter.clean_up()?;
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 #[derive(new)]
 struct DummySegmenter {}
 
@@ -1374,11 +1394,13 @@ fn path_to_region_labels(
 #[cfg(test)]
 mod segmenter_error_tests {
     use super::{
-        add_scores_to_segmenter, finish_segmenter, ChromToSingleScores,
-        DmrSegmenter,
+        add_scores_to_segmenter, finish_segmenter, finish_single_site_outputs,
+        ChromToSingleScores, DmrSegmenter,
     };
     use anyhow::anyhow;
     use indicatif::MultiProgress;
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
 
     const ADDED_ROW: &[u8] = b"chr1\t10\t11\tSAME\n";
     const FINAL_ROW: &[u8] = b"chr1\t20\t21\tDIFF\n";
@@ -1388,7 +1410,9 @@ mod segmenter_error_tests {
         output: Vec<u8>,
         add_error: Option<&'static str>,
         final_error: Option<&'static str>,
+        cleanup_error: Option<&'static str>,
         cleaned_up: bool,
+        events: Arc<Mutex<Vec<&'static str>>>,
     }
 
     impl DmrSegmenter for StubSegmenter {
@@ -1404,6 +1428,7 @@ mod segmenter_error_tests {
         }
 
         fn run_current_chunk(&mut self) -> anyhow::Result<()> {
+            self.events.lock().unwrap().push("final chunk");
             if let Some(message) = self.final_error {
                 return Err(anyhow!(message));
             }
@@ -1412,9 +1437,58 @@ mod segmenter_error_tests {
         }
 
         fn clean_up(&mut self) -> anyhow::Result<()> {
+            self.events.lock().unwrap().push("segmenter cleanup");
             self.cleaned_up = true;
+            if let Some(message) = self.cleanup_error {
+                return Err(anyhow!(message));
+            }
             Ok(())
         }
+    }
+
+    struct TrackingWriter {
+        events: Arc<Mutex<Vec<&'static str>>>,
+        flush_error: Option<&'static str>,
+    }
+
+    impl Write for TrackingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.events.lock().unwrap().push("main writer flush");
+            match self.flush_error {
+                Some(message) => Err(io::Error::other(message)),
+                None => Ok(()),
+            }
+        }
+    }
+
+    fn lifecycle(
+        first_error: Option<anyhow::Error>,
+        run_final_chunk: bool,
+        final_error: Option<&'static str>,
+        cleanup_error: Option<&'static str>,
+        flush_error: Option<&'static str>,
+    ) -> (anyhow::Result<()>, Vec<&'static str>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut segmenter = StubSegmenter {
+            final_error,
+            cleanup_error,
+            events: events.clone(),
+            ..StubSegmenter::default()
+        };
+        let mut writer = TrackingWriter { events: events.clone(), flush_error };
+        let result = finish_single_site_outputs(
+            first_error,
+            run_final_chunk,
+            &mut segmenter,
+            &mut writer,
+            &MultiProgress::new(),
+        );
+        let observed = events.lock().unwrap().clone();
+        (result, observed)
     }
 
     #[test]
@@ -1463,5 +1537,70 @@ mod segmenter_error_tests {
         expected.extend_from_slice(FINAL_ROW);
         assert_eq!(segmenter.output, expected);
         assert!(segmenter.cleaned_up);
+    }
+
+    #[test]
+    fn add_error_skips_chunk_retry_but_attempts_cleanup_and_main_flush() {
+        let (result, events) = lifecycle(
+            Some(anyhow!("segmenter add failed")),
+            false,
+            Some("must not retry final chunk"),
+            None,
+            Some("main flush failed"),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "segmenter add failed");
+        assert_eq!(events, ["segmenter cleanup", "main writer flush"]);
+    }
+
+    #[test]
+    fn batch_error_runs_pending_chunk_and_retains_first_error() {
+        let (result, events) = lifecycle(
+            Some(anyhow!("batch failed first")),
+            true,
+            Some("final chunk failed later"),
+            Some("cleanup failed later"),
+            Some("main flush failed later"),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "batch failed first");
+        assert_eq!(
+            events,
+            ["final chunk", "segmenter cleanup", "main writer flush"]
+        );
+    }
+
+    #[test]
+    fn main_write_error_still_attempts_all_finalization() {
+        let (result, events) = lifecycle(
+            Some(anyhow!("main write failed first")),
+            true,
+            None,
+            Some("cleanup failed later"),
+            Some("main flush failed later"),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "main write failed first");
+        assert_eq!(
+            events,
+            ["final chunk", "segmenter cleanup", "main writer flush"]
+        );
+    }
+
+    #[test]
+    fn final_chunk_error_wins_but_cleanup_and_main_flush_are_attempted() {
+        let (result, events) = lifecycle(
+            None,
+            true,
+            Some("final chunk failed first"),
+            Some("cleanup failed later"),
+            Some("main flush failed later"),
+        );
+
+        assert_eq!(result.unwrap_err().to_string(), "final chunk failed first");
+        assert_eq!(
+            events,
+            ["final chunk", "segmenter cleanup", "main writer flush"]
+        );
     }
 }
