@@ -28,8 +28,8 @@ The output table has the following schema:
 | 4      | n_mod            | number of calls for this modification code at this offset                                                                                                                                 | int   |
 | 5      | percent_modified | `n_mod` / `n_valid`  * 100                                                                                                                                                                | float |
 
-Earlier modkit releases reported the opposite offset sign. Negate offsets from
-those releases before comparing them with new output. The reference-coordinate
-axis is not reversed for negative-strand features.
+Profiles produced by affected earlier modkit releases must be regenerated before
+comparison because both queried membership and offset bins can differ. The
+reference-coordinate axis is not reversed for negative-strand features.
 
 Optionally the `--chart` argument can be used to create HTML charts of the modification patterns.
