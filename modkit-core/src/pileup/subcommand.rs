@@ -304,10 +304,10 @@ pub struct ModBamPileup {
     /// used, the resulting output BED file will indicate the motif in the
     /// "name" field as <mod_code>,<motif>,<offset>. For example, given
     /// `--motif CGCG 2 --motif CG 0` there will be output lines with name
-    /// fields such as "m,CG,0" and "m,CGCG,2". To use this option with
-    /// `--combine-strands`, all motifs must be reverse-complement
-    /// palindromic and the reverse-strand anchor must not precede the
-    /// forward-strand anchor, or an error will be raised.
+    /// fields such as "m,CG,0" and "m,CGCG,2". To use
+    /// `--combine-strands`, exactly one motif must be supplied. It must be
+    /// reverse-complement palindromic, and the reverse-strand anchor must not
+    /// precede the forward-strand anchor, or an error will be raised.
     #[clap(help_heading = "Modified Base Options")]
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
     motif: Option<Vec<String>>,
@@ -439,26 +439,44 @@ impl ModBamPileup {
         motifs == &[RegexMotif::parse_string("CG", 0).unwrap()]
     }
 
-    fn validate_combine_strands_anchor_order(
+    fn validate_combine_strands_motifs(
         combine_strands: bool,
         motifs: &[RegexMotif],
     ) -> anyhow::Result<()> {
-        if combine_strands {
-            for motif in motifs {
-                let motif_info = motif.motif_info;
-                if motif_info.reverse_offset < motif_info.forward_offset {
-                    bail!(
-                        "cannot combine strands for motif '{} {}': \
-                         reverse-strand anchor offset {} precedes \
-                         forward-strand anchor offset {}; the reverse anchor \
-                         must not precede the forward anchor",
-                        motif.raw_motif,
-                        motif_info.forward_offset,
-                        motif_info.reverse_offset,
-                        motif_info.forward_offset,
-                    );
-                }
-            }
+        if !combine_strands {
+            return Ok(());
+        }
+
+        let motif = match motifs {
+            [motif] => motif,
+            [] => bail!(
+                "need to provide one reverse-complement palindromic motif to \
+                 combine strands"
+            ),
+            _ => bail!(
+                "multiple motifs and combine-strands not currently supported"
+            ),
+        };
+        if !motif.is_palendrome() {
+            bail!(
+                "cannot combine strands for motif '{} {}': motif must be \
+                 reverse-complement palindromic",
+                motif.raw_motif,
+                motif.motif_info.forward_offset,
+            );
+        }
+
+        let motif_info = motif.motif_info;
+        if motif_info.reverse_offset < motif_info.forward_offset {
+            bail!(
+                "cannot combine strands for motif '{} {}': reverse-strand \
+                 anchor offset {} precedes forward-strand anchor offset {}; \
+                 the reverse anchor must not precede the forward anchor",
+                motif.raw_motif,
+                motif_info.forward_offset,
+                motif_info.reverse_offset,
+                motif_info.forward_offset,
+            );
         }
         Ok(())
     }
@@ -568,6 +586,10 @@ impl ModBamPileup {
     ) -> anyhow::Result<(Option<Presets>, Option<Vec<RegexMotif>>)> {
         let mut regex_motifs =
             self.parse_user_motifs().transpose()?.unwrap_or_else(Vec::new);
+        Self::validate_combine_strands_motifs(
+            self.combine_strands,
+            &regex_motifs,
+        )?;
         if regex_motifs.len() > 1 {
             if self.combine_strands {
                 bail!(
@@ -603,10 +625,6 @@ impl ModBamPileup {
             }
             return Ok((None, Some(regex_motifs)));
         }
-        Self::validate_combine_strands_anchor_order(
-            self.combine_strands,
-            &regex_motifs,
-        )?;
         if let Some(modified_bases) = self.modified_bases.as_ref() {
             let modified_bases = modified_bases
                 .iter()

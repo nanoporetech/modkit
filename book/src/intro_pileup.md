@@ -141,8 +141,9 @@ oligo_741_adapters  39 40 m,CG,0   4	-	39	40	255,0,0	4 100.00 4 0 0 0 0 0 0
 oligo_741_adapters  39 40 m,CGCG,2 4	-	39	40	255,0,0	4 100.00 4 0 0 0 0 0 0
 ```
 
-The `--combine-strands` flag can be combined with `--motif` however all motifs must be reverse-complement palindromic (`CG` _is_ a palindrome but `CHH` is not).
-Only one motif at a time is supported with `--combine-strands` is used (see [limitations](./limitations.md) for details).
+The `--combine-strands` flag requires exactly one motif, supplied with `--motif` or `--cpg`, and that motif must be reverse-complement palindromic (`CG` _is_ a palindrome but `CHH` is not).
+The reverse-strand anchor must not precede the forward-strand anchor; for example, `--motif CGCG 0 --combine-strands` is supported, while `--motif CGCG 2 --combine-strands` is not currently supported.
+See [limitations](./limitations.md) for more details.
 
 ## Partitioning reads based on phasing information with `--phased`
 
