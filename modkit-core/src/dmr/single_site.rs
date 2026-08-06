@@ -596,14 +596,18 @@ impl SingleSiteDmrScore {
         } else {
             (Vec::new(), Vec::new())
         };
-        let pct_a_samples = ((counts_a.len() as f32
-            / sample_index.num_a_samples() as f32)
-            * 100f32)
-            .floor() as usize;
-        let pct_b_samples = ((counts_b.len() as f32
-            / sample_index.num_b_samples() as f32)
-            * 100f32)
-            .floor() as usize;
+        let positive_a =
+            counts_a.iter().filter(|sample| sample.counts.total > 0).count();
+        let positive_b =
+            counts_b.iter().filter(|sample| sample.counts.total > 0).count();
+        let pct_a_samples = represented_sample_percentage(
+            positive_a,
+            sample_index.num_a_samples(),
+        );
+        let pct_b_samples = represented_sample_percentage(
+            positive_b,
+            sample_index.num_b_samples(),
+        );
         let balanced_counts_a = collapse_counts(counts_a, true);
         let balanced_counts_b = collapse_counts(counts_b, true);
         let epmap_balanced = estimator
@@ -781,31 +785,54 @@ impl SingleSiteDmrScore {
     }
 }
 
+fn represented_sample_percentage(
+    positive_count: usize,
+    configured_count: usize,
+) -> usize {
+    debug_assert!(configured_count > 0);
+    debug_assert!(positive_count <= configured_count);
+    let percentage = (positive_count as u128 * 100) / configured_count as u128;
+    usize::try_from(percentage)
+        .expect("represented sample percentage must fit in usize")
+}
+
 fn collapse_counts(counts: &[SampleCount], balance: bool) -> AggregatedCounts {
-    if counts.len() == 1 {
-        counts[0].counts.clone()
+    let positive_count =
+        counts.iter().filter(|sample| sample.counts.total > 0).count();
+    if positive_count == 0 {
+        AggregatedCounts::zero()
+    } else if positive_count == 1 {
+        counts
+            .iter()
+            .find(|sample| sample.counts.total > 0)
+            .map(|sample| sample.counts.clone())
+            .unwrap()
     } else if balance {
         let total_cov = counts
             .iter()
+            .filter(|sample| sample.counts.total > 0)
             .map(|sample_count| sample_count.counts.total)
             .sum::<usize>();
-        let n = counts.len();
-        let target_cov = total_cov as f32 / n as f32;
-        counts.iter().fold(AggregatedCounts::zero(), |agg, next| {
-            let counts = next
-                .counts
-                .iter_mod_fractions()
-                .map(|(code, frac)| {
-                    (code, (frac * target_cov).floor() as usize)
-                })
-                .collect::<HashMap<ModCodeRepr, usize>>();
-            let total = target_cov as usize;
-            let ac = AggregatedCounts::try_new(counts, total).unwrap();
-            agg.op(&ac)
-        })
+        let target_cov = total_cov as f32 / positive_count as f32;
+        counts.iter().filter(|sample| sample.counts.total > 0).fold(
+            AggregatedCounts::zero(),
+            |agg, next| {
+                let counts = next
+                    .counts
+                    .iter_mod_fractions()
+                    .map(|(code, frac)| {
+                        (code, (frac * target_cov).floor() as usize)
+                    })
+                    .collect::<HashMap<ModCodeRepr, usize>>();
+                let total = target_cov as usize;
+                let ac = AggregatedCounts::try_new(counts, total).unwrap();
+                agg.op(&ac)
+            },
+        )
     } else {
         counts
             .iter()
+            .filter(|sample| sample.counts.total > 0)
             .fold(AggregatedCounts::zero(), |agg, next| agg.op(&next.counts))
     }
 }
@@ -869,7 +896,8 @@ mod positive_coverage_tests {
             BetaParams::new(0.55, 0.55).unwrap(),
             0.05,
             true,
-        );
+        )
+        .unwrap();
         SingleSiteDmrScore::new_multi(
             &counts_a,
             &counts_b,
