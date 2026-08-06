@@ -808,6 +808,9 @@ fn collapse_counts(
 }
 
 type ChromToSingleScores = (String, Vec<MkResult<SingleSiteDmrScore>>);
+
+fn sort_chrom_to_site_scores(_: &mut [ChromToSingleScores]) {}
+
 fn process_batch_of_positions(
     batch: DmrBatchOfPositions,
     sample_index: Arc<SingleSiteSampleIndex>,
@@ -816,7 +819,7 @@ fn process_batch_of_positions(
     let (a_lines, b_lines) =
         sample_index.read_bedmethyl_lines_organized_by_position(batch)?;
 
-    let chrom_to_site_scores = a_lines
+    let mut chrom_to_site_scores = a_lines
         .into_iter()
         // intersect a_lines and b_lines on contig/chrom, there should be a
         // filter upstream of this to make sure that this is not ever a miss
@@ -852,7 +855,30 @@ fn process_batch_of_positions(
         })
         .collect::<Vec<ChromToSingleScores>>();
 
+    sort_chrom_to_site_scores(&mut chrom_to_site_scores);
+
     Ok(chrom_to_site_scores)
+}
+
+#[cfg(test)]
+mod chrom_score_order_tests {
+    use super::{sort_chrom_to_site_scores, ChromToSingleScores};
+
+    #[test]
+    fn chrom_scores_are_sorted_lexically() {
+        let mut chrom_to_site_scores = ["cc", "aa", "bb"]
+            .into_iter()
+            .map(|chrom| (chrom.to_string(), Vec::new()))
+            .collect::<Vec<ChromToSingleScores>>();
+
+        sort_chrom_to_site_scores(&mut chrom_to_site_scores);
+
+        let chroms = chrom_to_site_scores
+            .iter()
+            .map(|(chrom, _)| chrom.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(chroms, vec!["aa", "bb", "cc"]);
+    }
 }
 
 struct Coverages {
