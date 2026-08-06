@@ -2,6 +2,11 @@ use clap::Args;
 use std::path::PathBuf;
 
 #[derive(Args)]
+#[command(group(
+    clap::ArgGroup::new("motif_or_cpg")
+        .args(["motif", "cpg"])
+        .multiple(true)
+))]
 pub(super) struct InputArgs {
     /// Path to modBAM file to extract read-level information from, or one of
     /// `-` or `stdin` to specify a stream from standard input. If a file
@@ -113,7 +118,7 @@ pub(super) struct InputArgs {
     /// column. "." will be used when an aligned position does not match a
     /// motif.
     #[clap(help_heading = "Modified Base Options")]
-    #[arg(long, requires = "motif", default_value_t = false)]
+    #[arg(long, requires = "motif_or_cpg", default_value_t = false)]
     pub annotate_motifs: bool,
     /// Only output counts at CpG motifs. Requires a reference sequence to be
     /// provided.
@@ -125,7 +130,7 @@ pub(super) struct InputArgs {
     #[arg(
         long,
         short = 'k',
-        requires = "motif",
+        requires = "motif_or_cpg",
         default_value_t = false,
         hide_short_help = true
     )]

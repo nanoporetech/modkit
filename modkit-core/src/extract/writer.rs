@@ -67,7 +67,7 @@ impl PositionModCalls {
         let inferred = self.base_mod_probs.inferred_unmodified;
         let motif_hits = motif_position_lookup.and_then(|lu| {
             match (self.ref_position, profile.chrom_id, self.alignment_strand) {
-                (Some(i), Some(tid), Some(strand)) if i > 0i64 => {
+                (Some(i), Some(tid), Some(strand)) if i >= 0i64 => {
                     let pos = i as usize;
                     let motif_hits = lu.get_motif_hits(
                         tid,
@@ -289,7 +289,7 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
                 .and_then(|chrom_id| self.tid_to_name.get(&chrom_id));
             let position_calls = PositionModCalls::from_profile(&profile);
             for call in position_calls {
-                call.to_row(
+                if let Some(row) = call.to_row(
                     profile,
                     chrom_name,
                     &self.caller,
@@ -298,10 +298,10 @@ impl<W: Write> OutwriterWithMemory<ReadsBaseModProfile>
                     false,
                     motif_position_lookup,
                     self.with_motifs,
-                )
-                .map(|s| self.tsv_writer.write(s.as_bytes()))
-                .transpose()?;
-                rows_written += 1;
+                ) {
+                    self.tsv_writer.write(row.as_bytes())?;
+                    rows_written += 1;
+                }
             }
             self.number_of_written_reads += 1;
         }
@@ -448,5 +448,120 @@ impl<T: Write, const SIZE: usize>
         self.buff.set_position(0);
         let _ = self.return_mem.send(record);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustc_hash::FxHashMap;
+
+    use super::*;
+    use crate::mod_base_code::{DnaBase, ModCodeRepr};
+    use crate::motifs::motif_bed::RegexMotif;
+    use crate::read_ids_to_base_mod_probs::ModProfile;
+
+    fn mod_profile(position: usize, probability: f32) -> ModProfile {
+        ModProfile::new(
+            position,
+            Some(position as i64),
+            0,
+            0,
+            2,
+            probability,
+            ModCodeRepr::Code('a'),
+            30,
+            Kmer::new(b"AA", position, 1),
+            Strand::Positive,
+            Some(Strand::Positive),
+            DnaBase::A,
+            false,
+        )
+    }
+
+    fn motif_lookup_at_zero() -> MotifPositionLookup {
+        let positions =
+            FxHashMap::from_iter([((0, 0), vec![(0, Strand::Positive)])]);
+        let motifs = vec![RegexMotif::parse_string("A", 0).unwrap()];
+        MotifPositionLookup::new(positions, motifs)
+    }
+
+    #[test]
+    fn motif_annotation_includes_reference_position_zero() {
+        let profile = mod_profile(0, 1.0);
+        let motif_lookup = motif_lookup_at_zero();
+        let reference_seqs =
+            HashMap::from([("chr1".to_string(), b"AA".to_vec())]);
+        let mod_profile_row = profile.to_row(
+            "read",
+            "chr1",
+            Some(0),
+            Some(0),
+            Some(2),
+            &reference_seqs,
+            0,
+            Some(&motif_lookup),
+            true,
+        );
+
+        let read_profile = ReadBaseModProfile::new(
+            "read".to_string(),
+            Some(0),
+            0,
+            Some(0),
+            Some(2),
+            vec![profile],
+        );
+        let position_call =
+            PositionModCalls::from_profile(&read_profile).pop().unwrap();
+        let position_call_row = position_call
+            .to_row(
+                &read_profile,
+                Some(&"chr1".to_string()),
+                &MultipleThresholdModCaller::new_passthrough(),
+                &reference_seqs,
+                false,
+                false,
+                Some(&motif_lookup),
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(
+            (
+                mod_profile_row.trim_end().split(TAB).last(),
+                position_call_row.trim_end().split(TAB).last(),
+            ),
+            (Some("A,0"), Some("A,0"))
+        );
+    }
+
+    #[test]
+    fn rows_written_counts_only_emitted_rows() {
+        let read_profile = ReadBaseModProfile::new(
+            "read".to_string(),
+            Some(0),
+            0,
+            Some(0),
+            Some(2),
+            vec![mod_profile(0, 1.0), mod_profile(1, 0.2)],
+        );
+        let item = ReadsBaseModProfile::new(vec![read_profile], 0, 0);
+        let caller = MultipleThresholdModCaller::new(
+            HashMap::new(),
+            HashMap::new(),
+            0.9,
+        );
+        let mut writer = TsvWriterWithContigNames::new_with_caller(
+            TsvWriter::new_null(),
+            HashMap::new(),
+            HashMap::new(),
+            caller,
+            true,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(writer.write(item, None).unwrap(), 1);
+        assert_eq!(writer.num_reads(), 1);
     }
 }
