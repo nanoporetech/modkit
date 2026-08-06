@@ -1665,7 +1665,7 @@ pub fn base_mod_probs_from_record(
     extract_mod_probs(record, &forward_seq, &mm, &ml, &converter)
 }
 
-#[derive(new, Debug)]
+#[derive(new, Debug, Clone, Copy)]
 pub struct EdgeFilter {
     pub edge_filter_start: usize,
     pub edge_filter_end: usize,

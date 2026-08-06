@@ -403,10 +403,6 @@ impl QualHist {
         mapped_only: bool,
         multi_progress: &MultiProgress,
     ) -> anyhow::Result<Self> {
-        let edge_filter_start =
-            edge_filter.map(|ef| ef.edge_filter_start).unwrap_or(0usize);
-        let edge_filter_end =
-            edge_filter.map(|ef| ef.edge_filter_end).unwrap_or(0usize);
         let record_counter = multi_progress.add(get_ticker());
         let mut rng = SmallRng::seed_from_u64(seed.unwrap_or(42u64));
         record_counter.set_message("records processed");
@@ -438,11 +434,7 @@ impl QualHist {
                 continue 'records;
             }
             let read_length = record.seq_len();
-            let (left_edge_filter, right_edge_filter) = if record.is_reverse() {
-                (edge_filter_end, read_length.saturating_sub(edge_filter_start))
-            } else {
-                (edge_filter_start, read_length.saturating_sub(edge_filter_end))
-            };
+            let reverse = record.is_reverse();
             if let Some(sampling_frac) = sampling_frac {
                 if !rng.gen_bool(sampling_frac) {
                     continue 'records;
@@ -475,8 +467,12 @@ impl QualHist {
                 let aligned_pairs_iter = aligned_pairs_iter
                     .into_iter()
                     .filter_ok(move |(qpos, _rpos, _mod_state)| {
-                        (*qpos as usize) >= left_edge_filter
-                            && (*qpos as usize) < right_edge_filter
+                        edge_filter_keeps_query_position(
+                            edge_filter,
+                            *qpos as usize,
+                            read_length,
+                            reverse,
+                        )
                     })
                     .filter_ok(|(_, rpos, _)| {
                         spf.contains(chrom_id, *rpos as u64, strand)
@@ -525,9 +521,12 @@ impl QualHist {
                 'mods: loop {
                     match modbase_iter.next_modified_position_no_thresh() {
                         Ok(Some(mod_state)) => {
-                            if mod_state.mod_position >= left_edge_filter
-                                && mod_state.mod_position < right_edge_filter
-                            {
+                            if edge_filter_keeps_query_position(
+                                edge_filter,
+                                mod_state.mod_position,
+                                read_length,
+                                reverse,
+                            ) {
                                 if collect_mod_probs {
                                     increment_mods_counts(
                                         mod_state,
@@ -841,8 +840,26 @@ pub(crate) struct ProbsExtractor {
     sample: bool,
     sample_frac: f64,
     motif_bases: [DnaBase; 4],
-    edge_filter_start: usize,
-    edge_filter_end: usize,
+    edge_filter: Option<EdgeFilter>,
+}
+
+#[inline]
+fn edge_filter_keeps_query_position(
+    edge_filter: Option<&EdgeFilter>,
+    query_position: usize,
+    read_length: usize,
+    reverse: bool,
+) -> bool {
+    if query_position >= read_length {
+        return false;
+    }
+    let forward_position =
+        if reverse { read_length - 1 - query_position } else { query_position };
+    edge_filter
+        .map(|filter| {
+            filter.keep_position(forward_position, read_length).unwrap_or(false)
+        })
+        .unwrap_or(true)
 }
 
 impl ProbsExtractor {
@@ -854,8 +871,7 @@ impl ProbsExtractor {
         should_count_record: bool,
         start_pos: u32,
         end_pos: u32,
-        edge_filter_start: usize,
-        edge_filter_end: usize,
+        edge_filter: Option<EdgeFilter>,
     ) -> anyhow::Result<impl Iterator<Item = MkResult<ModState>> + use<'a>>
     {
         let reverse = record.is_reverse();
@@ -872,8 +888,12 @@ impl ProbsExtractor {
                 *rpos >= start_pos && *rpos < end_pos
             })
             .filter_ok(move |(qpos, _rpos, _mod_state)| {
-                (*qpos as usize) >= edge_filter_start
-                    && (*qpos as usize) < (read_length - edge_filter_end)
+                edge_filter_keeps_query_position(
+                    edge_filter.as_ref(),
+                    *qpos as usize,
+                    read_length,
+                    reverse,
+                )
             })
             .filter_map_ok(move |(qpos, rpos, mod_state)| {
                 let rpos = rpos
@@ -1059,7 +1079,7 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
         sample: bool,
         sample_frac: f64,
         motif_bases: [DnaBase; 4],
-        _edge_filter: Option<&EdgeFilter>,
+        edge_filter: Option<&EdgeFilter>,
     ) -> Self {
         let rng = SmallRng::seed_from_u64(seed);
         Self {
@@ -1067,8 +1087,7 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
             sample,
             sample_frac,
             motif_bases,
-            edge_filter_start: 0usize,
-            edge_filter_end: 0usize,
+            edge_filter: edge_filter.copied(),
         }
     }
 
@@ -1099,16 +1118,25 @@ impl ExtractsMleProbs<BaseArgmaxProbs> for ProbsExtractor {
         let mut modbase_iter = BaseModsAdapter::<16>::new(record)?;
         let bases = modbase_iter.primary_bases_in_record();
         byte_to_bool_positions(bases, records_with_base_mods);
+        let read_length = record.seq_len();
+        let reverse = record.is_reverse();
         loop {
             match modbase_iter.next_modified_position_no_thresh() {
                 Ok(Some(mod_state)) => {
-                    increment_base_counts(
-                        mod_state,
-                        explicit_canonical_probs,
-                        base_hist,
-                        base_totals,
-                        &mut self.rng,
-                    );
+                    if edge_filter_keeps_query_position(
+                        self.edge_filter.as_ref(),
+                        mod_state.mod_position,
+                        read_length,
+                        reverse,
+                    ) {
+                        increment_base_counts(
+                            mod_state,
+                            explicit_canonical_probs,
+                            base_hist,
+                            base_totals,
+                            &mut self.rng,
+                        );
+                    }
                 }
                 Ok(None) => break,
                 Err(e) => {
@@ -1126,7 +1154,7 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
         sample: bool,
         sample_frac: f64,
         motif_bases: [DnaBase; 4],
-        _edge_filter: Option<&EdgeFilter>,
+        edge_filter: Option<&EdgeFilter>,
     ) -> Self {
         let rng = SmallRng::seed_from_u64(seed);
         Self {
@@ -1134,8 +1162,7 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
             sample,
             sample_frac,
             motif_bases,
-            edge_filter_start: 0usize,
-            edge_filter_end: 0usize,
+            edge_filter: edge_filter.copied(),
         }
     }
 
@@ -1165,17 +1192,26 @@ impl ExtractsMleProbs<BaseAndModArgmaxProbs> for ProbsExtractor {
         let mut modbase_iter = BaseModsAdapter::<16>::new(record)?;
         let bases = modbase_iter.primary_bases_in_record();
         byte_to_bool_positions(bases, records_with_base_mods);
+        let read_length = record.seq_len();
+        let reverse = record.is_reverse();
         loop {
             match modbase_iter.next_modified_position_no_thresh() {
                 Ok(Some(mod_state)) => {
-                    increment_mods_counts(
-                        mod_state,
-                        &mut self.rng,
-                        explicit_canonical_probs,
-                        base_hist,
-                        base_totals,
-                        mods_hists,
-                    );
+                    if edge_filter_keeps_query_position(
+                        self.edge_filter.as_ref(),
+                        mod_state.mod_position,
+                        read_length,
+                        reverse,
+                    ) {
+                        increment_mods_counts(
+                            mod_state,
+                            &mut self.rng,
+                            explicit_canonical_probs,
+                            base_hist,
+                            base_totals,
+                            mods_hists,
+                        );
+                    }
                 }
                 Ok(None) => break,
                 Err(e) => {
@@ -1196,17 +1232,12 @@ impl ExtractsMleProbs<AlignedBaseAndModArgmaxProbs> for ProbsExtractor {
         edge_filter: Option<&EdgeFilter>,
     ) -> Self {
         let rng = SmallRng::seed_from_u64(seed);
-        let edge_filter_start =
-            edge_filter.map(|ef| ef.edge_filter_start).unwrap_or(0usize);
-        let edge_filter_end =
-            edge_filter.map(|ef| ef.edge_filter_end).unwrap_or(0usize);
         Self {
             rng,
             sample,
             sample_frac,
             motif_bases,
-            edge_filter_start,
-            edge_filter_end,
+            edge_filter: edge_filter.copied(),
         }
     }
 
@@ -1247,8 +1278,7 @@ impl ExtractsMleProbs<AlignedBaseAndModArgmaxProbs> for ProbsExtractor {
             should_count_record,
             start_pos,
             end_pos,
-            self.edge_filter_start,
-            self.edge_filter_end,
+            self.edge_filter,
         )?;
 
         for res in modstate_iter {
@@ -1281,17 +1311,12 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
         edge_filter: Option<&EdgeFilter>,
     ) -> Self {
         let rng = SmallRng::seed_from_u64(seed);
-        let edge_filter_start =
-            edge_filter.map(|ef| ef.edge_filter_start).unwrap_or(0usize);
-        let edge_filter_end =
-            edge_filter.map(|ef| ef.edge_filter_end).unwrap_or(0usize);
         Self {
             rng,
             sample,
             sample_frac,
             motif_bases,
-            edge_filter_start,
-            edge_filter_end,
+            edge_filter: edge_filter.copied(),
         }
     }
 
@@ -1332,8 +1357,7 @@ impl ExtractsMleProbs<AlignedBaseArgmaxProbs> for ProbsExtractor {
             should_count_record,
             start_pos,
             end_pos,
-            self.edge_filter_start,
-            self.edge_filter_end,
+            self.edge_filter,
         )?;
         for res in modstate_iter {
             match res {
@@ -1757,5 +1781,317 @@ fn byte_to_bool_positions<const SIZE: usize>(b: u8, agg: &mut [u32; SIZE]) {
     {
         let count = agg[i];
         agg[i] = count.saturating_add(1u32);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bitvec::bitvec;
+    use rust_htslib::bam::{
+        header::HeaderRecord,
+        record::{Aux, Cigar, CigarString},
+        Format, Header, Read, Writer,
+    };
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::position_filter::{GenomeIntervals, Iv};
+
+    fn make_five_base_record(reverse: bool) -> bam::Record {
+        let mut record = bam::Record::new();
+        let cigar = CigarString(vec![Cigar::Match(5)]);
+        let seq = if reverse { b"TTTTT" } else { b"AAAAA" };
+        record.set(b"read", Some(&cigar), seq, &[255; 5]);
+        record.set_tid(0);
+        record.set_pos(0);
+        record.push_aux(b"MM", Aux::String("A+a?,0,0,0,0,0;")).unwrap();
+        let ml = vec![201u8, 202, 203, 204, 205];
+        record.push_aux(b"ML", Aux::ArrayU8((&ml).into())).unwrap();
+        if reverse {
+            record.set_reverse();
+        }
+        record
+    }
+
+    fn retained_qualities<T>(
+        record: &bam::Record,
+        edge_filter: Option<&EdgeFilter>,
+    ) -> Vec<u8>
+    where
+        ProbsExtractor: ExtractsMleProbs<T>,
+    {
+        let mut extractor = <ProbsExtractor as ExtractsMleProbs<T>>::new(
+            42,
+            false,
+            0.0,
+            [DnaBase::A; 4],
+            edge_filter,
+        );
+        let chrom_coords = ChromCoordinates::new(
+            0,
+            0,
+            5,
+            FocusPositions2::MaskedPositions { mask: bitvec![1; 10] },
+            true,
+        );
+        let mut hist = QualHist::default();
+        let processed =
+            <ProbsExtractor as ExtractsMleProbs<T>>::process_record(
+                &mut extractor,
+                record,
+                &chrom_coords,
+                &mut hist.explicit_canonical_probs,
+                &mut hist.hist,
+                &mut hist.base_totals,
+                &mut hist.mods_hists,
+                &mut hist.num_records_with_base_mods,
+            )
+            .unwrap();
+        assert!(processed);
+
+        qualities_from_hist(&hist)
+    }
+
+    fn qualities_from_hist(hist: &QualHist) -> Vec<u8> {
+        let mut qualities = hist
+            .hist
+            .iter()
+            .chain(hist.mods_hists.iter().map(|mod_hist| &mod_hist.hist))
+            .flat_map(|counts| {
+                counts.iter().enumerate().flat_map(|(qual, count)| {
+                    std::iter::repeat(qual as u8).take(*count as usize)
+                })
+            })
+            .collect::<Vec<_>>();
+        qualities.sort_unstable();
+        qualities
+    }
+
+    fn write_bam(bam_path: &std::path::Path, record: &bam::Record) {
+        let mut header = Header::new();
+        let mut sq = HeaderRecord::new(b"SQ");
+        sq.push_tag(b"SN", &"chr1");
+        sq.push_tag(b"LN", &5);
+        header.push_record(&sq);
+
+        let mut writer =
+            Writer::from_path(bam_path, &header, Format::Bam).unwrap();
+        writer.write(record).unwrap();
+    }
+
+    fn all_positions_filter() -> StrandedPositionFilter<()> {
+        let intervals =
+            || GenomeIntervals::new(vec![Iv { start: 0, stop: 5, val: () }]);
+        let mut pos_positions = FxHashMap::default();
+        pos_positions.insert(0, intervals());
+        let mut neg_positions = FxHashMap::default();
+        neg_positions.insert(0, intervals());
+        StrandedPositionFilter { pos_positions, neg_positions }
+    }
+
+    fn serial_retained_qualities(
+        record: &bam::Record,
+        edge_filter: Option<&EdgeFilter>,
+        with_position_filter: bool,
+    ) -> Vec<u8> {
+        let temp_dir = tempdir().unwrap();
+        let bam_path = temp_dir.path().join("record.bam");
+        write_bam(&bam_path, record);
+        let mut reader = bam::Reader::from_path(&bam_path).unwrap();
+        let position_filter = with_position_filter.then(all_positions_filter);
+        let histogram = QualHist::from_records(
+            reader.records(),
+            position_filter,
+            None,
+            None,
+            None,
+            edge_filter,
+            false,
+            false,
+            false,
+            &MultiProgress::new(),
+        )
+        .unwrap();
+
+        qualities_from_hist(&histogram)
+    }
+
+    macro_rules! handler_results {
+        ($marker:ty, $forward:expr, $reverse:expr, $filter:expr) => {
+            (
+                retained_qualities::<$marker>($forward, None),
+                retained_qualities::<$marker>($forward, Some($filter)),
+                retained_qualities::<$marker>($reverse, None),
+                retained_qualities::<$marker>($reverse, Some($filter)),
+            )
+        };
+    }
+
+    #[test]
+    fn indexed_handlers_apply_asymmetric_edge_filter() {
+        let forward = make_five_base_record(false);
+        let reverse = make_five_base_record(true);
+        let edge_filter = EdgeFilter::new(1, 2, false);
+        let actual = [
+            handler_results!(
+                AlignedBaseArgmaxProbs,
+                &forward,
+                &reverse,
+                &edge_filter
+            ),
+            handler_results!(
+                AlignedBaseAndModArgmaxProbs,
+                &forward,
+                &reverse,
+                &edge_filter
+            ),
+            handler_results!(BaseArgmaxProbs, &forward, &reverse, &edge_filter),
+            handler_results!(
+                BaseAndModArgmaxProbs,
+                &forward,
+                &reverse,
+                &edge_filter
+            ),
+        ];
+        let all_qualities = vec![201, 202, 203, 204, 205];
+        let retained_qualities = vec![202, 203];
+
+        for (forward_all, forward_filtered, reverse_all, reverse_filtered) in
+            actual
+        {
+            assert_eq!(forward_all, all_qualities);
+            assert_eq!(forward_filtered, retained_qualities);
+            assert_eq!(reverse_all, all_qualities);
+            assert_eq!(reverse_filtered, retained_qualities);
+        }
+    }
+
+    #[test]
+    fn indexed_handlers_treat_overlong_edge_filter_as_empty() {
+        for reverse in [false, true] {
+            let record = make_five_base_record(reverse);
+            for inverted in [false, true] {
+                let edge_filter = EdgeFilter::new(1, 6, inverted);
+                let actual = [
+                    retained_qualities::<BaseArgmaxProbs>(
+                        &record,
+                        Some(&edge_filter),
+                    ),
+                    retained_qualities::<BaseAndModArgmaxProbs>(
+                        &record,
+                        Some(&edge_filter),
+                    ),
+                    retained_qualities::<AlignedBaseArgmaxProbs>(
+                        &record,
+                        Some(&edge_filter),
+                    ),
+                    retained_qualities::<AlignedBaseAndModArgmaxProbs>(
+                        &record,
+                        Some(&edge_filter),
+                    ),
+                ];
+
+                for qualities in actual {
+                    assert!(qualities.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn indexed_handlers_preserve_asymmetric_filter_inversion() {
+        let forward = make_five_base_record(false);
+        let reverse = make_five_base_record(true);
+        let edge_filter = EdgeFilter::new(1, 2, true);
+        let actual = [
+            handler_results!(
+                AlignedBaseArgmaxProbs,
+                &forward,
+                &reverse,
+                &edge_filter
+            ),
+            handler_results!(
+                AlignedBaseAndModArgmaxProbs,
+                &forward,
+                &reverse,
+                &edge_filter
+            ),
+            handler_results!(BaseArgmaxProbs, &forward, &reverse, &edge_filter),
+            handler_results!(
+                BaseAndModArgmaxProbs,
+                &forward,
+                &reverse,
+                &edge_filter
+            ),
+        ];
+        let all_qualities = vec![201, 202, 203, 204, 205];
+        let retained_qualities = vec![201, 204, 205];
+
+        for (forward_all, forward_filtered, reverse_all, reverse_filtered) in
+            actual
+        {
+            assert_eq!(forward_all, all_qualities);
+            assert_eq!(forward_filtered, retained_qualities);
+            assert_eq!(reverse_all, all_qualities);
+            assert_eq!(reverse_filtered, retained_qualities);
+        }
+    }
+
+    #[test]
+    fn serial_sampling_applies_edge_filters_in_molecular_orientation() {
+        let all_qualities = vec![201, 202, 203, 204, 205];
+        let interior_qualities = vec![202, 203];
+        let edge_qualities = vec![201, 204, 205];
+        let normal = EdgeFilter::new(1, 2, false);
+        let inverted = EdgeFilter::new(1, 2, true);
+
+        for reverse in [false, true] {
+            let record = make_five_base_record(reverse);
+            for with_position_filter in [false, true] {
+                assert_eq!(
+                    serial_retained_qualities(
+                        &record,
+                        None,
+                        with_position_filter,
+                    ),
+                    all_qualities,
+                );
+                assert_eq!(
+                    serial_retained_qualities(
+                        &record,
+                        Some(&normal),
+                        with_position_filter,
+                    ),
+                    interior_qualities,
+                );
+                assert_eq!(
+                    serial_retained_qualities(
+                        &record,
+                        Some(&inverted),
+                        with_position_filter,
+                    ),
+                    edge_qualities,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn serial_sampling_treats_overlong_edge_filters_as_empty() {
+        for reverse in [false, true] {
+            let record = make_five_base_record(reverse);
+            for with_position_filter in [false, true] {
+                for inverted in [false, true] {
+                    let edge_filter = EdgeFilter::new(1, 6, inverted);
+                    let qualities = serial_retained_qualities(
+                        &record,
+                        Some(&edge_filter),
+                        with_position_filter,
+                    );
+
+                    assert!(qualities.is_empty());
+                }
+            }
+        }
     }
 }
