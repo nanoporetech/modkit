@@ -24,6 +24,7 @@ use crate::command_utils::calculate_chunk_size;
 use crate::dmr::bedmethyl::BedMethylLine;
 use crate::dmr::isoform::{
     parse_gtf, transcript_pos0_to_genomic0, GtfId, GtfTranscript,
+    TranscriptModel,
 };
 use crate::errs::MkError;
 use crate::interval_chunks::{
@@ -696,6 +697,26 @@ pub struct EntryMapToGenome {
     header: bool,
 }
 
+fn map_bedmethyl_line_to_genome(
+    tm: &TranscriptModel,
+    mut bml: BedMethylLine,
+) -> Result<BedMethylLine, MkError> {
+    let genome_start = transcript_pos0_to_genomic0(tm, bml.start())?;
+    let genome_stop =
+        genome_start.checked_add(1).ok_or(MkError::InvalidGenomicPosition)?;
+    bml.strand = match (tm.strand(), bml.strand) {
+        ('+', strand) => strand,
+        ('-', StrandRule::Positive) => StrandRule::Negative,
+        ('-', StrandRule::Negative) => StrandRule::Positive,
+        ('-', StrandRule::Both) => StrandRule::Both,
+        _ => return Err(MkError::InvalidStrand),
+    };
+
+    bml.chrom = tm.chrom.clone();
+    bml.interval = Iv { start: genome_start, stop: genome_stop, val: () };
+    Ok(bml)
+}
+
 impl EntryMapToGenome {
     pub fn run(&self) -> anyhow::Result<()> {
         let _ = init_logging(None);
@@ -750,7 +771,7 @@ impl EntryMapToGenome {
 
         reader.fetch(tid, 0, tm.transcript_len)?;
         for res in reader.records() {
-            let Ok(mut bml) = res
+            let Ok(bml) = res
                 .map_err(|e| MkError::HtsLibError(e))
                 .and_then(|bs| {
                     String::from_utf8(bs)
@@ -761,22 +782,10 @@ impl EntryMapToGenome {
                 errored.inc(1);
                 continue;
             };
-            let Ok(genome_start) =
-                transcript_pos0_to_genomic0(&tm, bml.start())
-            else {
+            let Ok(bml) = map_bedmethyl_line_to_genome(tm, bml) else {
                 errored.inc(1);
                 continue;
             };
-            let genome_stop = match bml.strand {
-                StrandRule::Positive | StrandRule::Both => {
-                    genome_start.saturating_add(1)
-                }
-                StrandRule::Negative => genome_start.saturating_sub(1),
-            };
-
-            bml.chrom = tm.chrom.clone();
-            bml.interval =
-                Iv { start: genome_start, stop: genome_stop, val: () };
             writer.write(bml.to_line().as_bytes())?;
             processed_records.inc(1);
         }
@@ -790,5 +799,87 @@ impl EntryMapToGenome {
         });
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use tempfile::NamedTempFile;
+
+    use super::*;
+    use crate::util::StrandRule::{Both, Negative, Positive};
+
+    fn bedmethyl_at(
+        transcript_id: &str,
+        position: u64,
+        strand: StrandRule,
+    ) -> BedMethylLine {
+        BedMethylLine::new(
+            transcript_id.to_string(),
+            Iv { start: position, stop: position + 1, val: () },
+            ModCodeRepr::Code('m'),
+            strand,
+            1,
+            2,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+    }
+
+    #[test]
+    fn map_to_genome_composes_coordinates_and_strands() {
+        let mut gtf = NamedTempFile::new().unwrap();
+        write!(
+            gtf,
+            concat!(
+                "chrP\ttest\texon\t1\t2\t.\t+\t.\tgene_id \"g_pos\"; transcript_id \"tx_pos\";\n",
+                "chrP\ttest\texon\t11\t12\t.\t+\t.\tgene_id \"g_pos\"; transcript_id \"tx_pos\";\n",
+                "chrN\ttest\texon\t1\t2\t.\t-\t.\tgene_id \"g_neg\"; transcript_id \"tx_neg\";\n",
+                "chrN\ttest\texon\t11\t12\t.\t-\t.\tgene_id \"g_neg\"; transcript_id \"tx_neg\";\n",
+            )
+        )
+        .unwrap();
+
+        let multi_progress = MultiProgress::new();
+        multi_progress.set_draw_target(ProgressDrawTarget::hidden());
+        let models = parse_gtf(gtf.path(), true, &multi_progress).unwrap();
+        let cases = [
+            ("tx_pos", 0, Positive, "chrP", 0, Positive),
+            ("tx_pos", 1, Negative, "chrP", 1, Negative),
+            ("tx_pos", 2, Positive, "chrP", 10, Positive),
+            ("tx_pos", 3, Negative, "chrP", 11, Negative),
+            ("tx_neg", 0, Positive, "chrN", 11, Negative),
+            ("tx_neg", 1, Negative, "chrN", 10, Positive),
+            ("tx_neg", 2, Positive, "chrN", 1, Negative),
+            ("tx_neg", 3, Negative, "chrN", 0, Positive),
+            ("tx_neg", 0, Both, "chrN", 11, Both),
+        ];
+
+        for (tx_id, tx_pos, input_strand, chrom, genome_start, output_strand) in
+            cases
+        {
+            let tx_key = GtfTranscript::new(tx_id.to_string(), 0);
+            let model = models.get(&tx_key).unwrap();
+            let mapped = map_bedmethyl_line_to_genome(
+                model,
+                bedmethyl_at(tx_id, tx_pos, input_strand),
+            )
+            .unwrap();
+            assert_eq!(
+                (
+                    mapped.chrom.as_str(),
+                    mapped.start(),
+                    mapped.stop(),
+                    mapped.strand,
+                ),
+                (chrom, genome_start, genome_start + 1, output_strand)
+            );
+        }
     }
 }
