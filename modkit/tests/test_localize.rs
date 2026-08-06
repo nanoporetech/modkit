@@ -232,7 +232,7 @@ fn localize_valid_output_is_byte_identical_across_thread_counts() {
     }
 
     let expected = b"mod_code\toffset\tn_valid\tn_mod\tpercent_modified\n\
-m\t-1\t28\t10\t35.714287\n";
+m\t0\t28\t10\t35.714287\n";
     assert_eq!(std::fs::read(one_thread).unwrap(), expected);
     assert_eq!(std::fs::read(many_threads).unwrap(), expected);
 }

@@ -60,7 +60,7 @@ impl LocalizedModCounts {
         anchor_point: u64,
     ) {
         let pos = bed_methyl_line.start() as i64;
-        let offset = (anchor_point as i64).saturating_sub(pos);
+        let offset = pos.saturating_sub(anchor_point as i64);
         let mod_pos_info = self
             .offsets
             .entry(bed_methyl_line.raw_mod_code)

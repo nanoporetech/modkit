@@ -44,11 +44,12 @@ pub struct EntryLocalize {
     #[clap(help_heading = "Output Options")]
     #[arg(long = "name", requires = "chart_filepath")]
     chart_name: Option<String>,
-    /// Number of base pairs to search around, for example if your BED region
-    /// records are single positions, a window of 500 will look 500 base
-    /// pairs upstream and downstream of that position. If your region BED
-    /// records are larger regions, this will expand from the midpoint of
-    /// that region.
+    /// Number of base pairs to search around. The original BED feature
+    /// midpoint remains offset zero. Output offsets are the bedMethyl
+    /// position minus that midpoint: negative is toward lower reference
+    /// coordinates and positive toward higher reference coordinates,
+    /// independent of feature strand. Earlier releases used the opposite
+    /// sign. For example, a window of 500 searches 500 bases on each side.
     #[arg(short = 'w', long = "window", default_value_t = 2000)]
     expand_window: u64,
     // todo
@@ -477,11 +478,18 @@ mod tests {
         let index =
             HtsTabixHandler::<BedMethylLine>::from_path(&entry.in_bedmethyl)?;
 
-        entry.load_focus_regions(
-            &sequence_lengths,
-            &index,
-            &MultiProgress::new(),
-        )
+        entry
+            .load_focus_regions(
+                &sequence_lengths,
+                &index,
+                &MultiProgress::new(),
+            )
+            .map(|regions| {
+                regions
+                    .into_iter()
+                    .map(|region| region.query_region().clone())
+                    .collect()
+            })
     }
 
     fn load_regions(regions: PathBuf) -> anyhow::Result<Vec<GenomeRegion>> {
