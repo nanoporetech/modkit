@@ -1488,14 +1488,15 @@ where
 #[cfg(test)]
 mod writer_tests {
     use super::{
-        BedMethylWriter, BedMethylWriter2, PileupWriter, RecordingWriter,
-        TsvWriter,
+        BedMethylWriter, BedMethylWriter2, OutWriter, PileupWriter,
+        RecordingWriter, TsvWriter,
     };
     use crate::mod_base_code::ModCodeRepr;
     use crate::pileup::{ModBasePileup2, PileupFeatureCounts2};
     use indicatif::ProgressBar;
     use std::io::{self, BufWriter, Write};
     use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone)]
@@ -1503,6 +1504,7 @@ mod writer_tests {
         bytes: Arc<Mutex<Vec<u8>>>,
         max_write: usize,
         fail_flush: bool,
+        flush_count: Arc<AtomicUsize>,
     }
 
     impl ShortWriter {
@@ -1512,6 +1514,7 @@ mod writer_tests {
                 bytes: Arc::new(Mutex::new(Vec::new())),
                 max_write,
                 fail_flush: false,
+                flush_count: Arc::new(AtomicUsize::new(0)),
             }
         }
 
@@ -1521,6 +1524,10 @@ mod writer_tests {
 
         fn bytes(&self) -> Vec<u8> {
             self.bytes.lock().unwrap().clone()
+        }
+
+        fn flush_count(&self) -> usize {
+            self.flush_count.load(Ordering::SeqCst)
         }
     }
 
@@ -1532,6 +1539,7 @@ mod writer_tests {
         }
 
         fn flush(&mut self) -> io::Result<()> {
+            self.flush_count.fetch_add(1, Ordering::SeqCst);
             if self.fail_flush {
                 Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
             } else {
@@ -1612,4 +1620,52 @@ mod writer_tests {
         );
         assert!(result.unwrap().is_err());
     }
+
+    #[test]
+    fn bedmethyl_writer_finish_propagates_buffered_flush_error() {
+        let sink = ShortWriter::failing_flush(usize::MAX);
+        let buf_writer = BufWriter::with_capacity(1024, sink);
+        let mut writer =
+            BedMethylWriter { buf_writer, tabs_and_spaces: false };
+        PileupWriter::write(&mut writer, pileup(), &[]).unwrap();
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            <BedMethylWriter<ShortWriter> as PileupWriter<
+                ModBasePileup2,
+            >>::finish(&mut writer)
+        }));
+        assert!(result.is_ok(), "final flush panicked");
+        let error = result.unwrap().expect_err("final flush should fail");
+        assert!(error.to_string().contains("flush failed"));
+    }
+
+    #[test]
+    fn out_writer_finish_propagates_tsv_flush_error() {
+        let sink = ShortWriter::failing_flush(usize::MAX);
+        let mut writer = TsvWriter { writer: sink };
+        OutWriter::write(&mut writer, "row\n".to_string()).unwrap();
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            <TsvWriter<ShortWriter> as OutWriter<String>>::finish(&mut writer)
+        }));
+        assert!(result.is_ok(), "final flush panicked");
+        let error = result.unwrap().expect_err("final flush should fail");
+        assert!(error.to_string().contains("flush failed"));
+    }
+
+    #[test]
+    fn recording_writer_does_not_retry_a_surfaced_flush_error_on_drop() {
+        let sink = ShortWriter::failing_flush(usize::MAX);
+        let observed = sink.clone();
+        let mut writer = RecordingWriter {
+            inner: sink,
+            pb: ProgressBar::hidden(),
+        };
+
+        let error = writer.write(b"row\n").expect_err("flush should fail");
+        assert!(error.to_string().contains("flush failed"));
+        drop(writer);
+        assert_eq!(observed.flush_count(), 1);
+    }
+
 }
