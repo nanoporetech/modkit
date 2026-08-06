@@ -131,9 +131,9 @@ fn run_cgcg0_combined_pileup(
     std::fs::read(output_path).unwrap()
 }
 
-fn run_negative_combine_anchor_pileup(
+fn run_combine_motif_validation_pileup(
     output_path: &Path,
-    motif_offset: &str,
+    motifs: &[(&str, &str)],
     optimized: bool,
 ) -> std::process::Output {
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_modkit"));
@@ -141,9 +141,6 @@ fn run_negative_combine_anchor_pileup(
         "pileup",
         "../tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads.bam",
         output_path.to_str().unwrap(),
-        "--motif",
-        "CGCG",
-        motif_offset,
         "--combine-strands",
         "--no-filtering",
         "--ref",
@@ -156,6 +153,9 @@ fn run_negative_combine_anchor_pileup(
         "1",
         "--suppress-progress",
     ]);
+    for (motif, offset) in motifs {
+        command.args(["--motif", motif, offset]);
+    }
     if optimized {
         command.args(["--modified-bases", "C:m"]);
     }
@@ -239,9 +239,9 @@ fn test_negative_combine_anchor_is_rejected_before_opening_output() {
                 .path()
                 .join(format!("cgcg{motif_offset}-{processor}.bed"));
 
-            let output = run_negative_combine_anchor_pileup(
+            let output = run_combine_motif_validation_pileup(
                 &output_path,
-                motif_offset,
+                &[("CGCG", motif_offset)],
                 optimized,
             );
             let diagnostics = format!(
@@ -271,9 +271,9 @@ fn test_negative_combine_anchor_is_rejected_before_opening_output() {
             );
 
             std::fs::write(&output_path, sentinel).unwrap();
-            let output = run_negative_combine_anchor_pileup(
+            let output = run_combine_motif_validation_pileup(
                 &output_path,
-                motif_offset,
+                &[("CGCG", motif_offset)],
                 optimized,
             );
             assert!(
@@ -287,6 +287,86 @@ fn test_negative_combine_anchor_is_rejected_before_opening_output() {
             );
         }
     }
+}
+
+fn assert_invalid_combine_motif_configuration_preserves_output(
+    label: &str,
+    motifs: &[(&str, &str)],
+    expected_diagnostic: &str,
+) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let sentinel = b"existing output must remain unchanged\n";
+    for optimized in [false, true] {
+        let processor = if optimized { "optimized" } else { "generic" };
+        let output_path =
+            temp_dir.path().join(format!("{label}-{processor}.bed"));
+
+        let output = run_combine_motif_validation_pileup(
+            &output_path,
+            motifs,
+            optimized,
+        );
+        let diagnostics = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !output.status.success(),
+            "{label} unexpectedly succeeded with {processor}"
+        );
+        assert!(
+            diagnostics.contains(expected_diagnostic),
+            "unexpected {processor} diagnostics for {label}: {diagnostics}"
+        );
+        assert!(
+            !output_path.exists(),
+            "invalid {label} {processor} request created its output"
+        );
+
+        std::fs::write(&output_path, sentinel).unwrap();
+        let output = run_combine_motif_validation_pileup(
+            &output_path,
+            motifs,
+            optimized,
+        );
+        assert!(
+            !output.status.success(),
+            "{label} unexpectedly succeeded with {processor}"
+        );
+        assert_eq!(
+            std::fs::read(&output_path).unwrap(),
+            sentinel,
+            "invalid {label} {processor} request truncated its output"
+        );
+    }
+}
+
+#[test]
+fn test_missing_combine_motif_is_rejected_before_output() {
+    assert_invalid_combine_motif_configuration_preserves_output(
+        "no-motif",
+        &[],
+        "combine strands",
+    );
+}
+
+#[test]
+fn test_non_palindromic_combine_motif_is_rejected_before_output() {
+    assert_invalid_combine_motif_configuration_preserves_output(
+        "non-palindrome",
+        &[("CAT", "0")],
+        "combine strands",
+    );
+}
+
+#[test]
+fn test_multiple_combine_motifs_are_rejected_before_output() {
+    assert_invalid_combine_motif_configuration_preserves_output(
+        "multiple-motifs",
+        &[("CG", "0"), ("GATC", "1")],
+        "multiple motifs and combine-strands not currently supported",
+    );
 }
 
 #[test]
