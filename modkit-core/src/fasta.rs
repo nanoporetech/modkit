@@ -265,15 +265,16 @@ impl MotifLocationsLookup {
         Ok(mask)
     }
 
-    /// Find complete palindromic-motif anchor pairs owned by their positive
-    /// anchor. A combined-strand output row is written at that positive
-    /// coordinate, so the region and any stranded position filter must select
-    /// that coordinate; the paired negative anchor is then admitted
-    /// atomically even when a strand-specific filter does not select it.
+    /// Find complete palindromic-motif anchor pairs whose positive anchor is
+    /// in `positive_scan`. A combined-strand output row is written at that
+    /// positive coordinate, so any stranded position filter must select it;
+    /// the paired negative anchor is then admitted atomically even when a
+    /// strand-specific filter does not select it.
     fn get_combined_motif_pairs(
         &self,
         contig: &str,
-        positive_owner: std::ops::Range<u64>,
+        positive_scan: std::ops::Range<u64>,
+        owner_start: u64,
         owner_limit: u64,
         tid: u32,
         stranded_position_filter: Option<&StrandedPositionFilter<()>>,
@@ -281,19 +282,20 @@ impl MotifLocationsLookup {
         let ref_end = *self.reader.contigs.get(contig).ok_or_else(|| {
             MkError::ContigMissing(format!("{contig} not in FASTA index"))
         })?;
-        if positive_owner.start > positive_owner.end
-            || positive_owner.end > owner_limit
+        if owner_start > positive_scan.start
+            || positive_scan.start > positive_scan.end
+            || positive_scan.end > owner_limit
             || owner_limit > ref_end
         {
             return Err(MkError::InvalidReferenceCoordinates);
         }
-        if positive_owner.is_empty() {
+        if positive_scan.is_empty() {
             return Ok(Vec::new());
         }
 
         let context = self.longest_motif_length.saturating_sub(1);
-        let fetch_start = positive_owner.start.saturating_sub(context);
-        let fetch_end = positive_owner.end.saturating_add(context).min(ref_end);
+        let fetch_start = positive_scan.start.saturating_sub(context);
+        let fetch_end = positive_scan.end.saturating_add(context).min(ref_end);
         let seq = self.reader.get_sequence(contig, fetch_start, fetch_end)?;
         let seq = if self.mask { seq } else { seq.to_ascii_uppercase() };
 
@@ -311,7 +313,7 @@ impl MotifLocationsLookup {
                 else {
                     continue;
                 };
-                if !positive_owner.contains(&positive_position)
+                if !positive_scan.contains(&positive_position)
                     || stranded_position_filter.is_some_and(|spf| {
                         !spf.contains(
                             tid as i32,
@@ -333,10 +335,9 @@ impl MotifLocationsLookup {
                     continue;
                 };
 
-                // Both anchors must be in the same selected reference region
-                // and owner. In particular, never expose a reverse anchor
-                // whose positive owner is before the region start.
-                if negative_position < positive_owner.start
+                // Both anchors must be in the same selected reference region,
+                // even when this scan window starts inside that region.
+                if negative_position < owner_start
                     || negative_position >= owner_limit
                 {
                     continue;
@@ -375,50 +376,74 @@ impl MotifLocationsLookup {
             ));
         }
 
-        let mut end = range.end;
-        let (mask, end) = loop {
-            let pairs = self.get_combined_motif_pairs(
+        // Discover a little past the requested owner so an ordinary boundary
+        // pair closes in one scan. If overlapping pairs carry the closure
+        // farther, scan disjoint lookahead windows that grow geometrically.
+        // This preserves exact transitive ownership without repeatedly
+        // fetching and searching the full growing owner prefix.
+        let mut closure_end = range.end;
+        let mut scan_start = range.start;
+        let mut window_size = self.longest_motif_length.max(1);
+        let mut scan_end =
+            range.end.saturating_add(window_size).min(owner_limit);
+        let mut pairs = Vec::new();
+        loop {
+            let mut new_pairs = self.get_combined_motif_pairs(
                 contig,
-                range.start..end,
+                scan_start..scan_end,
+                range.start,
                 owner_limit,
                 tid,
                 stranded_position_filter,
             )?;
-            let required_end = pairs
-                .iter()
-                .filter_map(|(positive, negative, _)| {
-                    positive.max(negative).checked_add(1)
-                })
-                .max()
-                .unwrap_or(end);
-            if required_end > end {
-                debug!(
-                    "extending combined motif owner from {end} to \
-                     {required_end}, contig={contig}, range={range:?}"
-                );
-                end = required_end;
-                continue;
+            new_pairs.sort_unstable_by_key(|(positive, _, _)| *positive);
+            for (positive, negative, _) in &new_pairs {
+                if *positive >= closure_end {
+                    break;
+                }
+                if let Some(pair_end) = positive.max(negative).checked_add(1) {
+                    closure_end = closure_end.max(pair_end);
+                }
+            }
+            pairs.extend(new_pairs);
+
+            if closure_end <= scan_end {
+                break;
             }
 
-            let mut mask =
-                bitvec![0; (end - range.start) as usize * bits_per_pos];
-            for (positive, negative, motif_idx) in pairs {
-                let positive_local = (positive - range.start) as usize;
-                let negative_local = (negative - range.start) as usize;
-                mask.set((positive_local * bits_per_pos) + motif_idx, true);
-                mask.set(
-                    (negative_local * bits_per_pos) + num_motifs + motif_idx,
-                    true,
-                );
-            }
-            break (mask, end);
-        };
+            let previous_scan_end = scan_end;
+            scan_start = scan_end;
+            window_size = window_size.saturating_mul(2);
+            scan_end = scan_end
+                .saturating_add(window_size)
+                .max(closure_end)
+                .min(owner_limit);
+            debug!(
+                "growing combined motif lookahead from {previous_scan_end} to \
+                 {scan_end} for owner closure {closure_end}, contig={contig}, \
+                 range={range:?}"
+            );
+            debug_assert!(scan_end > previous_scan_end);
+        }
+
+        pairs.retain(|(positive, _, _)| *positive < closure_end);
+        let mut mask =
+            bitvec![0; (closure_end - range.start) as usize * bits_per_pos];
+        for (positive, negative, motif_idx) in pairs {
+            let positive_local = (positive - range.start) as usize;
+            let negative_local = (negative - range.start) as usize;
+            mask.set((positive_local * bits_per_pos) + motif_idx, true);
+            mask.set(
+                (negative_local * bits_per_pos) + num_motifs + motif_idx,
+                true,
+            );
+        }
         Ok((
             FocusPositions2::MotifMask {
                 mask,
                 num_motifs: self.num_motifs() as u8,
             },
-            end as u32,
+            closure_end as u32,
         ))
     }
 
