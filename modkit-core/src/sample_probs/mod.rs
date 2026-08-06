@@ -1825,6 +1825,10 @@ mod tests {
         io::{Error, ErrorKind},
         path::PathBuf,
         process::{Command, Stdio},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Barrier,
+        },
         thread,
         time::{Duration, Instant},
     };
@@ -1931,6 +1935,42 @@ mod tests {
             _mem: QualHist,
         ) -> anyhow::Result<QualHist> {
             panic!("synthetic worker panic")
+        }
+    }
+
+    struct CoordinatedPanics {
+        start: Arc<Barrier>,
+    }
+
+    impl ExtractProbsWorker for CoordinatedPanics {
+        fn process(
+            &mut self,
+            _item: ChromCoordinates,
+            _mem: QualHist,
+        ) -> anyhow::Result<QualHist> {
+            self.start.wait();
+            panic!("synthetic coordinated worker panic")
+        }
+    }
+
+    struct CoordinatedSurvivor {
+        start: Arc<Barrier>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ExtractProbsWorker for CoordinatedSurvivor {
+        fn process(
+            &mut self,
+            _item: ChromCoordinates,
+            mut mem: QualHist,
+        ) -> anyhow::Result<QualHist> {
+            let call = self.calls.fetch_add(1, Ordering::Relaxed);
+            if call == 0 {
+                self.start.wait();
+            }
+            mem.interval_length = 1;
+            mem.ok_records = 1;
+            Ok(mem)
         }
     }
 
@@ -2152,6 +2192,11 @@ mod tests {
     }
 
     #[test]
+    fn multi_worker_panic_cancels_long_feed_promptly() {
+        run_in_child("multi_worker_panic");
+    }
+
+    #[test]
     fn zero_workers_are_rejected_without_deadlock() {
         run_in_child("zero_workers");
     }
@@ -2166,6 +2211,7 @@ mod tests {
         let Ok(mode) = std::env::var(CHILD_MODE_ENV) else {
             return;
         };
+        let survivor_calls = Arc::new(AtomicUsize::new(0));
         let (workers, feeder): (
             Vec<Box<dyn ExtractProbsWorker>>,
             ChromCoordinatesFeeder,
@@ -2176,6 +2222,19 @@ mod tests {
             "worker_panic" => {
                 (vec![Box::new(AlwaysPanics)], synthetic_feeder(3))
             }
+            "multi_worker_panic" => {
+                let start = Arc::new(Barrier::new(2));
+                (
+                    vec![
+                        Box::new(CoordinatedPanics { start: start.clone() }),
+                        Box::new(CoordinatedSurvivor {
+                            start,
+                            calls: survivor_calls.clone(),
+                        }),
+                    ],
+                    synthetic_feeder(10_000_000),
+                )
+            }
             "feeder_error" => {
                 (vec![Box::new(MustNotRun)], feeder_that_errors())
             }
@@ -2183,15 +2242,28 @@ mod tests {
             _ => panic!("unknown child mode {mode}"),
         };
 
+        let start = Instant::now();
         let error =
             run_extract_probs_workers(workers, MultiProgress::new(), feeder)
                 .unwrap_err();
+        let elapsed = start.elapsed();
         let error = format!("{error:#}");
         match mode.as_str() {
             "worker_error" => {
                 assert!(error.contains("synthetic worker failure"))
             }
             "worker_panic" => assert!(error.contains("worker 0 panicked")),
+            "multi_worker_panic" => {
+                assert!(error.contains("worker 0 panicked"), "{error}");
+                assert!(
+                    elapsed < Duration::from_secs(2),
+                    "multi-worker panic cancellation took {elapsed:?}"
+                );
+                assert!(
+                    survivor_calls.load(Ordering::Relaxed) < 10_000,
+                    "surviving worker processed too many intervals before cancellation"
+                );
+            }
             "feeder_error" => {
                 assert!(error.contains("invalid-reference-coordinates"))
             }
