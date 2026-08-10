@@ -103,14 +103,10 @@ fn call_and_adjust_mods_match_bam_and_cram() {
         BAM,
         call_bam.to_str().unwrap(),
         "--output-sam",
-        "--sampling-frac",
-        "1",
-        "--seed",
-        "7",
+        "--filter-threshold",
+        "0.5",
         "--threads",
         "1",
-        "--sampling-interval-size",
-        "20",
         "--reference",
         REFERENCE,
         "--suppress-progress",
@@ -119,6 +115,27 @@ fn call_and_adjust_mods_match_bam_and_cram() {
         "call-mods",
         CRAM,
         call_cram.to_str().unwrap(),
+        "--output-sam",
+        "--filter-threshold",
+        "0.5",
+        "--threads",
+        "1",
+        "--ref",
+        REFERENCE,
+        "--suppress-progress",
+    ]);
+    assert_success(&bam_output);
+    assert_success(&cram_output);
+    let bam_records = normalized_sam_records(&call_bam);
+    assert_eq!(bam_records.len(), 10);
+    assert_eq!(bam_records, normalized_sam_records(&call_cram));
+
+    let automatic_cram = temp_dir.path().join("call.automatic.cram.sam");
+    let automatic_log = temp_dir.path().join("call.automatic.cram.log");
+    let automatic_output = run_modkit(&[
+        "call-mods",
+        CRAM,
+        automatic_cram.to_str().unwrap(),
         "--output-sam",
         "--sampling-frac",
         "1",
@@ -130,13 +147,15 @@ fn call_and_adjust_mods_match_bam_and_cram() {
         "20",
         "--ref",
         REFERENCE,
+        "--log",
+        automatic_log.to_str().unwrap(),
         "--suppress-progress",
     ]);
-    assert_success(&bam_output);
-    assert_success(&cram_output);
-    let bam_records = normalized_sam_records(&call_bam);
-    assert_eq!(bam_records.len(), 10);
-    assert_eq!(bam_records, normalized_sam_records(&call_cram));
+    assert_success(&automatic_output);
+    assert_eq!(normalized_sam_records(&automatic_cram).len(), 10);
+    let automatic_log = fs::read_to_string(automatic_log).unwrap();
+    assert!(automatic_log.contains("sampling 100% of reads"));
+    assert!(automatic_log.contains("estimated pass threshold"));
 
     let adjust_bam = temp_dir.path().join("adjust.bam.sam");
     let adjust_cram = temp_dir.path().join("adjust.cram.sam");

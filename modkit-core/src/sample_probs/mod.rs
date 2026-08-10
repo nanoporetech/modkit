@@ -39,7 +39,9 @@ use crate::{
 };
 use crate::{
     mod_base_code::DnaBase,
-    util::{qual_to_prob, reader_is_cram},
+    util::{
+        qual_to_prob, reader_is_cram, set_reference_for_cram_indexed_reader,
+    },
 };
 
 #[derive(new, Debug)]
@@ -1518,6 +1520,7 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
         multi_progress
             .suspend(|| info!("collecting probabilities from unmapped reads"));
         let mut records = bam::IndexedReader::from_path(bam_fp)?;
+        set_reference_for_cram_indexed_reader(&mut records, reference_fasta)?;
         records.fetch(FetchDefinition::Unmapped)?;
         let unmapped_qual_hist = QualHist::from_records(
             records.records(),
@@ -1801,9 +1804,13 @@ fn byte_to_bool_positions<const SIZE: usize>(b: u8, agg: &mut [u32; SIZE]) {
 
 #[cfg(test)]
 mod empty_threshold_tests {
+    use std::path::PathBuf;
+
     use indicatif::MultiProgress;
 
-    use super::{ModHist, QualHist};
+    use super::{
+        calc_per_base_thresholds_from_indexed_hts_file, ModHist, QualHist,
+    };
     use crate::mod_base_code::{DnaBase, METHYL_CYTOSINE};
 
     fn all_modified_qual_hist() -> QualHist {
@@ -1841,5 +1848,40 @@ mod empty_threshold_tests {
             .get_base_thresholds(0.1, None, &MultiProgress::new())
             .expect("all-modified observations must produce a threshold");
         assert!(thresholds[DnaBase::C as usize] > 0.0);
+    }
+
+    #[test]
+    fn indexed_unmapped_threshold_reader_applies_supplied_cram_reference() {
+        let bam_fp = PathBuf::from(
+            "../tests/resources/bc_anchored_10_reads_unmapped.cram",
+        );
+        let missing_reference =
+            PathBuf::from("../tests/resources/missing-reference.fa");
+        let io_threadpool = rust_htslib::tpool::ThreadPool::new(1).unwrap();
+
+        let error = calc_per_base_thresholds_from_indexed_hts_file(
+            &bam_fp,
+            Some(&missing_reference),
+            0.1,
+            false,
+            false,
+            false,
+            None,
+            10,
+            None,
+            None,
+            None,
+            false,
+            1,
+            1_000,
+            Some(7),
+            None,
+            None,
+            &io_threadpool,
+            MultiProgress::new(),
+        )
+        .expect_err("a supplied CRAM reference must reach the fallback reader");
+
+        assert!(error.to_string().contains("failed to set CRAM reference"));
     }
 }
