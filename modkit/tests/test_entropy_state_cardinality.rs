@@ -15,7 +15,7 @@ fn write_reference(temp_dir: &Path) -> PathBuf {
     reference
 }
 
-fn write_ten_code_bam(temp_dir: &Path, name: &str, codes: &[char]) -> PathBuf {
+fn write_code_bam(temp_dir: &Path, name: &str, codes: &[char]) -> PathBuf {
     let bam_path = temp_dir.join(format!("{name}.bam"));
     let mut header = bam::Header::new();
     let mut sq = HeaderRecord::new(b"SQ");
@@ -84,36 +84,50 @@ fn run_entropy(input: &Path, reference: &Path, output: &Path, threads: usize) {
 }
 
 #[test]
-fn ten_code_cli_is_stable_across_encounter_order_and_threads() {
+fn code_cardinality_cli_is_stable_across_encounter_order_and_threads() {
     let temp_dir = tempfile::tempdir().unwrap();
     let reference = write_reference(temp_dir.path());
-    let codes = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
-    let forward = write_ten_code_bam(temp_dir.path(), "forward", &codes);
-    let mut reversed_codes = codes;
-    reversed_codes.reverse();
-    let reversed =
-        write_ten_code_bam(temp_dir.path(), "reversed", &reversed_codes);
 
-    let mut expected = None;
-    for (order, input) in [("forward", &forward), ("reversed", &reversed)] {
-        for threads in [1, 4] {
-            let output = temp_dir.path().join(format!("{order}-{threads}.bed"));
-            run_entropy(input, &reference, &output, threads);
-            let observed = fs::read(&output).unwrap();
-            if let Some(expected) = expected.as_ref() {
-                assert_eq!(&observed, expected);
-            } else {
-                expected = Some(observed);
+    for code_count in [9, 10, 12, 17] {
+        let codes = ('a'..='z').take(code_count).collect::<Vec<_>>();
+        let forward = write_code_bam(
+            temp_dir.path(),
+            &format!("forward-{code_count}"),
+            &codes,
+        );
+        let mut reversed_codes = codes;
+        reversed_codes.reverse();
+        let reversed = write_code_bam(
+            temp_dir.path(),
+            &format!("reversed-{code_count}"),
+            &reversed_codes,
+        );
+
+        let mut expected = None;
+        for (order, input) in
+            [("forward", &forward), ("reversed", &reversed)]
+        {
+            for threads in [1, 4] {
+                let output = temp_dir.path().join(format!(
+                    "{code_count}-{order}-{threads}.bed"
+                ));
+                run_entropy(input, &reference, &output, threads);
+                let observed = fs::read(&output).unwrap();
+                if let Some(expected) = expected.as_ref() {
+                    assert_eq!(&observed, expected);
+                } else {
+                    expected = Some(observed);
+                }
             }
         }
-    }
 
-    let output = String::from_utf8(expected.unwrap()).unwrap();
-    let rows = output.lines().collect::<Vec<_>>();
-    assert_eq!(rows.len(), 1);
-    let fields = rows[0].split('\t').collect::<Vec<_>>();
-    assert_eq!(fields.len(), 6);
-    assert_eq!(fields[5], "10");
-    let entropy = fields[3].parse::<f32>().unwrap();
-    assert!((entropy - 10f32.log2()).abs() < 0.000_01);
+        let output = String::from_utf8(expected.unwrap()).unwrap();
+        let rows = output.lines().collect::<Vec<_>>();
+        assert_eq!(rows.len(), 1);
+        let fields = rows[0].split('\t').collect::<Vec<_>>();
+        assert_eq!(fields.len(), 6);
+        assert_eq!(fields[5], code_count.to_string());
+        let entropy = fields[3].parse::<f32>().unwrap();
+        assert!((entropy - (code_count as f32).log2()).abs() < 0.000_01);
+    }
 }
