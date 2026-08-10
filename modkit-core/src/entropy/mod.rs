@@ -2001,6 +2001,7 @@ mod entropy_mod_tests {
     use rayon::ThreadPoolBuilder;
     use rustc_hash::FxHashMap;
     use std::collections::{BTreeSet, HashSet, VecDeque};
+    use std::sync::Arc;
 
     fn combined_window_with_code_count(code_count: usize) -> GenomeWindow {
         let read_patterns = (0..code_count)
@@ -2307,6 +2308,202 @@ mod entropy_mod_tests {
         )
         .unwrap();
         assert_eq!(deduped.len(), 1);
+    }
+
+    #[test]
+    fn combined_partner_conflict_is_detected_across_scan_stripes() {
+        let sequence = "CGC".chars().collect::<Vec<_>>();
+        let motifs = vec![
+            RegexMotif::parse_string("CG", 0).unwrap(),
+            RegexMotif::parse_string("GC", 1).unwrap(),
+        ];
+
+        let error = SlidingWindows::scan_motif_hits_with_config_for_test(
+            &sequence,
+            &motifs,
+            0..sequence.len(),
+            0,
+            "chr1",
+            true,
+            2,
+            1,
+            Some(Strand::Positive),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("negative C partner 1"), "{error}");
+        assert!(error.contains("positive anchors 0"), "{error}");
+        assert!(error.contains("and 2"), "{error}");
+    }
+
+    #[test]
+    fn dense_base_scan_is_identical_across_threads_and_chunk_seams() {
+        let sequence = "ACGT".repeat(257).chars().collect::<Vec<_>>();
+        let motifs = ["A", "C", "G", "T"]
+            .into_iter()
+            .map(|base| RegexMotif::parse_string(base, 0).unwrap())
+            .collect::<Vec<_>>();
+        let mut baseline = None;
+
+        for (threads, chunk_size) in [(1, 7), (4, 7), (4, 13)] {
+            let pool =
+                ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+            let hits = pool
+                .install(|| {
+                    SlidingWindows::scan_motif_hits_with_config_for_test(
+                        &sequence,
+                        &motifs,
+                        0..sequence.len(),
+                        0,
+                        "chr1",
+                        false,
+                        chunk_size,
+                        3,
+                        None,
+                    )
+                })
+                .unwrap();
+            let snapshot = hits
+                .iter()
+                .map(|hit| {
+                    (
+                        hit.pos,
+                        hit.strand,
+                        hit.base,
+                        hit.neg_position,
+                        hit.motif_idx,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(snapshot.len(), sequence.len() * 2);
+            assert!(snapshot.windows(2).all(|pair| pair[0] <= pair[1]));
+            if let Some(expected) = baseline.as_ref() {
+                assert_eq!(&snapshot, expected);
+            } else {
+                baseline = Some(snapshot);
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_anchor_groups_remain_unique_across_scan_stripes() {
+        let sequence = "CGACGA".chars().collect::<Vec<_>>();
+        let motifs = vec![
+            RegexMotif::parse_string("CG", 0).unwrap(),
+            RegexMotif::parse_string("CGN", 0).unwrap(),
+        ];
+
+        let hits = SlidingWindows::scan_motif_hits_with_config_for_test(
+            &sequence,
+            &motifs,
+            0..sequence.len(),
+            0,
+            "chr1",
+            false,
+            1,
+            2,
+            Some(Strand::Positive),
+        )
+        .unwrap();
+
+        assert_eq!(
+            hits.iter().map(|hit| hit.pos).collect::<Vec<_>>(),
+            vec![0, 3]
+        );
+    }
+
+    #[test]
+    fn out_of_window_lookahead_is_not_emitted_and_scan_terminates() {
+        let make_search_space = |tid, name: &str| {
+            let sequence = "AAAA".chars().collect::<Vec<_>>();
+            ReferenceSearchSpace {
+                record: ReferenceRecord::new(
+                    tid,
+                    0,
+                    sequence.len() as u32,
+                    name.to_string(),
+                ),
+                owner: 0..sequence.len(),
+                sequence: Arc::new(sequence),
+            }
+        };
+        let mut windows = SlidingWindows::new_for_test(
+            VecDeque::from([
+                make_search_space(0, "chr1"),
+                make_search_space(1, "chr2"),
+            ]),
+            vec![RegexMotif::parse_string("A", 0).unwrap()],
+            false,
+            2,
+            1,
+            1,
+            2,
+            2,
+        )
+        .unwrap();
+
+        // Every lookahead contains the next anchor at or beyond the exclusive
+        // one-base window end, so no two-position window is eligible.
+        assert!(windows.next().is_none());
+        assert!(windows.done);
+        assert!(windows.next().is_none());
+    }
+
+    #[test]
+    fn dense_two_owner_scan_has_fixed_live_hit_high_water() {
+        const CHUNK_SIZE: usize = 31;
+        const STRIPES_PER_BATCH: usize = 3;
+        const NUM_POSITIONS: usize = 4;
+        let make_search_space = |tid, name: &str, repeats| {
+            let sequence = "ACGT".repeat(repeats).chars().collect::<Vec<_>>();
+            let length = sequence.len();
+            ReferenceSearchSpace {
+                record: ReferenceRecord::new(
+                    tid,
+                    0,
+                    length as u32,
+                    name.to_string(),
+                ),
+                sequence: Arc::new(sequence),
+                owner: 0..length,
+            }
+        };
+        let work_queue = VecDeque::from([
+            make_search_space(0, "chr1", 513),
+            make_search_space(1, "chr2", 777),
+        ]);
+        let motifs = ["A", "C", "G", "T"]
+            .into_iter()
+            .map(|base| RegexMotif::parse_string(base, 0).unwrap())
+            .collect::<Vec<_>>();
+        let mut windows = SlidingWindows::new_for_test(
+            work_queue,
+            motifs,
+            false,
+            NUM_POSITIONS,
+            17,
+            1,
+            CHUNK_SIZE,
+            STRIPES_PER_BATCH,
+        )
+        .unwrap();
+
+        while windows.next().is_some() {}
+
+        // Four single-base motifs produce two raw strand hits per base before
+        // filtering. The conservative metric counts raw and deduplicated
+        // stripe storage separately for both strand streams, plus both N-hit
+        // lookaheads.
+        let fixed_bound =
+            6 * CHUNK_SIZE * STRIPES_PER_BATCH + 2 * NUM_POSITIONS;
+        let raw_or_dedup_max =
+            4 * CHUNK_SIZE * STRIPES_PER_BATCH + 2 * NUM_POSITIONS;
+        let high_water = windows.high_water_retained_hits_for_test();
+        assert!(high_water > raw_or_dedup_max);
+        assert!(high_water <= fixed_bound);
+        assert!(high_water < 513 * 4);
     }
 
     #[test]
