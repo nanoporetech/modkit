@@ -1,16 +1,21 @@
 use std::cmp::Ordering;
-use std::path::PathBuf;
+use std::fs::{self, File};
+use std::io::{Read as IoRead, Seek, SeekFrom};
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use clap::Args;
 use crossbeam_channel::unbounded;
 use derive_new::new;
 use indicatif::{MultiProgress, ProgressBar};
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::{self, Read};
 use rustc_hash::FxHashMap;
+use tempfile::{Builder as TempFileBuilder, NamedTempFile, TempDir};
 
 use modkit_logging::init_logging;
 
@@ -46,10 +51,452 @@ pub struct RepairTags {
     threads: usize,
 }
 
+const REPAIR_TEMP_PREFIX: &str = ".modkit-repair-";
+const BGZF_EOF_BLOCK: [u8; 28] = [
+    31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, 66, 67, 2, 0, 27, 0, 3, 0, 0, 0,
+    0, 0, 0, 0, 0, 0,
+];
+
+trait RepairSink {
+    fn write(&mut self, record: &bam::Record) -> anyhow::Result<()>;
+    fn finish(self, expected_records: usize) -> anyhow::Result<()>;
+}
+
+trait StagedBamValidator {
+    fn validate(
+        &self,
+        file: &mut File,
+        path: &Path,
+        expected_identity: StagedFileIdentity,
+        expected_records: usize,
+    ) -> anyhow::Result<()>;
+}
+
+struct CompleteBamValidator;
+
+impl StagedBamValidator for CompleteBamValidator {
+    fn validate(
+        &self,
+        file: &mut File,
+        path: &Path,
+        expected_identity: StagedFileIdentity,
+        expected_records: usize,
+    ) -> anyhow::Result<()> {
+        validate_complete_bam_file(
+            file,
+            path,
+            expected_identity,
+            expected_records,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StagedFileIdentity {
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl StagedFileIdentity {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        {
+            Self { device: metadata.dev(), inode: metadata.ino() }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = metadata;
+            Self {}
+        }
+    }
+}
+
+fn require_staged_path_identity(
+    file: &File,
+    path: &Path,
+    expected: StagedFileIdentity,
+) -> anyhow::Result<()> {
+    let retained_metadata = file.metadata().with_context(|| {
+        format!(
+            "failed to inspect retained staged repair BAM descriptor for {}",
+            path.display()
+        )
+    })?;
+    if !retained_metadata.file_type().is_file() {
+        bail!(
+            "retained staged repair BAM descriptor for {} is not a regular file",
+            path.display()
+        );
+    }
+    let path_metadata = fs::symlink_metadata(path).with_context(|| {
+        format!(
+            "staged repair BAM pathname {} no longer identifies the retained file",
+            path.display()
+        )
+    })?;
+    if !path_metadata.file_type().is_file() {
+        bail!(
+            "staged repair BAM pathname {} no longer identifies the retained regular file",
+            path.display()
+        );
+    }
+    #[cfg(unix)]
+    {
+        let retained_identity =
+            StagedFileIdentity::from_metadata(&retained_metadata);
+        let path_identity = StagedFileIdentity::from_metadata(&path_metadata);
+        if retained_identity != expected || path_identity != expected {
+            bail!(
+                "staged repair BAM pathname {} no longer identifies the retained file \
+                 (expected dev {} ino {}, retained dev {} ino {}, path dev {} ino {})",
+                path.display(),
+                expected.device,
+                expected.inode,
+                retained_identity.device,
+                retained_identity.inode,
+                path_identity.device,
+                path_identity.inode
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = expected;
+    Ok(())
+}
+
+struct StagedBamOutput<V> {
+    // Keep the writer and temporary file before the directory so early-drop
+    // closes htslib, removes the staged file, then removes the private dir.
+    writer: Option<bam::Writer>,
+    temp_file: NamedTempFile,
+    _staging_dir: TempDir,
+    destination: PathBuf,
+    destination_permissions: Option<fs::Permissions>,
+    staged_identity: StagedFileIdentity,
+    validator: V,
+}
+
+fn existing_destination_permissions(
+    destination: &Path,
+) -> anyhow::Result<Option<fs::Permissions>> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() => bail!(
+            "repair output destination {} must not be a symbolic link",
+            destination.display()
+        ),
+        Ok(metadata) if !metadata.file_type().is_file() => bail!(
+            "repair output destination {} must be a regular file when it already exists",
+            destination.display()
+        ),
+        Ok(metadata) => Ok(Some(metadata.permissions())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "failed to inspect repair output destination {}",
+                destination.display()
+            )
+        }),
+    }
+}
+
+impl StagedBamOutput<CompleteBamValidator> {
+    fn new(destination: &Path, header: &bam::Header) -> anyhow::Result<Self> {
+        Self::with_validator(destination, header, CompleteBamValidator)
+    }
+}
+
+impl<V> StagedBamOutput<V> {
+    fn with_validator(
+        destination: &Path,
+        header: &bam::Header,
+        validator: V,
+    ) -> anyhow::Result<Self> {
+        let destination_permissions =
+            existing_destination_permissions(destination)?;
+        let destination_dir = destination
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+
+        let mut staging_dir_builder = TempFileBuilder::new();
+        staging_dir_builder.prefix(REPAIR_TEMP_PREFIX);
+        #[cfg(unix)]
+        staging_dir_builder.permissions(fs::Permissions::from_mode(0o700));
+        let staging_dir = staging_dir_builder
+            .tempdir_in(destination_dir)
+            .with_context(|| {
+                format!(
+                    "failed to create private repair staging directory in {}",
+                    destination_dir.display()
+                )
+            })?;
+        #[cfg(unix)]
+        {
+            // Builder applies the process umask. A restrictive umask may
+            // remove owner bits, but group/other access must never be added.
+            let staging_mode = fs::symlink_metadata(staging_dir.path())
+                .with_context(|| {
+                    format!(
+                        "failed to inspect repair staging directory {}",
+                        staging_dir.path().display()
+                    )
+                })?
+                .permissions()
+                .mode()
+                & 0o7777;
+            if staging_mode & 0o077 != 0 {
+                bail!(
+                    "repair staging directory {} has non-owner mode bits {staging_mode:o}",
+                    staging_dir.path().display()
+                );
+            }
+        }
+
+        let mut temp_file_builder = TempFileBuilder::new();
+        temp_file_builder.prefix("staged-").suffix(".bam");
+        #[cfg(unix)]
+        {
+            // Match an ordinary File::create rather than tempfile's 0600
+            // default; Builder applies the process umask to this mode.
+            temp_file_builder.permissions(fs::Permissions::from_mode(0o666));
+        }
+        let temp_file = temp_file_builder
+            .tempfile_in(staging_dir.path())
+            .with_context(|| {
+                format!(
+                    "failed to create staged repair BAM in private directory {}",
+                    staging_dir.path().display()
+                )
+            })?;
+        let staged_identity = StagedFileIdentity::from_metadata(
+            &temp_file.as_file().metadata().with_context(|| {
+                format!(
+                    "failed to inspect retained staged repair BAM {}",
+                    temp_file.path().display()
+                )
+            })?,
+        );
+        let writer =
+            bam::Writer::from_path(temp_file.path(), header, bam::Format::Bam)
+                .with_context(|| {
+                    format!(
+                        "failed to open staged repair BAM {}",
+                        temp_file.path().display()
+                    )
+                })?;
+        require_staged_path_identity(
+            temp_file.as_file(),
+            temp_file.path(),
+            staged_identity,
+        )
+        .context("staged repair BAM changed while opening its htslib writer")?;
+        Ok(Self {
+            writer: Some(writer),
+            temp_file,
+            _staging_dir: staging_dir,
+            destination: destination.to_path_buf(),
+            destination_permissions,
+            staged_identity,
+            validator,
+        })
+    }
+}
+
+impl<V: StagedBamValidator> RepairSink for StagedBamOutput<V> {
+    fn write(&mut self, record: &bam::Record) -> anyhow::Result<()> {
+        self.writer
+            .as_mut()
+            .ok_or_else(|| {
+                anyhow!("staged repair BAM writer is already closed")
+            })?
+            .write(record)
+            .context("failed to write staged repair BAM record")
+    }
+
+    fn finish(mut self, expected_records: usize) -> anyhow::Result<()> {
+        let writer = self.writer.take().ok_or_else(|| {
+            anyhow!("staged repair BAM writer is already closed")
+        })?;
+        // rust-htslib 0.46 does not expose hts_close's return status. Drop the
+        // writer, then independently require a readable BAM, canonical EOF,
+        // and the expected record count before making it visible.
+        drop(writer);
+        let staged_path = self.temp_file.path().to_path_buf();
+        require_staged_path_identity(
+            self.temp_file.as_file(),
+            &staged_path,
+            self.staged_identity,
+        )
+        .context("staged repair BAM changed after closing its htslib writer")?;
+        self.validator
+            .validate(
+                self.temp_file.as_file_mut(),
+                &staged_path,
+                self.staged_identity,
+                expected_records,
+            )
+            .context("failed to validate staged repair BAM")?;
+        require_staged_path_identity(
+            self.temp_file.as_file(),
+            &staged_path,
+            self.staged_identity,
+        )
+        .context("staged repair BAM changed during validation")?;
+        if let Some(permissions) = self.destination_permissions.take() {
+            // Restore after all writes because a write may clear special mode
+            // bits. Any failure still precedes the atomic replacement.
+            self.temp_file
+                .as_file()
+                .set_permissions(permissions)
+                .with_context(|| {
+                    format!(
+                        "failed to preserve permissions for existing repair output {}",
+                        self.destination.display()
+                    )
+                })?;
+        }
+        self.temp_file.as_file().sync_all().with_context(|| {
+            format!(
+                "failed to sync staged repair BAM {}",
+                staged_path.display()
+            )
+        })?;
+        // NamedTempFile::persist still names the source path. These checks
+        // reject observed substitutions, although a hostile writer of a
+        // non-sticky parent directory can still race the check and rename.
+        require_staged_path_identity(
+            self.temp_file.as_file(),
+            &staged_path,
+            self.staged_identity,
+        )
+        .context("staged repair BAM changed before atomic replacement")?;
+        self.temp_file.persist(&self.destination).map_err(|error| {
+            anyhow!(
+                "failed to atomically replace repair output {}: {error}",
+                self.destination.display()
+            )
+        })?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+fn validate_complete_bam(
+    path: &Path,
+    expected_records: usize,
+) -> anyhow::Result<()> {
+    let mut file = File::open(path).with_context(|| {
+        format!("failed to open staged repair BAM {}", path.display())
+    })?;
+    let expected_identity = StagedFileIdentity::from_metadata(
+        &file.metadata().with_context(|| {
+            format!("failed to inspect staged repair BAM {}", path.display())
+        })?,
+    );
+    validate_complete_bam_file(
+        &mut file,
+        path,
+        expected_identity,
+        expected_records,
+    )
+}
+
+fn validate_complete_bam_file(
+    file: &mut File,
+    path: &Path,
+    expected_identity: StagedFileIdentity,
+    expected_records: usize,
+) -> anyhow::Result<()> {
+    let file_len = file
+        .metadata()
+        .with_context(|| {
+            format!("failed to inspect staged repair BAM {}", path.display())
+        })?
+        .len();
+    if file_len < BGZF_EOF_BLOCK.len() as u64 {
+        bail!(
+            "staged repair BAM {} is too short to contain a BGZF EOF block",
+            path.display()
+        )
+    }
+    file.seek(SeekFrom::End(-(BGZF_EOF_BLOCK.len() as i64))).with_context(
+        || format!("failed to seek staged repair BAM {}", path.display()),
+    )?;
+    let mut eof = [0u8; BGZF_EOF_BLOCK.len()];
+    file.read_exact(&mut eof).with_context(|| {
+        format!("failed to read staged repair BAM EOF at {}", path.display())
+    })?;
+    if eof != BGZF_EOF_BLOCK {
+        bail!(
+            "staged repair BAM {} is missing the canonical BGZF EOF block",
+            path.display()
+        )
+    }
+
+    require_staged_path_identity(file, path, expected_identity)
+        .context("staged repair BAM changed before full BAM decoding")?;
+    let mut reader = bam::Reader::from_path(path).with_context(|| {
+        format!("failed to reopen staged repair BAM {}", path.display())
+    })?;
+    let mut observed_records = 0usize;
+    for (index, record) in reader.records().enumerate() {
+        record.with_context(|| {
+            format!(
+                "failed to decode staged repair BAM record {} at {}",
+                index + 1,
+                path.display()
+            )
+        })?;
+        observed_records += 1;
+    }
+    drop(reader);
+    require_staged_path_identity(file, path, expected_identity)
+        .context("staged repair BAM changed during full BAM decoding")?;
+    if observed_records != expected_records {
+        bail!(
+            "staged repair BAM {} contains {observed_records} records, \
+             expected {expected_records}",
+            path.display()
+        )
+    }
+    Ok(())
+}
+
+fn open_bam_reader(
+    path: &Path,
+    input_label: &str,
+    threads: usize,
+) -> anyhow::Result<bam::Reader> {
+    let mut reader = bam::Reader::from_path(path).with_context(|| {
+        format!("failed to open {input_label} BAM {}", path.display())
+    })?;
+    reader.set_threads(threads).with_context(|| {
+        format!(
+            "failed to configure {input_label} BAM reader {}",
+            path.display()
+        )
+    })?;
+    Ok(reader)
+}
+
 impl RepairTags {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
+        self.run_with_output_factory(|header| {
+            StagedBamOutput::new(&self.output_bam, header)
+        })
+    }
 
+    fn run_with_output_factory<S, F>(
+        &self,
+        make_output: F,
+    ) -> anyhow::Result<()>
+    where
+        S: RepairSink,
+        F: FnOnce(&bam::Header) -> anyhow::Result<S>,
+    {
         let reader_threads = {
             let half = self.threads / 2;
             std::cmp::min(half, 16)
@@ -61,10 +508,13 @@ impl RepairTags {
              {pool_threads} to process records"
         );
 
-        let mut donor_records = bam::Reader::from_path(&self.donor_bam)?;
-        donor_records.set_threads(threads_per_reader)?;
-        let mut acceptor_records = bam::Reader::from_path(&self.acceptor_bam)?;
-        acceptor_records.set_threads(threads_per_reader)?;
+        let donor_records =
+            open_bam_reader(&self.donor_bam, "donor", threads_per_reader)?;
+        let acceptor_records = open_bam_reader(
+            &self.acceptor_bam,
+            "acceptor",
+            threads_per_reader,
+        )?;
         let donor_order = query_name_order(donor_records.header(), "donor")?;
         let acceptor_order =
             query_name_order(acceptor_records.header(), "acceptor")?;
@@ -78,11 +528,7 @@ impl RepairTags {
             ),
         };
         let header = bam::Header::from_template(acceptor_records.header());
-        let mut writer = bam::Writer::from_path(
-            &self.output_bam,
-            &header,
-            bam::Format::Bam,
-        )?;
+        let mut output = make_output(&header)?;
         info!(
             "repairing records in {} with base modification information in {}",
             &self.acceptor_bam.to_str().unwrap_or_else(|| "??"),
@@ -115,13 +561,14 @@ impl RepairTags {
             repaired_ticker.inc(1);
             match res {
                 Ok(record) => {
-                    if let Err(e) = writer.write(&record) {
-                        error!("failed to write record {}", e.to_string());
-                        n_failed += 1;
-                    } else {
-                        written_ticker.inc(1);
-                        n_repaired += 1;
-                    }
+                    output.write(&record).with_context(|| {
+                        format!(
+                            "failed to write repaired record {}",
+                            String::from_utf8_lossy(record.qname())
+                        )
+                    })?;
+                    written_ticker.inc(1);
+                    n_repaired += 1;
                 }
                 Err(e) => {
                     debug!("record failed to be repaired: {}", e.to_string());
@@ -131,6 +578,7 @@ impl RepairTags {
             Ok(())
         })?;
 
+        output.finish(n_repaired)?;
         info!("finished, repaired {n_repaired} records, {n_failed} failed.");
         Ok(())
     }
@@ -387,6 +835,8 @@ struct ZipRecordsIter<D: Read, A: Read> {
     cur_acceptor_record: Option<bam::Record>,
     last_donor_name: Option<Vec<u8>>,
     last_acceptor_name: Option<Vec<u8>>,
+    donor_records_read: usize,
+    acceptor_records_read: usize,
     donor_ticker: ProgressBar,
     acceptor_ticker: ProgressBar,
     order: QueryNameOrder,
@@ -409,6 +859,8 @@ impl<D: Read, A: Read> ZipRecordsIter<D, A> {
             cur_acceptor_record: None,
             last_donor_name: None,
             last_acceptor_name: None,
+            donor_records_read: 0,
+            acceptor_records_read: 0,
             donor_ticker,
             acceptor_ticker,
             order,
@@ -438,8 +890,11 @@ impl<D: Read, A: Read> ZipRecordsIter<D, A> {
 
     fn read_primary_donor(&mut self) -> anyhow::Result<Option<bam::Record>> {
         loop {
-            let Some(record) =
-                get_next_record(&mut self.donor_records, "donor")
+            let Some(record) = get_next_record(
+                &mut self.donor_records,
+                "donor",
+                &mut self.donor_records_read,
+            )?
             else {
                 return Ok(None);
             };
@@ -500,8 +955,11 @@ impl<D: Read, A: Read> ZipRecordsIter<D, A> {
         if self.cur_acceptor_record.is_some() {
             return Ok(true);
         }
-        let Some(record) =
-            get_next_record(&mut self.acceptor_records, "acceptor")
+        let Some(record) = get_next_record(
+            &mut self.acceptor_records,
+            "acceptor",
+            &mut self.acceptor_records_read,
+        )?
         else {
             return Ok(false);
         };
@@ -576,18 +1034,19 @@ impl<D: Read, A: Read> ZipRecordsIter<D, A> {
 fn get_next_record<T: Read>(
     records: &mut T,
     input_label: &str,
-) -> Option<bam::Record> {
-    loop {
-        let mut record = bam::Record::new();
-        match records.read(&mut record) {
-            Some(Ok(())) => return Some(record),
-            Some(Err(error)) => {
-                // Commit 2 makes malformed input fatal and contextual. Keep
-                // the current skip-and-warn policy in this ordering-only unit.
-                warn!("failed to parse record from {input_label} BAM, {error}");
-            }
-            None => return None,
+    records_read: &mut usize,
+) -> anyhow::Result<Option<bam::Record>> {
+    let mut record = bam::Record::new();
+    match records.read(&mut record) {
+        Some(Ok(())) => {
+            *records_read += 1;
+            Ok(Some(record))
         }
+        Some(Err(error)) => bail!(
+            "failed to decode {input_label} BAM record {}: {error}",
+            *records_read + 1
+        ),
+        None => Ok(None),
     }
 }
 
@@ -706,26 +1165,502 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
         Ok(repaired_record)
     }
 }
+
 #[cfg(test)]
 mod tests {
+    use std::env;
+    use std::fs::{self, File, OpenOptions};
+    #[cfg(unix)]
+    use std::os::unix::fs::{symlink, FileTypeExt, PermissionsExt};
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
     use std::sync::{Arc, Mutex};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use crossbeam_channel::{bounded, Receiver, Sender};
-    use rust_htslib::bam;
+    use rust_htslib::bam::header::HeaderRecord;
+    use rust_htslib::bam::{self, record::Aux};
 
     use crate::ordered_scheduler::OrderedWorker;
 
     use super::{
-        query_name_order, run_repair_scheduler, QueryNameOrder, RecordPair,
-        RepairJob, RepairSlot,
+        query_name_order, run_repair_scheduler, validate_complete_bam,
+        CompleteBamValidator, QueryNameOrder, RecordPair, RepairJob,
+        RepairSink, RepairSlot, RepairTags, StagedBamOutput,
+        StagedBamValidator, StagedFileIdentity, REPAIR_TEMP_PREFIX,
     };
 
     fn make_record(name: &[u8], sequence: &str) -> bam::Record {
         let mut record = bam::Record::new();
         record.set(name, None, sequence.as_bytes(), &vec![255; sequence.len()]);
         record
+    }
+
+    struct FailNthWriteSink<S> {
+        inner: S,
+        fail_at: usize,
+        writes: usize,
+    }
+
+    impl<S: RepairSink> RepairSink for FailNthWriteSink<S> {
+        fn write(&mut self, record: &bam::Record) -> anyhow::Result<()> {
+            self.writes += 1;
+            if self.writes == self.fail_at {
+                anyhow::bail!(
+                    "injected repair sink write failure at record {}",
+                    self.fail_at
+                )
+            }
+            self.inner.write(record)
+        }
+
+        fn finish(self, expected_records: usize) -> anyhow::Result<()> {
+            self.inner.finish(expected_records)
+        }
+    }
+
+    struct CorruptBeforeValidation;
+
+    impl StagedBamValidator for CorruptBeforeValidation {
+        fn validate(
+            &self,
+            file: &mut File,
+            path: &Path,
+            expected_identity: StagedFileIdentity,
+            expected_records: usize,
+        ) -> anyhow::Result<()> {
+            let file_len = file.metadata()?.len();
+            file.set_len(file_len.checked_sub(1).expect("BAM is non-empty"))?;
+            CompleteBamValidator.validate(
+                file,
+                path,
+                expected_identity,
+                expected_records,
+            )
+        }
+    }
+
+    #[cfg(unix)]
+    struct SubstituteBeforeDecode;
+
+    #[cfg(unix)]
+    impl StagedBamValidator for SubstituteBeforeDecode {
+        fn validate(
+            &self,
+            file: &mut File,
+            path: &Path,
+            expected_identity: StagedFileIdentity,
+            expected_records: usize,
+        ) -> anyhow::Result<()> {
+            let replacement = path.with_file_name("replacement.bam");
+            let replacement_writer = bam::Writer::from_path(
+                &replacement,
+                &bam::Header::new(),
+                bam::Format::Bam,
+            )?;
+            drop(replacement_writer);
+            fs::rename(&replacement, path)?;
+            CompleteBamValidator.validate(
+                file,
+                path,
+                expected_identity,
+                expected_records,
+            )
+        }
+    }
+
+    const REPAIR_CHILD_CASE_ENV: &str = "MODKIT_REPAIR_CHILD_CASE";
+    const REPAIR_CHILD_DIR_ENV: &str = "MODKIT_REPAIR_CHILD_DIR";
+    const REPAIR_CHILD_TEST: &str =
+        "repair_tags::tests::repair_lifecycle_child";
+
+    fn write_lifecycle_bam(path: &Path, records: usize, donor: bool) {
+        let mut header = bam::Header::new();
+        let mut hd = HeaderRecord::new(b"HD");
+        hd.push_tag(b"VN", "1.6")
+            .push_tag(b"SO", "queryname")
+            .push_tag(b"SS", "queryname:natural");
+        header.push_record(&hd);
+        let mut writer =
+            bam::Writer::from_path(path, &header, bam::Format::Bam).unwrap();
+        for index in 0..records {
+            let name = format!("read{index:06}");
+            let sequence = if donor { "TACGT" } else { "ACG" };
+            let mut record = make_record(name.as_bytes(), sequence);
+            if donor {
+                record.push_aux(b"MM", Aux::String("A+a.,0;")).unwrap();
+                let probability = [((index % 200) + 1) as u8];
+                record
+                    .push_aux(b"ML", Aux::ArrayU8((&probability[..]).into()))
+                    .unwrap();
+            }
+            writer.write(&record).unwrap();
+        }
+        drop(writer);
+        validate_complete_bam(path, records).unwrap();
+    }
+
+    fn truncate_bam_data(path: &Path) {
+        let file = OpenOptions::new().write(true).open(path).unwrap();
+        let file_len = file.metadata().unwrap().len();
+        assert!(file_len > 40);
+        // Remove the canonical 28-byte EOF plus part of the final data block.
+        file.set_len(file_len - 40).unwrap();
+    }
+
+    fn lifecycle_paths(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        (
+            root.join("donor.bam"),
+            root.join("acceptor.bam"),
+            root.join("output.bam"),
+        )
+    }
+
+    fn run_lifecycle_child(case: &str, root: &Path) {
+        let mut child = Command::new(env::current_exe().unwrap())
+            .args(["--exact", REPAIR_CHILD_TEST, "--nocapture"])
+            .env(REPAIR_CHILD_CASE_ENV, case)
+            .env(REPAIR_CHILD_DIR_ENV, root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "repair lifecycle child {case} exceeded watchdog; \
+                     stdout={} stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "repair lifecycle child {case} failed; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn staged_repair_entries(root: &Path) -> Vec<PathBuf> {
+        fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(REPAIR_TEMP_PREFIX)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn repair_lifecycle_child() {
+        let Ok(case) = env::var(REPAIR_CHILD_CASE_ENV) else {
+            return;
+        };
+        let root = PathBuf::from(env::var_os(REPAIR_CHILD_DIR_ENV).unwrap());
+        let (donor_bam, acceptor_bam, output_bam) = lifecycle_paths(&root);
+        let repair = RepairTags {
+            donor_bam,
+            acceptor_bam,
+            output_bam,
+            log_filepath: None,
+            threads: 2,
+        };
+        let result = match case.as_str() {
+            "nth-write" => repair.run_with_output_factory(|header| {
+                Ok(FailNthWriteSink {
+                    inner: StagedBamOutput::new(&repair.output_bam, header)?,
+                    fail_at: 2,
+                    writes: 0,
+                })
+            }),
+            "validation" => repair.run_with_output_factory(|header| {
+                StagedBamOutput::with_validator(
+                    &repair.output_bam,
+                    header,
+                    CorruptBeforeValidation,
+                )
+            }),
+            _ => repair.run_with_output_factory(|header| {
+                StagedBamOutput::new(&repair.output_bam, header)
+            }),
+        };
+        match case.as_str() {
+            "success" => result.expect("successful repair should finish"),
+            "truncated-donor" => {
+                let error = result.expect_err("truncated donor must fail");
+                assert!(
+                    format!("{error:#}")
+                        .contains("failed to decode donor BAM record"),
+                    "unexpected truncated-donor error: {error:#}"
+                );
+            }
+            "truncated-acceptor" => {
+                let error = result.expect_err("truncated acceptor must fail");
+                assert!(
+                    format!("{error:#}")
+                        .contains("failed to decode acceptor BAM record"),
+                    "unexpected truncated-acceptor error: {error:#}"
+                );
+            }
+            "nth-write" => {
+                let error = result.expect_err("injected write must fail");
+                assert!(
+                    format!("{error:#}").contains(
+                        "injected repair sink write failure at record 2"
+                    ),
+                    "unexpected injected-write error: {error:#}"
+                );
+            }
+            "validation" => {
+                let error = result.expect_err("corrupt staged BAM must fail");
+                assert!(
+                    format!("{error:#}")
+                        .contains("missing the canonical BGZF EOF block"),
+                    "unexpected validation error: {error:#}"
+                );
+            }
+            other => panic!("unknown repair lifecycle child case {other}"),
+        }
+    }
+
+    #[test]
+    fn repair_lifecycle_failures_preserve_outputs_and_clean_staging() {
+        const SENTINEL: &[u8] = b"existing repair output sentinel";
+        for case in [
+            "truncated-donor",
+            "truncated-acceptor",
+            "nth-write",
+            "validation",
+            "success",
+        ] {
+            for output_exists in [false, true] {
+                let temp_dir = tempfile::tempdir().unwrap();
+                let (donor, acceptor, output) =
+                    lifecycle_paths(temp_dir.path());
+                let records =
+                    if case.starts_with("truncated-") { 2_000 } else { 3 };
+                write_lifecycle_bam(&donor, records, true);
+                write_lifecycle_bam(&acceptor, records, false);
+                match case {
+                    "truncated-donor" => truncate_bam_data(&donor),
+                    "truncated-acceptor" => truncate_bam_data(&acceptor),
+                    _ => {}
+                }
+                if output_exists {
+                    fs::write(&output, SENTINEL).unwrap();
+                }
+
+                run_lifecycle_child(case, temp_dir.path());
+
+                if case == "success" {
+                    validate_complete_bam(&output, records).unwrap();
+                    assert_ne!(fs::read(&output).unwrap(), SENTINEL);
+                } else if output_exists {
+                    assert_eq!(fs::read(&output).unwrap(), SENTINEL);
+                } else {
+                    assert!(!output.exists());
+                }
+                let staged = staged_repair_entries(temp_dir.path());
+                assert!(
+                    staged.is_empty(),
+                    "staged repair entries remain: {staged:?}"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_output_matches_file_create_mode_and_preserves_existing_mode() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        // Model a shared, non-sticky destination directory. The staged BAM
+        // must still live under an owner-only child directory.
+        fs::set_permissions(temp_dir.path(), fs::Permissions::from_mode(0o777))
+            .unwrap();
+        let header = bam::Header::new();
+
+        let control = temp_dir.path().join("ordinary-file-create");
+        drop(File::create(&control).unwrap());
+        let ordinary_create_mode =
+            fs::metadata(&control).unwrap().permissions().mode() & 0o7777;
+
+        let new_output = temp_dir.path().join("new-output.bam");
+        let staged_output = StagedBamOutput::new(&new_output, &header).unwrap();
+        let staging_dir = staged_output._staging_dir.path().to_path_buf();
+        assert_eq!(staging_dir.parent(), Some(temp_dir.path()));
+        assert_eq!(
+            fs::metadata(&staging_dir).unwrap().permissions().mode() & 0o077,
+            0
+        );
+        assert_eq!(
+            staged_output.temp_file.path().parent(),
+            Some(staging_dir.as_path())
+        );
+        assert_eq!(
+            staged_output
+                .temp_file
+                .as_file()
+                .metadata()
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            ordinary_create_mode
+        );
+        staged_output.finish(0).unwrap();
+        assert!(!staging_dir.exists());
+        let new_output_mode =
+            fs::metadata(&new_output).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(new_output_mode, ordinary_create_mode);
+
+        let existing_output = temp_dir.path().join("existing-output.bam");
+        fs::write(&existing_output, b"sentinel").unwrap();
+        let deliberate_mode = 0o404;
+        fs::set_permissions(
+            &existing_output,
+            fs::Permissions::from_mode(deliberate_mode),
+        )
+        .unwrap();
+        StagedBamOutput::new(&existing_output, &header)
+            .unwrap()
+            .finish(0)
+            .unwrap();
+        let replacement_mode =
+            fs::metadata(&existing_output).unwrap().permissions().mode()
+                & 0o7777;
+        assert_eq!(replacement_mode, deliberate_mode);
+        assert!(staged_repair_entries(temp_dir.path()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_inode_substitution_is_fatal_and_cleans_private_directory() {
+        const SENTINEL: &[u8] = b"existing repair output sentinel";
+        for output_exists in [false, true] {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let output = temp_dir.path().join("output.bam");
+            if output_exists {
+                fs::write(&output, SENTINEL).unwrap();
+            }
+            let staged_output = StagedBamOutput::with_validator(
+                &output,
+                &bam::Header::new(),
+                SubstituteBeforeDecode,
+            )
+            .unwrap();
+            let staging_dir = staged_output._staging_dir.path().to_path_buf();
+
+            let error = staged_output
+                .finish(0)
+                .expect_err("replacement inode must not be persisted");
+            assert!(
+                format!("{error:#}")
+                    .contains("no longer identifies the retained file"),
+                "unexpected substitution error: {error:#}"
+            );
+            if output_exists {
+                assert_eq!(fs::read(&output).unwrap(), SENTINEL);
+            } else {
+                assert!(!output.exists());
+            }
+            assert!(!staging_dir.exists());
+            assert!(staged_repair_entries(temp_dir.path()).is_empty());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_output_rejects_symlink_and_nonregular_destinations() {
+        const SENTINEL: &[u8] = b"symlink target sentinel";
+        let temp_dir = tempfile::tempdir().unwrap();
+        let header = bam::Header::new();
+
+        let target = temp_dir.path().join("target.bam");
+        fs::write(&target, SENTINEL).unwrap();
+        let symlink_output = temp_dir.path().join("symlink-output.bam");
+        symlink(&target, &symlink_output).unwrap();
+        let symlink_error = match StagedBamOutput::new(&symlink_output, &header)
+        {
+            Ok(_) => panic!("symlink destination should be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            format!("{symlink_error:#}")
+                .contains("must not be a symbolic link"),
+            "unexpected symlink error: {symlink_error:#}"
+        );
+        assert_eq!(fs::read(&target).unwrap(), SENTINEL);
+        assert!(fs::symlink_metadata(&symlink_output)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        let dangling_output = temp_dir.path().join("dangling-output.bam");
+        symlink(temp_dir.path().join("missing-target.bam"), &dangling_output)
+            .unwrap();
+        let dangling_error =
+            match StagedBamOutput::new(&dangling_output, &header) {
+                Ok(_) => {
+                    panic!("dangling symlink destination should be rejected")
+                }
+                Err(error) => error,
+            };
+        assert!(
+            format!("{dangling_error:#}")
+                .contains("must not be a symbolic link"),
+            "unexpected dangling-symlink error: {dangling_error:#}"
+        );
+        assert!(fs::symlink_metadata(&dangling_output)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        let fifo_output = temp_dir.path().join("fifo-output.bam");
+        let fifo_status =
+            Command::new("mkfifo").arg(&fifo_output).status().unwrap();
+        assert!(fifo_status.success(), "failed to create FIFO fixture");
+        let fifo_error = match StagedBamOutput::new(&fifo_output, &header) {
+            Ok(_) => panic!("FIFO destination should be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            format!("{fifo_error:#}")
+                .contains("must be a regular file when it already exists"),
+            "unexpected FIFO error: {fifo_error:#}"
+        );
+        assert!(fs::symlink_metadata(&fifo_output)
+            .unwrap()
+            .file_type()
+            .is_fifo());
+
+        let directory_output = temp_dir.path().join("directory-output.bam");
+        fs::create_dir(&directory_output).unwrap();
+        let directory_error =
+            match StagedBamOutput::new(&directory_output, &header) {
+                Ok(_) => panic!("directory destination should be rejected"),
+                Err(error) => error,
+            };
+        assert!(
+            format!("{directory_error:#}")
+                .contains("must be a regular file when it already exists"),
+            "unexpected directory error: {directory_error:#}"
+        );
+        assert!(directory_output.is_dir());
+        assert!(staged_repair_entries(temp_dir.path()).is_empty());
     }
 
     struct GatedRepairWorker {
