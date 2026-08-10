@@ -271,6 +271,7 @@ fn conflict_on_later_contig_fails_before_output_creation() {
     let (reference, bam) =
         write_two_contig_conflict_fixture(temp_dir.path());
     let output = temp_dir.path().join("later-conflict.bed");
+    fs::write(&output, b"sentinel\n").unwrap();
     let result = Command::new(env!("CARGO_BIN_EXE_modkit"))
         .args([
             "entropy",
@@ -300,6 +301,7 @@ fn conflict_on_later_contig_fails_before_output_creation() {
             "--io-threads",
             "1",
             "--suppress-progress",
+            "--force",
         ])
         .output()
         .unwrap();
@@ -311,5 +313,5 @@ fn conflict_on_later_contig_fails_before_output_creation() {
         "{stderr}"
     );
     assert!(stderr.contains("chr2:0"), "{stderr}");
-    assert!(!output.exists());
+    assert_eq!(fs::read(output).unwrap(), b"sentinel\n");
 }
