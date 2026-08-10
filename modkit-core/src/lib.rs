@@ -16,6 +16,7 @@ pub mod mod_base_code;
 pub mod modbam_util;
 pub mod monoid;
 pub mod motifs;
+pub(crate) mod ordered_scheduler;
 pub mod pileup;
 pub mod position_filter;
 pub mod read_ids_to_base_mod_probs;
