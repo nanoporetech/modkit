@@ -132,25 +132,30 @@ fn call_and_adjust_mods_match_bam_and_cram() {
 
     let automatic_cram = temp_dir.path().join("call.automatic.cram.sam");
     let automatic_log = temp_dir.path().join("call.automatic.cram.log");
-    let automatic_output = run_modkit(&[
-        "call-mods",
-        CRAM,
-        automatic_cram.to_str().unwrap(),
-        "--output-sam",
-        "--sampling-frac",
-        "1",
-        "--seed",
-        "7",
-        "--threads",
-        "1",
-        "--sampling-interval-size",
-        "20",
-        "--ref",
-        REFERENCE,
-        "--log",
-        automatic_log.to_str().unwrap(),
-        "--suppress-progress",
-    ]);
+    let empty_reference_cache = temp_dir.path().join("empty-reference-cache");
+    fs::create_dir(&empty_reference_cache).unwrap();
+    let automatic_output = run_modkit_without_reference_resolution(
+        &[
+            "call-mods",
+            CRAM,
+            automatic_cram.to_str().unwrap(),
+            "--output-sam",
+            "--sampling-frac",
+            "1",
+            "--seed",
+            "7",
+            "--threads",
+            "1",
+            "--sampling-interval-size",
+            "20",
+            "--ref",
+            REFERENCE,
+            "--log",
+            automatic_log.to_str().unwrap(),
+            "--suppress-progress",
+        ],
+        &empty_reference_cache,
+    );
     assert_success(&automatic_output);
     assert_eq!(normalized_sam_records(&automatic_cram).len(), 10);
     let automatic_log = fs::read_to_string(automatic_log).unwrap();
