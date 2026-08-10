@@ -271,7 +271,7 @@ impl ReferenceIntervalBatchesFeeder {
             // in the case where we're on a large chrom end will be < length,
             // but batch length will be equal to interval size
             let end = std::cmp::min(
-                start + self.interval_size,
+                start.saturating_add(self.interval_size),
                 self.curr_contig.end(),
             );
             // get the sequence here.
@@ -660,8 +660,11 @@ where
 mod interval_chunks_tests {
     use rust_htslib::faidx;
 
-    use crate::interval_chunks::slice_dna_sequence;
+    use crate::interval_chunks::{
+        slice_dna_sequence, ReferenceIntervalBatchesFeeder,
+    };
     use crate::test_utils::load_test_sequence;
+    use crate::util::ReferenceRecord;
 
     #[test]
     fn test_check_sequence_slicing_is_same_as_fetch() {
@@ -696,5 +699,65 @@ mod interval_chunks_tests {
         // assert_eq!(e, 6);
         // let (s, e) = (s as usize, e as usize);
         // assert_eq!(&seq[s..e], ['E', 'F']);
+    }
+
+    #[test]
+    fn test_reference_interval_batches_near_u32_max() {
+        let requested_start = u32::MAX - 9;
+        let requested_end = u32::MAX;
+        let record = ReferenceRecord::new(
+            7,
+            requested_start,
+            requested_end - requested_start,
+            "near-u32-max".to_string(),
+        );
+        let mut feeder = ReferenceIntervalBatchesFeeder::new(
+            vec![record],
+            1,
+            8,
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        let mut intervals = Vec::new();
+        let mut terminated = false;
+
+        for _ in 0..4 {
+            match feeder.next() {
+                Some(Ok(batches)) => intervals.extend(
+                    batches.into_iter().flat_map(|batch| batch.0).map(
+                        |coordinates| {
+                            (coordinates.start_pos, coordinates.end_pos)
+                        },
+                    ),
+                ),
+                Some(Err(error)) => panic!("feeder failed: {error}"),
+                None => {
+                    terminated = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(terminated, "feeder did not terminate");
+        assert_eq!(
+            intervals,
+            vec![
+                (requested_start, u32::MAX - 1),
+                (u32::MAX - 1, requested_end),
+            ]
+        );
+        let mut cursor = requested_start;
+        let mut covered = 0u64;
+        for (start, end) in intervals {
+            assert_eq!(start, cursor, "intervals must be monotonic");
+            assert!(start < end, "intervals must be nonempty");
+            assert!(end <= requested_end, "interval exceeds contig end");
+            covered += u64::from(end - start);
+            cursor = end;
+        }
+        assert_eq!(cursor, requested_end);
+        assert_eq!(covered, u64::from(requested_end - requested_start));
     }
 }
