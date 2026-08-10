@@ -1677,6 +1677,7 @@ impl BedRegion {
 #[cfg(test)]
 mod entropy_mod_tests {
     use crate::entropy::{BedRegion, DescriptiveStats};
+    use itertools::Itertools;
 
     #[test]
     fn singleton_entropy_summary_uses_its_value_as_the_median() {
@@ -1760,6 +1761,32 @@ mod entropy_mod_tests {
 
         assert_eq!(observed.median_entropy, sorted.median_entropy);
         assert_eq!(observed.median_entropy, 0.4);
+    }
+
+    #[test]
+    fn regional_medians_are_stable_across_all_small_encounter_orders() {
+        for (values, expected_median) in [
+            (vec![0.75, 0.25, 0.5], 0.5),
+            (vec![0.75, 0.0, 0.25, 0.5], 0.375),
+        ] {
+            for measurements in
+                values.iter().copied().permutations(values.len())
+            {
+                let original_order = measurements.clone();
+                let reads = vec![1; measurements.len()];
+                let stats = DescriptiveStats::new(
+                    &measurements,
+                    &reads,
+                    0,
+                    0,
+                    &(10..20),
+                )
+                .unwrap();
+
+                assert_eq!(stats.median_entropy, expected_median);
+                assert_eq!(measurements, original_order);
+            }
+        }
     }
 
     #[test]
