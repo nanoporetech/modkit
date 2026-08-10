@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::bail;
 use derive_new::new;
@@ -13,7 +13,9 @@ use crate::motifs::motif_bed::MotifInfo;
 use crate::pileup::{get_forward_read_base, PileupIter, PileupNumericOptions};
 use crate::read_cache::DuplexReadCache;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::record_is_not_primary;
+use crate::util::{
+    record_is_not_primary, set_reference_for_cram_indexed_reader,
+};
 
 /// Summarizes the duplex (hemi) methylation patterns for
 /// a genomic interval
@@ -206,9 +208,36 @@ impl DuplexFeatureVector {
 
 // todo this function should be removed in favor of a more
 //  generic version in pileup/mod.rs
+#[allow(dead_code)]
 pub fn process_region_duplex_batch<T: AsRef<Path> + Copy>(
     chromosome_coordintes: &MultiChromCoordinates,
     bam_fp: T,
+    caller: &MultipleThresholdModCaller,
+    pileup_numeric_options: &PileupNumericOptions,
+    force_allow: bool,
+    max_depth: u32,
+    motif: MotifInfo,
+    edge_filter: Option<&EdgeFilter>,
+) -> Vec<anyhow::Result<DuplexModBasePileup>> {
+    process_region_duplex_batch_with_reference(
+        chromosome_coordintes,
+        bam_fp,
+        None,
+        caller,
+        pileup_numeric_options,
+        force_allow,
+        max_depth,
+        motif,
+        edge_filter,
+    )
+}
+
+pub(crate) fn process_region_duplex_batch_with_reference<
+    T: AsRef<Path> + Copy,
+>(
+    chromosome_coordintes: &MultiChromCoordinates,
+    bam_fp: T,
+    reference_fasta: Option<&PathBuf>,
     caller: &MultipleThresholdModCaller,
     pileup_numeric_options: &PileupNumericOptions,
     force_allow: bool,
@@ -222,6 +251,7 @@ pub fn process_region_duplex_batch<T: AsRef<Path> + Copy>(
         .map(|chrom_coords| {
             process_region_duplex(
                 bam_fp,
+                reference_fasta,
                 chrom_coords.chrom_tid,
                 chrom_coords.start_pos,
                 chrom_coords.end_pos,
@@ -239,6 +269,7 @@ pub fn process_region_duplex_batch<T: AsRef<Path> + Copy>(
 
 fn process_region_duplex<T: AsRef<Path>>(
     bam_fp: T,
+    reference_fasta: Option<&PathBuf>,
     chrom_tid: u32,
     start_pos: u32,
     end_pos: u32,
@@ -261,6 +292,7 @@ fn process_region_duplex<T: AsRef<Path>>(
     };
 
     let mut bam_reader = bam::IndexedReader::from_path(bam_fp)?;
+    set_reference_for_cram_indexed_reader(&mut bam_reader, reference_fasta)?;
     let chrom_name =
         String::from_utf8_lossy(bam_reader.header().tid2name(chrom_tid))
             .to_string();
@@ -341,4 +373,36 @@ fn process_region_duplex<T: AsRef<Path>>(
         processed_records,
         skipped_records,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_duplex_batch_signature_compiles() {
+        fn call_legacy_signature(
+            chromosome_coordinates: &MultiChromCoordinates,
+            bam_fp: &Path,
+            caller: &MultipleThresholdModCaller,
+            pileup_numeric_options: &PileupNumericOptions,
+            force_allow: bool,
+            max_depth: u32,
+            motif: MotifInfo,
+            edge_filter: Option<&EdgeFilter>,
+        ) -> Vec<anyhow::Result<DuplexModBasePileup>> {
+            process_region_duplex_batch(
+                chromosome_coordinates,
+                bam_fp,
+                caller,
+                pileup_numeric_options,
+                force_allow,
+                max_depth,
+                motif,
+                edge_filter,
+            )
+        }
+
+        let _ = call_legacy_signature;
+    }
 }

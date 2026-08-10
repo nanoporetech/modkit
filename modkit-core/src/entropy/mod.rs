@@ -25,7 +25,10 @@ use crate::read_ids_to_base_mod_probs::{PositionModCalls, ReadBaseModProfile};
 use crate::reads_sampler::sampling_schedule::ReferenceSequencesLookup;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::percentile_linear_interp;
-use crate::util::{record_is_not_primary, ReferenceRecord, Strand};
+use crate::util::{
+    record_is_not_primary, set_reference_for_cram_indexed_reader,
+    ReferenceRecord, Strand,
+};
 
 mod methylation_entropy;
 pub mod subcommand;
@@ -1486,11 +1489,13 @@ struct Message {
 
 fn process_bam_fp(
     bam_fp: &PathBuf,
+    reference_fasta: &PathBuf,
     fetch_definition: FetchDefinition,
     caller: Arc<MultipleThresholdModCaller>,
     io_threads: usize,
 ) -> anyhow::Result<Vec<Message>> {
     let mut reader = bam::IndexedReader::from_path(bam_fp)?;
+    set_reference_for_cram_indexed_reader(&mut reader, Some(reference_fasta))?;
     reader.set_threads(io_threads)?;
     reader.fetch(fetch_definition)?;
 
@@ -1583,9 +1588,11 @@ pub(super) fn process_entropy_window(
     io_threads: usize,
     caller: Arc<MultipleThresholdModCaller>,
     bam_fps: &[PathBuf],
+    reference_fasta: &PathBuf,
 ) -> anyhow::Result<EntropyCalculation> {
     let bam_fp = &bam_fps[0];
-    let reader = bam::IndexedReader::from_path(bam_fp)?;
+    let mut reader = bam::IndexedReader::from_path(bam_fp)?;
+    set_reference_for_cram_indexed_reader(&mut reader, Some(reference_fasta))?;
     let chrom_id = entropy_windows.chrom_id;
     drop(reader);
 
@@ -1594,6 +1601,7 @@ pub(super) fn process_entropy_window(
         .map(|fp| {
             process_bam_fp(
                 fp,
+                reference_fasta,
                 entropy_windows.get_fetch_definition(),
                 caller.clone(),
                 io_threads,

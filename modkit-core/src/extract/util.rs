@@ -15,14 +15,15 @@ use crate::read_ids_to_base_mod_probs::{
     ModProfile, ReadBaseModProfile, ReadsBaseModProfile,
 };
 use crate::reads_sampler::record_sampler::RecordSampler;
-use crate::reads_sampler::sample_reads_from_interval;
+use crate::reads_sampler::sample_reads_from_interval_with_reference;
 use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
 use crate::sample_probs::QualHist;
 use crate::util::{
     get_guage, get_master_progress_bar, get_query_name_string,
     get_reference_mod_strand, get_subroutine_progress_bar, get_targets,
-    get_ticker, record_is_primary, Region, Strand,
+    get_ticker, record_is_primary, set_reference_for_cram_indexed_reader,
+    set_reference_for_cram_reader, Region, Strand,
 };
 use derive_new::new;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressBar};
@@ -320,6 +321,7 @@ pub(super) fn load_regions(
                     input_args.interval_size
                 );
                 let reference_records = get_targets(reader.header(), region);
+                let zero_reference_targets = reference_records.is_empty();
                 let reference_records =
                     if let Some(pf) = include_positions.as_ref() {
                         pf.optimize_reference_records(
@@ -330,14 +332,29 @@ pub(super) fn load_regions(
                         reference_records
                     };
 
-                let feeder = ReferenceIntervalBatchesFeeder::new(
-                    reference_records,
-                    (input_args.threads as f32 * 1.5f32).floor() as usize,
-                    input_args.interval_size,
-                    false,
-                    None,
-                    None,
-                )?;
+                let batch_size =
+                    (input_args.threads as f32 * 1.5f32).floor() as usize;
+                let feeder = if include_unmapped_reads && zero_reference_targets
+                {
+                    ReferenceIntervalBatchesFeeder::
+                        new_allowing_zero_reference_targets(
+                            reference_records,
+                            batch_size,
+                            input_args.interval_size,
+                            false,
+                            None,
+                            None,
+                        )?
+                } else {
+                    ReferenceIntervalBatchesFeeder::new(
+                        reference_records,
+                        batch_size,
+                        input_args.interval_size,
+                        false,
+                        None,
+                        None,
+                    )?
+                };
                 Some(feeder)
             }
             Err(_) => {
@@ -371,6 +388,7 @@ pub(super) fn load_regions(
 pub(super) fn run_extract_reads(
     mut reader: bam::Reader,
     in_bam: String,
+    reference_fasta: Option<PathBuf>,
     references_and_intervals: Option<ReferenceIntervalBatchesFeeder>,
     schedule: Option<SamplingSchedule>,
     collapse_method: Option<CollapseMethod>,
@@ -437,35 +455,38 @@ pub(super) fn run_extract_reads(
                                 .unwrap_or_else(|| {
                                     RecordSampler::new_passthrough()
                                 });
-                            let batch_result = sample_reads_from_interval::<
-                                ReadsBaseModProfile,
-                            >(
-                                &bam_fp,
-                                cc.chrom_tid(),
-                                cc.start_pos(),
-                                cc.end_pos(),
-                                cc.prev_end(),
-                                record_sampler,
-                                collapse_method.as_ref(),
-                                edge_filter.as_ref(),
-                                None,
-                                false,
-                                allow_non_primary,
-                                Some(kmer_size),
-                            )
-                            .map(|reads_base_mod_profile| {
-                                if remove_inferred {
-                                    reads_base_mod_profile.remove_inferred()
-                                } else {
-                                    reads_base_mod_profile
-                                }
-                            })
-                            .map(|reads_base_mod_profile| {
-                                reference_position_filter
-                                    .filter_read_base_mod_probs(
-                                        reads_base_mod_profile,
-                                    )
-                            });
+                            let batch_result =
+                                sample_reads_from_interval_with_reference::<
+                                    ReadsBaseModProfile,
+                                >(
+                                    &bam_fp,
+                                    reference_fasta.as_ref(),
+                                    cc.chrom_tid(),
+                                    cc.start_pos(),
+                                    cc.end_pos(),
+                                    cc.prev_end(),
+                                    record_sampler,
+                                    collapse_method.as_ref(),
+                                    edge_filter.as_ref(),
+                                    None,
+                                    false,
+                                    allow_non_primary,
+                                    Some(kmer_size),
+                                );
+                            let batch_result = batch_result
+                                .map(|reads_base_mod_profile| {
+                                    if remove_inferred {
+                                        reads_base_mod_profile.remove_inferred()
+                                    } else {
+                                        reads_base_mod_profile
+                                    }
+                                })
+                                .map(|reads_base_mod_profile| {
+                                    reference_position_filter
+                                        .filter_read_base_mod_probs(
+                                            reads_base_mod_profile,
+                                        )
+                                });
 
                             let num_reads_success = batch_result
                                 .as_ref()
@@ -503,13 +524,16 @@ pub(super) fn run_extract_reads(
             } else {
                 debug!("processing unmapped reads");
             }
-            let reader = bam::IndexedReader::from_path(&bam_fp)
-                .and_then(|mut reader| {
-                    reader.fetch(FetchDefinition::Unmapped).map(|_| reader)
-                })
-                .and_then(|mut reader| {
-                    reader.set_threads(threads).map(|_| reader)
-                });
+            let reader = (|| -> anyhow::Result<bam::IndexedReader> {
+                let mut reader = bam::IndexedReader::from_path(&bam_fp)?;
+                set_reference_for_cram_indexed_reader(
+                    &mut reader,
+                    reference_fasta.as_ref(),
+                )?;
+                reader.fetch(FetchDefinition::Unmapped)?;
+                reader.set_threads(threads)?;
+                Ok(reader)
+            })();
             match reader {
                 Ok(mut reader) => {
                     let (skip, fail) = process_records_to_chan(
@@ -831,6 +855,7 @@ impl<const SIZE: usize> ReadModStatsProcessor<SIZE> {
 
 pub(super) fn calc_per_base_thresholds_from_stream(
     bam_fp: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
     num_reads: usize,
     allow_non_primary: bool,
     stranded_position_filter: Option<StrandedPositionFilter<()>>,
@@ -847,6 +872,7 @@ pub(super) fn calc_per_base_thresholds_from_stream(
         );
     });
     let mut records = bam::Reader::from_path(bam_fp)?;
+    set_reference_for_cram_reader(&mut records, reference_fasta)?;
     records.set_threads(io_threads)?;
     QualHist::from_records(
         records.records(),

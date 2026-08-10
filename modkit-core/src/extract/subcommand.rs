@@ -41,7 +41,10 @@ use crate::reads_sampler::sampling_schedule::SamplingSchedule;
 use crate::record_processor::WithRecords;
 use crate::sample_probs::calc_per_base_thresholds_from_indexed_hts_file;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::util::{format_errors_table, get_ticker, Region, KMER_SIZE};
+use crate::util::{
+    format_errors_table, get_ticker, preflight_cram_input, reader_is_cram,
+    set_reference_for_cram_reader, Region, KMER_SIZE,
+};
 use crate::writers::TsvWriter;
 
 #[derive(Subcommand)]
@@ -150,6 +153,13 @@ impl EntryExtractFull {
             .transpose()?;
 
         let mut reader = get_serial_reader(&self.input_args.in_bam)?;
+        set_reference_for_cram_reader(&mut reader, self.reference.as_ref())?;
+        if !self.using_stdin() && reader_is_cram(&reader) {
+            preflight_cram_input(
+                Path::new(&self.input_args.in_bam),
+                self.reference.as_ref(),
+            )?;
+        }
         let header = reader.header().to_owned();
 
         let queue_size = self.input_args.queue_size;
@@ -219,13 +229,16 @@ impl EntryExtractFull {
             (_, true) | (None, false) => None,
             (Some(num_reads), false) => {
                 match bam::IndexedReader::from_path(&self.input_args.in_bam) {
-                    Ok(_) => Some(SamplingSchedule::from_num_reads(
-                        &self.input_args.in_bam,
-                        num_reads,
-                        region.as_ref(),
-                        reference_position_filter.include_pos.as_ref(),
-                        reference_position_filter.include_unmapped_reads,
-                    )?),
+                    Ok(_) => {
+                        Some(SamplingSchedule::from_num_reads_with_reference(
+                            &self.input_args.in_bam,
+                            self.reference.as_ref(),
+                            num_reads,
+                            region.as_ref(),
+                            reference_position_filter.include_pos.as_ref(),
+                            reference_position_filter.include_unmapped_reads,
+                        )?)
+                    }
                     Err(_) => {
                         debug!(
                             "cannot use sampling schedule without index, \
@@ -251,6 +264,7 @@ impl EntryExtractFull {
         let threads = self.input_args.threads;
         let mapped_only = self.input_args.mapped_only;
         let in_bam = self.input_args.in_bam.clone();
+        let reference = self.reference.clone();
         let kmer_size = self.input_args.kmer_size;
         let allow_non_primary = self.input_args.allow_non_primary;
         let remove_inferred = self.input_args.ignore_implicit;
@@ -259,6 +273,7 @@ impl EntryExtractFull {
             super::util::run_extract_reads(
                 reader,
                 in_bam,
+                reference,
                 references_and_intervals,
                 schedule,
                 collapse_method,
@@ -522,6 +537,7 @@ impl EntryExtractCalls {
         {
             calc_per_base_thresholds_from_stream(
                 &Path::new(&self.input_args.in_bam).to_path_buf(),
+                self.reference.as_ref(),
                 self.sample_num_reads,
                 false,
                 position_filter,
@@ -613,6 +629,13 @@ impl EntryExtractCalls {
             .transpose()?;
 
         let mut reader = get_serial_reader(&self.input_args.in_bam)?;
+        set_reference_for_cram_reader(&mut reader, self.reference.as_ref())?;
+        if !self.using_stdin() && reader_is_cram(&reader) {
+            preflight_cram_input(
+                Path::new(&self.input_args.in_bam),
+                self.reference.as_ref(),
+            )?;
+        }
         let header = reader.header().to_owned();
 
         let tid_to_name = (0..header.target_count())
@@ -776,13 +799,16 @@ impl EntryExtractCalls {
             (_, true) | (None, false) => None,
             (Some(num_reads), false) => {
                 match bam::IndexedReader::from_path(&self.input_args.in_bam) {
-                    Ok(_) => Some(SamplingSchedule::from_num_reads(
-                        &self.input_args.in_bam,
-                        num_reads,
-                        region.as_ref(),
-                        reference_position_filter.include_pos.as_ref(),
-                        reference_position_filter.include_unmapped_reads,
-                    )?),
+                    Ok(_) => {
+                        Some(SamplingSchedule::from_num_reads_with_reference(
+                            &self.input_args.in_bam,
+                            self.reference.as_ref(),
+                            num_reads,
+                            region.as_ref(),
+                            reference_position_filter.include_pos.as_ref(),
+                            reference_position_filter.include_unmapped_reads,
+                        )?)
+                    }
                     Err(_) => {
                         debug!(
                             "cannot use sampling schedule without index, \
@@ -811,6 +837,7 @@ impl EntryExtractCalls {
         let threads = self.input_args.threads;
         let mapped_only = self.input_args.mapped_only;
         let in_bam = self.input_args.in_bam.clone();
+        let reference = self.reference.clone();
         let kmer_size = self.input_args.kmer_size;
         let allow_non_primary = self.input_args.allow_non_primary;
         let remove_inferred = self.input_args.ignore_implicit;
@@ -819,6 +846,7 @@ impl EntryExtractCalls {
             super::util::run_extract_reads(
                 reader,
                 in_bam,
+                reference,
                 references_and_intervals,
                 schedule,
                 collapse_method,

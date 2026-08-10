@@ -20,7 +20,9 @@ use crate::reads_sampler::sampling_schedule::{
 };
 use crate::record_processor::{RecordProcessor, WithRecords};
 use crate::util::{
-    get_master_progress_bar, get_targets, get_ticker, ReferenceRecord, Region,
+    get_master_progress_bar, get_targets, get_ticker,
+    set_reference_for_cram_indexed_reader, set_reference_for_cram_reader,
+    ReferenceRecord, Region,
 };
 use record_sampler::RecordSampler;
 
@@ -44,6 +46,43 @@ pub fn get_sampled_read_ids_to_base_mod_probs<P: RecordProcessor>(
 where
     P::Output: Moniod + WithRecords,
 {
+    get_sampled_read_ids_to_base_mod_probs_with_reference::<P>(
+        bam_fp,
+        None,
+        reader_threads,
+        interval_size,
+        sample_frac,
+        num_reads,
+        seed,
+        region,
+        collapse_method,
+        edge_filter,
+        position_filter,
+        only_mapped,
+        suppress_progress,
+    )
+}
+
+pub(crate) fn get_sampled_read_ids_to_base_mod_probs_with_reference<
+    P: RecordProcessor,
+>(
+    bam_fp: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
+    reader_threads: usize,
+    interval_size: u32,
+    sample_frac: Option<f64>,
+    num_reads: Option<usize>,
+    seed: Option<u64>,
+    region: Option<&Region>,
+    collapse_method: Option<&CollapseMethod>,
+    edge_filter: Option<&EdgeFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
+    only_mapped: bool,
+    suppress_progress: bool,
+) -> anyhow::Result<P::Output>
+where
+    P::Output: Moniod + WithRecords,
+{
     let use_regions = bam::IndexedReader::from_path(&bam_fp).is_ok();
     if use_regions {
         debug!(
@@ -51,22 +90,29 @@ where
              chunks"
         );
         let schedule = match (sample_frac, num_reads) {
-            (_, Some(num_reads)) => SamplingSchedule::from_num_reads(
+            (_, Some(num_reads)) => {
+                SamplingSchedule::from_num_reads_with_reference(
+                    bam_fp,
+                    reference_fasta,
+                    num_reads,
+                    region,
+                    position_filter,
+                    !only_mapped,
+                )
+            }
+            (Some(frac), _) => {
+                SamplingSchedule::from_sample_frac_with_reference(
+                    bam_fp,
+                    reference_fasta,
+                    frac as f32,
+                    region,
+                    position_filter,
+                    !only_mapped,
+                )
+            }
+            (None, None) => SamplingSchedule::from_sample_frac_with_reference(
                 bam_fp,
-                num_reads,
-                region,
-                position_filter,
-                !only_mapped,
-            ),
-            (Some(frac), _) => SamplingSchedule::from_sample_frac(
-                bam_fp,
-                frac as f32,
-                region,
-                position_filter,
-                !only_mapped,
-            ),
-            (None, None) => SamplingSchedule::from_sample_frac(
-                bam_fp,
+                reference_fasta,
                 1.0,
                 region,
                 position_filter,
@@ -76,6 +122,7 @@ where
         let mut read_ids_to_base_mod_calls =
             sample_reads_base_mod_calls_over_regions::<P>(
                 bam_fp,
+                reference_fasta,
                 interval_size,
                 (reader_threads as f32 * 1.5).floor() as usize,
                 region,
@@ -94,6 +141,10 @@ where
                 read_ids_to_base_mod_calls.len()
             );
             let mut reader = bam::IndexedReader::from_path(bam_fp)?;
+            set_reference_for_cram_indexed_reader(
+                &mut reader,
+                reference_fasta,
+            )?;
             reader.set_threads(reader_threads)?;
             reader.fetch(bam::FetchDefinition::Unmapped)?;
             let num_reads_unmapped = num_reads.map(|nr| {
@@ -138,6 +189,7 @@ where
             );
         }
         let mut reader = bam::Reader::from_path(bam_fp)?;
+        set_reference_for_cram_reader(&mut reader, reference_fasta)?;
         reader.set_threads(reader_threads)?;
         let record_sampler =
             RecordSampler::new_from_options(sample_frac, num_reads, seed);
@@ -162,6 +214,7 @@ where
 /// an entire sorted, aligned BAM. Only uses primary alignments
 fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
     bam_fp: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
     interval_size: u32,
     batch_size: usize,
     region: Option<&Region>,
@@ -175,7 +228,8 @@ fn sample_reads_base_mod_calls_over_regions<P: RecordProcessor>(
 where
     P::Output: Moniod + WithRecords,
 {
-    let reader = bam::IndexedReader::from_path(bam_fp)?;
+    let mut reader = bam::IndexedReader::from_path(bam_fp)?;
+    set_reference_for_cram_indexed_reader(&mut reader, reference_fasta)?;
     let header = reader.header();
 
     let contigs = get_targets(header, region)
@@ -232,6 +286,7 @@ where
                 .map(|multi_coords| {
                     run_batch::<P>(
                         bam_fp,
+                        reference_fasta,
                         multi_coords,
                         sampling_schedule,
                         collapse_method,
@@ -258,6 +313,7 @@ where
 
 fn run_batch<P: RecordProcessor>(
     bam_fp: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
     batch: Vec<(ChromCoordinates, CountOrSample)>,
     sampling_schedule: &SamplingSchedule,
     collapse_method: Option<&CollapseMethod>,
@@ -293,9 +349,9 @@ where
                 }
                 CountOrSample::All => RecordSampler::new_passthrough(),
             };
-
-            match sample_reads_from_interval::<P>(
+            match sample_reads_from_interval_with_reference::<P>(
                 bam_fp,
+                reference_fasta,
                 cc.chrom_tid,
                 cc.start_pos,
                 cc.end_pos,
@@ -354,7 +410,43 @@ pub(crate) fn sample_reads_from_interval<P: RecordProcessor>(
 where
     P::Output: Moniod,
 {
+    sample_reads_from_interval_with_reference::<P>(
+        bam_fp,
+        None,
+        chrom_tid,
+        start,
+        end,
+        prev_end,
+        record_sampler,
+        collapse_method,
+        edge_filter,
+        position_filter,
+        only_mapped,
+        allow_non_primary,
+        kmer_size,
+    )
+}
+
+pub(crate) fn sample_reads_from_interval_with_reference<P: RecordProcessor>(
+    bam_fp: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
+    chrom_tid: u32,
+    start: u32,
+    end: u32,
+    prev_end: Option<u32>,
+    record_sampler: RecordSampler,
+    collapse_method: Option<&CollapseMethod>,
+    edge_filter: Option<&EdgeFilter>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
+    only_mapped: bool,
+    allow_non_primary: bool,
+    kmer_size: Option<usize>,
+) -> anyhow::Result<P::Output>
+where
+    P::Output: Moniod,
+{
     let mut bam_reader = bam::IndexedReader::from_path(bam_fp)?;
+    set_reference_for_cram_indexed_reader(&mut bam_reader, reference_fasta)?;
     bam_reader.fetch(bam::FetchDefinition::Region(
         chrom_tid as i32,
         start as i64,

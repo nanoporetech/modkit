@@ -39,7 +39,9 @@ use crate::{
 };
 use crate::{
     mod_base_code::DnaBase,
-    util::{qual_to_prob, reader_is_cram},
+    util::{
+        qual_to_prob, reader_is_cram, set_reference_for_cram_indexed_reader,
+    },
 };
 
 #[derive(new, Debug)]
@@ -110,6 +112,11 @@ pub(crate) struct QualHist {
 }
 
 impl QualHist {
+    pub(crate) fn has_probability_observations(&self) -> bool {
+        self.base_totals.iter().any(|count| *count > 0)
+            || self.mods_hists.iter().any(|hist| hist.total > 0)
+    }
+
     pub(crate) fn clear(&mut self) {
         for ar in self.hist.iter_mut() {
             ar.iter_mut().for_each(|x| *x = 0u64);
@@ -569,8 +576,11 @@ impl QualHist {
         max_thresholds_per_base: Option<[f32; 4]>,
         multi_progress: &MultiProgress,
     ) -> anyhow::Result<[f32; 4]> {
-        if self.ok_records == 0 {
-            bail!("Failed to sample any records to estimate threshold.")
+        if !self.has_probability_observations() {
+            bail!(
+                "cannot calculate automatic thresholds because no \
+                 modification probabilities were sampled"
+            )
         }
         let mut base_thresholds = [0f32; 4];
         let filter_percentile = if filter_percentile >= 1.0f32 {
@@ -580,10 +590,10 @@ impl QualHist {
         } else {
             filter_percentile * 100f32
         };
-        for (base, vals) in QualHist::percentiles(
-            &self.hist,
-            &self.base_totals,
-            &vec![filter_percentile],
+        for (base, vals) in self.base_level_percentiles(
+            &[filter_percentile],
+            multi_progress,
+            false,
         ) {
             assert_eq!(vals.len(), 1);
             let (t, q) = (vals[0].threshold, vals[0].qual);
@@ -623,11 +633,18 @@ impl QualHist {
                     base_thresholds[base as usize] = t_fb;
                 }
             } else {
+                let modified_probability_count = self
+                    .mods_hists
+                    .iter()
+                    .filter(|hist| hist.dna_base == base)
+                    .fold(0u64, |total, hist| total.saturating_add(hist.total));
+                let probability_count = self.base_totals[base as usize]
+                    .saturating_add(modified_probability_count);
                 multi_progress.suspend(|| {
                     info!(
                         "setting threshold {t} (qual: {q}) for base {base}, \
                          percentile {}, {} total probabilites",
-                        filter_percentile, self.base_totals[base as usize]
+                        filter_percentile, probability_count
                     );
                 });
                 base_thresholds[base as usize] = t;
@@ -1496,12 +1513,14 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
         sampling_region,
         edge_filter,
         io_threadpool,
+        ZeroReferenceTargetMode::FinishMappedPhaseForUnmappedFallback,
         multi_progress.clone(),
     )?;
     if qual_hist.ok_records < 100 {
         multi_progress
             .suspend(|| info!("collecting probabilities from unmapped reads"));
         let mut records = bam::IndexedReader::from_path(bam_fp)?;
+        set_reference_for_cram_indexed_reader(&mut records, reference_fasta)?;
         records.fetch(FetchDefinition::Unmapped)?;
         let unmapped_qual_hist = QualHist::from_records(
             records.records(),
@@ -1525,6 +1544,14 @@ pub(crate) fn calc_per_base_thresholds_from_indexed_hts_file(
     )
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ZeroReferenceTargetMode {
+    Reject,
+    /// Finish the mapped phase immediately so this consumer can run its
+    /// existing unmapped-record fallback.
+    FinishMappedPhaseForUnmappedFallback,
+}
+
 pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
     bam_fp: &PathBuf,
     reference_fasta: Option<&PathBuf>,
@@ -1542,6 +1569,7 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
     sampling_region: Option<&Region>,
     edge_filter: Option<&EdgeFilter>,
     io_threadpool: &rust_htslib::tpool::ThreadPool,
+    zero_reference_target_mode: ZeroReferenceTargetMode,
     multi_progress: MultiProgress,
 ) -> anyhow::Result<QualHist> {
     let bam_reader = bam::IndexedReader::from_path(bam_fp)?;
@@ -1564,13 +1592,27 @@ pub(crate) fn get_base_mods_quals_from_indexed_hts_file(
         mask,
         preload_references,
     )?;
-    let feeder = ChromCoordinatesFeeder::new(
-        &reference_records,
-        interval_size,
-        motif_lookup,
-        false,
-        stranded_position_filter.clone(),
-    )?;
+    let feeder = match zero_reference_target_mode {
+        ZeroReferenceTargetMode::Reject => ChromCoordinatesFeeder::new(
+            &reference_records,
+            interval_size,
+            motif_lookup,
+            false,
+            stranded_position_filter.clone(),
+        ),
+        ZeroReferenceTargetMode::FinishMappedPhaseForUnmappedFallback => {
+            ChromCoordinatesFeeder::new_allowing_zero_reference_targets(
+                &reference_records,
+                interval_size,
+                motif_lookup,
+                false,
+                stranded_position_filter.clone(),
+            )
+        }
+    }?;
+    if feeder.is_zero_reference_target_terminal() {
+        return Ok(QualHist::default());
+    }
     if let Some(motif_bases) = feeder.get_motif_bases() {
         for i in 0..n_workers {
             let worker: Box<dyn ExtractProbsWorker> = if collect_mod_histograms
@@ -1757,5 +1799,89 @@ fn byte_to_bool_positions<const SIZE: usize>(b: u8, agg: &mut [u32; SIZE]) {
     {
         let count = agg[i];
         agg[i] = count.saturating_add(1u32);
+    }
+}
+
+#[cfg(test)]
+mod empty_threshold_tests {
+    use std::path::PathBuf;
+
+    use indicatif::MultiProgress;
+
+    use super::{
+        calc_per_base_thresholds_from_indexed_hts_file, ModHist, QualHist,
+    };
+    use crate::mod_base_code::{DnaBase, METHYL_CYTOSINE};
+
+    fn all_modified_qual_hist() -> QualHist {
+        let mut hist = [0u64; 256];
+        hist[128] = 1;
+        let mut qual_hist = QualHist::default();
+        qual_hist.mods_hists.push(ModHist {
+            total: 1,
+            mod_code: METHYL_CYTOSINE,
+            dna_base: DnaBase::C,
+            hist,
+        });
+        qual_hist.num_records_with_base_mods[DnaBase::C as usize] = 1;
+        qual_hist.ok_records = 1;
+        qual_hist
+    }
+
+    #[test]
+    fn probability_observations_are_not_inferred_from_record_count() {
+        let mut qual_hist = QualHist::default();
+        qual_hist.ok_records = 1;
+
+        assert!(!qual_hist.has_probability_observations());
+        let error = qual_hist
+            .get_base_thresholds(0.1, None, &MultiProgress::new())
+            .expect_err("record count alone must not enable auto-thresholding");
+        assert!(error.to_string().contains("no modification probabilities"));
+    }
+
+    #[test]
+    fn all_modified_observations_support_automatic_thresholds() {
+        let qual_hist = all_modified_qual_hist();
+        assert!(qual_hist.has_probability_observations());
+        let thresholds = qual_hist
+            .get_base_thresholds(0.1, None, &MultiProgress::new())
+            .expect("all-modified observations must produce a threshold");
+        assert!(thresholds[DnaBase::C as usize] > 0.0);
+    }
+
+    #[test]
+    fn indexed_unmapped_threshold_reader_applies_supplied_cram_reference() {
+        let bam_fp = PathBuf::from(
+            "../tests/resources/bc_anchored_10_reads_unmapped.cram",
+        );
+        let missing_reference =
+            PathBuf::from("../tests/resources/missing-reference.fa");
+        let io_threadpool = rust_htslib::tpool::ThreadPool::new(1).unwrap();
+
+        let error = calc_per_base_thresholds_from_indexed_hts_file(
+            &bam_fp,
+            Some(&missing_reference),
+            0.1,
+            false,
+            false,
+            false,
+            None,
+            10,
+            None,
+            None,
+            None,
+            false,
+            1,
+            1_000,
+            Some(7),
+            None,
+            None,
+            &io_threadpool,
+            MultiProgress::new(),
+        )
+        .expect_err("a supplied CRAM reference must reach the fallback reader");
+
+        assert!(error.to_string().contains("failed to set CRAM reference"));
     }
 }

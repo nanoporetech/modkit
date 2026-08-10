@@ -29,6 +29,7 @@ indexmap = "2.2.6"
 indicatif = { version = "0.17.1", features = ["rayon"] }
 itertools = "0.12.1"
 lazy_static = "1.4"
+libc = "0.2"
 linear-map = "1.2.0"
 log = "0.4.0"
 log-once = "0.4.0"

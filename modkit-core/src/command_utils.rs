@@ -13,7 +13,7 @@ use crate::mod_base_code::{DnaBase, ModCodeRepr};
 use crate::motifs::motif_bed::RegexMotif;
 use crate::position_filter::StrandedPositionFilter;
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
-use crate::thresholds::calc_threshold_from_bam;
+use crate::thresholds::calc_threshold_from_bam_with_reference;
 use crate::util::{create_out_directory, Region};
 
 pub fn parse_per_mod_thresholds(
@@ -142,6 +142,44 @@ pub fn get_threshold_from_options(
     only_mapped: bool,
     suppress_progress: bool,
 ) -> anyhow::Result<MultipleThresholdModCaller> {
+    get_threshold_from_options_with_reference(
+        in_bam,
+        None,
+        threads,
+        interval_size,
+        sample_frac,
+        num_reads,
+        no_filtering,
+        filter_percentile,
+        seed,
+        region,
+        per_mod_thresholds,
+        edge_filter,
+        collapse_method,
+        position_filter,
+        only_mapped,
+        suppress_progress,
+    )
+}
+
+pub(crate) fn get_threshold_from_options_with_reference(
+    in_bam: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
+    threads: usize,
+    interval_size: u32,
+    sample_frac: Option<f64>,
+    num_reads: usize,
+    no_filtering: bool,
+    filter_percentile: f32,
+    seed: Option<u64>,
+    region: Option<&Region>,
+    per_mod_thresholds: Option<HashMap<ModCodeRepr, f32>>,
+    edge_filter: Option<&EdgeFilter>,
+    collapse_method: Option<&CollapseMethod>,
+    position_filter: Option<&StrandedPositionFilter<()>>,
+    only_mapped: bool,
+    suppress_progress: bool,
+) -> anyhow::Result<MultipleThresholdModCaller> {
     if no_filtering {
         info!("not performing filtering");
         return Ok(MultipleThresholdModCaller::new_passthrough());
@@ -157,8 +195,9 @@ pub fn get_threshold_from_options(
             (None, Some(num_reads))
         }
     };
-    let per_base_thresholds = calc_threshold_from_bam(
+    let per_base_thresholds = calc_threshold_from_bam_with_reference(
         in_bam,
+        reference_fasta,
         threads,
         interval_size,
         sample_frac,

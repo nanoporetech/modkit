@@ -22,8 +22,8 @@ use crate::reads_sampler::sampling_schedule::{
 };
 use crate::threshold_mod_caller::MultipleThresholdModCaller;
 use crate::thresholds::{
-    calculate_threshold_with_fallback, get_modbase_probs_from_bam,
-    log_calculated_thresholds,
+    calculate_threshold_with_fallback,
+    get_modbase_probs_from_bam_with_reference, log_calculated_thresholds,
 };
 use crate::util::{
     format_errors_table, get_master_progress_bar, get_ticker, MutOpMax,
@@ -60,7 +60,12 @@ pub struct MethylationEntropy {
     window_size: usize,
     /// Do not perform any filtering, include all mod base calls in output.
     #[clap(help_heading = "Filtering Options")]
-    #[arg(group = "thresholds", long, default_value_t = false)]
+    #[arg(
+        group = "thresholds",
+        long,
+        conflicts_with = "mod_thresholds",
+        default_value_t = false
+    )]
     no_filtering: bool,
     /// Sample this many reads when estimating the filtering threshold. Reads
     /// will be sampled evenly across aligned genome. If a region is
@@ -194,41 +199,19 @@ impl MethylationEntropy {
             bail!("min-valid-coverage must be at least 1")
         }
         for bam_fp in self.in_bams.iter() {
-            IdxStats::check_any_mapped_reads(&bam_fp, None, None)
-                .with_context(|| {
-                    format!(
-                        "did not find any mapped reads in {bam_fp:?}, perform \
+            IdxStats::check_any_mapped_reads_with_reference(
+                &bam_fp,
+                Some(&self.reference_fasta),
+                None,
+                None,
+            )
+            .with_context(|| {
+                format!(
+                    "did not find any mapped reads in {bam_fp:?}, perform \
                          alignment first"
-                    )
-                })?;
+                )
+            })?;
         }
-
-        let mut writer: Box<dyn EntropyWriter> =
-            match (self.out_bed.as_ref(), self.regions_fp.is_some()) {
-                (Some(out_fp), false) => Box::new(
-                    WindowsWriter::new_file(out_fp, self.header, self.verbose)
-                        .context("failed to make writer to file")?,
-                ),
-                (Some(out_dir), true) => Box::new(
-                    RegionsWriter::new(
-                        out_dir,
-                        self.prefix.as_ref(),
-                        self.header,
-                        self.verbose,
-                    )
-                    .context(
-                        "failed to make regions writer, output must be a \
-                         directory",
-                    )?,
-                ),
-                (None, false) => Box::new(
-                    WindowsWriter::new_stdout(self.header, self.verbose)
-                        .context("failed to make writer to stdout")?,
-                ),
-                (None, true) => {
-                    bail!("must provide output directory with regions")
-                }
-            };
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.threads)
@@ -338,9 +321,43 @@ impl MethylationEntropy {
         let threshold_caller =
             self.get_threshold_caller(&pool).map(|c| Arc::new(c))?;
 
+        let mut writer: Box<dyn EntropyWriter> =
+            match (self.out_bed.as_ref(), self.regions_fp.is_some()) {
+                (Some(out_fp), false) => Box::new(
+                    WindowsWriter::new_file(
+                        out_fp,
+                        self.header,
+                        self.verbose,
+                        self.force,
+                    )
+                    .context("failed to make writer to file")?,
+                ),
+                (Some(out_dir), true) => Box::new(
+                    RegionsWriter::new(
+                        out_dir,
+                        self.prefix.as_ref(),
+                        self.header,
+                        self.verbose,
+                        self.force,
+                    )
+                    .context(
+                        "failed to make regions writer, output must be a \
+                         directory",
+                    )?,
+                ),
+                (None, false) => Box::new(
+                    WindowsWriter::new_stdout(self.header, self.verbose)
+                        .context("failed to make writer to stdout")?,
+                ),
+                (None, true) => {
+                    bail!("must provide output directory with regions")
+                }
+            };
+
         let (snd, rcv) = crossbeam::channel::bounded(10_000);
 
         let bam_fps = self.in_bams.clone();
+        let reference_fasta = self.reference_fasta.clone();
         let min_coverage = self.min_valid_coverage;
         let threads = self.threads;
         let io_threads = self.io_threads.unwrap_or(threads);
@@ -387,6 +404,7 @@ impl MethylationEntropy {
                                     io_threads,
                                     threshold_caller.clone(),
                                     &bam_fps,
+                                    &reference_fasta,
                                 )
                             })
                             .collect::<Vec<_>>();
@@ -455,6 +473,11 @@ impl MethylationEntropy {
         &self,
         pool: &rayon::ThreadPool,
     ) -> anyhow::Result<MultipleThresholdModCaller> {
+        if self.no_filtering {
+            info!("not performing filtering");
+            return Ok(MultipleThresholdModCaller::new_passthrough());
+        }
+
         let per_mod_thresholds = self
             .mod_thresholds
             .as_ref()
@@ -482,8 +505,9 @@ impl MethylationEntropy {
                     HashMap::<DnaBase, f32>::new();
                 for in_bam in self.in_bams.iter() {
                     let (per_base_thresholds, explicit_canonical_probs) =
-                        get_modbase_probs_from_bam(
+                        get_modbase_probs_from_bam_with_reference(
                             in_bam,
+                            Some(&self.reference_fasta),
                             self.threads,
                             1_000_000,
                             None,
