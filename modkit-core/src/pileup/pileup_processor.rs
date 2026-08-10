@@ -62,6 +62,37 @@ fn get_query_base(record: &bam::Record, qpos: usize) -> Option<DnaBase> {
     })
 }
 
+#[inline]
+fn record_uses_reference_equal_bases(record: &bam::Record) -> bool {
+    let seq = record.seq();
+    // Each complete byte stores two bases. For odd-length sequences, only
+    // inspect the final high nibble because the low nibble is zero padding.
+    let complete_bytes = seq.len() / 2;
+    seq.encoded[..complete_bytes]
+        .iter()
+        .any(|packed| packed & 0x0f == 0 || packed >> 4 == 0)
+        || (seq.len() % 2 == 1 && seq.encoded[complete_bytes] >> 4 == 0)
+}
+
+#[cfg(test)]
+mod reference_equal_base_tests {
+    use super::*;
+
+    #[test]
+    fn odd_length_padding_is_not_a_reference_equal_base() {
+        let mut canonical = bam::Record::new();
+        canonical.set(b"canonical", None, b"ACGTA", &[30; 5]);
+        let seq = canonical.seq();
+        assert_eq!(seq.len(), 5);
+        assert_eq!(seq.encoded.last().unwrap() & 0x0f, 0);
+        assert!(!record_uses_reference_equal_bases(&canonical));
+
+        let mut reference_equal = bam::Record::new();
+        reference_equal.set(b"reference-equal", None, b"AC=TA", &[30; 5]);
+        assert!(record_uses_reference_equal_bases(&reference_equal));
+    }
+}
+
 pub(super) struct DnaPileupWorker<
     T,
     M,
@@ -157,6 +188,7 @@ impl<
         mut pileup_space: ModBasePileup2,
     ) -> anyhow::Result<ModBasePileup2> {
         let mut erred_records = 0usize;
+        let mut reference_equal_records = 0usize;
         let chrom_tid = item.chrom_tid;
         let start_pos = item.start_pos;
         let end_pos = item.end_pos;
@@ -203,6 +235,16 @@ impl<
             });
 
         'records: for (record, hp) in records {
+            // BAM code zero (`=` in SAM) means "same as the reference". Its
+            // identity cannot be recovered from SEQ alone, so reject the
+            // record before adding any of its observations to the matrix.
+            if record_uses_reference_equal_bases(&record) {
+                erred_records = erred_records.saturating_add(1);
+                reference_equal_records =
+                    reference_equal_records.saturating_add(1);
+                continue 'records;
+            }
+
             if self.allow_non_primary && record_is_not_primary(&record) {
                 if validate_mn_tag_on_record(&record).is_err() {
                     erred_records = erred_records.saturating_add(1);
@@ -445,6 +487,7 @@ impl<
             pileup_space.position_feature_counts = combined_counts;
             pileup_space.phased_feature_counts = [hp1, hp2];
             pileup_space.failed_records = erred_records;
+            pileup_space.reference_equal_records = reference_equal_records;
             Ok(pileup_space)
         } else {
             pileup_space.chrom_name = chrom_name;
@@ -455,6 +498,7 @@ impl<
                 .filter(|x| x.is_valid())
                 .collect();
             pileup_space.failed_records = erred_records;
+            pileup_space.reference_equal_records = reference_equal_records;
             Ok(pileup_space)
         }
     }
@@ -539,6 +583,7 @@ impl PileupWorker for GenericPileupWorker {
         mut pileup_space: ModBasePileup2,
     ) -> anyhow::Result<ModBasePileup2> {
         let mut erred_records = 0usize;
+        let mut reference_equal_records = 0usize;
         let chrom_tid = chrom_coordinates.chrom_tid;
         let start_pos = chrom_coordinates.start_pos;
         let end_pos = chrom_coordinates.end_pos;
@@ -614,6 +659,15 @@ impl PileupWorker for GenericPileupWorker {
         let mut pos_base_mod_call = Option::<BaseModCall>::None;
         let mut mod_strand = Option::<Strand>::None;
         'records: for record in records {
+            // Keep this preflight before modification parsing and tallying so
+            // a reference-equal query cannot contribute a partial record.
+            if record_uses_reference_equal_bases(&record) {
+                erred_records = erred_records.saturating_add(1);
+                reference_equal_records =
+                    reference_equal_records.saturating_add(1);
+                continue 'records;
+            }
+
             let reverse = record.is_reverse();
             let record_strand = if record.is_reverse() {
                 Strand::Negative
@@ -934,6 +988,7 @@ impl PileupWorker for GenericPileupWorker {
         pileup_space.interval_width = width;
         pileup_space.position_feature_counts = position_feature_counts;
         pileup_space.failed_records = erred_records;
+        pileup_space.reference_equal_records = reference_equal_records;
         Ok(pileup_space)
     }
 }

@@ -1623,11 +1623,16 @@ impl ModBamPileup {
             drop(records_tx);
         });
 
+        let mut reference_equal_records = 0u64;
         for result in records_rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {
                     tid_progress.inc(mod_base_pileup.interval_width as u64);
                     erred_reads.inc(mod_base_pileup.failed_records as u64);
+                    reference_equal_records = reference_equal_records
+                        .saturating_add(
+                            mod_base_pileup.reference_equal_records as u64,
+                        );
                     let rows_written =
                         writer.write(mod_base_pileup, &motif_labels)?;
                     write_progress.inc(rows_written);
@@ -1640,6 +1645,17 @@ impl ModBamPileup {
 
         let rows_processed = write_progress.position();
         let n_failed_reads = erred_reads.position();
+
+        if reference_equal_records > 0 {
+            master_progress.suspend(|| {
+                error!(
+                    "~{reference_equal_records} records rejected because BAM \
+                     SEQ contains '='; '=' means reference-equality and must \
+                     be resolved against the reference to an explicit base \
+                     before pileup"
+                );
+            });
+        }
 
         if n_failed_reads > 0 {
             master_progress.suspend(|| {

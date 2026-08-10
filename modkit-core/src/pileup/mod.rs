@@ -171,6 +171,7 @@ pub struct ModBasePileup2 {
     pub(crate) interval_width: usize,
     pub(crate) stride: usize,
     pub(crate) failed_records: usize,
+    pub(crate) reference_equal_records: usize,
     pub(crate) phased_feature_counts: [Vec<PileupFeatureCounts2>; 2],
 }
 
@@ -182,6 +183,7 @@ impl ModBasePileup2 {
             interval_width: 0,
             stride: 0,
             failed_records: 0,
+            reference_equal_records: 0,
             phased_feature_counts: [Vec::new(), Vec::new()],
         }
     }

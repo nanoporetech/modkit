@@ -59,13 +59,47 @@ fn make_ambiguous_query_pileup_bam(bam_path: &PathBuf, overrun: bool) {
     bam::index::build(bam_path, None, bam::index::Type::Bai, 1).unwrap();
 }
 
-type AmbiguousQueryPileupRow = (u64, ModCodeRepr, u64, u64);
+fn make_reference_equal_query_pileup_bam(bam_path: &PathBuf) {
+    let mut header = bam::Header::new();
+    let mut header_record = bam::header::HeaderRecord::new(b"HD");
+    header_record.push_tag(b"VN", "1.6").push_tag(b"SO", "coordinate");
+    header.push_record(&header_record);
+    let mut reference_record = bam::header::HeaderRecord::new(b"SQ");
+    reference_record
+        .push_tag(b"SN", "oligo_1512_adapters")
+        .push_tag(b"LN", 156);
+    header.push_record(&reference_record);
 
-fn run_ambiguous_query_pileup(
+    let cigar = bam::record::CigarString(vec![bam::record::Cigar::Match(10)]);
+    let mut writer =
+        bam::Writer::from_path(bam_path, &header, bam::Format::Bam).unwrap();
+    for (name, sequence) in [
+        (b"reference-equal".as_slice(), b"C=TGTACTTC".as_slice()),
+        (b"valid-control".as_slice(), b"CCTGTACTTC".as_slice()),
+    ] {
+        let mut record = bam::Record::new();
+        record.set(name, Some(&cigar), sequence, &[30; 10]);
+        record.set_tid(0);
+        record.set_pos(0);
+        record.set_mapq(60);
+        record.push_aux(b"MM", bam::record::Aux::String("C+m?,0;")).unwrap();
+        record
+            .push_aux(b"ML", bam::record::Aux::ArrayU8((&[255][..]).into()))
+            .unwrap();
+        writer.write(&record).unwrap();
+    }
+    drop(writer);
+    bam::index::build(bam_path, None, bam::index::Type::Bai, 1).unwrap();
+}
+
+type QueryPileupRow = (u64, ModCodeRepr, u64, u64);
+
+fn run_query_pileup(
     input_bam: &PathBuf,
     output_bed: &PathBuf,
     optimized: bool,
-) -> Result<Vec<AmbiguousQueryPileupRow>, String> {
+    log_path: Option<&PathBuf>,
+) -> Result<Vec<QueryPileupRow>, String> {
     let mut args = vec![
         "pileup",
         input_bam.to_str().unwrap(),
@@ -81,6 +115,9 @@ fn run_ambiguous_query_pileup(
         "--threads",
         "1",
     ]);
+    if let Some(log_path) = log_path {
+        args.extend(["--log", log_path.to_str().unwrap()]);
+    }
     run_modkit(&args).map_err(|error| error.to_string())?;
 
     Ok(BufReader::new(File::open(output_bed).unwrap())
@@ -249,12 +286,9 @@ fn test_pileup_skips_ambiguous_query_and_keeps_downstream_modification() {
     let observed = vec![
         (
             "optimized",
-            run_ambiguous_query_pileup(&input_bam, &optimized_output, true),
+            run_query_pileup(&input_bam, &optimized_output, true, None),
         ),
-        (
-            "generic",
-            run_ambiguous_query_pileup(&input_bam, &generic_output, false),
-        ),
+        ("generic", run_query_pileup(&input_bam, &generic_output, false, None)),
     ];
     let expected_row = (1, METHYL_CYTOSINE, 1, 1);
 
@@ -277,12 +311,9 @@ fn test_pileup_skips_ambiguous_query_after_unaligned_modification() {
     let observed = vec![
         (
             "optimized",
-            run_ambiguous_query_pileup(&input_bam, &optimized_output, true),
+            run_query_pileup(&input_bam, &optimized_output, true, None),
         ),
-        (
-            "generic",
-            run_ambiguous_query_pileup(&input_bam, &generic_output, false),
-        ),
+        ("generic", run_query_pileup(&input_bam, &generic_output, false, None)),
     ];
     let expected_row = (1, METHYL_CYTOSINE, 1, 1);
 
@@ -293,6 +324,41 @@ fn test_pileup_skips_ambiguous_query_after_unaligned_modification() {
             ("generic", Ok(vec![expected_row])),
         ]
     );
+}
+
+#[test]
+fn test_pileup_rejects_reference_equal_query_before_tallying() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let input_bam = temp_dir.path().join("reference-equal-query.bam");
+    make_reference_equal_query_pileup_bam(&input_bam);
+    let expected_row = (0, METHYL_CYTOSINE, 1, 1);
+
+    for (label, optimized) in [("optimized", true), ("generic", false)] {
+        let output_bed = temp_dir.path().join(format!("{label}.bed"));
+        let log_path = temp_dir.path().join(format!("{label}.log"));
+        let rows = run_query_pileup(
+            &input_bam,
+            &output_bed,
+            optimized,
+            Some(&log_path),
+        )
+        .unwrap();
+        let log = std::fs::read_to_string(log_path).unwrap();
+
+        assert_eq!(rows, vec![expected_row], "{label}");
+        assert!(
+            log.contains("~1 records rejected because BAM SEQ contains '='"),
+            "{label}: {log}"
+        );
+        assert!(
+            log.contains(
+                "'=' means reference-equality and must be resolved against \
+                 the reference to an explicit base before pileup"
+            ),
+            "{label}: {log}"
+        );
+        assert!(log.contains("~1 failed processing"), "{label}: {log}");
+    }
 }
 
 #[test]
