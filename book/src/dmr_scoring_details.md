@@ -55,6 +55,11 @@ Where \\(X\\) is the observations (\\(N_{\text{mod}}\\) and \\(N_{\text{canonica
     P(p | X) = \text{Beta}(\alpha_0 + N_{\text{mod}}, \beta_0 + N_{\text{can}})
 \\]
 Where \\(\alpha_0\\) and \\(\beta_0\\) are the parameters for the prior distribution \\(\text{Beta}(\alpha_0, \beta_0)\\).
+
+A user-specified prior must have \\(\alpha_0 > 0\\), \\(\beta_0 > 0\\), and \\(\alpha_0 + \beta_0 \ge 1\\).
+This input contract differs from the finite-domain condition for the closed-form density at zero: the paired posterior parameters must independently satisfy \\(\alpha_1 + \alpha_2 > 1\\) and \\(\beta_1 + \beta_2 > 1\\).
+Therefore, a positive prior whose parameters sum to exactly one remains valid input, while equality at either posterior pair-sum boundary is rejected.
+
 The advantage to this model is that as you collect more coverage, the variance of the posterior gets smaller - you're more confident that the true value of \\(p\\) is near the empirical mean.
 But when you have low coverage, you keep the uncertainty around.
 
@@ -168,4 +173,3 @@ To provide another metric that is more robust to high counts, Modkit DMR will ou
 In addition to the statistic, the high and low bound of the 95% confidence interval are reported.
 A CI value (high or low) of zero indicates that there is little certainty about there being a difference between the two conditions.
 Generally speaking, filtering or sorting on the lower bound is a good test for finding important changes.
-

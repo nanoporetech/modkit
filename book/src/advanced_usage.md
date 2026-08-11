@@ -2683,7 +2683,8 @@ Single-site Options:
           Prior distribution for estimating MAP-based p-value. Should be two
           arguments for alpha and beta (e.g. 1.0 1.0). See
           `dmr_scoring_details.md` for additional details on how the metric is
-          calculated
+          calculated. Alpha and beta must each be positive, and their sum must
+          be >= 1.0
 
       --delta <DELTA>
           Consider only effect sizes greater than this when calculating the

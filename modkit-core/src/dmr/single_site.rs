@@ -17,7 +17,7 @@ use rustc_hash::FxHashMap;
 use crate::dmr::beta_diff::{BetaParams, PMapEstimator};
 use crate::dmr::llr_model::{llk_ratio, AggregatedCounts};
 use crate::dmr::tabix::{
-    MultiSampleIndex, SampleToChromBMLines, SingleSiteSampleIndex,
+    MultiSampleIndex, SampleCount, SampleToChromBMLines, SingleSiteSampleIndex,
 };
 use crate::dmr::util::{cohen_h, DmrBatchOfPositions};
 use crate::errs::{MkError, MkResult};
@@ -75,7 +75,7 @@ impl SingleSiteDmrAnalysis {
         }
         let prior = if let Some(raw_prior_params) = prior {
             if raw_prior_params[0] + raw_prior_params[1] < 1.0 {
-                bail!("alpha + beta must be > 1.0 for numerical stability")
+                bail!("alpha + beta must be >= 1.0 for numerical stability")
             }
             let prior =
                 BetaParams::new(raw_prior_params[0], raw_prior_params[1])?;
@@ -121,7 +121,7 @@ impl SingleSiteDmrAnalysis {
             prior,
             rope,
             cap_coverages,
-        ));
+        )?);
 
         Ok(Self {
             sample_index,
@@ -570,25 +570,25 @@ impl SingleSiteDmrScore {
     }
 
     fn new_multi(
-        counts_a: &[AggregatedCounts],
-        counts_b: &[AggregatedCounts],
+        counts_a: &[SampleCount],
+        counts_b: &[SampleCount],
         sample_index: &SingleSiteSampleIndex,
         position: u64,
         strand: Strand,
         estimator: &PMapEstimator,
     ) -> MkResult<Self> {
         let (replicate_epmap, replicate_effect_sizes) = if sample_index
-            .matched_replicate_samples()
-            && counts_a.len() == counts_b.len()
+            .has_complete_positive_matched_counts(counts_a, counts_b)
         {
             let n_samples = counts_a.len();
             let mut replicate_epmap = Vec::with_capacity(n_samples);
             let mut replicate_effect_size = Vec::with_capacity(n_samples);
             for (a, b) in counts_a.iter().zip(counts_b) {
-                let epmap = estimator.predict(a, b).map_err(|e| {
-                    debug!("failed to calculate MAP-based p-value, {e}");
-                    MkError::BetaDiffCalcError
-                })?;
+                let epmap =
+                    estimator.predict(&a.counts, &b.counts).map_err(|e| {
+                        debug!("failed to calculate MAP-based p-value, {e}");
+                        MkError::BetaDiffCalcError
+                    })?;
                 replicate_epmap.push(epmap.e_pmap);
                 replicate_effect_size.push(epmap.effect_size);
             }
@@ -596,14 +596,18 @@ impl SingleSiteDmrScore {
         } else {
             (Vec::new(), Vec::new())
         };
-        let pct_a_samples = ((counts_a.len() as f32
-            / sample_index.num_a_samples() as f32)
-            * 100f32)
-            .floor() as usize;
-        let pct_b_samples = ((counts_b.len() as f32
-            / sample_index.num_b_samples() as f32)
-            * 100f32)
-            .floor() as usize;
+        let positive_a =
+            counts_a.iter().filter(|sample| sample.counts.total > 0).count();
+        let positive_b =
+            counts_b.iter().filter(|sample| sample.counts.total > 0).count();
+        let pct_a_samples = represented_sample_percentage(
+            positive_a,
+            sample_index.num_a_samples(),
+        );
+        let pct_b_samples = represented_sample_percentage(
+            positive_b,
+            sample_index.num_b_samples(),
+        );
         let balanced_counts_a = collapse_counts(counts_a, true);
         let balanced_counts_b = collapse_counts(counts_b, true);
         let epmap_balanced = estimator
@@ -781,33 +785,196 @@ impl SingleSiteDmrScore {
     }
 }
 
-fn collapse_counts(
-    counts: &[AggregatedCounts],
-    balance: bool,
-) -> AggregatedCounts {
-    if counts.len() == 1 {
-        counts[0].clone()
+fn represented_sample_percentage(
+    positive_count: usize,
+    configured_count: usize,
+) -> usize {
+    debug_assert!(configured_count > 0);
+    debug_assert!(positive_count <= configured_count);
+    let percentage = (positive_count as u128 * 100) / configured_count as u128;
+    usize::try_from(percentage)
+        .expect("represented sample percentage must fit in usize")
+}
+
+fn collapse_counts(counts: &[SampleCount], balance: bool) -> AggregatedCounts {
+    let positive_count =
+        counts.iter().filter(|sample| sample.counts.total > 0).count();
+    if positive_count == 0 {
+        AggregatedCounts::zero()
+    } else if positive_count == 1 {
+        counts
+            .iter()
+            .find(|sample| sample.counts.total > 0)
+            .map(|sample| sample.counts.clone())
+            .unwrap()
     } else if balance {
-        let total_cov = counts.iter().map(|ac| ac.total).sum::<usize>();
-        let n = counts.len();
-        let target_cov = total_cov as f32 / n as f32;
-        counts.iter().fold(AggregatedCounts::zero(), |agg, next| {
-            let counts = next
-                .iter_mod_fractions()
-                .map(|(code, frac)| {
-                    (code, (frac * target_cov).floor() as usize)
-                })
-                .collect::<HashMap<ModCodeRepr, usize>>();
-            let total = target_cov as usize;
-            let ac = AggregatedCounts::try_new(counts, total).unwrap();
-            agg.op(&ac)
-        })
+        let total_cov = counts
+            .iter()
+            .filter(|sample| sample.counts.total > 0)
+            .map(|sample_count| sample_count.counts.total)
+            .sum::<usize>();
+        let target_cov = total_cov as f32 / positive_count as f32;
+        counts.iter().filter(|sample| sample.counts.total > 0).fold(
+            AggregatedCounts::zero(),
+            |agg, next| {
+                let counts = next
+                    .counts
+                    .iter_mod_fractions()
+                    .map(|(code, frac)| {
+                        (code, (frac * target_cov).floor() as usize)
+                    })
+                    .collect::<HashMap<ModCodeRepr, usize>>();
+                let total = target_cov as usize;
+                let ac = AggregatedCounts::try_new(counts, total).unwrap();
+                agg.op(&ac)
+            },
+        )
     } else {
-        counts.iter().fold(AggregatedCounts::zero(), |agg, next| agg.op(next))
+        counts
+            .iter()
+            .filter(|sample| sample.counts.total > 0)
+            .fold(AggregatedCounts::zero(), |agg, next| agg.op(&next.counts))
+    }
+}
+
+#[cfg(test)]
+mod positive_coverage_tests {
+    use std::collections::HashMap;
+
+    use super::SingleSiteDmrScore;
+    use crate::dmr::beta_diff::{BetaParams, PMapEstimator};
+    use crate::dmr::llr_model::AggregatedCounts;
+    use crate::dmr::tabix::{
+        MultiSampleIndex, SampleCount, SingleSiteSampleIndex,
+    };
+    use crate::errs::MkError;
+    use crate::mod_base_code::ModCodeRepr;
+    use crate::util::Strand;
+    use rustc_hash::FxHashMap;
+
+    fn counts(code: char, n_mod: usize, total: usize) -> AggregatedCounts {
+        AggregatedCounts::try_new(
+            HashMap::from([(ModCodeRepr::Code(code), n_mod)]),
+            total,
+        )
+        .unwrap()
+    }
+
+    fn score(
+        counts_a: &[(char, usize, usize)],
+        counts_b: &[(char, usize, usize)],
+        num_a: usize,
+        num_b: usize,
+    ) -> Result<SingleSiteDmrScore, MkError> {
+        let sample_index = SingleSiteSampleIndex::new(
+            MultiSampleIndex::new(Vec::new(), FxHashMap::default(), 0, 1),
+            num_a,
+            num_b,
+            None,
+        )
+        .unwrap();
+        let counts_a = counts_a
+            .iter()
+            .enumerate()
+            .map(|(sample_id, &(code, n_mod, total))| SampleCount {
+                sample_id,
+                counts: counts(code, n_mod, total),
+            })
+            .collect::<Vec<_>>();
+        let counts_b = counts_b
+            .iter()
+            .enumerate()
+            .map(|(sample_id, &(code, n_mod, total))| SampleCount {
+                sample_id: sample_id + num_a,
+                counts: counts(code, n_mod, total),
+            })
+            .collect::<Vec<_>>();
+        let estimator = PMapEstimator::new(
+            [10, 10],
+            num_a,
+            num_b,
+            BetaParams::new(0.55, 0.55).unwrap(),
+            0.05,
+            true,
+        )
+        .unwrap();
+        SingleSiteDmrScore::new_multi(
+            &counts_a,
+            &counts_b,
+            &sample_index,
+            0,
+            Strand::Positive,
+            &estimator,
+        )
+    }
+
+    #[test]
+    fn balanced_score_ignores_zero_coverage_replicates() {
+        let score = score(&[('m', 10, 10), ('h', 0, 0)], &[('m', 0, 10)], 2, 1)
+            .unwrap();
+
+        assert_eq!(score.counts_a.total, 10);
+        assert_eq!(score.counts_a.modified_counts(), 10);
+        assert_eq!(score.counts_a.string_counts(), "m:10");
+        assert_eq!(score.counts_b.total, 10);
+        assert_eq!(score.effect_size, 1.0);
+        assert_eq!(score.balanced_effect_size, score.effect_size);
+        assert_eq!(score.pct_a_samples, 50);
+        assert_eq!(score.pct_b_samples, 100);
+    }
+
+    #[test]
+    fn reverse_balanced_score_ignores_zero_coverage_replicates() {
+        let score = score(&[('m', 0, 10)], &[('m', 10, 10), ('h', 0, 0)], 1, 2)
+            .unwrap();
+
+        assert_eq!(score.effect_size, -1.0);
+        assert_eq!(score.balanced_effect_size, score.effect_size);
+        assert_eq!(score.pct_a_samples, 100);
+        assert_eq!(score.pct_b_samples, 50);
+    }
+
+    #[test]
+    fn positive_canonical_and_absent_replicates_keep_their_meaning() {
+        let score =
+            score(&[('m', 0, 10), ('h', 0, 0)], &[('m', 0, 10)], 3, 2).unwrap();
+
+        assert_eq!(score.counts_a.total, 10);
+        assert_eq!(score.counts_a.modified_counts(), 0);
+        assert_eq!(score.effect_size, 0.0);
+        assert_eq!(score.balanced_effect_size, score.effect_size);
+        assert_eq!(score.pct_a_samples, 33);
+        assert_eq!(score.pct_b_samples, 50);
+    }
+
+    #[test]
+    fn condition_without_positive_coverage_is_a_recoverable_site_failure() {
+        let result = score(&[('m', 0, 0), ('h', 0, 0)], &[('m', 0, 10)], 2, 1);
+
+        assert!(matches!(result, Err(MkError::BetaDiffCalcError)));
+    }
+
+    #[test]
+    fn represented_sample_percentages_use_exact_integer_floor() {
+        for represented in [53, 59] {
+            let counts_a = vec![('m', 10, 10); represented];
+            let score = score(&counts_a, &[('m', 0, 10)], 100, 1).unwrap();
+
+            assert_eq!(score.pct_a_samples, represented);
+            assert_eq!(score.pct_b_samples, 100);
+        }
     }
 }
 
 type ChromToSingleScores = (String, Vec<MkResult<SingleSiteDmrScore>>);
+
+fn sort_chrom_to_site_scores(chrom_to_site_scores: &mut [ChromToSingleScores]) {
+    // The batch maps use hash iteration order, while the writer and stateful
+    // segmenter require the lexical contig order used by SingleSiteBatches.
+    chrom_to_site_scores
+        .sort_unstable_by(|(a_chrom, _), (b_chrom, _)| a_chrom.cmp(b_chrom));
+}
+
 fn process_batch_of_positions(
     batch: DmrBatchOfPositions,
     sample_index: Arc<SingleSiteSampleIndex>,
@@ -816,7 +983,7 @@ fn process_batch_of_positions(
     let (a_lines, b_lines) =
         sample_index.read_bedmethyl_lines_organized_by_position(batch)?;
 
-    let chrom_to_site_scores = a_lines
+    let mut chrom_to_site_scores = a_lines
         .into_iter()
         // intersect a_lines and b_lines on contig/chrom, there should be a
         // filter upstream of this to make sure that this is not ever a miss
@@ -852,7 +1019,30 @@ fn process_batch_of_positions(
         })
         .collect::<Vec<ChromToSingleScores>>();
 
+    sort_chrom_to_site_scores(&mut chrom_to_site_scores);
+
     Ok(chrom_to_site_scores)
+}
+
+#[cfg(test)]
+mod chrom_score_order_tests {
+    use super::{sort_chrom_to_site_scores, ChromToSingleScores};
+
+    #[test]
+    fn chrom_scores_are_sorted_lexically() {
+        let mut chrom_to_site_scores = ["cc", "aa", "bb"]
+            .into_iter()
+            .map(|chrom| (chrom.to_string(), Vec::new()))
+            .collect::<Vec<ChromToSingleScores>>();
+
+        sort_chrom_to_site_scores(&mut chrom_to_site_scores);
+
+        let chroms = chrom_to_site_scores
+            .iter()
+            .map(|(chrom, _)| chrom.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(chroms, vec!["aa", "bb", "cc"]);
+    }
 }
 
 struct Coverages {
@@ -1319,7 +1509,7 @@ fn path_to_region_labels(
     path: &[States],
     positions: &[u64],
 ) -> Vec<(u64, u64, States)> {
-    assert_eq!(path.len(), positions.len() - 1);
+    assert_eq!(path.len(), positions.len());
     if path.is_empty() {
         return Vec::new();
     } else {
@@ -1343,5 +1533,77 @@ fn path_to_region_labels(
         agg.push(final_bedline);
 
         agg
+    }
+}
+
+#[cfg(test)]
+mod segmentation_path_tests {
+    use super::{path_to_region_labels, States};
+
+    fn assert_every_position_covered_once(
+        path: &[States],
+        positions: &[u64],
+        regions: &[(u64, u64, States)],
+    ) {
+        for (&position, &state) in positions.iter().zip(path) {
+            let covering_regions = regions
+                .iter()
+                .filter(|(start, end, _)| *start <= position && position < *end)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                covering_regions.len(),
+                1,
+                "position {position} in state {state:?} was not covered exactly once"
+            );
+            assert_eq!(covering_regions[0].2, state);
+        }
+    }
+
+    fn check_case(
+        path: &[States],
+        positions: &[u64],
+        expected: &[(u64, u64, States)],
+    ) {
+        let regions = path_to_region_labels(path, positions);
+        assert_eq!(regions, expected);
+        assert_every_position_covered_once(path, positions, &regions);
+    }
+
+    #[test]
+    fn singleton_position_becomes_a_single_base_region() {
+        check_case(&[States::Same], &[10], &[(10, 11, States::Same)]);
+    }
+
+    #[test]
+    fn two_positions_are_both_integrated() {
+        check_case(
+            &[States::Same, States::Same],
+            &[10, 20],
+            &[(10, 21, States::Same)],
+        );
+        check_case(
+            &[States::Same, States::Different],
+            &[10, 20],
+            &[(10, 11, States::Same), (20, 21, States::Different)],
+        );
+    }
+
+    #[test]
+    fn multi_position_transitions_cover_each_position_once() {
+        check_case(
+            &[
+                States::Same,
+                States::Same,
+                States::Different,
+                States::Different,
+                States::Same,
+            ],
+            &[10, 20, 30, 40, 50],
+            &[
+                (10, 21, States::Same),
+                (30, 41, States::Different),
+                (50, 51, States::Same),
+            ],
+        );
     }
 }
