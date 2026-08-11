@@ -1,17 +1,374 @@
 use anyhow::Context;
 use itertools::Itertools;
 use rust_htslib::bam;
+use rust_htslib::bam::header::HeaderRecord;
+use rust_htslib::bam::record::{Aux, Cigar, CigarString};
+use rust_htslib::bam::{Format, Header, Record, Writer as BamWriter};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use common::{check_against_expected_text_file, run_modkit};
 use mod_kit::dmr::bedmethyl::BedMethylLine;
 use mod_kit::mod_base_code::{ModCodeRepr, METHYL_CYTOSINE};
 
 mod common;
+
+fn write_motif_boundary_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    let bam_path = root.join("motif-boundaries.bam");
+    let fasta_path = root.join("motif-boundaries.fa");
+
+    let mut header = Header::new();
+    let mut sq = HeaderRecord::new(b"SQ");
+    sq.push_tag(b"SN", "chr1");
+    sq.push_tag(b"LN", 6);
+    header.push_record(&sq);
+
+    let mut writer =
+        BamWriter::from_path(&bam_path, &header, Format::Bam).unwrap();
+    for (name, reverse) in [("forward", false), ("reverse", true)] {
+        let cigar = CigarString(vec![Cigar::Match(6)]);
+        let mut record = Record::new();
+        record.set(name.as_bytes(), Some(&cigar), b"ACGTCG", &[30; 6]);
+        record.set_tid(0);
+        record.set_pos(0);
+        record.set_mapq(60);
+        if reverse {
+            record.set_flags(16);
+        }
+        record.push_aux(b"MM", Aux::String("C+m?,0,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[255, 255][..]).into())).unwrap();
+        record.push_aux(b"MN", Aux::U32(6)).unwrap();
+        record.push_aux(b"NM", Aux::U32(0)).unwrap();
+        writer.write(&record).unwrap();
+    }
+    drop(writer);
+    bam::index::build(bam_path.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    File::create(&fasta_path).unwrap().write_all(b">chr1\nACGTCG\n").unwrap();
+    File::create(root.join("motif-boundaries.fa.fai"))
+        .unwrap()
+        .write_all(b"chr1\t6\t6\t6\t7\n")
+        .unwrap();
+
+    (bam_path, fasta_path)
+}
+
+fn run_motif_boundary_pileup(
+    root: &Path,
+    bam_path: &Path,
+    fasta_path: &Path,
+    preload: bool,
+    interval_size: usize,
+) -> Vec<u8> {
+    let preload_name = if preload { "preload" } else { "faidx" };
+    let output_path =
+        root.join(format!("motif-{preload_name}-{interval_size}.bed"));
+    let interval_size = interval_size.to_string();
+    let mut args = vec![
+        "pileup",
+        bam_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--motif",
+        "CG",
+        "0",
+        "--modified-bases",
+        "C:m",
+        "--no-filtering",
+        "--interval-size",
+        &interval_size,
+        "--threads",
+        "1",
+        "--suppress-progress",
+    ];
+    if preload {
+        args.push("--preload-references");
+    }
+    run_modkit(&args).unwrap();
+    std::fs::read(output_path).unwrap()
+}
+
+fn run_cgcg0_combined_pileup(
+    root: &Path,
+    optimized: bool,
+    region: &str,
+    interval_size: usize,
+) -> Vec<u8> {
+    let processor = if optimized { "optimized" } else { "generic" };
+    let output_path = root.join(format!(
+        "cgcg0-{processor}-{}-{interval_size}.bed",
+        region.replace(':', "-")
+    ));
+    let interval_size = interval_size.to_string();
+    let mut args = vec![
+        "pileup",
+        "../tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads.bam",
+        output_path.to_str().unwrap(),
+        "--motif",
+        "CGCG",
+        "0",
+        "--combine-strands",
+        "--no-filtering",
+        "--ref",
+        "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region",
+        region,
+        "--interval-size",
+        &interval_size,
+        "--threads",
+        "1",
+        "--suppress-progress",
+    ];
+    if optimized {
+        args.extend(["--modified-bases", "C:m"]);
+    }
+    run_modkit(&args).unwrap();
+    std::fs::read(output_path).unwrap()
+}
+
+fn run_combine_motif_validation_pileup(
+    output_path: &Path,
+    motifs: &[(&str, &str)],
+    optimized: bool,
+) -> std::process::Output {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_modkit"));
+    command.args([
+        "pileup",
+        "../tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads.bam",
+        output_path.to_str().unwrap(),
+        "--combine-strands",
+        "--no-filtering",
+        "--ref",
+        "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region",
+        "oligo_741_adapters:22-62",
+        "--interval-size",
+        "40",
+        "--threads",
+        "1",
+        "--suppress-progress",
+    ]);
+    for (motif, offset) in motifs {
+        command.args(["--motif", motif, offset]);
+    }
+    if optimized {
+        command.args(["--modified-bases", "C:m"]);
+    }
+    command.output().unwrap()
+}
+
+#[test]
+fn test_pileup_motif_boundaries_are_preload_and_interval_invariant() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_motif_boundary_fixture(root);
+    let expected = concat!(
+        "chr1\t1\t2\tm\t1\t+\t1\t2\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+        "chr1\t2\t3\tm\t1\t-\t2\t3\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+        "chr1\t4\t5\tm\t1\t+\t4\t5\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+        "chr1\t5\t6\tm\t1\t-\t5\t6\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+    );
+
+    for preload in [false, true] {
+        for interval_size in [1, 2, 3, 6, 100] {
+            let observed = run_motif_boundary_pileup(
+                root,
+                &bam_path,
+                &fasta_path,
+                preload,
+                interval_size,
+            );
+            assert_eq!(
+                observed,
+                expected.as_bytes(),
+                "preload={preload}, interval_size={interval_size}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_cgcg0_combined_optimized_and_generic_are_interval_invariant() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let expected = b"oligo_741_adapters\t38\t39\tm\t11\t.\t38\t39\t255,0,0\t11\t100.00\t11\t0\t0\t1\t0\t0\t0\n";
+
+    for interval_size in [1, 2, 3, 40] {
+        let optimized = run_cgcg0_combined_pileup(
+            temp_dir.path(),
+            true,
+            "oligo_741_adapters:22-62",
+            interval_size,
+        );
+        let generic = run_cgcg0_combined_pileup(
+            temp_dir.path(),
+            false,
+            "oligo_741_adapters:22-62",
+            interval_size,
+        );
+        assert_eq!(optimized, expected, "optimized interval={interval_size}");
+        assert_eq!(generic, expected, "generic interval={interval_size}");
+    }
+
+    // The only CGCG0 pair in this span is +38/-41. Its positive owner is
+    // before the region, so neither processor may fabricate a row at 40.
+    for optimized in [false, true] {
+        let observed = run_cgcg0_combined_pileup(
+            temp_dir.path(),
+            optimized,
+            "oligo_741_adapters:40-62",
+            2,
+        );
+        assert!(observed.is_empty(), "optimized={optimized}");
+    }
+}
+
+#[test]
+fn test_negative_combine_anchor_is_rejected_before_opening_output() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let sentinel = b"existing output must remain unchanged\n";
+
+    for motif_offset in ["2", "3"] {
+        for optimized in [false, true] {
+            let processor = if optimized { "optimized" } else { "generic" };
+            let output_path = temp_dir
+                .path()
+                .join(format!("cgcg{motif_offset}-{processor}.bed"));
+
+            let output = run_combine_motif_validation_pileup(
+                &output_path,
+                &[("CGCG", motif_offset)],
+                optimized,
+            );
+            let diagnostics = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                !output.status.success(),
+                "CGCG {motif_offset} unexpectedly succeeded with {processor}"
+            );
+            assert!(
+                diagnostics.contains(&format!(
+                    "cannot combine strands for motif 'CGCG {motif_offset}'"
+                )),
+                "unexpected {processor} diagnostics: {diagnostics}"
+            );
+            assert!(
+                diagnostics.contains(
+                    "the reverse anchor must not precede the forward anchor"
+                ),
+                "unexpected {processor} diagnostics: {diagnostics}"
+            );
+            assert!(
+                !output_path.exists(),
+                "invalid {processor} request created its output"
+            );
+
+            std::fs::write(&output_path, sentinel).unwrap();
+            let output = run_combine_motif_validation_pileup(
+                &output_path,
+                &[("CGCG", motif_offset)],
+                optimized,
+            );
+            assert!(
+                !output.status.success(),
+                "CGCG {motif_offset} unexpectedly succeeded with {processor}"
+            );
+            assert_eq!(
+                std::fs::read(&output_path).unwrap(),
+                sentinel,
+                "invalid {processor} request truncated its output"
+            );
+        }
+    }
+}
+
+fn assert_invalid_combine_motif_configuration_preserves_output(
+    label: &str,
+    motifs: &[(&str, &str)],
+    expected_diagnostic: &str,
+) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let sentinel = b"existing output must remain unchanged\n";
+    for optimized in [false, true] {
+        let processor = if optimized { "optimized" } else { "generic" };
+        let output_path =
+            temp_dir.path().join(format!("{label}-{processor}.bed"));
+
+        let output = run_combine_motif_validation_pileup(
+            &output_path,
+            motifs,
+            optimized,
+        );
+        let diagnostics = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !output.status.success(),
+            "{label} unexpectedly succeeded with {processor}"
+        );
+        assert!(
+            diagnostics.contains(expected_diagnostic),
+            "unexpected {processor} diagnostics for {label}: {diagnostics}"
+        );
+        assert!(
+            !output_path.exists(),
+            "invalid {label} {processor} request created its output"
+        );
+
+        std::fs::write(&output_path, sentinel).unwrap();
+        let output = run_combine_motif_validation_pileup(
+            &output_path,
+            motifs,
+            optimized,
+        );
+        assert!(
+            !output.status.success(),
+            "{label} unexpectedly succeeded with {processor}"
+        );
+        assert_eq!(
+            std::fs::read(&output_path).unwrap(),
+            sentinel,
+            "invalid {label} {processor} request truncated its output"
+        );
+    }
+}
+
+#[test]
+fn test_missing_combine_motif_is_rejected_before_output() {
+    assert_invalid_combine_motif_configuration_preserves_output(
+        "no-motif",
+        &[],
+        "combine strands",
+    );
+}
+
+#[test]
+fn test_non_palindromic_combine_motif_is_rejected_before_output() {
+    assert_invalid_combine_motif_configuration_preserves_output(
+        "non-palindrome",
+        &[("CAT", "0")],
+        "combine strands",
+    );
+}
+
+#[test]
+fn test_multiple_combine_motifs_are_rejected_before_output() {
+    assert_invalid_combine_motif_configuration_preserves_output(
+        "multiple-motifs",
+        &[("CG", "0"), ("GATC", "1")],
+        "multiple motifs and combine-strands not currently supported",
+    );
+}
 
 #[test]
 fn test_pileup_help() {
@@ -837,6 +1194,168 @@ fn test_pileup_motifs_cg0_cgcg2() {
         temp_file.to_str().unwrap(),
         "../tests/resources/cgcg2_cg0_test2.bed",
     );
+}
+
+fn run_pileup_with_overlapping_motifs(
+    output_path: &Path,
+    motif_count: usize,
+    modified_base: &str,
+    extra_modified_base: Option<&str>,
+    add_cpg: bool,
+    extra_motif: Option<(&str, &str)>,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_modkit"));
+    command.args([
+        "pileup",
+        "../tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads.bam",
+        output_path.to_str().unwrap(),
+        "--no-filtering",
+        "--ref",
+        "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region",
+        "oligo_741_adapters:22-62",
+        "--modified-bases",
+        modified_base,
+    ]);
+    if let Some(extra_modified_base) = extra_modified_base {
+        command.arg(extra_modified_base);
+    }
+    command.args(["--threads", "1", "--io-threads", "1"]);
+
+    for (motif, offset) in [
+        ("CGG", "0"),
+        ("CGGG", "0"),
+        ("TCG", "1"),
+        ("CTCG", "2"),
+        ("GCTCG", "3"),
+        ("TGCTCG", "4"),
+        ("TTGCTCG", "5"),
+        ("ATTGCTCG", "6"),
+    ]
+    .into_iter()
+    .take(motif_count)
+    {
+        command.args(["--motif", motif, offset]);
+    }
+    if let Some((motif, offset)) = extra_motif {
+        command.args(["--motif", motif, offset]);
+    }
+    if add_cpg {
+        command.arg("--cpg");
+    }
+
+    command.output().unwrap()
+}
+
+#[test]
+fn test_pileup_rejects_more_than_eight_motifs() {
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    let eight_motifs_path = temp_dir.path().join("eight.bed");
+    let output = run_pileup_with_overlapping_motifs(
+        &eight_motifs_path,
+        8,
+        "5mC",
+        None,
+        false,
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "eight motifs should be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let observed_labels =
+        BufReader::new(File::open(&eight_motifs_path).unwrap())
+            .lines()
+            .map(|line| line.unwrap().split('\t').nth(3).unwrap().to_string())
+            .collect::<BTreeSet<_>>();
+    let expected_labels = [
+        "m,CGG,0",
+        "m,CGGG,0",
+        "m,TCG,1",
+        "m,CTCG,2",
+        "m,GCTCG,3",
+        "m,TGCTCG,4",
+        "m,TTGCTCG,5",
+        "m,ATTGCTCG,6",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(observed_labels, expected_labels);
+
+    let deduplicated_auto_motif_path =
+        temp_dir.path().join("deduplicated-auto-motif.bed");
+    let output = run_pileup_with_overlapping_motifs(
+        &deduplicated_auto_motif_path,
+        7,
+        "m6A",
+        Some("2OmeA"),
+        false,
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "two codes for one missing primary base should add one motif: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let automatically_added_labels =
+        BufReader::new(File::open(&deduplicated_auto_motif_path).unwrap())
+            .lines()
+            .map(|line| line.unwrap().split('\t').nth(3).unwrap().to_string())
+            .collect::<BTreeSet<_>>();
+    assert!(automatically_added_labels.contains("a,A,0"));
+
+    for (filename, modified_base, add_cpg, extra_motif) in [
+        ("ninth-explicit.bed", "5mC", false, Some(("CGCG", "0"))),
+        ("ninth-cpg.bed", "5mC", true, None),
+        ("ninth-added-base.bed", "m6A", false, None),
+    ] {
+        let output_path = temp_dir.path().join(filename);
+        let output = run_pileup_with_overlapping_motifs(
+            &output_path,
+            8,
+            modified_base,
+            None,
+            add_cpg,
+            extra_motif,
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "nine motifs should fail");
+        assert!(
+            stderr.contains("pileup supports at most 8 motifs")
+                && stderr.contains("received 9"),
+            "expected a clear motif-capacity diagnostic, got: {stderr}"
+        );
+        assert!(
+            !output_path.exists(),
+            "motif validation should happen before creating output"
+        );
+
+        let sentinel = b"existing output\n";
+        std::fs::write(&output_path, sentinel).unwrap();
+        let output = run_pileup_with_overlapping_motifs(
+            &output_path,
+            8,
+            modified_base,
+            None,
+            add_cpg,
+            extra_motif,
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "nine motifs should fail");
+        assert!(
+            stderr.contains("pileup supports at most 8 motifs")
+                && stderr.contains("received 9"),
+            "expected a clear motif-capacity diagnostic, got: {stderr}"
+        );
+        assert_eq!(
+            std::fs::read(&output_path).unwrap(),
+            sentinel,
+            "motif validation should happen before changing output"
+        );
+    }
 }
 
 #[test]

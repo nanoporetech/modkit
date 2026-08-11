@@ -57,6 +57,18 @@ use crate::writers::{
     PhasedBedMethylWriter, PileupWriter,
 };
 
+const MAX_PILEUP_MOTIFS: usize = u8::BITS as usize;
+
+fn validate_motif_capacity(motif_count: usize) -> anyhow::Result<()> {
+    if motif_count > MAX_PILEUP_MOTIFS {
+        bail!(
+            "pileup supports at most {MAX_PILEUP_MOTIFS} motifs because motif \
+             membership is stored in an 8-bit mask; received {motif_count}"
+        )
+    }
+    Ok(())
+}
+
 #[derive(Args)]
 #[command(arg_required_else_help = true)]
 pub struct ModBamPileup {
@@ -304,9 +316,11 @@ pub struct ModBamPileup {
     /// used, the resulting output BED file will indicate the motif in the
     /// "name" field as <mod_code>,<motif>,<offset>. For example, given
     /// `--motif CGCG 2 --motif CG 0` there will be output lines with name
-    /// fields such as "m,CG,0" and "m,CGCG,2". To use this option with
-    /// `--combine-strands`, all motifs must be reverse-complement
-    /// palindromic or an error will be raised.
+    /// fields such as "m,CG,0" and "m,CGCG,2". At most eight motifs are
+    /// supported, including motifs added by `--cpg` or `--modified-bases`.
+    /// To use `--combine-strands`, exactly one motif must be supplied. It must
+    /// be reverse-complement palindromic, and the reverse-strand anchor must
+    /// not precede the forward-strand anchor, or an error will be raised.
     #[clap(help_heading = "Modified Base Options")]
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, requires = "reference_fasta")]
     motif: Option<Vec<String>>,
@@ -438,6 +452,48 @@ impl ModBamPileup {
         motifs == &[RegexMotif::parse_string("CG", 0).unwrap()]
     }
 
+    fn validate_combine_strands_motifs(
+        combine_strands: bool,
+        motifs: &[RegexMotif],
+    ) -> anyhow::Result<()> {
+        if !combine_strands {
+            return Ok(());
+        }
+
+        let motif = match motifs {
+            [motif] => motif,
+            [] => bail!(
+                "need to provide one reverse-complement palindromic motif to \
+                 combine strands"
+            ),
+            _ => bail!(
+                "multiple motifs and combine-strands not currently supported"
+            ),
+        };
+        if !motif.is_palendrome() {
+            bail!(
+                "cannot combine strands for motif '{} {}': motif must be \
+                 reverse-complement palindromic",
+                motif.raw_motif,
+                motif.motif_info.forward_offset,
+            );
+        }
+
+        let motif_info = motif.motif_info;
+        if motif_info.reverse_offset < motif_info.forward_offset {
+            bail!(
+                "cannot combine strands for motif '{} {}': reverse-strand \
+                 anchor offset {} precedes forward-strand anchor offset {}; \
+                 the reverse anchor must not precede the forward anchor",
+                motif.raw_motif,
+                motif_info.forward_offset,
+                motif_info.reverse_offset,
+                motif_info.forward_offset,
+            );
+        }
+        Ok(())
+    }
+
     fn is_5mc_5hmc_cpg(
         modified_bases: &[(DnaBase, ModCodeRepr)],
     ) -> anyhow::Result<bool> {
@@ -543,6 +599,11 @@ impl ModBamPileup {
     ) -> anyhow::Result<(Option<Presets>, Option<Vec<RegexMotif>>)> {
         let mut regex_motifs =
             self.parse_user_motifs().transpose()?.unwrap_or_else(Vec::new);
+        validate_motif_capacity(regex_motifs.len())?;
+        Self::validate_combine_strands_motifs(
+            self.combine_strands,
+            &regex_motifs,
+        )?;
         if regex_motifs.len() > 1 {
             if self.combine_strands {
                 bail!(
@@ -553,7 +614,7 @@ impl ModBamPileup {
             info!(
                 "more than one motif requires use of general pileup processor"
             );
-            let motif_primary_bases = regex_motifs
+            let mut motif_primary_bases = regex_motifs
                 .iter()
                 .map(|mot| mot.motif_info.primary_base)
                 .collect::<HashSet<DnaBase>>();
@@ -561,7 +622,7 @@ impl ModBamPileup {
                 for primary_base in
                     modified_bases.iter().map(|x| x.primary_base)
                 {
-                    if !motif_primary_bases.contains(&primary_base) {
+                    if motif_primary_bases.insert(primary_base) {
                         info!(
                             "adding single-base motif: '{} 0'",
                             primary_base.char()
@@ -576,6 +637,7 @@ impl ModBamPileup {
                     }
                 }
             }
+            validate_motif_capacity(regex_motifs.len())?;
             return Ok((None, Some(regex_motifs)));
         }
         if let Some(modified_bases) = self.modified_bases.as_ref() {
@@ -640,11 +702,7 @@ impl ModBamPileup {
                          motif to combine strands"
                     )
                 }
-                let motif_offset = regex_motifs[0].motif_info.offset();
-                if motif_offset < 0 {
-                    bail!("invalid palindromic motif");
-                }
-                let motif_offset = motif_offset as u32;
+                let motif_offset = regex_motifs[0].motif_info.offset() as u32;
                 let motif_bases = [
                     regex_motifs[0].motif_info.primary_base,
                     DnaBase::C,
@@ -1029,6 +1087,9 @@ impl ModBamPileup {
                 Presets::DnaCpGCombineStrands { .. } => {
                     (PileupNumericOptions::Passthrough, true)
                 }
+                Presets::DynamicAllContext {
+                    motif_offset: Some(_), ..
+                } => (PileupNumericOptions::Passthrough, true),
                 _ => (PileupNumericOptions::Passthrough, false),
             },
             None => {
@@ -1661,6 +1722,20 @@ impl ModBamPileup {
         aggregator.join().expect("aggregator theread paniced");
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn motif_capacity_accepts_eight_and_rejects_nine() {
+        assert!(validate_motif_capacity(8).is_ok());
+
+        let error = validate_motif_capacity(9).unwrap_err().to_string();
+        assert!(error.contains("at most 8 motifs"));
+        assert!(error.contains("received 9"));
     }
 }
 
