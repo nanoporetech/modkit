@@ -1493,10 +1493,14 @@ Options:
           centered
 
   -w, --window <EXPAND_WINDOW>
-          Number of base pairs to search around, for example if your BED region
-          records are single positions, a window of 500 will look 500 base pairs
-          upstream and downstream of that position. If your region BED records
-          are larger regions, this will expand from the midpoint of that region
+          Number of base pairs to search around. The original BED feature
+          midpoint remains offset zero. Output offsets are the bedMethyl
+          position minus that midpoint: negative is toward lower reference
+          coordinates and positive toward higher reference coordinates,
+          independent of feature strand. Profiles produced by affected earlier
+          releases must be regenerated because both queried membership and
+          offset bins can differ. For example, a window of 500 searches 500 bases
+          on each side
           
           [default: 2000]
 

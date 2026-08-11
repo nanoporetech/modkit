@@ -20,12 +20,16 @@ modkit localise ${bedmethyl} --regions ${ctcf} --genome-sizes ${sizes}
 
 The output table has the following schema:
 
-| column | Name             | Description                                                                                                         | type  |
-|--------|------------------|---------------------------------------------------------------------------------------------------------------------|-------|
-| 1      | mod code         | modification code as present in the bedmethyl                                                                       | str   |
-| 2      | offset           | distance in base pairs from the center of the genome features, negative values reflect towards the 5' of the genome | int   |
-| 3      | n_valid          | number of valid calls at this offset for this modification code                                                     | int   |
-| 4      | n_mod            | number of calls for this modification code at this offset                                                           | int   |
-| 5      | percent_modified | `n_mod` / `n_valid`  * 100                                                                                          | float |
+| column | Name             | Description                                                                                                                                                                               | type  |
+|--------|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------|
+| 1      | mod code         | modification code as present in the bedmethyl                                                                                                                                             | str   |
+| 2      | offset           | bedMethyl position minus the original feature midpoint; negative is toward lower reference coordinates and positive toward higher coordinates, independent of the BED feature strand      | int   |
+| 3      | n_valid          | number of valid calls at this offset for this modification code                                                                                                                           | int   |
+| 4      | n_mod            | number of calls for this modification code at this offset                                                                                                                                 | int   |
+| 5      | percent_modified | `n_mod` / `n_valid`  * 100                                                                                                                                                                | float |
+
+Profiles produced by affected earlier modkit releases must be regenerated before
+comparison because both queried membership and offset bins can differ. The
+reference-coordinate axis is not reversed for negative-strand features.
 
 Optionally the `--chart` argument can be used to create HTML charts of the modification patterns.
