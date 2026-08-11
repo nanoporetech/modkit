@@ -12,6 +12,7 @@ use crossbeam_channel::unbounded;
 use derive_new::new;
 use indicatif::{MultiProgress, ProgressBar};
 use log::{debug, info, warn};
+use memchr::memmem::Finder;
 use rust_htslib::bam::record::{Aux, AuxArray};
 use rust_htslib::bam::{self, Read};
 use rustc_hash::FxHashMap;
@@ -1095,19 +1096,18 @@ fn repair_record_pair(record_pair: RecordPair) -> anyhow::Result<bam::Record> {
         })?;
 
     if donor_seq.len() < acceptor_seq.len() {
-        bail!("donor sequence for {read_name} is longer than acceptor sequence")
+        bail!(
+            "donor sequence for {read_name} is shorter than acceptor sequence"
+        )
     }
-    let matches = donor_seq.match_indices(&acceptor_seq);
-
-    let starts =
-        matches.into_iter().map(|(start, _)| start).collect::<Vec<usize>>();
-    if starts.len() > 1 {
-        bail!("multiple potential corrections found for {read_name}")
-    } else if starts.is_empty() {
+    let finder = Finder::new(acceptor_seq.as_bytes());
+    let Some(start) = finder.find(donor_seq.as_bytes()) else {
         bail!("acceptor sequence is not a substring of the donor sequence")
+    };
+    if finder.find(&donor_seq.as_bytes()[start + 1..]).is_some() {
+        bail!("multiple potential corrections found for {read_name}")
     } else {
         let acceptor_seq_len = acceptor_seq.len();
-        let start = *starts.get(0).unwrap();
         let end = start + acceptor_seq_len;
 
         let mm_style = modbase_info.mm_style;
@@ -1185,16 +1185,111 @@ mod tests {
     use crate::ordered_scheduler::OrderedWorker;
 
     use super::{
-        query_name_order, run_repair_scheduler, validate_complete_bam,
-        CompleteBamValidator, QueryNameOrder, RecordPair, RepairJob,
-        RepairSink, RepairSlot, RepairTags, StagedBamOutput,
-        StagedBamValidator, StagedFileIdentity, REPAIR_TEMP_PREFIX,
+        query_name_order, repair_record_pair, run_repair_scheduler,
+        validate_complete_bam, CompleteBamValidator, QueryNameOrder,
+        RecordPair, RepairJob, RepairSink, RepairSlot, RepairTags,
+        StagedBamOutput, StagedBamValidator, StagedFileIdentity,
+        REPAIR_TEMP_PREFIX,
     };
 
     fn make_record(name: &[u8], sequence: &str) -> bam::Record {
         let mut record = bam::Record::new();
         record.set(name, None, sequence.as_bytes(), &vec![255; sequence.len()]);
         record
+    }
+
+    fn make_donor(name: &[u8], sequence: &str) -> bam::Record {
+        let mut record = make_record(name, sequence);
+        record.push_aux(b"MM", Aux::String("A+a.,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[200u8][..]).into())).unwrap();
+        record
+    }
+
+    fn repair(donor: &str, acceptor: &str) -> anyhow::Result<bam::Record> {
+        repair_record_pair(RecordPair::new(
+            Arc::new(make_donor(b"read", donor)),
+            make_record(b"read", acceptor),
+        ))
+    }
+
+    fn repair_reverse(
+        donor_stored_sequence: &str,
+        acceptor_stored_sequence: &str,
+    ) -> anyhow::Result<bam::Record> {
+        let mut donor = make_donor(b"reverse", donor_stored_sequence);
+        donor.set_reverse();
+        let mut acceptor = make_record(b"reverse", acceptor_stored_sequence);
+        acceptor.set_reverse();
+        repair_record_pair(RecordPair::new(Arc::new(donor), acceptor))
+    }
+
+    #[test]
+    fn repair_rejects_overlapping_ambiguous_placements() {
+        let error = repair("ACACAC", "ACAC").unwrap_err();
+        assert!(
+            error.to_string().contains("multiple potential corrections"),
+            "unexpected error: {error:#}"
+        );
+
+        assert!(repair("ACACGGACAC", "ACAC")
+            .unwrap_err()
+            .to_string()
+            .contains("multiple potential corrections"));
+    }
+
+    #[test]
+    fn repair_preserves_unique_and_absent_placement_behavior() {
+        let repaired = repair("TACACG", "ACAC").unwrap();
+        assert!(matches!(repaired.aux(b"MM").unwrap(), Aux::String("A+a.,0;")));
+        match repaired.aux(b"ML").unwrap() {
+            Aux::ArrayU8(qualities) => {
+                assert_eq!(qualities.iter().collect::<Vec<_>>(), vec![200]);
+            }
+            other => panic!("unexpected ML tag: {other:?}"),
+        }
+        assert!(matches!(repaired.aux(b"MN").unwrap(), Aux::U32(4)));
+
+        assert!(repair("ACACAC", "CGCG")
+            .unwrap_err()
+            .to_string()
+            .contains("not a substring"));
+    }
+
+    #[test]
+    fn repair_searches_forward_sequences_for_reverse_records() {
+        // Stored placement starts at 3, while the forward-sequence placement
+        // TACGAAA -> ACG starts at 1.
+        let repaired = repair_reverse("TTTCGTA", "CGT").unwrap();
+        assert!(repaired.is_reverse());
+        assert!(matches!(repaired.aux(b"MM").unwrap(), Aux::String("A+a.,0;")));
+        match repaired.aux(b"ML").unwrap() {
+            Aux::ArrayU8(qualities) => {
+                assert_eq!(qualities.iter().collect::<Vec<_>>(), vec![200]);
+            }
+            other => panic!("unexpected ML tag: {other:?}"),
+        }
+        assert!(matches!(repaired.aux(b"MN").unwrap(), Aux::U32(3)));
+
+        assert!(repair_reverse("GTGTGT", "GTGT")
+            .unwrap_err()
+            .to_string()
+            .contains("multiple potential corrections"));
+    }
+
+    #[test]
+    fn repair_returns_errors_for_empty_sequences() {
+        for (donor, acceptor, expected) in [
+            (
+                "ACAC",
+                "",
+                "acceptor sequence for record read failed, empty-read-sequence",
+            ),
+            ("", "ACAC", "record read failed, invalid-MM-tag"),
+            ("", "", "record read failed, invalid-MM-tag"),
+        ] {
+            let error = repair(donor, acceptor).unwrap_err();
+            assert_eq!(error.to_string(), expected);
+        }
     }
 
     struct FailNthWriteSink<S> {
