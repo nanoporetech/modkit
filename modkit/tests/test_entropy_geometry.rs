@@ -83,10 +83,9 @@ fn write_two_contig_conflict_fixture(root: &Path) -> (PathBuf, PathBuf) {
     }
     let mut writer =
         bam::Writer::from_path(&bam_path, &header, bam::Format::Bam).unwrap();
-    for (tid, sequence, mm_tag, ml_count) in [
-        (0, "CG", "C+m?,0;", 1),
-        (1, "CGCG", "C+m?,0,0;", 2),
-    ] {
+    for (tid, sequence, mm_tag, ml_count) in
+        [(0, "CG", "C+m?,0;", 1), (1, "CGCG", "C+m?,0,0;", 2)]
+    {
         let cigar = CigarString(vec![Cigar::Match(sequence.len() as u32)]);
         let mut record = bam::Record::new();
         record.set(
@@ -214,13 +213,7 @@ fn region_owning_only_the_anchor_uses_reference_context() {
 fn conflicting_combined_motif_partners_fail_before_output_creation() {
     let temp_dir = tempfile::tempdir().unwrap();
     let reference = write_reference(temp_dir.path(), "CGCG");
-    let bam = write_bam(
-        temp_dir.path(),
-        "CGCG",
-        "C+m?,0,0;",
-        2,
-        &[false],
-    );
+    let bam = write_bam(temp_dir.path(), "CGCG", "C+m?,0,0;", 2, &[false]);
     let output = temp_dir.path().join("conflict.bed");
     let result = Command::new(env!("CARGO_BIN_EXE_modkit"))
         .args([
@@ -268,8 +261,7 @@ fn conflicting_combined_motif_partners_fail_before_output_creation() {
 #[test]
 fn conflict_on_later_contig_fails_before_output_creation() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let (reference, bam) =
-        write_two_contig_conflict_fixture(temp_dir.path());
+    let (reference, bam) = write_two_contig_conflict_fixture(temp_dir.path());
     let output = temp_dir.path().join("later-conflict.bed");
     fs::write(&output, b"sentinel\n").unwrap();
     let result = Command::new(env!("CARGO_BIN_EXE_modkit"))

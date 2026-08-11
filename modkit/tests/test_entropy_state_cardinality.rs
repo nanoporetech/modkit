@@ -104,13 +104,11 @@ fn code_cardinality_cli_is_stable_across_encounter_order_and_threads() {
         );
 
         let mut expected = None;
-        for (order, input) in
-            [("forward", &forward), ("reversed", &reversed)]
-        {
+        for (order, input) in [("forward", &forward), ("reversed", &reversed)] {
             for threads in [1, 4] {
-                let output = temp_dir.path().join(format!(
-                    "{code_count}-{order}-{threads}.bed"
-                ));
+                let output = temp_dir
+                    .path()
+                    .join(format!("{code_count}-{order}-{threads}.bed"));
                 run_entropy(input, &reference, &output, threads);
                 let observed = fs::read(&output).unwrap();
                 if let Some(expected) = expected.as_ref() {

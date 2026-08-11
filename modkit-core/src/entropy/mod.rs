@@ -45,9 +45,7 @@ where
         }
         MinMaxResult::OneElement(position) => {
             position
-                ..position
-                    .checked_add(1)
-                    .expect("reference interval overflow")
+                ..position.checked_add(1).expect("reference interval overflow")
         }
         MinMaxResult::NoElements => {
             unreachable!("cannot build an interval without positions")
@@ -674,25 +672,24 @@ impl GenomeWindows {
             );
             // if neg_entropies is empty and there are no fails, we never saw
             // any negative strand me entropies
-            let neg_entropy_stats = if neg_entropies.is_empty()
-                && neg_num_fails == 0
-            {
-                assert!(
+            let neg_entropy_stats =
+                if neg_entropies.is_empty() && neg_num_fails == 0 {
+                    assert!(
                     neg_num_reads.is_empty(),
                     "neg num reads and window entropies should both be empty"
                 );
-                None
-            } else {
-                // this will fail correctly if there are neg_entropies is empty
-                // but there are fails
-                Some(DescriptiveStats::new(
-                    &neg_entropies,
-                    &neg_num_reads,
-                    neg_num_fails,
-                    chrom_id,
-                    &interval,
-                ))
-            };
+                    None
+                } else {
+                    // this will fail correctly if there are neg_entropies is empty
+                    // but there are fails
+                    Some(DescriptiveStats::new(
+                        &neg_entropies,
+                        &neg_num_reads,
+                        neg_num_fails,
+                        chrom_id,
+                        &interval,
+                    ))
+                };
 
             let region_entropy = RegionEntropy::new(
                 chrom_id,
@@ -2886,16 +2883,10 @@ mod entropy_mod_tests {
 
     #[test]
     fn fetch_range_uses_global_min_start_and_max_exclusive_end() {
-        let first = GenomeWindow::new_combine_strands(
-            10..21,
-            0,
-            FxHashMap::default(),
-        );
-        let second = GenomeWindow::new_combine_strands(
-            15..17,
-            0,
-            FxHashMap::default(),
-        );
+        let first =
+            GenomeWindow::new_combine_strands(10..21, 0, FxHashMap::default());
+        let second =
+            GenomeWindow::new_combine_strands(15..17, 0, FxHashMap::default());
         let windows = GenomeWindows::new(0, vec![first, second], None);
 
         assert_eq!(windows.get_range(), 10..21);
@@ -2904,8 +2895,7 @@ mod entropy_mod_tests {
     #[test]
     fn combined_window_advances_from_owned_anchor_not_left_partner() {
         let motifs = vec![RegexMotif::parse_string("GATC", 3).unwrap()];
-        let mut windows =
-            sliding_windows_for_test("GATC", motifs, true, 1);
+        let mut windows = sliding_windows_for_test("GATC", motifs, true, 1);
 
         assert!(windows.next_window().is_some());
         assert_eq!(windows.curr_position, 4);
@@ -2917,8 +2907,7 @@ mod entropy_mod_tests {
             RegexMotif::parse_string("CG", 0).unwrap(),
             RegexMotif::parse_string("CGN", 0).unwrap(),
         ];
-        let mut windows =
-            sliding_windows_for_test("CGA", motifs, false, 2);
+        let mut windows = sliding_windows_for_test("CGA", motifs, false, 2);
 
         assert!(windows.next_window().is_none());
     }
@@ -2930,27 +2919,12 @@ mod entropy_mod_tests {
             RegexMotif::parse_string("GATC", 2).unwrap(),
         ];
         let hits = vec![
-            super::MotifHit::new(
-                3,
-                Some(10),
-                Strand::Positive,
-                DnaBase::C,
-                0,
-            ),
-            super::MotifHit::new(
-                5,
-                Some(10),
-                Strand::Positive,
-                DnaBase::C,
-                1,
-            ),
+            super::MotifHit::new(3, Some(10), Strand::Positive, DnaBase::C, 0),
+            super::MotifHit::new(5, Some(10), Strand::Positive, DnaBase::C, 1),
         ];
 
         let error = SlidingWindows::sort_and_dedup_motif_hits(
-            hits,
-            &motifs,
-            true,
-            "chr1",
+            hits, &motifs, true, "chr1",
         )
         .unwrap_err()
         .to_string();
@@ -2968,27 +2942,12 @@ mod entropy_mod_tests {
             RegexMotif::parse_string("CGN", 0).unwrap(),
         ];
         let hits = vec![
-            super::MotifHit::new(
-                4,
-                Some(5),
-                Strand::Positive,
-                DnaBase::C,
-                0,
-            ),
-            super::MotifHit::new(
-                4,
-                Some(5),
-                Strand::Positive,
-                DnaBase::C,
-                1,
-            ),
+            super::MotifHit::new(4, Some(5), Strand::Positive, DnaBase::C, 0),
+            super::MotifHit::new(4, Some(5), Strand::Positive, DnaBase::C, 1),
         ];
 
         let deduped = SlidingWindows::sort_and_dedup_motif_hits(
-            hits,
-            &motifs,
-            true,
-            "chr1",
+            hits, &motifs, true, "chr1",
         )
         .unwrap();
         assert_eq!(deduped.len(), 1);
