@@ -1,13 +1,15 @@
 use std::cmp::Ordering;
+use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
+use std::ops::Range;
 use std::path::PathBuf;
 use std::string::FromUtf8Error;
 
 use ansi_term::Style;
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use clap::Args;
 use derive_new::new;
 use itertools::Itertools;
@@ -37,6 +39,10 @@ use crate::util::{
     format_int_with_commas, get_reference_mod_strand, get_ticker, parse_nm,
     record_is_not_primary, Strand,
 };
+
+#[cfg(test)]
+#[path = "unseeded_observations_tests.rs"]
+mod unseeded_observations_tests;
 
 /// todo investigate using this type in BaseModCall
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,18 +86,30 @@ impl BaseStatus {
 
 impl BaseStatus {
     pub fn parse(raw: &str) -> anyhow::Result<Self> {
-        if let Ok(code) = raw.parse::<char>() {
-            if code == '-' {
-                Ok(Self::Canonical)
-            } else {
+        if raw == "-" {
+            return Ok(Self::Canonical);
+        }
+
+        if !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) {
+            let chebi = raw.parse::<u32>().map_err(|e| {
+                anyhow!("failed to parse ChEBI code {raw}: {e}")
+            })?;
+            return Ok(Self::Modified(ModCodeRepr::ChEbi(chebi)));
+        }
+
+        let mut chars = raw.chars();
+        match (chars.next(), chars.next()) {
+            (Some(code), None)
+                if code.is_ascii_lowercase()
+                    || matches!(code, 'A' | 'C' | 'G' | 'T' | 'U' | 'N') =>
+            {
                 Ok(Self::Modified(ModCodeRepr::Code(code)))
             }
-        } else {
-            if let Ok(chebi) = raw.parse::<u32>() {
-                Ok(Self::Modified(ModCodeRepr::ChEbi(chebi)))
-            } else {
-                Err(anyhow!("failed to parse mod code {raw}"))
-            }
+            _ => Err(anyhow!(
+                "failed to parse mod code {raw}: expected `-`, a numeric \
+                 ChEBI code, one lowercase ASCII letter, or one of \
+                 A/C/G/T/U/N"
+            )),
         }
     }
 }
@@ -122,7 +140,7 @@ struct GroundTruthSite {
     pub chrom: String,
     pub strand: Strand,
     pub base_status: BaseStatus,
-    pub positions: Vec<i64>,
+    pub positions: Range<i64>,
 }
 
 fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
@@ -136,13 +154,21 @@ fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
         fields[1].parse().map_err(|e| anyhow!("Error parsing start: {}", e))?;
     let end: i64 =
         fields[2].parse().map_err(|e| anyhow!("Error parsing end: {}", e))?;
+    if start < 0 {
+        bail!("BED start must be non-negative, found {start}");
+    }
+    if end <= start {
+        bail!(
+            "BED end must be greater than start, found start {start} and end \
+             {end}"
+        );
+    }
     let raw_mod_code = fields[3];
-    let strand_char = fields[5]
-        .chars()
-        .next()
-        .ok_or_else(|| anyhow!("Error parsing strand {}", fields[5]))?;
-
-    let strand = Strand::parse_char(strand_char)?;
+    let strand = match fields[5] {
+        "+" => Strand::Positive,
+        "-" => Strand::Negative,
+        raw => bail!("Error parsing strand {raw}: expected `+` or `-`"),
+    };
     let base_status = BaseStatus::parse(&raw_mod_code)
         .map_err(|e| anyhow!("Error parsing base status code: {}", e))?;
     if let BaseStatus::Modified(mod_code) = base_status {
@@ -155,7 +181,7 @@ fn parse_ground_truth_bed_line(line: &str) -> anyhow::Result<GroundTruthSite> {
             )
         }
     }
-    let positions = (start..end).collect();
+    let positions = start..end;
 
     Ok(GroundTruthSite { chrom, strand, base_status, positions })
 }
@@ -164,6 +190,17 @@ type TidToChrom = HashMap<u32, String>;
 
 type ChromStrandPositionNames =
     HashMap<String, HashMap<Strand, BTreeMap<i64, BaseStatus>>>;
+
+#[derive(Debug, Copy, Clone)]
+struct GroundTruthIntervalProvenance {
+    start: i64,
+    end: i64,
+    base_status: BaseStatus,
+    line_number: usize,
+}
+
+type ChromStrandIntervalProvenance =
+    HashMap<String, HashMap<Strand, Vec<GroundTruthIntervalProvenance>>>;
 
 fn get_tid_to_chrom(reader: &Reader) -> anyhow::Result<TidToChrom> {
     let header = reader.header().to_owned();
@@ -185,6 +222,7 @@ fn parse_ground_truth_bed_file(
 ) -> anyhow::Result<ChromStrandPositionNames> {
     info!("Parsing BED at {}", file_path.to_str().unwrap_or("invalid-UTF-8"));
     let mut result = HashMap::new();
+    let mut provenance: ChromStrandIntervalProvenance = HashMap::new();
     let lines_processed = get_ticker();
     if suppress_pb {
         lines_processed
@@ -192,28 +230,91 @@ fn parse_ground_truth_bed_file(
     }
     lines_processed.set_message("rows processed");
 
-    let reader = BufReader::new(File::open(file_path)?);
-    for ground_truth_site in reader
-        .lines()
-        .skip_while(|r| r.as_ref().map(|l| l.starts_with('#')).unwrap_or(false))
-        .filter_map(|r| {
-            r.map_err(|e| anyhow!("failed to read, {}", e.to_string()))
-                .and_then(|line| parse_ground_truth_bed_line(&line))
-                .ok()
-        })
-    {
+    let reader = BufReader::new(File::open(file_path).with_context(|| {
+        format!("failed to open ground truth BED {}", file_path.display())
+    })?);
+    for (line_idx, raw_line) in reader.lines().enumerate() {
+        let line_number = line_idx + 1;
+        let line = raw_line.with_context(|| {
+            format!(
+                "failed to read ground truth BED {} at line {line_number}",
+                file_path.display()
+            )
+        })?;
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let ground_truth_site = parse_ground_truth_bed_line(line)
+            .with_context(|| {
+                format!(
+                    "failed to parse ground truth BED {} at line \
+                     {line_number}",
+                    file_path.display()
+                )
+            })?;
+        let interval_start = ground_truth_site.positions.start;
+        let interval_end = ground_truth_site.positions.end;
         let cs_res = result
-            .entry(ground_truth_site.chrom)
+            .entry(ground_truth_site.chrom.clone())
             .or_insert_with(HashMap::new)
             .entry(ground_truth_site.strand)
             .or_insert_with(BTreeMap::new);
+        let prior_intervals = provenance
+            .entry(ground_truth_site.chrom.clone())
+            .or_insert_with(HashMap::new)
+            .entry(ground_truth_site.strand)
+            .or_insert_with(Vec::new);
         for pos in ground_truth_site.positions {
-            cs_res.insert(pos, ground_truth_site.base_status);
+            match cs_res.entry(pos) {
+                BTreeMapEntry::Vacant(entry) => {
+                    entry.insert(ground_truth_site.base_status);
+                }
+                BTreeMapEntry::Occupied(entry) => {
+                    let existing_status = *entry.get();
+                    if existing_status == ground_truth_site.base_status {
+                        continue;
+                    }
+                    let first_line = prior_intervals
+                        .iter()
+                        .find(|assignment| {
+                            assignment.start <= pos
+                                && pos < assignment.end
+                                && assignment.base_status == existing_status
+                        })
+                        .map(|assignment| assignment.line_number)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "missing provenance for existing ground truth \
+                                 assignment"
+                            )
+                        })?;
+                    bail!(
+                        "conflicting ground truth labels in BED {} at line \
+                         {line_number} for {}:{pos} strand {}: existing \
+                         `{existing_status}` from line {first_line}, new \
+                         `{}`",
+                        file_path.display(),
+                        ground_truth_site.chrom,
+                        ground_truth_site.strand,
+                        ground_truth_site.base_status
+                    );
+                }
+            }
         }
+        prior_intervals.push(GroundTruthIntervalProvenance {
+            start: interval_start,
+            end: interval_end,
+            base_status: ground_truth_site.base_status,
+            line_number,
+        });
         lines_processed.inc(1);
     }
     if result.is_empty() {
-        bail!("zero valid positions parsed from BED file".to_string());
+        bail!(
+            "zero valid positions parsed from BED file {}",
+            file_path.display()
+        );
     }
     lines_processed.finish_and_clear();
     info!("Processed {} BED lines", lines_processed.position());
@@ -276,6 +377,15 @@ fn derive_canonical_base(
 // ground truth and observed base status pointing to vector of mod probabilities
 type StatusProbs = HashMap<(BaseStatus, BaseStatus), Vec<f32>>;
 
+fn position_is_reference_skip(
+    position: i64,
+    reference_skips: &[[i64; 2]],
+) -> bool {
+    let insertion_idx =
+        reference_skips.partition_point(|[start, _]| *start <= position);
+    insertion_idx > 0 && position < reference_skips[insertion_idx - 1][1]
+}
+
 fn process_bam_record(
     record: &Record,
     mod_positions: &ChromStrandPositionNames,
@@ -297,6 +407,17 @@ fn process_bam_record(
     let cgt_mod_pos = mod_positions
         .get(chrom)
         .ok_or_else(|| anyhow!("No ground truth on this contig.",))?;
+    let alignment_strand =
+        if record.is_reverse() { Strand::Negative } else { Strand::Positive };
+    let mut called_ref_pos = mbi
+        .mod_strands_for_modified_primary_base(can_base)
+        .map(|mod_strand| {
+            (
+                get_reference_mod_strand(mod_strand, alignment_strand),
+                HashSet::new(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
     let mbp = ReadBaseModProfile::process_record(
         &record,
         &record_name,
@@ -330,20 +451,21 @@ fn process_bam_record(
                 .map(|gt_code| (mod_call, ref_pos, ref_strand, gt_code))
         });
 
-    let mut called_ref_pos = HashMap::new();
     let mut result = HashMap::new();
     for (mod_call, ref_pos, ref_mod_strand, gt_code) in mod_call_iter {
-        called_ref_pos
-            .entry(ref_mod_strand)
-            .or_insert_with(HashSet::new)
-            .insert(ref_pos);
+        let Some(positions) = called_ref_pos.get_mut(&ref_mod_strand) else {
+            continue;
+        };
+        positions.insert(ref_pos);
 
-        if mod_call.canonical_base != can_base {
+        let modified_primary_base = if mod_call.mod_strand == Strand::Negative {
+            mod_call.canonical_base.complement()
+        } else {
+            mod_call.canonical_base
+        };
+        if modified_primary_base != can_base {
             result
-                .entry((
-                    *gt_code,
-                    BaseStatus::Mismatch(mod_call.canonical_base),
-                ))
+                .entry((*gt_code, BaseStatus::Mismatch(modified_primary_base)))
                 .or_insert_with(Vec::new)
                 .push(f32::NAN);
             continue;
@@ -371,6 +493,7 @@ fn process_bam_record(
     let q_seq = record.seq();
     let ref_to_query: FxHashMap<i64, i64> =
         record.aligned_pairs().map(|pos| (pos[1], pos[0])).collect();
+    let reference_skips = record.introns().collect::<Vec<_>>();
     for (strand, positions) in called_ref_pos.iter() {
         let Some(cs_mod_pos) = cgt_mod_pos.get(&strand) else {
             // should be unnecessary
@@ -382,14 +505,49 @@ fn process_bam_record(
                 continue;
             };
             let Some(q_pos) = ref_to_query.get(pos) else {
+                if position_is_reference_skip(*pos, &reference_skips) {
+                    continue;
+                }
                 result
                     .entry((*gt_code, BaseStatus::Deletion))
                     .or_insert_with(Vec::new)
                     .push(f32::NAN);
                 continue;
             };
-            let mut base = DnaBase::parse(q_seq[*q_pos as usize] as char)?;
+            let q_pos = *q_pos as usize;
+            if let Some(edge_filter) = edge_filter {
+                // EdgeFilter uses forward/as-sequenced query coordinates,
+                // while aligned_pairs follows the alignment orientation.
+                let forward_q_pos = if record.is_reverse() {
+                    q_pos
+                        .checked_add(1)
+                        .and_then(|p| record.seq_len().checked_sub(p))
+                } else {
+                    Some(q_pos)
+                };
+                let Some(forward_q_pos) = forward_q_pos else {
+                    continue;
+                };
+                if !edge_filter
+                    .keep_position(forward_q_pos, record.seq_len())
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+            }
+            let Ok(mut base) = DnaBase::parse(q_seq[q_pos] as char) else {
+                result
+                    .entry((*gt_code, BaseStatus::NoCall))
+                    .or_insert_with(Vec::new)
+                    .push(f32::NAN);
+                continue;
+            };
             if record.is_reverse() {
+                base = base.complement();
+            }
+            let mod_strand =
+                get_reference_mod_strand(*strand, alignment_strand);
+            if mod_strand == Strand::Negative {
                 base = base.complement();
             }
             if base == can_base {
@@ -690,11 +848,13 @@ fn machine_parseable_table(
         gt_codes.iter().chain(call_codes.iter()).unique().collect();
     all_codes.sort();
 
-    let mut out_str = "[[\"ground_truth_label\",\"".to_string();
-    out_str.push_str(
-        &all_codes.iter().map(|x| x.human_display(validate_base)).join("\",\""),
-    );
-    out_str.push_str("\"]");
+    let mut out_str = "[[\"ground_truth_label\"".to_string();
+    for &call_code in &all_codes {
+        out_str.push_str(",\"");
+        out_str.push_str(&call_code.human_display(validate_base));
+        out_str.push_str("\"");
+    }
+    out_str.push_str("]");
     for gt_code in &gt_codes {
         out_str.push_str(",[\"");
         out_str.push_str(&gt_code.human_display(validate_base));
@@ -711,6 +871,14 @@ fn machine_parseable_table(
     }
     out_str.push_str("]");
     out_str
+}
+
+fn format_percentage_cell(count: usize, total: usize) -> String {
+    if total == 0 {
+        "NA".to_string()
+    } else {
+        format!("{:.2}%", 100.0 * count as f32 / total as f32)
+    }
 }
 
 fn print_table(
@@ -762,11 +930,8 @@ fn print_table(
             if show_percentages {
                 let gt_total = gt_totals.get(gt_code).unwrap();
                 row.add_cell(
-                    cell!(&format!(
-                        "{:.2}%",
-                        100.0 * vector_length as f32 / *gt_total as f32
-                    ))
-                    .style_spec("r"),
+                    cell!(&format_percentage_cell(vector_length, *gt_total))
+                        .style_spec("r"),
                 );
             } else {
                 row.add_cell(
@@ -898,10 +1063,6 @@ pub struct ValidateFromModBam {
 impl ValidateFromModBam {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
-        let mut out_handle: Option<File> = None;
-        if let Some(file_path) = self.out_filepath.clone() {
-            out_handle = Some(File::create(&file_path)?);
-        }
         let collapse_method = match &self.ignore {
             Some(raw_mod_code) => {
                 let mod_code = ModCodeRepr::parse(raw_mod_code)?;
@@ -963,18 +1124,20 @@ impl ValidateFromModBam {
         let can_base =
             derive_canonical_base(&gt_positions, self.canonical_base)?;
         info!("Canonical base: {}", can_base);
+        let mut out_handle =
+            self.out_filepath.as_ref().map(File::create).transpose()?;
 
         let mut all_probs = HashMap::new();
         for (bam_path, bed_indices) in bam_path_to_bed_indices {
-            let mut reader = Reader::from_path(bam_path.as_path())?;
-            reader.set_threads(self.threads)?;
-            let tid_to_chrom = get_tid_to_chrom(&reader)?;
             info!(
                 "Parsing mapping at {}",
                 bam_path.to_str().unwrap_or("invalid-UTF-8")
             );
 
             for bed_idx in bed_indices {
+                let mut reader = Reader::from_path(bam_path.as_path())?;
+                reader.set_threads(self.threads)?;
+                let tid_to_chrom = get_tid_to_chrom(&reader)?;
                 let status_probs = process_bam_file(
                     &mut reader,
                     &read_filter,
@@ -1014,6 +1177,58 @@ impl ValidateFromModBam {
             BaseStatus::Canonical | BaseStatus::Modified(_) => true,
             _ => false,
         });
+
+        // Accuracy and filtering rates have no denominator when every
+        // observation is a non-call status.
+        if all_probs.values().all(Vec::is_empty) {
+            info!("Balancing ground truth call totals");
+            print_table(can_base, &all_probs, false, "Balanced counts summary");
+            info!("Raw accuracy: NA");
+            print_table(
+                can_base,
+                &all_probs,
+                true,
+                "Raw modified base calls contingency table",
+            );
+
+            let threshold = self
+                .filter_threshold
+                .map(|threshold| threshold.to_string())
+                .unwrap_or_else(|| "NA".to_string());
+            info!("Call probability threshold: {threshold}");
+            info!("Percent of modified base calls removed: NA");
+            info!("{}", Style::new().bold().paint("Filtered accuracy: NA"));
+            print_table(
+                can_base,
+                &all_probs,
+                true,
+                "Filtered modified base calls contingency table",
+            );
+
+            if let Some(valid_out_handle) = &mut out_handle {
+                let empty_table = machine_parseable_table(can_base, &all_probs);
+                valid_out_handle
+                    .write_all(
+                        format!(
+                            concat!(
+                                "raw_accuracy: NA\n",
+                                "raw_contingency_table: {}\n",
+                                "filter_threshold: {}\n",
+                                "percent_of_mod_called_removed: NA\n",
+                                "filtered_accuracy: NA\n",
+                                "filtered_contingency_table: {}\n",
+                            ),
+                            empty_table, threshold, empty_table,
+                        )
+                        .as_bytes(),
+                    )
+                    .map_err(|e| {
+                        anyhow::anyhow!("Error writing to file: {}", e)
+                    })?;
+            }
+
+            return Ok(());
+        }
 
         info!("Balancing ground truth call totals");
         balance_ground_truth(&mut all_probs)?;
@@ -1085,13 +1300,26 @@ impl ValidateFromModBam {
             .filter(|&((gt_code, call_code), _)| gt_code == call_code)
             .map(|(_, values)| values.len())
             .sum::<usize>();
-        let filt_acc = 100.0 * correct_filt_calls as f32 / filt_calls as f32;
-        info!(
-            "{}",
-            Style::new()
-                .bold()
-                .paint(format!("Filtered accuracy: {:.2}%", filt_acc)),
-        );
+        let filt_acc = if filt_calls == 0 {
+            None
+        } else {
+            Some(100.0 * correct_filt_calls as f32 / filt_calls as f32)
+        };
+        let filtered_accuracy = match filt_acc {
+            Some(accuracy) => {
+                info!(
+                    "{}",
+                    Style::new()
+                        .bold()
+                        .paint(format!("Filtered accuracy: {:.2}%", accuracy)),
+                );
+                accuracy.to_string()
+            }
+            None => {
+                info!("{}", Style::new().bold().paint("Filtered accuracy: NA"));
+                "NA".to_string()
+            }
+        };
         print_table(
             can_base,
             &all_probs,
@@ -1115,7 +1343,8 @@ impl ValidateFromModBam {
                 .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
             valid_out_handle
                 .write_all(
-                    &format!("filtered_accuracy: {}\n", filt_acc).into_bytes(),
+                    &format!("filtered_accuracy: {}\n", filtered_accuracy)
+                        .into_bytes(),
                 )
                 .map_err(|e| anyhow::anyhow!("Error writing to file: {}", e))?;
             valid_out_handle
@@ -1130,5 +1359,360 @@ impl ValidateFromModBam {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use rust_htslib::bam::record::{Aux, Cigar, CigarString};
+    use tempfile::NamedTempFile;
+
+    use super::*;
+
+    #[test]
+    fn percentage_cells_are_unavailable_without_a_denominator() {
+        assert_eq!(format_percentage_cell(0, 0), "NA");
+        assert_eq!(format_percentage_cell(1, 4), "25.00%");
+    }
+
+    fn make_record(gap: Cigar) -> Record {
+        let cigar = CigarString(vec![Cigar::Match(1), gap, Cigar::Match(1)]);
+        let mut record = Record::new();
+        record.set(b"read", Some(&cigar), b"CC", &[255, 255]);
+        record.set_tid(0);
+        record.set_pos(0);
+        record.push_aux(b"MM", Aux::String("C+m?,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[255][..]).into())).unwrap();
+        record
+    }
+
+    fn make_record_with_ambiguous_bases() -> Record {
+        let cigar = CigarString(vec![Cigar::Match(5)]);
+        let mut record = Record::new();
+        record.set(b"ambiguous", Some(&cigar), b"CNRAC", &[255; 5]);
+        record.set_tid(0);
+        record.set_pos(0);
+        record.push_aux(b"MM", Aux::String("C+m?,0,0;")).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8((&[255, 0][..]).into())).unwrap();
+        record
+    }
+
+    fn category_count(
+        status_probs: &StatusProbs,
+        truth: BaseStatus,
+        call: BaseStatus,
+    ) -> usize {
+        status_probs.get(&(truth, call)).map(Vec::len).unwrap_or(0)
+    }
+
+    fn classify_record(record: &Record) -> anyhow::Result<StatusProbs> {
+        let truth_status = BaseStatus::Modified(ModCodeRepr::Code('m'));
+        let truth = HashMap::from([(
+            "chr1".to_string(),
+            HashMap::from([(
+                Strand::Positive,
+                (0..5).map(|pos| (pos, truth_status)).collect(),
+            )]),
+        )]);
+        let tid_to_chrom = HashMap::from([(0, "chr1".to_string())]);
+
+        process_bam_record(
+            record,
+            &truth,
+            &tid_to_chrom,
+            DnaBase::C,
+            None,
+            None,
+        )
+    }
+
+    fn classify(gap: Cigar) -> StatusProbs {
+        classify_record(&make_record(gap)).unwrap()
+    }
+
+    #[test]
+    fn reference_skips_are_not_classified_as_deletions() {
+        let truth_status = BaseStatus::Modified(ModCodeRepr::Code('m'));
+
+        let skipped = classify(Cigar::RefSkip(3));
+        assert_eq!(category_count(&skipped, truth_status, truth_status), 1);
+        assert_eq!(
+            category_count(&skipped, truth_status, BaseStatus::NoCall),
+            1
+        );
+        assert_eq!(
+            category_count(&skipped, truth_status, BaseStatus::Deletion),
+            0
+        );
+        assert_eq!(skipped.values().map(Vec::len).sum::<usize>(), 2);
+
+        let deleted = classify(Cigar::Del(3));
+        assert_eq!(category_count(&deleted, truth_status, truth_status), 1);
+        assert_eq!(
+            category_count(&deleted, truth_status, BaseStatus::NoCall),
+            1
+        );
+        assert_eq!(
+            category_count(&deleted, truth_status, BaseStatus::Deletion),
+            3
+        );
+        assert_eq!(deleted.values().map(Vec::len).sum::<usize>(), 5);
+    }
+
+    #[test]
+    fn ambiguous_aligned_bases_are_site_local_no_calls() {
+        let truth_status = BaseStatus::Modified(ModCodeRepr::Code('m'));
+        let classified = classify_record(&make_record_with_ambiguous_bases())
+            .expect(
+                "N and IUPAC query bases must not discard the whole record",
+            );
+
+        assert_eq!(category_count(&classified, truth_status, truth_status), 1);
+        assert_eq!(
+            category_count(&classified, truth_status, BaseStatus::Canonical),
+            1
+        );
+        assert_eq!(
+            category_count(&classified, truth_status, BaseStatus::NoCall),
+            2
+        );
+        assert_eq!(
+            category_count(
+                &classified,
+                truth_status,
+                BaseStatus::Mismatch(DnaBase::A),
+            ),
+            1
+        );
+        assert_eq!(classified.values().map(Vec::len).sum::<usize>(), 5);
+    }
+
+    #[test]
+    fn ground_truth_bed_reports_mixed_row_error_with_physical_line() {
+        let mut bed = NamedTempFile::new().unwrap();
+        writeln!(bed, "chr1\t4\t5\tm\t.\t+").unwrap();
+        writeln!(bed, "not-a-bed-row").unwrap();
+
+        let error =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&bed.path().display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("line 2"), "{message}");
+        assert!(message.contains("Invalid number of fields"), "{message}");
+    }
+
+    #[test]
+    fn ground_truth_bed_allows_blank_and_comment_rows_anywhere() {
+        let mut bed = NamedTempFile::new().unwrap();
+        writeln!(bed, "# header").unwrap();
+        writeln!(bed, "chr1\t4\t5\tm\t.\t+").unwrap();
+        writeln!(bed).unwrap();
+        writeln!(bed, "  # another comment").unwrap();
+        writeln!(bed, "chr1\t8\t9\t-\t.\t-").unwrap();
+
+        let parsed =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap();
+        assert_eq!(
+            parsed["chr1"][&Strand::Positive][&4],
+            BaseStatus::Modified('m'.into())
+        );
+        assert_eq!(
+            parsed["chr1"][&Strand::Negative][&8],
+            BaseStatus::Canonical
+        );
+    }
+
+    #[test]
+    fn ground_truth_bed_rejects_invalid_truth_fields_with_physical_line() {
+        let cases = [
+            (
+                "negative start",
+                "chr1\t-1\t1\tm\t.\t+",
+                "BED start must be non-negative",
+            ),
+            (
+                "reversed interval",
+                "chr1\t5\t4\tm\t.\t+",
+                "BED end must be greater than start",
+            ),
+            (
+                "zero-width interval",
+                "chr1\t5\t5\tm\t.\t+",
+                "BED end must be greater than start",
+            ),
+            ("strand suffix", "chr1\t5\t6\tm\t.\t+junk", "expected `+` or `-`"),
+            (
+                "punctuation mod code",
+                "chr1\t5\t6\t.\t.\t+",
+                "failed to parse mod code",
+            ),
+            (
+                "multi-letter mod code",
+                "chr1\t5\t6\tmm\t.\t+",
+                "failed to parse mod code",
+            ),
+            (
+                "invalid uppercase mod code",
+                "chr1\t5\t6\tM\t.\t+",
+                "failed to parse mod code",
+            ),
+            (
+                "non-ASCII mod code",
+                "chr1\t5\t6\té\t.\t+",
+                "failed to parse mod code",
+            ),
+        ];
+
+        for (case_name, invalid_line, expected_error) in cases {
+            let mut bed = NamedTempFile::new().unwrap();
+            writeln!(bed, "# header").unwrap();
+            writeln!(bed, "chr1\t4\t5\tm\t.\t+").unwrap();
+            writeln!(bed).unwrap();
+            writeln!(bed, "{invalid_line}").unwrap();
+
+            let error =
+                parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                    .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(&bed.path().display().to_string()),
+                "{case_name}: {message}"
+            );
+            assert!(message.contains("line 4"), "{case_name}: {message}");
+            assert!(message.contains(expected_error), "{case_name}: {message}");
+        }
+    }
+
+    #[test]
+    fn ground_truth_bed_accepts_documented_mod_tokens_and_extra_columns() {
+        let cases = [
+            ("m", BaseStatus::Modified(ModCodeRepr::Code('m'))),
+            ("C", BaseStatus::Modified(ModCodeRepr::Code('C'))),
+            ("1", BaseStatus::Modified(ModCodeRepr::ChEbi(1))),
+            ("21839", BaseStatus::Modified(ModCodeRepr::ChEbi(21839))),
+            ("-", BaseStatus::Canonical),
+        ];
+        let mut bed = NamedTempFile::new().unwrap();
+        for (offset, (raw_code, _)) in cases.iter().enumerate() {
+            let start = 10 + offset as i64;
+            writeln!(
+                bed,
+                "chr1\t{start}\t{}\t{raw_code}\t.\t+\textra\tcolumns",
+                start + 1
+            )
+            .unwrap();
+        }
+
+        let parsed =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap();
+        for (offset, (raw_code, expected_status)) in cases.iter().enumerate() {
+            let position = 10 + offset as i64;
+            assert_eq!(
+                parsed["chr1"][&Strand::Positive][&position],
+                *expected_status,
+                "token {raw_code}"
+            );
+        }
+    }
+
+    #[test]
+    fn ground_truth_bed_rejects_conflicting_overlap_in_both_orders() {
+        let cases = [("m", "h"), ("h", "m")];
+
+        for (existing_label, new_label) in cases {
+            let mut bed = NamedTempFile::new().unwrap();
+            writeln!(bed, "chr1\t4\t7\t{existing_label}\t.\t+").unwrap();
+            writeln!(bed, "chr1\t6\t8\t{new_label}\t.\t+").unwrap();
+
+            let error =
+                parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                    .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(&bed.path().display().to_string()),
+                "{message}"
+            );
+            assert!(message.contains("line 2"), "{message}");
+            assert!(message.contains("chr1:6 strand +"), "{message}");
+            assert!(
+                message.contains(&format!(
+                    "existing `{existing_label}` from line 1"
+                )),
+                "{message}"
+            );
+            assert!(
+                message.contains(&format!("new `{new_label}`")),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn ground_truth_bed_retains_first_line_for_later_conflict() {
+        let mut bed = NamedTempFile::new().unwrap();
+        writeln!(bed, "chr1\t4\t8\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t6\t9\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t7\t8\th\t.\t+").unwrap();
+
+        let error =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("line 3"), "{message}");
+        assert!(message.contains("chr1:7 strand +"), "{message}");
+        assert!(message.contains("existing `m` from line 1"), "{message}");
+        assert!(message.contains("new `h`"), "{message}");
+    }
+
+    #[test]
+    fn ground_truth_bed_accepts_identical_duplicate_and_overlap() {
+        let mut bed = NamedTempFile::new().unwrap();
+        writeln!(bed, "chr1\t4\t8\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t4\t8\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t6\t9\tm\t.\t+").unwrap();
+        writeln!(bed, "chr1\t6\t7\th\t.\t-").unwrap();
+
+        let parsed =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap();
+        let positive = &parsed["chr1"][&Strand::Positive];
+        assert_eq!(positive.len(), 5);
+        assert_eq!(
+            positive.keys().copied().collect::<Vec<_>>(),
+            vec![4, 5, 6, 7, 8]
+        );
+        assert!(positive
+            .values()
+            .all(|status| *status == BaseStatus::Modified('m'.into())));
+        assert_eq!(
+            parsed["chr1"][&Strand::Negative][&6],
+            BaseStatus::Modified('h'.into())
+        );
+    }
+
+    #[test]
+    fn ground_truth_bed_reports_read_error_with_physical_line() {
+        let mut bed = NamedTempFile::new().unwrap();
+        bed.write_all(b"chr1\t4\t5\tm\t.\t+\n").unwrap();
+        bed.write_all(&[0xff, b'\n']).unwrap();
+
+        let error =
+            parse_ground_truth_bed_file(&bed.path().to_path_buf(), true)
+                .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&bed.path().display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("line 2"), "{message}");
+        assert!(message.contains("failed to read"), "{message}");
     }
 }
