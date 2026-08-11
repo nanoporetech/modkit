@@ -925,6 +925,17 @@ impl ReferenceSequencesLookup {
             .map(|id| *self.id_to_tid.get(&id).unwrap())
     }
 
+    pub(crate) fn sequence_length_by_name(
+        &self,
+        name: &str,
+    ) -> anyhow::Result<usize> {
+        let id = self
+            .reference_sequence_names
+            .get_index_of(name)
+            .ok_or_else(|| anyhow!("seq {name} not in used references"))?;
+        Ok(self.reference_sequences.get(&id).unwrap().len())
+    }
+
     pub(crate) fn get_subsequence_by_name(
         &self,
         name: &str,
