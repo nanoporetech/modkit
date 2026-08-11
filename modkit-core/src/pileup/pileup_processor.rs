@@ -18,8 +18,7 @@ use crate::{
         MmTagInfo,
     },
     mod_base_code::{
-        DnaBase, ModCodeRepr, ANY_CYTOSINE, HYDROXY_METHYL_CYTOSINE,
-        METHYL_CYTOSINE, SIX_METHYL_ADENINE,
+        DnaBase, ModCodeRepr, ANY_CYTOSINE, METHYL_CYTOSINE, SIX_METHYL_ADENINE,
     },
     motifs::motif_bed::MotifInfo,
     pileup::{
@@ -257,10 +256,6 @@ impl<
                             "bs:{bs:?} st:{st} end:{end} \
                              num_motifs:{num_motifs}"
                         );
-                        #[cfg(debug_assertions)]
-                        {
-                            assert!(bs.count_ones() <= 1);
-                        }
                         if bs[0] {
                             Some((qpos, rpos, self.motif_bases[0]))
                         } else if *num_motifs >= 2u8 && bs[1] {
@@ -1012,10 +1007,62 @@ const DYN_CAN_C: usize = 5usize;
 const DYN_CAN_G: usize = 6usize;
 const DYN_CAN_T: usize = 7usize;
 const DYN_OTHER_MOD_A: usize = 8usize;
-// const DYN_OTHER_MOD_C: usize = 9usize;
-// const DYN_OTHER_MOD_G: usize = 10usize;
-// const DYN_OTHER_MOD_T: usize = 11usize;
+const DYN_OTHER_MOD_C: usize = 9usize;
+const DYN_OTHER_MOD_G: usize = 10usize;
+const DYN_OTHER_MOD_T: usize = 11usize;
 const DYN_N_CONSTANT_COUNTS: usize = 12usize;
+
+fn dynamic_canonical_offset(canonical_base: DnaBase) -> usize {
+    match canonical_base {
+        DnaBase::A => DYN_CAN_A,
+        DnaBase::C => DYN_CAN_C,
+        DnaBase::G => DYN_CAN_G,
+        DnaBase::T => DYN_CAN_T,
+    }
+}
+
+fn dynamic_other_mod_offset(canonical_base: DnaBase) -> usize {
+    match canonical_base {
+        DnaBase::A => DYN_OTHER_MOD_A,
+        DnaBase::C => DYN_OTHER_MOD_C,
+        DnaBase::G => DYN_OTHER_MOD_G,
+        DnaBase::T => DYN_OTHER_MOD_T,
+    }
+}
+
+#[inline]
+fn dynamic_anchor_rpos(rpos: u32, reverse: bool, motif_offset: u32) -> u32 {
+    if reverse {
+        rpos.saturating_sub(motif_offset)
+    } else {
+        rpos
+    }
+}
+
+fn dynamic_mod_offset(
+    mod_codes: &[(DnaBase, ModCodeRepr)],
+    canonical_base: DnaBase,
+    mod_code: ModCodeRepr,
+    combine_mods: bool,
+) -> usize {
+    let compact_slot = if combine_mods {
+        mod_codes.iter().position(|(base, _)| *base == canonical_base)
+    } else {
+        mod_codes.iter().position(|(base, code)| {
+            *base == canonical_base && *code == mod_code
+        })
+    };
+    let mod_offset = compact_slot
+        .map(|slot| DYN_N_CONSTANT_COUNTS + slot)
+        .unwrap_or_else(|| dynamic_other_mod_offset(canonical_base));
+    let row_stride = DYN_N_CONSTANT_COUNTS + mod_codes.len();
+    assert!(
+        mod_offset < row_stride,
+        "dynamic modification offset {mod_offset} exceeds row stride \
+         {row_stride}"
+    );
+    mod_offset
+}
 
 pub(super) trait ACountsMatrix<T, const STRANDS: usize, const CHECK_DEPTH: bool>
 {
@@ -1460,7 +1507,7 @@ impl ACountsMatrix<DnaCytosineCombine, 2, false> for CountsMatrix {
         &mut self,
         rpos: u32,
         canonical_base: DnaBase,
-        mod_code: ModCodeRepr,
+        _mod_code: ModCodeRepr,
         reverse: bool,
         haplotype: u8,
         _combine_mods: bool,
@@ -1473,12 +1520,8 @@ impl ACountsMatrix<DnaCytosineCombine, 2, false> for CountsMatrix {
         );
         match canonical_base {
             DnaBase::C => {
-                if mod_code == METHYL_CYTOSINE
-                    || mod_code == HYDROXY_METHYL_CYTOSINE
-                {
-                    self.inner[offset + METH_C_OFFSET] =
-                        self.inner[offset + METH_C_OFFSET].saturating_add(1);
-                }
+                self.inner[offset + METH_C_OFFSET] =
+                    self.inner[offset + METH_C_OFFSET].saturating_add(1);
             }
             _ => {}
         }
@@ -1501,7 +1544,7 @@ impl ACountsMatrix<DnaCytosineCombine, 2, false> for CountsMatrix {
         match canonical_base {
             DnaBase::C => {
                 self.inner[offset + FILT_C_OFFSET] =
-                    self.inner[offset + FILT_C_OFFSET];
+                    self.inner[offset + FILT_C_OFFSET].saturating_add(1);
             }
             _ => {}
         }
@@ -1821,6 +1864,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
             return;
         }
 
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1844,8 +1888,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         if base != reference_base {
             return;
         }
-        let rpos =
-            if reverse { rpos.saturating_sub(self.motif_offset) } else { rpos };
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1853,12 +1896,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
             reverse,
             haplotype,
         );
-        let base_offset = match base {
-            DnaBase::A => DYN_CAN_A,
-            DnaBase::C => DYN_CAN_C,
-            DnaBase::G => DYN_CAN_G,
-            DnaBase::T => DYN_CAN_T,
-        };
+        let base_offset = dynamic_canonical_offset(base);
         assert!(offset + base_offset < self.inner.len());
         self.inner[offset + base_offset] =
             self.inner[offset + base_offset].saturating_add(1);
@@ -1873,8 +1911,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         haplotype: u8,
         combine_mods: bool,
     ) {
-        let rpos =
-            if reverse { rpos.saturating_sub(self.motif_offset) } else { rpos };
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1882,15 +1919,12 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
             reverse,
             haplotype,
         );
-        let mod_offset = if combine_mods {
-            canonical_base as usize + DYN_N_CONSTANT_COUNTS
-        } else {
-            self.mod_codes
-                .iter()
-                .position(|(_b, c)| c == &mod_code)
-                .map(|p| p + DYN_N_CONSTANT_COUNTS)
-                .unwrap_or(DYN_OTHER_MOD_A + canonical_base as usize)
-        };
+        let mod_offset = dynamic_mod_offset(
+            &self.mod_codes,
+            canonical_base,
+            mod_code,
+            combine_mods,
+        );
         assert!(offset + mod_offset < self.inner.len(), "STRANDS {STRANDS}");
         self.inner[offset + mod_offset] =
             self.inner[offset + mod_offset].saturating_add(1);
@@ -1903,6 +1937,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         reverse: bool,
         haplotype: u8,
     ) {
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1926,6 +1961,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         if <CountsMatrix as ACountsMatrix<Dynamic, STRANDS, CHECK_DEPTH>>::reached_max_depth(self, rpos, reverse, haplotype) {
             return;
         }
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -1951,8 +1987,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         reverse: bool,
         haplotype: u8,
     ) -> bool {
-        let rpos =
-            if reverse { rpos.saturating_sub(self.motif_offset) } else { rpos };
+        let rpos = dynamic_anchor_rpos(rpos, reverse, self.motif_offset);
         let offset = calc_offset_dyn::<STRANDS>(
             rpos,
             self.strand_width,
@@ -2018,9 +2053,10 @@ fn slice_to_counts_dynamic<'a>(
             mod_codes.iter().enumerate().map(
                 move |(j, (primary_base, code))| {
                     let n_modified = chunk[DYN_N_CONSTANT_COUNTS + j];
-                    let n_canonical = chunk[DYN_CAN_A + *primary_base as usize];
+                    let n_canonical =
+                        chunk[dynamic_canonical_offset(*primary_base)];
                     let n_anon_modified =
-                        chunk[DYN_OTHER_MOD_A + *primary_base as usize];
+                        chunk[dynamic_other_mod_offset(*primary_base)];
                     let n_other_modified = mod_codes
                         .iter()
                         .enumerate()
@@ -2495,6 +2531,11 @@ fn update_mods_iter2<'a>(
                 return Err(MkError::HtsLibError(e));
             }
         }
+    } else {
+        *mod_pos = None;
+        *canonical_base = None;
+        *pos_base_mod_call = None;
+        *mod_strand = None;
     }
     Ok(())
 }
@@ -2506,4 +2547,481 @@ fn indices_to_byte(motif_idxs: &BitSlice) -> u8 {
         agg |= b << i;
     }
     agg
+}
+
+#[cfg(test)]
+mod tests {
+    use rust_htslib::bam::{
+        self,
+        header::HeaderRecord,
+        record::{Aux, Cigar, CigarString},
+    };
+    use tempfile::tempdir;
+
+    use crate::{
+        mod_base_code::{
+            DnaBase, ModCodeRepr, ANY_CYTOSINE, FORMYL_CYTOSINE,
+            HYDROXY_METHYL_CYTOSINE, METHYL_CYTOSINE, TWO_OME_CYTOSINE,
+        },
+        pileup::base_mods_adapter::ModState,
+    };
+
+    use super::{
+        ACountsMatrix, ChromCoordinates, CountsMatrix, DnaCytosineCombine,
+        DnaModOption, Dynamic, FocusPositions2, GenericPileupWorker,
+        ModBasePileup2, PileupNumericOptions, PileupWorker, SIX_METHYL_ADENINE,
+    };
+
+    fn make_aligned_mod_record(
+        name: &[u8],
+        mm: &str,
+        ml: &[u8],
+    ) -> bam::Record {
+        let mut record = bam::Record::new();
+        record.set(
+            name,
+            Some(&CigarString(vec![Cigar::Match(5)])),
+            b"AAAAA",
+            &[255; 5],
+        );
+        record.set_tid(0);
+        record.set_pos(0);
+        record.set_mapq(60);
+        record.push_aux(b"MM", Aux::String(mm)).unwrap();
+        record.push_aux(b"ML", Aux::ArrayU8(ml.into())).unwrap();
+        record
+    }
+
+    #[test]
+    fn generic_pileup_clears_mod_state_between_records() {
+        let temp_dir = tempdir().unwrap();
+        let bam_path = temp_dir.path().join("two-records.bam");
+        let mut header = bam::Header::new();
+        let mut hd = HeaderRecord::new(b"HD");
+        hd.push_tag(b"VN", "1.6").push_tag(b"SO", "coordinate");
+        header.push_record(&hd);
+        let mut sq = HeaderRecord::new(b"SQ");
+        sq.push_tag(b"SN", "chr1").push_tag(b"LN", 5);
+        header.push_record(&sq);
+
+        {
+            let mut writer =
+                bam::Writer::from_path(&bam_path, &header, bam::Format::Bam)
+                    .unwrap();
+            writer
+                .write(&make_aligned_mod_record(b"modified", "A+a.,4;", &[255]))
+                .unwrap();
+            writer
+                .write(&make_aligned_mod_record(b"canonical", "A+a.;", &[]))
+                .unwrap();
+        }
+        bam::index::build(&bam_path, None, bam::index::Type::Bai, 1).unwrap();
+
+        let mut worker = GenericPileupWorker::new(
+            &bam_path,
+            None,
+            Vec::new(),
+            0.0,
+            [0.0; 4],
+            &[],
+            PileupNumericOptions::Passthrough,
+            false,
+            u16::MAX,
+        )
+        .unwrap();
+        let coordinates =
+            ChromCoordinates::new(0, 0, 5, FocusPositions2::AllPositions, true);
+        let pileup =
+            worker.process(coordinates, ModBasePileup2::new_empty()).unwrap();
+        let counts = pileup
+            .position_feature_counts
+            .iter()
+            .find(|counts| {
+                counts.position == 4 && counts.mod_code == SIX_METHYL_ADENINE
+            })
+            .unwrap();
+
+        assert_eq!(counts.filtered_coverage, 2);
+        assert_eq!(counts.n_modified, 1);
+        assert_eq!(counts.n_canonical, 1);
+        assert_eq!(counts.n_other_modified, 0);
+        assert_eq!(counts.n_delete, 0);
+        assert_eq!(counts.n_filtered, 0);
+        assert_eq!(counts.n_diff, 0);
+        assert_eq!(counts.n_nocall, 0);
+        assert_eq!(
+            f32::from(counts.n_modified) / f32::from(counts.filtered_coverage),
+            0.5
+        );
+    }
+
+    type DynamicCounts =
+        (u32, char, u16, ModCodeRepr, u16, u16, u16, u16, u16, u16, u16, u8);
+
+    fn increment_dynamic_call(
+        matrix: &mut CountsMatrix,
+        rpos: u32,
+        primary_base: DnaBase,
+        reference_base: DnaBase,
+        mod_code: ModCodeRepr,
+        modified: bool,
+        filtered: bool,
+        reverse: bool,
+        haplotype: u8,
+    ) {
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_call(
+            matrix,
+            ModState {
+                mod_position: rpos as usize,
+                modified,
+                filtered,
+                mod_code,
+                primary_base,
+                inferred: false,
+                mod_qual: 255,
+            },
+            rpos,
+            reference_base,
+            reverse,
+            haplotype,
+            false,
+        );
+    }
+
+    fn valid_dynamic_counts(
+        counts: &[crate::pileup::PileupFeatureCounts2],
+    ) -> Vec<DynamicCounts> {
+        counts
+            .iter()
+            .filter(|counts| counts.is_valid())
+            .map(|counts| {
+                (
+                    counts.position,
+                    counts.raw_strand,
+                    counts.filtered_coverage,
+                    counts.mod_code,
+                    counts.n_canonical,
+                    counts.n_modified,
+                    counts.n_other_modified,
+                    counts.n_delete,
+                    counts.n_filtered,
+                    counts.n_diff,
+                    counts.n_nocall,
+                    counts.motif_idxs,
+                )
+            })
+            .collect()
+    }
+
+    fn new_cytosine_combine_matrix() -> CountsMatrix {
+        <CountsMatrix as ACountsMatrix<DnaCytosineCombine, 2, false>>::new(
+            1,
+            false,
+            Vec::new(),
+            0,
+            u16::MAX,
+        )
+    }
+
+    fn increment_cytosine_call(
+        matrix: &mut CountsMatrix,
+        modified: bool,
+        filtered: bool,
+        mod_code: ModCodeRepr,
+    ) {
+        <CountsMatrix as ACountsMatrix<
+            DnaCytosineCombine,
+            2,
+            false,
+        >>::incr_call(
+            matrix,
+            ModState {
+                mod_position: 0,
+                modified,
+                filtered,
+                mod_code,
+                primary_base: DnaBase::C,
+                inferred: false,
+                mod_qual: 255,
+            },
+            0,
+            DnaBase::C,
+            false,
+            0,
+            true,
+        );
+    }
+
+    fn decode_cytosine_combine(
+        matrix: &CountsMatrix,
+    ) -> Vec<crate::pileup::PileupFeatureCounts2> {
+        <CountsMatrix as ACountsMatrix<DnaCytosineCombine, 2, false>>::decode(
+            matrix,
+            100,
+            DnaModOption::Combine,
+            false,
+        )
+    }
+
+    #[test]
+    fn dynamic_explicit_mod_offsets_are_keyed_by_base_and_code() {
+        let mod_codes =
+            [(DnaBase::A, METHYL_CYTOSINE), (DnaBase::C, METHYL_CYTOSINE)];
+
+        assert_eq!(
+            super::dynamic_mod_offset(
+                &mod_codes,
+                DnaBase::A,
+                METHYL_CYTOSINE,
+                false,
+            ),
+            super::DYN_N_CONSTANT_COUNTS
+        );
+        assert_eq!(
+            super::dynamic_mod_offset(
+                &mod_codes,
+                DnaBase::C,
+                METHYL_CYTOSINE,
+                false,
+            ),
+            super::DYN_N_CONSTANT_COUNTS + 1
+        );
+        assert_eq!(
+            super::dynamic_mod_offset(
+                &mod_codes,
+                DnaBase::T,
+                METHYL_CYTOSINE,
+                false,
+            ),
+            super::DYN_OTHER_MOD_T
+        );
+    }
+
+    #[test]
+    fn dynamic_explicit_slots_preserve_statuses_across_strand_and_phase() {
+        let mod_codes =
+            vec![(DnaBase::A, METHYL_CYTOSINE), (DnaBase::C, METHYL_CYTOSINE)];
+        let mut matrix = <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::new(
+            2,
+            true,
+            mod_codes,
+            0,
+            u16::MAX,
+        );
+
+        // The unphased partition proves that identical modification codes on
+        // different primary bases retain independent requested slots.
+        increment_dynamic_call(
+            &mut matrix,
+            0,
+            DnaBase::A,
+            DnaBase::A,
+            METHYL_CYTOSINE,
+            true,
+            false,
+            false,
+            0,
+        );
+        increment_dynamic_call(
+            &mut matrix,
+            1,
+            DnaBase::C,
+            DnaBase::C,
+            METHYL_CYTOSINE,
+            true,
+            false,
+            false,
+            0,
+        );
+
+        // Exercise every dynamic status in the reverse HP1 partition. A zero
+        // motif offset intentionally isolates slot mapping from motif shifts.
+        for (mod_code, modified, filtered) in [
+            (METHYL_CYTOSINE, true, false),
+            (METHYL_CYTOSINE, false, false),
+            (HYDROXY_METHYL_CYTOSINE, true, false),
+            (METHYL_CYTOSINE, false, true),
+        ] {
+            increment_dynamic_call(
+                &mut matrix,
+                1,
+                DnaBase::C,
+                DnaBase::C,
+                mod_code,
+                modified,
+                filtered,
+                true,
+                1,
+            );
+        }
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_diff_call(
+            &mut matrix,
+            1,
+            DnaBase::A,
+            DnaBase::C,
+            true,
+            1,
+        );
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_diff_call(
+            &mut matrix,
+            1,
+            DnaBase::C,
+            DnaBase::C,
+            true,
+            1,
+        );
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_delete(
+            &mut matrix,
+            1,
+            true,
+            1,
+        );
+
+        // Repeat the same status oracle for adenine in the forward HP2
+        // partition, including an unrequested modification code.
+        for (mod_code, modified, filtered) in [
+            (METHYL_CYTOSINE, true, false),
+            (METHYL_CYTOSINE, false, false),
+            (ModCodeRepr::Code('x'), true, false),
+            (METHYL_CYTOSINE, false, true),
+        ] {
+            increment_dynamic_call(
+                &mut matrix,
+                0,
+                DnaBase::A,
+                DnaBase::A,
+                mod_code,
+                modified,
+                filtered,
+                false,
+                2,
+            );
+        }
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_diff_call(
+            &mut matrix,
+            0,
+            DnaBase::C,
+            DnaBase::A,
+            false,
+            2,
+        );
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_diff_call(
+            &mut matrix,
+            0,
+            DnaBase::A,
+            DnaBase::A,
+            false,
+            2,
+        );
+        <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::incr_delete(
+            &mut matrix,
+            0,
+            false,
+            2,
+        );
+
+        let decoded = <CountsMatrix as ACountsMatrix<Dynamic, 2, true>>::decode(
+            &matrix,
+            100,
+            DnaModOption::Other(ANY_CYTOSINE),
+            true,
+        );
+        let partition_width = 2 * 2 * 2;
+        assert_eq!(decoded.len(), partition_width * 3);
+        assert_eq!(
+            valid_dynamic_counts(&decoded[..partition_width]),
+            vec![
+                (100, '+', 1, METHYL_CYTOSINE, 0, 1, 0, 0, 0, 0, 0, 0),
+                (101, '+', 1, METHYL_CYTOSINE, 0, 1, 0, 0, 0, 0, 0, 0),
+            ]
+        );
+        assert_eq!(
+            valid_dynamic_counts(
+                &decoded[partition_width..partition_width * 2]
+            ),
+            vec![(101, '-', 3, METHYL_CYTOSINE, 1, 1, 1, 1, 1, 1, 1, 0,)]
+        );
+        assert_eq!(
+            valid_dynamic_counts(&decoded[partition_width * 2..]),
+            vec![(100, '+', 3, METHYL_CYTOSINE, 1, 1, 1, 1, 1, 1, 1, 0,)]
+        );
+    }
+
+    #[test]
+    fn dna_cytosine_combine_counts_every_c_modification() {
+        let mut matrix = new_cytosine_combine_matrix();
+        increment_cytosine_call(&mut matrix, false, false, ANY_CYTOSINE);
+        for mod_code in [
+            METHYL_CYTOSINE,
+            HYDROXY_METHYL_CYTOSINE,
+            FORMYL_CYTOSINE,
+            TWO_OME_CYTOSINE,
+        ] {
+            increment_cytosine_call(&mut matrix, true, false, mod_code);
+        }
+
+        let decoded = decode_cytosine_combine(&matrix);
+        let counts = &decoded[0];
+        assert_eq!(
+            (
+                counts.position,
+                counts.raw_strand,
+                counts.filtered_coverage,
+                counts.mod_code,
+                counts.n_canonical,
+                counts.n_modified,
+                counts.n_other_modified,
+                counts.n_delete,
+                counts.n_filtered,
+                counts.n_diff,
+                counts.n_nocall,
+                counts.motif_idxs,
+            ),
+            (100, '+', 5, ANY_CYTOSINE, 1, 4, 0, 0, 0, 0, 0, 0)
+        );
+        assert_eq!(
+            counts.filtered_coverage,
+            counts
+                .n_canonical
+                .saturating_add(counts.n_modified)
+                .saturating_add(counts.n_other_modified)
+        );
+    }
+
+    #[test]
+    fn dna_cytosine_combine_counts_filtered_c_calls_saturating() {
+        let mut matrix = new_cytosine_combine_matrix();
+        increment_cytosine_call(&mut matrix, false, false, ANY_CYTOSINE);
+        increment_cytosine_call(&mut matrix, false, true, ANY_CYTOSINE);
+        let decoded = decode_cytosine_combine(&matrix);
+        let counts = &decoded[0];
+        assert_eq!(
+            (
+                counts.position,
+                counts.raw_strand,
+                counts.filtered_coverage,
+                counts.mod_code,
+                counts.n_canonical,
+                counts.n_modified,
+                counts.n_other_modified,
+                counts.n_delete,
+                counts.n_filtered,
+                counts.n_diff,
+                counts.n_nocall,
+                counts.motif_idxs,
+            ),
+            (100, '+', 1, ANY_CYTOSINE, 1, 0, 0, 0, 1, 0, 0, 0)
+        );
+        assert_eq!(
+            counts.filtered_coverage,
+            counts
+                .n_canonical
+                .saturating_add(counts.n_modified)
+                .saturating_add(counts.n_other_modified)
+        );
+
+        matrix.inner[super::FILT_C_OFFSET] = u16::MAX;
+        increment_cytosine_call(&mut matrix, false, true, ANY_CYTOSINE);
+        assert_eq!(decode_cytosine_combine(&matrix)[0].n_filtered, u16::MAX);
+    }
 }

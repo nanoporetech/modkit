@@ -1,17 +1,346 @@
 use anyhow::Context;
 use itertools::Itertools;
 use rust_htslib::bam;
+use rust_htslib::bam::header::HeaderRecord;
+use rust_htslib::bam::record::{Aux, Cigar, CigarString};
+use rust_htslib::bam::{Format, Header, Record, Writer as BamWriter};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 
 use common::{check_against_expected_text_file, run_modkit};
 use mod_kit::dmr::bedmethyl::BedMethylLine;
 use mod_kit::mod_base_code::{ModCodeRepr, METHYL_CYTOSINE};
 
 mod common;
+
+fn read_bed_sites(path: &str) -> HashSet<(String, u32, char)> {
+    BufReader::new(File::open(path).unwrap())
+        .lines()
+        .map(|line| {
+            let line = line.unwrap();
+            let fields = line.split('\t').collect::<Vec<_>>();
+            (
+                fields[0].to_string(),
+                fields[1].parse::<u32>().unwrap(),
+                fields[5].parse::<char>().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn write_dynamic_slot_fixture_with_probs(
+    root: &Path,
+    name: &str,
+    probabilities: &[[u8; 3]],
+) -> (PathBuf, PathBuf) {
+    let bam_path = root.join(format!("{name}.bam"));
+    let fasta_path = root.join("reference.fa");
+
+    let mut header = Header::new();
+    let mut sq = HeaderRecord::new(b"SQ");
+    sq.push_tag(b"SN", "chr1");
+    sq.push_tag(b"LN", 3);
+    header.push_record(&sq);
+
+    let mut writer =
+        BamWriter::from_path(&bam_path, &header, Format::Bam).unwrap();
+    for (i, probabilities) in probabilities.iter().enumerate() {
+        let cigar = CigarString(vec![Cigar::Match(3)]);
+        let mut record = Record::new();
+        record.set(
+            format!("read-{i}").as_bytes(),
+            Some(&cigar),
+            b"ACT",
+            &[30; 3],
+        );
+        record.set_tid(0);
+        record.set_pos(0);
+        record.set_mapq(60);
+        record.push_aux(b"MM", Aux::String("A+m?,0;C+m?,0;T+g?,0;")).unwrap();
+        record
+            .push_aux(b"ML", Aux::ArrayU8((&probabilities[..]).into()))
+            .unwrap();
+        record.push_aux(b"MN", Aux::U32(3)).unwrap();
+        record.push_aux(b"NM", Aux::U32(0)).unwrap();
+        writer.write(&record).unwrap();
+    }
+    drop(writer);
+    bam::index::build(bam_path.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    File::create(&fasta_path).unwrap().write_all(b">chr1\nACT\n").unwrap();
+    File::create(root.join("reference.fa.fai"))
+        .unwrap()
+        .write_all(b"chr1\t3\t6\t3\t4\n")
+        .unwrap();
+
+    (bam_path, fasta_path)
+}
+
+fn write_dynamic_slot_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    write_dynamic_slot_fixture_with_probs(
+        root,
+        "dynamic-slots",
+        &[[255, 255, 255]],
+    )
+}
+
+fn write_reverse_motif_record(
+    writer: &mut BamWriter,
+    name: &str,
+    sequence: &[u8],
+    cigar: CigarString,
+    mm_tag: &str,
+    probability: u8,
+    edit_distance: u32,
+) {
+    let qualities = vec![30; sequence.len()];
+    let probabilities = [probability];
+    let mut record = Record::new();
+    record.set(name.as_bytes(), Some(&cigar), sequence, &qualities);
+    record.set_tid(0);
+    record.set_pos(0);
+    record.set_mapq(60);
+    record.set_flags(16);
+    record.push_aux(b"MM", Aux::String(mm_tag)).unwrap();
+    record.push_aux(b"ML", Aux::ArrayU8((&probabilities[..]).into())).unwrap();
+    record.push_aux(b"MN", Aux::U32(sequence.len() as u32)).unwrap();
+    record.push_aux(b"NM", Aux::U32(edit_distance)).unwrap();
+    writer.write(&record).unwrap();
+}
+
+fn write_combined_non_cpg_anchor_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    let bam_path = root.join("combined-non-cpg-anchor.bam");
+    let fasta_path = root.join("combined-non-cpg-anchor.fa");
+
+    let mut header = Header::new();
+    let mut sq = HeaderRecord::new(b"SQ");
+    sq.push_tag(b"SN", "chr1");
+    sq.push_tag(b"LN", 4);
+    header.push_record(&sq);
+
+    let mut writer =
+        BamWriter::from_path(&bam_path, &header, Format::Bam).unwrap();
+    let full_match = || CigarString(vec![Cigar::Match(4)]);
+
+    // GATC is reverse-complement palindromic. Focusing offset 1 makes the
+    // forward A anchor position 1 and the reverse T anchor position 2.
+    for (name, probability) in
+        [("modified", 255), ("canonical", 0), ("filtered", 128)]
+    {
+        write_reverse_motif_record(
+            &mut writer,
+            name,
+            b"GATC",
+            full_match(),
+            "A+m?,0;",
+            probability,
+            0,
+        );
+    }
+    write_reverse_motif_record(
+        &mut writer,
+        "no-call",
+        b"GATC",
+        full_match(),
+        "C+m?,0;",
+        255,
+        0,
+    );
+    write_reverse_motif_record(
+        &mut writer,
+        "mismatch",
+        b"GACC",
+        full_match(),
+        "C+m?,0;",
+        255,
+        1,
+    );
+    write_reverse_motif_record(
+        &mut writer,
+        "deletion",
+        b"GAC",
+        CigarString(vec![Cigar::Match(2), Cigar::Del(1), Cigar::Match(1)]),
+        "C+m?,0;",
+        255,
+        1,
+    );
+    drop(writer);
+    bam::index::build(bam_path.clone(), None, bam::index::Type::Bai, 1)
+        .unwrap();
+
+    File::create(&fasta_path).unwrap().write_all(b">chr1\nGATC\n").unwrap();
+    File::create(root.join("combined-non-cpg-anchor.fa.fai"))
+        .unwrap()
+        .write_all(b"chr1\t4\t6\t4\t5\n")
+        .unwrap();
+
+    (bam_path, fasta_path)
+}
+
+fn run_combined_non_cpg_anchor_pileup(
+    root: &Path,
+    bam_path: &Path,
+    fasta_path: &Path,
+    high_depth: bool,
+    threads: usize,
+) -> Vec<u8> {
+    let mode = if high_depth { "high" } else { "normal" };
+    let output_path =
+        root.join(format!("combined-non-cpg-{mode}-{threads}.bed"));
+    let threads = threads.to_string();
+    let mut args = vec![
+        "pileup",
+        bam_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--motif",
+        "GATC",
+        "1",
+        "--combine-strands",
+        "--modified-bases",
+        "A:m",
+        "--filter-threshold",
+        "0.9",
+        "--interval-size",
+        "4",
+        "--threads",
+        &threads,
+        "--suppress-progress",
+    ];
+    if high_depth {
+        args.extend_from_slice(&["--high-depth", "--max-depth", "10"]);
+    }
+
+    run_modkit(&args)
+        .with_context(|| {
+            format!(
+                "combined non-CpG pileup failed for mode {mode}, threads \
+                 {threads}"
+            )
+        })
+        .unwrap();
+    std::fs::read(output_path).unwrap()
+}
+
+fn run_combined_slot_pileup(
+    root: &Path,
+    bam_path: &Path,
+    fasta_path: &Path,
+    bases: &[&str],
+    high_depth: bool,
+    threads: usize,
+) -> Vec<u8> {
+    let mode = if high_depth { "high" } else { "normal" };
+    let output_path =
+        root.join(format!("combine-{}-{mode}-{threads}.bed", bases.join("")));
+    let threads = threads.to_string();
+    let mut args = vec![
+        "pileup",
+        bam_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--modified-bases",
+    ];
+    args.extend_from_slice(bases);
+    args.extend_from_slice(&[
+        "--combine-mods",
+        "--no-filtering",
+        "--interval-size",
+        "1",
+        "--threads",
+        &threads,
+        "--suppress-progress",
+    ]);
+    if high_depth {
+        args.extend_from_slice(&["--high-depth", "--max-depth", "10"]);
+    }
+
+    run_modkit(&args)
+        .with_context(|| {
+            format!(
+                "combine pileup failed for bases {}, mode {mode}, threads {}",
+                bases.join(","),
+                threads
+            )
+        })
+        .unwrap();
+    std::fs::read(output_path).unwrap()
+}
+
+fn assert_combined_slot_parity(bases: &[&str], expected: &str) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_dynamic_slot_fixture(root);
+    let baseline =
+        run_combined_slot_pileup(root, &bam_path, &fasta_path, bases, false, 1);
+    assert_eq!(baseline, expected.as_bytes());
+
+    for threads in [1, 2, 3, 8] {
+        for high_depth in [false, true] {
+            let observed = run_combined_slot_pileup(
+                root,
+                &bam_path,
+                &fasta_path,
+                bases,
+                high_depth,
+                threads,
+            );
+            assert_eq!(
+                observed,
+                baseline,
+                "bases {}, high_depth {high_depth}, threads {threads}",
+                bases.join(",")
+            );
+        }
+    }
+}
+
+fn run_explicit_pair_slot_pileup(
+    root: &Path,
+    bam_path: &Path,
+    fasta_path: &Path,
+    high_depth: bool,
+    threads: usize,
+) -> Vec<u8> {
+    let mode = if high_depth { "high" } else { "normal" };
+    let output_path = root.join(format!("explicit-{mode}-{threads}.bed"));
+    let threads = threads.to_string();
+    let mut args = vec![
+        "pileup",
+        bam_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--modified-bases",
+        "A:m",
+        "C:m",
+        "--no-filtering",
+        "--interval-size",
+        "1",
+        "--threads",
+        &threads,
+        "--suppress-progress",
+    ];
+    if high_depth {
+        args.extend_from_slice(&["--high-depth", "--max-depth", "10"]);
+    }
+
+    run_modkit(&args)
+        .with_context(|| {
+            format!(
+                "explicit pair pileup failed for mode {mode}, threads \
+                 {threads}"
+            )
+        })
+        .unwrap();
+    std::fs::read(output_path).unwrap()
+}
 
 #[test]
 fn test_pileup_help() {
@@ -249,6 +578,166 @@ fn test_pileup_cpg_motif_filtering() {
         temp_file.to_str().unwrap(),
         "../tests/resources/bc_anchored_10_reads_nofilt_cg_motif.bed",
     );
+}
+
+#[test]
+fn test_pileup_cpg_combined_cytosine_debug_regression() {
+    let temp_file = std::env::temp_dir()
+        .join("test_pileup_cpg_combined_cytosine_debug_regression.bed");
+    run_modkit(&[
+        "pileup",
+        "../tests/resources/bc_anchored_10_reads.sorted.bam",
+        temp_file.to_str().unwrap(),
+        "--cpg",
+        "--modified-bases",
+        "C",
+        "--combine-mods",
+        "--no-filtering",
+        "--ref",
+        "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--threads",
+        "1",
+    ])
+    .expect("valid overlapping CpG and internal C masks should not panic");
+
+    let observed = read_bed_sites(temp_file.to_str().unwrap());
+    let expected = read_bed_sites(
+        "../tests/resources/bc_anchored_10_reads_nofilt_cg_motif.bed",
+    );
+    assert!(!observed.is_empty());
+    assert_eq!(observed, expected);
+}
+
+#[test]
+fn test_pileup_combined_c_compact_slot_matches_high_depth() {
+    assert_combined_slot_parity(
+        &["C"],
+        "chr1\t1\t2\tC\t1\t+\t1\t2\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+    );
+}
+
+#[test]
+fn test_pileup_combined_act_compact_slots_match_high_depth() {
+    assert_combined_slot_parity(
+        &["A", "C", "T"],
+        concat!(
+            "chr1\t0\t1\tA\t1\t+\t0\t1\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+            "chr1\t1\t2\tC\t1\t+\t1\t2\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+            "chr1\t2\t3\tT\t1\t+\t2\t3\t255,0,0\t1\t100.00\t1\t0\t0\t0\t0\t0\t0\n",
+        ),
+    );
+}
+
+#[test]
+fn test_pileup_explicit_same_code_slots_are_keyed_by_base() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_dynamic_slot_fixture_with_probs(
+        root,
+        "explicit-pairs",
+        &[[255, 255, 255], [0, 0, 0]],
+    );
+    let expected = concat!(
+        "chr1\t0\t1\tm\t2\t+\t0\t1\t255,0,0\t2\t50.00\t1\t1\t0\t0\t0\t0\t0\n",
+        "chr1\t1\t2\tm\t2\t+\t1\t2\t255,0,0\t2\t50.00\t1\t1\t0\t0\t0\t0\t0\n",
+    );
+
+    for threads in [1, 2, 3, 8] {
+        for high_depth in [false, true] {
+            let observed = run_explicit_pair_slot_pileup(
+                root,
+                &bam_path,
+                &fasta_path,
+                high_depth,
+                threads,
+            );
+            assert_eq!(
+                observed,
+                expected.as_bytes(),
+                "high_depth {high_depth}, threads {threads}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_pileup_duplicate_modified_base_selections_are_idempotent() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_dynamic_slot_fixture(root);
+    for (mode, mode_args) in [
+        ("optimized", &[][..]),
+        ("dynamic", &["--use-dynamic"][..]),
+        ("high-depth", &["--high-depth", "--max-depth", "100"][..]),
+    ] {
+        let unique_output = root.join(format!("{mode}-unique.bed"));
+        let duplicate_output = root.join(format!("{mode}-duplicate.bed"));
+        let mut unique_args = vec![
+            "pileup",
+            bam_path.to_str().unwrap(),
+            unique_output.to_str().unwrap(),
+            "--ref",
+            fasta_path.to_str().unwrap(),
+            "--modified-bases",
+            "C:m",
+            "--no-filtering",
+            "--threads",
+            "1",
+            "--suppress-progress",
+        ];
+        unique_args.extend_from_slice(mode_args);
+        run_modkit(&unique_args).unwrap();
+
+        let mut duplicate_args = vec![
+            "pileup",
+            bam_path.to_str().unwrap(),
+            duplicate_output.to_str().unwrap(),
+            "--ref",
+            fasta_path.to_str().unwrap(),
+            "--modified-bases",
+            "C:m",
+            "C:m",
+            "--no-filtering",
+            "--threads",
+            "1",
+            "--suppress-progress",
+        ];
+        duplicate_args.extend_from_slice(mode_args);
+        run_modkit(&duplicate_args).unwrap();
+
+        let expected = std::fs::read(unique_output).unwrap();
+        assert!(!expected.is_empty(), "{mode} control emitted no rows");
+        assert_eq!(
+            std::fs::read(duplicate_output).unwrap(),
+            expected,
+            "duplicate selection changed {mode} output"
+        );
+    }
+}
+
+#[test]
+fn test_pileup_combined_non_cpg_reverse_statuses_share_anchor() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_combined_non_cpg_anchor_fixture(root);
+    let expected =
+        b"chr1\t1\t2\tm\t2\t.\t1\t2\t255,0,0\t2\t50.00\t1\t1\t0\t1\t1\t1\t1\n";
+
+    for threads in [1, 2] {
+        for high_depth in [false, true] {
+            let observed = run_combined_non_cpg_anchor_pileup(
+                root,
+                &bam_path,
+                &fasta_path,
+                high_depth,
+                threads,
+            );
+            assert_eq!(
+                observed, expected,
+                "high_depth {high_depth}, threads {threads}"
+            );
+        }
+    }
 }
 
 #[test]

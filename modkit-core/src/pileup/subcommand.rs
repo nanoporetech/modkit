@@ -424,6 +424,31 @@ pub struct ModBamPileup {
 }
 
 impl ModBamPileup {
+    fn normalized_modified_base_selections(
+        &self,
+    ) -> Option<Vec<ModifiedBasesOptions>> {
+        self.modified_bases.as_ref().map(|modified_bases| {
+            let mut seen = HashSet::with_capacity(modified_bases.len());
+            modified_bases
+                .iter()
+                .filter_map(|option| {
+                    let selection = (option.primary_base, option.mod_code);
+                    if seen.insert(selection) {
+                        Some(option.clone())
+                    } else {
+                        warn!(
+                            "ignoring duplicate --modified-bases selection \
+                             '{}:{}'",
+                            option.primary_base.char(),
+                            option.mod_code
+                        );
+                        None
+                    }
+                })
+                .collect()
+        })
+    }
+
     fn parse_user_motifs(&self) -> Option<anyhow::Result<Vec<RegexMotif>>> {
         if let Some(raw_motif_parts) = &self.motif {
             Some(parse_raw_motifs(raw_motif_parts, self.cpg, false))
@@ -540,6 +565,7 @@ impl ModBamPileup {
 
     fn determine_preset(
         &self,
+        modified_base_selections: Option<&[ModifiedBasesOptions]>,
     ) -> anyhow::Result<(Option<Presets>, Option<Vec<RegexMotif>>)> {
         let mut regex_motifs =
             self.parse_user_motifs().transpose()?.unwrap_or_else(Vec::new);
@@ -557,7 +583,7 @@ impl ModBamPileup {
                 .iter()
                 .map(|mot| mot.motif_info.primary_base)
                 .collect::<HashSet<DnaBase>>();
-            if let Some(modified_bases) = self.modified_bases.as_ref() {
+            if let Some(modified_bases) = modified_base_selections {
                 for primary_base in
                     modified_bases.iter().map(|x| x.primary_base)
                 {
@@ -578,7 +604,7 @@ impl ModBamPileup {
             }
             return Ok((None, Some(regex_motifs)));
         }
-        if let Some(modified_bases) = self.modified_bases.as_ref() {
+        if let Some(modified_bases) = modified_base_selections {
             let modified_bases = modified_bases
                 .iter()
                 .map(|x| (x.primary_base, x.mod_code))
@@ -930,6 +956,9 @@ impl ModBamPileup {
                 .set_draw_target(indicatif::ProgressDrawTarget::stderr());
         }
 
+        let modified_base_selections =
+            self.normalized_modified_base_selections();
+
         let io_thread_pool =
             rust_htslib::tpool::ThreadPool::new(self.io_threads)?;
 
@@ -980,7 +1009,7 @@ impl ModBamPileup {
             .transpose()?;
         let reference_records = get_targets(&header, region.as_ref());
         if self.include_bed.is_some() {
-            if !(self.modified_bases.is_some() || self.motif.is_some()) {
+            if !(modified_base_selections.is_some() || self.motif.is_some()) {
                 bail!(
                     "currently, --include-bed requires a --motif or \
                      --modified-bases. This limitation may be removed in the \
@@ -1022,7 +1051,8 @@ impl ModBamPileup {
             reference_records
         };
 
-        let (preset, regex_motifs) = self.determine_preset()?;
+        let (preset, regex_motifs) =
+            self.determine_preset(modified_base_selections.as_deref())?;
 
         let (pileup_options, combine_strands) = match &preset {
             Some(preset) => match preset {
@@ -1102,7 +1132,7 @@ impl ModBamPileup {
                             self.with_header,
                             &self.bedrmodargs,
                             &header,
-                            self.modified_bases.as_ref(),
+                            modified_base_selections.as_ref(),
                             empties_tx.clone(),
                             master_progress.clone(),
                         )?)
@@ -1112,7 +1142,7 @@ impl ModBamPileup {
                             self.with_header,
                             &self.bedrmodargs,
                             &header,
-                            self.modified_bases.as_ref(),
+                            modified_base_selections.as_ref(),
                             master_progress.clone(),
                             empties_tx.clone(),
                         )?)
@@ -1133,7 +1163,7 @@ impl ModBamPileup {
                                 self.with_header,
                                 &self.bedrmodargs,
                                 &header,
-                                self.modified_bases.as_ref(),
+                                modified_base_selections.as_ref(),
                                 master_progress.clone(),
                                 empties_tx.clone(),
                                 self.bgzf_threads,
@@ -1144,7 +1174,7 @@ impl ModBamPileup {
                                 self.with_header,
                                 &self.bedrmodargs,
                                 &header,
-                                self.modified_bases.as_ref(),
+                                modified_base_selections.as_ref(),
                                 master_progress.clone(),
                                 empties_tx.clone(),
                             )?)
@@ -1161,7 +1191,7 @@ impl ModBamPileup {
                                 self.with_header,
                                 &self.bedrmodargs,
                                 &header,
-                                self.modified_bases.as_ref(),
+                                modified_base_selections.as_ref(),
                                 master_progress.clone(),
                                 empties_tx.clone(),
                                 self.bgzf_threads,
@@ -1173,7 +1203,7 @@ impl ModBamPileup {
                                 self.with_header,
                                 &self.bedrmodargs,
                                 &header,
-                                self.modified_bases.as_ref(),
+                                modified_base_selections.as_ref(),
                                 master_progress.clone(),
                                 empties_tx.clone(),
                             )?)
