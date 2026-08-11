@@ -2288,8 +2288,13 @@ impl DescriptiveStats {
                 "measurements and n_reads should be the same length"
             );
             let mean_entropy = Self::mean(measurements);
-            let median_entropy =
-                percentile_linear_interp(measurements, 0.5f32)?;
+            let median_entropy = if measurements.len() == 1 {
+                measurements[0]
+            } else {
+                let mut sorted_measurements = measurements.to_vec();
+                sorted_measurements.sort_unstable_by(f32::total_cmp);
+                percentile_linear_interp(&sorted_measurements, 0.5f32)?
+            };
             // safe because of above check
             let (min_entropy, max_entropy) = match measurements.iter().minmax()
             {
@@ -2571,18 +2576,128 @@ impl BedRegion {
 mod entropy_mod_tests {
     use crate::entropy::methylation_entropy::EntropySymbol;
     use crate::entropy::{
-        BedRegion, GenomeWindow, GenomeWindows, ReferenceSearchSpace,
-        SlidingWindows,
+        BedRegion, DescriptiveStats, GenomeWindow, GenomeWindows,
+        ReferenceSearchSpace, SlidingWindows,
     };
     use crate::mod_bam::BaseModCall;
     use crate::mod_base_code::{DnaBase, ModCodeRepr};
     use crate::motifs::motif_bed::RegexMotif;
     use crate::util::{ReferenceRecord, Strand};
+    use itertools::Itertools;
     use rayon::prelude::*;
     use rayon::ThreadPoolBuilder;
     use rustc_hash::FxHashMap;
     use std::collections::{BTreeSet, HashSet, VecDeque};
     use std::sync::Arc;
+
+    #[test]
+    fn singleton_entropy_summary_uses_its_value_as_the_median() {
+        let stats = DescriptiveStats::new(&[0.25], &[7], 2, 0, &(10..11))
+            .expect("a singleton is a valid regional entropy summary");
+
+        assert_eq!(stats.mean_entropy, 0.25);
+        assert_eq!(stats.median_entropy, 0.25);
+        assert_eq!(stats.min_entropy, 0.25);
+        assert_eq!(stats.max_entropy, 0.25);
+        assert_eq!(stats.mean_num_reads, 7.0);
+        assert_eq!(stats.min_num_reads, 7);
+        assert_eq!(stats.max_num_reads, 7);
+        assert_eq!(stats.successful_count, 1);
+        assert_eq!(stats.failed_count, 2);
+    }
+
+    #[test]
+    fn multi_window_entropy_summary_keeps_existing_exact_statistics() {
+        let stats = DescriptiveStats::new(
+            &[0.25, 0.5, 0.75],
+            &[2, 4, 6],
+            1,
+            0,
+            &(10..20),
+        )
+        .unwrap();
+
+        assert_eq!(stats.mean_entropy, 0.5);
+        assert_eq!(stats.median_entropy, 0.5);
+        assert_eq!(stats.min_entropy, 0.25);
+        assert_eq!(stats.max_entropy, 0.75);
+        assert_eq!(stats.mean_num_reads, 4.0);
+        assert_eq!(stats.min_num_reads, 2);
+        assert_eq!(stats.max_num_reads, 6);
+        assert_eq!(stats.successful_count, 3);
+        assert_eq!(stats.failed_count, 1);
+    }
+
+    #[test]
+    fn region_median_is_independent_of_window_encounter_order() {
+        let observed = DescriptiveStats::new(
+            &[0.9, 0.1, 0.4, 0.2],
+            &[9, 1, 4, 2],
+            0,
+            0,
+            &(10..20),
+        )
+        .unwrap();
+        let sorted = DescriptiveStats::new(
+            &[0.1, 0.2, 0.4, 0.9],
+            &[1, 2, 4, 9],
+            0,
+            0,
+            &(10..20),
+        )
+        .unwrap();
+
+        assert_eq!(observed.median_entropy, sorted.median_entropy);
+        assert_eq!(observed.median_entropy, 0.3);
+    }
+
+    #[test]
+    fn odd_region_median_is_independent_of_window_encounter_order() {
+        let observed = DescriptiveStats::new(
+            &[0.9, 0.1, 0.4],
+            &[9, 1, 4],
+            0,
+            0,
+            &(10..20),
+        )
+        .unwrap();
+        let sorted = DescriptiveStats::new(
+            &[0.1, 0.4, 0.9],
+            &[1, 4, 9],
+            0,
+            0,
+            &(10..20),
+        )
+        .unwrap();
+
+        assert_eq!(observed.median_entropy, sorted.median_entropy);
+        assert_eq!(observed.median_entropy, 0.4);
+    }
+
+    #[test]
+    fn regional_medians_are_stable_across_all_small_encounter_orders() {
+        for (values, expected_median) in
+            [(vec![0.75, 0.25, 0.5], 0.5), (vec![0.75, 0.0, 0.25, 0.5], 0.375)]
+        {
+            for measurements in
+                values.iter().copied().permutations(values.len())
+            {
+                let original_order = measurements.clone();
+                let reads = vec![1; measurements.len()];
+                let stats = DescriptiveStats::new(
+                    &measurements,
+                    &reads,
+                    0,
+                    0,
+                    &(10..20),
+                )
+                .unwrap();
+
+                assert_eq!(stats.median_entropy, expected_median);
+                assert_eq!(measurements, original_order);
+            }
+        }
+    }
 
     fn combined_window_with_code_count(code_count: usize) -> GenomeWindow {
         let read_patterns = (0..code_count)
