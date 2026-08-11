@@ -269,10 +269,12 @@ Modified Base Options:
           is used, the resulting output BED file will indicate the motif in the
           "name" field as <mod_code>,<motif>,<offset>. For example, given
           `--motif CGCG 2 --motif CG 0` there will be output lines with name
-          fields such as "m,CG,0" and "m,CGCG,2". To use `--combine-strands`,
-          exactly one motif must be supplied. It must be reverse-complement
-          palindromic, and the reverse-strand anchor must not precede the
-          forward-strand anchor, or an error will be raised.
+          fields such as "m,CG,0" and "m,CGCG,2". At most eight motifs are
+          supported, including motifs added by `--cpg` or `--modified-bases`.
+          To use `--combine-strands`, exactly one motif must be supplied. It
+          must be reverse-complement palindromic, and the reverse-strand anchor
+          must not precede the forward-strand anchor, or an error will be
+          raised.
 
       --cpg
           Only output counts at CpG motifs

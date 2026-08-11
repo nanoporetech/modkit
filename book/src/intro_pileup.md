@@ -141,6 +141,8 @@ oligo_741_adapters  39 40 m,CG,0   4	-	39	40	255,0,0	4 100.00 4 0 0 0 0 0 0
 oligo_741_adapters  39 40 m,CGCG,2 4	-	39	40	255,0,0	4 100.00 4 0 0 0 0 0 0
 ```
 
+Pileup supports at most eight motifs, including motifs added by `--cpg` or `--modified-bases`.
+
 The `--combine-strands` flag requires exactly one motif, supplied with `--motif` or `--cpg`, and that motif must be reverse-complement palindromic (`CG` _is_ a palindrome but `CHH` is not).
 The reverse-strand anchor must not precede the forward-strand anchor; for example, `--motif CGCG 0 --combine-strands` is supported, while `--motif CGCG 2 --combine-strands` is not currently supported.
 See [limitations](./limitations.md) for more details.

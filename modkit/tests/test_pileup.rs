@@ -5,10 +5,11 @@ use rust_htslib::bam::header::HeaderRecord;
 use rust_htslib::bam::record::{Aux, Cigar, CigarString};
 use rust_htslib::bam::{Format, Header, Record, Writer as BamWriter};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use common::{check_against_expected_text_file, run_modkit};
 use mod_kit::dmr::bedmethyl::BedMethylLine;
@@ -1193,6 +1194,168 @@ fn test_pileup_motifs_cg0_cgcg2() {
         temp_file.to_str().unwrap(),
         "../tests/resources/cgcg2_cg0_test2.bed",
     );
+}
+
+fn run_pileup_with_overlapping_motifs(
+    output_path: &Path,
+    motif_count: usize,
+    modified_base: &str,
+    extra_modified_base: Option<&str>,
+    add_cpg: bool,
+    extra_motif: Option<(&str, &str)>,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_modkit"));
+    command.args([
+        "pileup",
+        "../tests/resources/CG_5mC_20230207_1700_6A_PAG66026_3c0abf27_oligo_741_adapters_modcalls_0th_sort_10_reads.bam",
+        output_path.to_str().unwrap(),
+        "--no-filtering",
+        "--ref",
+        "../tests/resources/CGI_ladder_3.6kb_ref.fa",
+        "--region",
+        "oligo_741_adapters:22-62",
+        "--modified-bases",
+        modified_base,
+    ]);
+    if let Some(extra_modified_base) = extra_modified_base {
+        command.arg(extra_modified_base);
+    }
+    command.args(["--threads", "1", "--io-threads", "1"]);
+
+    for (motif, offset) in [
+        ("CGG", "0"),
+        ("CGGG", "0"),
+        ("TCG", "1"),
+        ("CTCG", "2"),
+        ("GCTCG", "3"),
+        ("TGCTCG", "4"),
+        ("TTGCTCG", "5"),
+        ("ATTGCTCG", "6"),
+    ]
+    .into_iter()
+    .take(motif_count)
+    {
+        command.args(["--motif", motif, offset]);
+    }
+    if let Some((motif, offset)) = extra_motif {
+        command.args(["--motif", motif, offset]);
+    }
+    if add_cpg {
+        command.arg("--cpg");
+    }
+
+    command.output().unwrap()
+}
+
+#[test]
+fn test_pileup_rejects_more_than_eight_motifs() {
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    let eight_motifs_path = temp_dir.path().join("eight.bed");
+    let output = run_pileup_with_overlapping_motifs(
+        &eight_motifs_path,
+        8,
+        "5mC",
+        None,
+        false,
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "eight motifs should be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let observed_labels =
+        BufReader::new(File::open(&eight_motifs_path).unwrap())
+            .lines()
+            .map(|line| line.unwrap().split('\t').nth(3).unwrap().to_string())
+            .collect::<BTreeSet<_>>();
+    let expected_labels = [
+        "m,CGG,0",
+        "m,CGGG,0",
+        "m,TCG,1",
+        "m,CTCG,2",
+        "m,GCTCG,3",
+        "m,TGCTCG,4",
+        "m,TTGCTCG,5",
+        "m,ATTGCTCG,6",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(observed_labels, expected_labels);
+
+    let deduplicated_auto_motif_path =
+        temp_dir.path().join("deduplicated-auto-motif.bed");
+    let output = run_pileup_with_overlapping_motifs(
+        &deduplicated_auto_motif_path,
+        7,
+        "m6A",
+        Some("2OmeA"),
+        false,
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "two codes for one missing primary base should add one motif: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let automatically_added_labels =
+        BufReader::new(File::open(&deduplicated_auto_motif_path).unwrap())
+            .lines()
+            .map(|line| line.unwrap().split('\t').nth(3).unwrap().to_string())
+            .collect::<BTreeSet<_>>();
+    assert!(automatically_added_labels.contains("a,A,0"));
+
+    for (filename, modified_base, add_cpg, extra_motif) in [
+        ("ninth-explicit.bed", "5mC", false, Some(("CGCG", "0"))),
+        ("ninth-cpg.bed", "5mC", true, None),
+        ("ninth-added-base.bed", "m6A", false, None),
+    ] {
+        let output_path = temp_dir.path().join(filename);
+        let output = run_pileup_with_overlapping_motifs(
+            &output_path,
+            8,
+            modified_base,
+            None,
+            add_cpg,
+            extra_motif,
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "nine motifs should fail");
+        assert!(
+            stderr.contains("pileup supports at most 8 motifs")
+                && stderr.contains("received 9"),
+            "expected a clear motif-capacity diagnostic, got: {stderr}"
+        );
+        assert!(
+            !output_path.exists(),
+            "motif validation should happen before creating output"
+        );
+
+        let sentinel = b"existing output\n";
+        std::fs::write(&output_path, sentinel).unwrap();
+        let output = run_pileup_with_overlapping_motifs(
+            &output_path,
+            8,
+            modified_base,
+            None,
+            add_cpg,
+            extra_motif,
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "nine motifs should fail");
+        assert!(
+            stderr.contains("pileup supports at most 8 motifs")
+                && stderr.contains("received 9"),
+            "expected a clear motif-capacity diagnostic, got: {stderr}"
+        );
+        assert_eq!(
+            std::fs::read(&output_path).unwrap(),
+            sentinel,
+            "motif validation should happen before changing output"
+        );
+    }
 }
 
 #[test]
