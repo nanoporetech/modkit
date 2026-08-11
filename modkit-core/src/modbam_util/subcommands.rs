@@ -1771,6 +1771,10 @@ pub struct ModSummarize {
     interval_size: u32,
 }
 
+fn sampling_fraction_log_message(fraction: f64) -> String {
+    format!("sampling {}% of reads", fraction * 100f64)
+}
+
 impl ModSummarize {
     pub fn run(&self) -> anyhow::Result<()> {
         let _handle = init_logging(self.log_filepath.as_ref());
@@ -1807,7 +1811,9 @@ impl ModSummarize {
             (None, Some(num_reads)) => {
                 info!("sampling {num_reads} reads from BAM")
             }
-            (Some(pct), None) => info!("sampling {pct}% of reads"),
+            (Some(fraction), None) => {
+                info!("{}", sampling_fraction_log_message(fraction))
+            }
             (Some(_), Some(_)) => unreachable!(),
         });
 
@@ -1932,7 +1938,11 @@ impl ModSummarize {
                 multi_progress.clone(),
             )?;
 
-            if self.mapped_only || self.matched_only || self.motif.is_some() {
+            if self.mapped_only
+                || self.matched_only
+                || self.motif.is_some()
+                || self.cpg
+            {
                 qual_hist
             } else if let Some(nr) = self.num_reads {
                 if qual_hist.ok_records < nr {
@@ -2471,5 +2481,15 @@ impl ModMode {
             Self::explicit => SkipMode::Explicit,
             Self::implicit => SkipMode::ImplicitUnmodified,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sampling_fraction_log_message;
+
+    #[test]
+    fn summary_sampling_fraction_log_uses_percentage_units() {
+        assert_eq!(sampling_fraction_log_message(0.1), "sampling 10% of reads");
     }
 }
