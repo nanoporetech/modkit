@@ -1,17 +1,148 @@
 use anyhow::Context;
 use itertools::Itertools;
-use rust_htslib::bam;
+use rust_htslib::bam::{
+    self,
+    header::HeaderRecord,
+    record::{Aux, Cigar, CigarString},
+    Format, Header, Record, Writer as BamWriter,
+};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 
 use common::{check_against_expected_text_file, run_modkit};
 use mod_kit::dmr::bedmethyl::BedMethylLine;
 use mod_kit::mod_base_code::{ModCodeRepr, METHYL_CYTOSINE};
 
 mod common;
+
+fn write_independent_mm_group_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    let bam_path = root.join("independent-mm-groups.bam");
+    let fasta_path = root.join("reference.fa");
+
+    let mut header = Header::new();
+    let mut hd = HeaderRecord::new(b"HD");
+    hd.push_tag(b"VN", "1.6").push_tag(b"SO", "coordinate");
+    header.push_record(&hd);
+    let mut sq = HeaderRecord::new(b"SQ");
+    sq.push_tag(b"SN", "chr1").push_tag(b"LN", 2);
+    header.push_record(&sq);
+
+    let mut record = Record::new();
+    record.set(
+        b"independent-groups",
+        Some(&CigarString(vec![Cigar::Match(2)])),
+        b"CC",
+        &[30; 2],
+    );
+    record.set_tid(0);
+    record.set_pos(0);
+    record.set_mapq(60);
+    record.push_aux(b"MM", Aux::String("C+m?,0;C+h?,1;")).unwrap();
+    record.push_aux(b"ML", Aux::ArrayU8((&[200, 250][..]).into())).unwrap();
+    record.push_aux(b"MN", Aux::U32(2)).unwrap();
+    record.push_aux(b"NM", Aux::U32(0)).unwrap();
+
+    let mut writer =
+        BamWriter::from_path(&bam_path, &header, Format::Bam).unwrap();
+    writer.write(&record).unwrap();
+    drop(writer);
+    bam::index::build(&bam_path, None, bam::index::Type::Bai, 1).unwrap();
+
+    File::create(&fasta_path).unwrap().write_all(b">chr1\nCC\n").unwrap();
+    File::create(root.join("reference.fa.fai"))
+        .unwrap()
+        .write_all(b"chr1\t2\t6\t2\t3\n")
+        .unwrap();
+
+    (bam_path, fasta_path)
+}
+
+fn collect_nonzero_modified_events(
+    output_path: &Path,
+) -> Vec<(u32, u32, char, u16, String, u16, u16, u16)> {
+    BufReader::new(File::open(output_path).unwrap())
+        .lines()
+        .map(|line| line.unwrap())
+        .filter_map(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            let n_modified = fields[11].parse::<u16>().unwrap();
+            (n_modified > 0).then(|| {
+                (
+                    fields[1].parse::<u32>().unwrap(),
+                    fields[2].parse::<u32>().unwrap(),
+                    fields[3]
+                        .split(',')
+                        .next()
+                        .unwrap()
+                        .parse::<char>()
+                        .unwrap(),
+                    fields[9].parse::<u16>().unwrap(),
+                    fields[10].to_string(),
+                    n_modified,
+                    fields[12].parse::<u16>().unwrap(),
+                    fields[13].parse::<u16>().unwrap(),
+                )
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn test_pileup_independent_same_base_mm_groups_match_generic() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path();
+    let (bam_path, fasta_path) = write_independent_mm_group_fixture(root);
+    let optimized_path = root.join("optimized.bed");
+    let generic_path = root.join("generic.bed");
+
+    run_modkit(&[
+        "pileup",
+        bam_path.to_str().unwrap(),
+        optimized_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--modified-bases",
+        "C:m",
+        "C:h",
+        "--no-filtering",
+        "--threads",
+        "1",
+        "--io-threads",
+        "1",
+        "--suppress-progress",
+    ])
+    .unwrap();
+    run_modkit(&[
+        "pileup",
+        bam_path.to_str().unwrap(),
+        generic_path.to_str().unwrap(),
+        "--ref",
+        fasta_path.to_str().unwrap(),
+        "--motif",
+        "CC",
+        "0",
+        "--motif",
+        "CC",
+        "1",
+        "--no-filtering",
+        "--threads",
+        "1",
+        "--io-threads",
+        "1",
+        "--suppress-progress",
+    ])
+    .unwrap();
+
+    let expected = vec![
+        (0, 1, 'm', 1, "100.00".to_string(), 1, 0, 0),
+        (1, 2, 'h', 1, "100.00".to_string(), 1, 0, 0),
+    ];
+    assert_eq!(collect_nonzero_modified_events(&optimized_path), expected);
+    assert_eq!(collect_nonzero_modified_events(&generic_path), expected);
+}
 
 #[test]
 fn test_pileup_help() {
