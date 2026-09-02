@@ -333,7 +333,23 @@ fn extract_mm_tag_info(record: &bam::Record) -> TagState {
     match MmTagInfo::parse_mm_tag(&raw_mod_tags.raw_mm) {
         Ok(mm_tags) => {
             let forward_sequence = get_forward_sequence(record);
-            match ModBaseInfo::new(&mm_tags, &raw_mod_tags, &forward_sequence) {
+            match ModBaseInfo::new(
+                &mm_tags,
+                &raw_mod_tags,
+                &forward_sequence,
+                &[],
+            ) {
+                // check-tags is strict, a record with positions where the
+                // probabilities sum to more than one is reported as invalid
+                // even though the other commands will now use the record.
+                Ok(mod_base_info) if mod_base_info.n_conflict_positions > 0 => {
+                    TagState::ValidTagsInvalidInfo {
+                        mmtag_infos: mm_tags,
+                        modbase_info_err: MkError::Conflict(
+                            crate::errs::ConflictError::ProbaGreaterThanOne,
+                        ),
+                    }
+                }
                 Ok(mod_base_info) => {
                     TagState::Valid { mmtag_infos: mm_tags, mod_base_info }
                 }

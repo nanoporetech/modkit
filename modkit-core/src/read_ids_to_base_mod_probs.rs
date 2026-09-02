@@ -284,8 +284,9 @@ impl RecordProcessor for ReadIdsToBaseModProbs {
         } else {
             None
         };
+        let resolvers = collapse_method.cloned().into_iter().collect();
         let mod_base_info_iter = records
-            .with_mod_base_info()
+            .with_mod_base_info(resolvers)
             .filter(|(record, _)| {
                 if only_mapped || edge_filter.is_some() {
                     !record.is_unmapped()
@@ -991,8 +992,13 @@ impl RecordProcessor for ReadsBaseModProfile {
         cut: Option<u32>,
         kmer_size: Option<usize>,
     ) -> anyhow::Result<Self::Output> {
-        let mut mod_iter =
-            TrackingModRecordIter::new(records, false, allow_non_primary);
+        let resolvers = collapse_method.cloned().into_iter().collect();
+        let mut mod_iter = TrackingModRecordIter::new(
+            records,
+            false,
+            allow_non_primary,
+            resolvers,
+        );
         let mut agg = Vec::new();
         let mut seen = HashSet::new();
         let pb = if with_progress { Some(get_ticker()) } else { None };

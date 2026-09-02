@@ -866,6 +866,13 @@ pub(crate) fn reader_is_cram(reader: &bam::IndexedReader) -> bool {
     }
 }
 
+pub(crate) fn unindexed_reader_is_cram(reader: &bam::Reader) -> bool {
+    unsafe {
+        (*reader.htsfile()).format.format
+            == rust_htslib::htslib::htsExactFormat_cram
+    }
+}
+
 pub(crate) const KMER_SIZE: usize = 50;
 
 #[derive(Copy, Clone)]

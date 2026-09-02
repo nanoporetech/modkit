@@ -120,7 +120,7 @@ fn adjust_mod_probs<'a>(
     sequence_motifs: &Option<SequenceMotifs<'a>>,
     discard_motifs: bool,
 ) -> MkResult<bam::Record> {
-    let mod_base_info = ModBaseInfo::new_from_record(&record)?;
+    let mod_base_info = ModBaseInfo::new_from_record_with(&record, methods)?;
     let mm_style = mod_base_info.mm_style;
     let ml_style = mod_base_info.ml_style;
 
@@ -302,6 +302,7 @@ pub fn adjust_modbam(
     spinner.finish_and_clear();
 
     info!("done, {} records processed", total,);
+    crate::mod_bam::report_conflict_summary();
 
     if !error_counts.is_empty() {
         info!("error/skip counts:");

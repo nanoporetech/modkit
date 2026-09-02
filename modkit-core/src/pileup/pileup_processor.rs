@@ -14,8 +14,8 @@ use crate::{
     errs::{MkError, MkResult},
     interval_chunks::{ChromCoordinates, FocusPositions2},
     mod_bam::{
-        validate_mn_tag_on_record, BaseModCall, BaseModProbs, EdgeFilter,
-        MmTagInfo,
+        note_conflict_position, probs_exceed_max, validate_mn_tag_on_record,
+        BaseModCall, BaseModProbs, EdgeFilter, MmTagInfo,
     },
     mod_base_code::{
         DnaBase, ModCodeRepr, ANY_CYTOSINE, HYDROXY_METHYL_CYTOSINE,
@@ -206,6 +206,14 @@ impl<
                 erred_records = erred_records.saturating_add(1);
                 continue 'records;
             };
+            if modbase_iter.has_negative_strand_mods() {
+                // modification calls on the opposite strand of the primary
+                // sequence base (e.g. PacBio `T-a.`) are not supported by the
+                // optimized workers, the pileup command detects these up
+                // front and uses the general workers instead.
+                erred_records = erred_records.saturating_add(1);
+                continue 'records;
+            }
 
             let Ok(mut mod_state) = modbase_iter.next_modified_position(
                 self.filter_thresholds,
@@ -641,7 +649,10 @@ impl PileupWorker for GenericPileupWorker {
                 continue 'records;
             };
 
-            let mm_tag_infos = MmTagInfo::from_record(&record)?;
+            let Ok(mm_tag_infos) = MmTagInfo::from_record(&record) else {
+                erred_records = erred_records.saturating_add(1);
+                continue 'records;
+            };
             let (bases_to_codes, implicit_bases) =
                 get_base_codes_and_implicits(&mm_tag_infos);
 
@@ -803,7 +814,7 @@ impl PileupWorker for GenericPileupWorker {
                             if q > pos {
                                 continue 'overran;
                             } else {
-                                let probs = codes
+                                let probs: FxHashMap<ModCodeRepr, f32> = codes
                                     .iter()
                                     .map(|hts_code| {
                                         let mod_code = ModCodeRepr::from(
@@ -813,6 +824,12 @@ impl PileupWorker for GenericPileupWorker {
                                         (mod_code, prob)
                                     })
                                     .collect();
+                                if probs_exceed_max(probs.values()) {
+                                    // probabilities from separate sub-tags
+                                    // sum to more than one, skip the position
+                                    note_conflict_position();
+                                    continue 'overran;
+                                }
                                 let Ok(can_base) =
                                     DnaBase::try_from(codes[0].canonical_base)
                                 else {
@@ -2458,7 +2475,7 @@ fn update_mods_iter2<'a>(
     reverse: bool,
     caller: &MultipleThresholdModCaller,
 ) -> MkResult<()> {
-    if let Some(res) = modbase_iter.next() {
+    while let Some(res) = modbase_iter.next() {
         match res {
             Ok((pos, codes)) => {
                 let pos = pos as usize;
@@ -2473,7 +2490,7 @@ fn update_mods_iter2<'a>(
                     Strand::Positive => can_base,
                     Strand::Negative => can_base.complement(),
                 };
-                let base_mod_probs = codes
+                let base_mod_probs: FxHashMap<ModCodeRepr, f32> = codes
                     .iter()
                     .map(|hts_code| {
                         (
@@ -2482,6 +2499,12 @@ fn update_mods_iter2<'a>(
                         )
                     })
                     .collect();
+                if probs_exceed_max(base_mod_probs.values()) {
+                    // probabilities from separate sub-tags sum to more than
+                    // one, skip this position and move to the next one
+                    note_conflict_position();
+                    continue;
+                }
                 let base_mod_probs = BaseModProbs::new(base_mod_probs, false);
 
                 *pos_base_mod_call =
@@ -2489,7 +2512,8 @@ fn update_mods_iter2<'a>(
                 *mod_pos = Some(pos);
                 *canonical_base = Some(can_base);
                 let strand = duplex_aware_strand(tag_mod_strand, reverse)?;
-                *mod_strand = Some(strand)
+                *mod_strand = Some(strand);
+                break;
             }
             Err(e) => {
                 return Err(MkError::HtsLibError(e));

@@ -571,8 +571,13 @@ fn process_records_to_chan<'a, T: Read>(
     message: &'static str,
     kmer_size: usize,
 ) -> (usize, usize) {
-    let mut mod_iter =
-        TrackingModRecordIter::new(records, false, allow_non_primary);
+    let resolvers = collapse_method.cloned().into_iter().collect();
+    let mut mod_iter = TrackingModRecordIter::new(
+        records,
+        false,
+        allow_non_primary,
+        resolvers,
+    );
     let pb = multi_pb.add(get_ticker());
     pb.set_message(format!("{message}records processed"));
     for (record, read_id, mod_base_info) in &mut mod_iter {

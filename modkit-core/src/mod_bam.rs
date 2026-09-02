@@ -2,11 +2,13 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 use anyhow::bail;
 use derive_new::new;
 use itertools::{Itertools, PeekingNext};
-use log::debug;
+use log::{debug, warn};
+use log_once::warn_once;
 use nom::bytes::complete::tag;
 use nom::character::complete::{digit1, multispace0};
 use nom::multi::separated_list1;
@@ -20,14 +22,100 @@ use crate::errs::{ConflictError, MkError, MkResult};
 use crate::mod_base_code::{DnaBase, ModCodeRepr, ParseChar};
 use crate::motifs::iupac::nt_bytes;
 use crate::util::{
-    get_forward_sequence, get_tag, record_is_not_primary, Strand,
+    get_forward_sequence, get_query_name_string, get_tag,
+    record_is_not_primary, Strand,
 };
 
-const MAX_PROB: f32 = 1.01f32;
+/// Maximum allowed sum of base modification probabilities at a single
+/// position, slightly above 1.0 to allow for rounding when converting from the
+/// 8-bit ML encoding.
+pub(crate) const MAX_PROB: f32 = 1.01f32;
+
+/// Number of positions dropped because the explicit probabilities coming from
+/// separate MM sub-tags summed to more than one (e.g. PacBio Jasmine 5mC and
+/// 5hmC calls, which are made by independent models).
+static CONFLICT_POSITIONS: AtomicUsize = AtomicUsize::new(0);
+/// Number of records that had at least one such position dropped.
+static CONFLICT_RECORDS: AtomicUsize = AtomicUsize::new(0);
+
+/// Record that `n_positions` positions of a record were dropped because the
+/// modification probabilities at those positions summed to more than one.
+#[inline]
+pub(crate) fn note_conflict_positions(n_positions: usize) {
+    if n_positions > 0 {
+        CONFLICT_POSITIONS.fetch_add(n_positions, AtomicOrdering::Relaxed);
+        CONFLICT_RECORDS.fetch_add(1, AtomicOrdering::Relaxed);
+        warn_once!(
+            "found position(s) where the base modification probabilities from \
+             separate MM sub-tags sum to more than 1.0 (non-conformant tags, \
+             e.g. PacBio Jasmine 5mC and 5hmC calls made by independent \
+             models). These positions are dropped and the records are kept, \
+             use --ignore or --convert to resolve the conflicting \
+             modification code instead. This warning is only shown once, \
+             per-record details are logged at DEBUG level and totals are \
+             reported at the end."
+        );
+    }
+}
+
+/// Record that a single position was skipped in a streaming parser (where
+/// records are not tracked).
+#[inline]
+pub(crate) fn note_conflict_position() {
+    CONFLICT_POSITIONS.fetch_add(1, AtomicOrdering::Relaxed);
+    warn_once!(
+        "found position(s) where the base modification probabilities from \
+         separate MM sub-tags sum to more than 1.0 (non-conformant tags, e.g. \
+         PacBio Jasmine 5mC and 5hmC calls made by independent models). These \
+         positions are skipped and the records are kept. This warning is only \
+         shown once, totals are reported at the end."
+    );
+}
+
+/// Returns (number of records, number of positions) dropped due to base
+/// modification probabilities summing to more than one.
+pub fn conflict_counts() -> (usize, usize) {
+    (
+        CONFLICT_RECORDS.load(AtomicOrdering::Relaxed),
+        CONFLICT_POSITIONS.load(AtomicOrdering::Relaxed),
+    )
+}
+
+/// Log a summary of how many positions/records were affected by base
+/// modification probabilities summing to more than one, if any.
+pub fn report_conflict_summary() {
+    let (n_records, n_positions) = conflict_counts();
+    if n_positions > 0 {
+        let records_message = if n_records > 0 {
+            format!(" in {n_records} record(s)")
+        } else {
+            String::new()
+        };
+        warn!(
+            "dropped {n_positions} position(s){records_message} where the \
+             base modification probabilities summed to more than 1.0, the \
+             records were otherwise used. Use --ignore or --convert to \
+             resolve the conflicting modification code, or `modkit modbam \
+             check-tags` to inspect the modBAM."
+        );
+    }
+}
+
+/// Check whether the sum of a collection of base modification probabilities
+/// exceeds the maximum allowed.
+#[inline]
+pub(crate) fn probs_exceed_max<'a>(
+    probs: impl Iterator<Item = &'a f32>,
+) -> bool {
+    probs.sum::<f32>() > MAX_PROB
+}
 pub(crate) struct TrackingModRecordIter<'a, T: bam::Read> {
     records: bam::Records<'a, T>,
     skip_unmapped: bool,
     allow_non_primary: bool,
+    /// collapse methods used to resolve positions where probabilities sum to
+    /// more than one, see `ModBaseInfo::new_from_record_with`.
+    resolvers: Vec<CollapseMethod>,
     pub(crate) num_used: usize,
     pub(crate) num_skipped: usize,
     pub(crate) num_failed: usize,
@@ -38,11 +126,13 @@ impl<'a, T: bam::Read> TrackingModRecordIter<'a, T> {
         records: bam::Records<'a, T>,
         skip_unmapped: bool,
         allow_non_primary: bool,
+        resolvers: Vec<CollapseMethod>,
     ) -> Self {
         Self {
             records,
             skip_unmapped,
             allow_non_primary,
+            resolvers,
             num_used: 0,
             num_skipped: 0,
             num_failed: 0,
@@ -80,7 +170,10 @@ impl<'a, T: bam::Read> Iterator for &mut TrackingModRecordIter<'a, T> {
                             self.num_failed += 1;
                             continue;
                         } else {
-                            match ModBaseInfo::new_from_record(&record) {
+                            match ModBaseInfo::new_from_record_with(
+                                &record,
+                                &self.resolvers,
+                            ) {
                                 Ok(modbase_info) => {
                                     if modbase_info.is_empty() {
                                         self.num_skipped += 1;
@@ -127,13 +220,19 @@ pub(crate) struct ModBaseInfoRecordTracker<
     // total: usize,
     num_errors: usize,
     records: I,
+    /// collapse methods used to resolve positions where probabilities sum to
+    /// more than one, see `ModBaseInfo::new_from_record_with`.
+    resolvers: Vec<CollapseMethod>,
 }
 
 pub(crate) trait WithModBaseInfos<
     I: Iterator<Item = rust_htslib::errors::Result<bam::record::Record>>,
 >
 {
-    fn with_mod_base_info(self) -> ModBaseInfoRecordTracker<Self>
+    fn with_mod_base_info(
+        self,
+        resolvers: Vec<CollapseMethod>,
+    ) -> ModBaseInfoRecordTracker<Self>
     where
         Self: Iterator<Item = rust_htslib::errors::Result<bam::record::Record>>
             + Sized,
@@ -142,6 +241,7 @@ pub(crate) trait WithModBaseInfos<
             // total: 0,
             num_errors: 0,
             records: self,
+            resolvers,
         }
     }
 }
@@ -163,7 +263,10 @@ impl<I: Iterator<Item = rust_htslib::errors::Result<bam::record::Record>>>
                     if record_is_not_primary(&record) || record.seq_len() == 0 {
                         continue;
                     }
-                    match ModBaseInfo::new_from_record(&record) {
+                    match ModBaseInfo::new_from_record_with(
+                        &record,
+                        &self.resolvers,
+                    ) {
                         Ok(modbase_info) => {
                             if modbase_info.is_empty() {
                                 continue;
@@ -640,6 +743,47 @@ impl BaseModProbs {
         self.check()
     }
 
+    /// Attempt to resolve a position whose probabilities sum to more than one
+    /// using the user-requested collapse methods. Ignoring a modification code
+    /// (either method) removes that code's probability outright (the usual
+    /// re-normalization is undefined when the canonical probability is
+    /// negative); converting sums the probabilities into the target code,
+    /// saturating at 1.0. Returns true when the position is valid afterwards.
+    pub(crate) fn resolve_conflict(
+        &mut self,
+        resolvers: &[CollapseMethod],
+    ) -> bool {
+        if self.check().is_ok() {
+            return true;
+        }
+        for method in resolvers {
+            match method {
+                CollapseMethod::ReNormalize(code)
+                | CollapseMethod::ReDistribute(code) => {
+                    self.probs.remove(code);
+                }
+                CollapseMethod::Convert { from, to } => {
+                    let mut converted = 0f32;
+                    let mut any = false;
+                    for code in from {
+                        if let Some(p) = self.probs.remove(code) {
+                            converted += p;
+                            any = true;
+                        }
+                    }
+                    if any {
+                        let q = self.probs.entry(*to).or_insert(0f32);
+                        *q = (*q + converted).min(1f32);
+                    }
+                }
+            }
+            if self.check().is_ok() {
+                return true;
+            }
+        }
+        false
+    }
+
     fn check(&self) -> MkResult<()> {
         let x = self.probs.values().sum::<f32>();
         if x > MAX_PROB {
@@ -915,6 +1059,13 @@ fn parse_int_list<'a>(input: &'a str) -> IResult<&'a str, Vec<u32>> {
 }
 
 impl MmTagInfo {
+    /// Strand of the modification relative to the primary sequence base,
+    /// `-` (Negative) means the modification is on the opposite strand, e.g.
+    /// `T-a` for 6mA on the complement of a thymine.
+    pub(crate) fn strand(&self) -> Strand {
+        self.strand
+    }
+
     pub(crate) fn from_record(record: &bam::Record) -> MkResult<Vec<Self>> {
         let raw_mod_tags = parse_raw_mod_tags(record)?;
         Self::parse_mm_tag(&raw_mod_tags.raw_mm)
@@ -1065,23 +1216,42 @@ impl MmTagInfo {
     }
 }
 
+/// Combine the base modification probabilities from another MM sub-tag into
+/// `agg`. When the probabilities at a position sum to more than one (the
+/// sub-tags come from independent models, e.g. PacBio Jasmine 5mC and 5hmC)
+/// the position is resolved with `resolvers` if possible, otherwise it is
+/// dropped. Returns the number of dropped positions.
 fn combine_positions_to_probs(
     agg: &mut SeqPosBaseModProbs,
     to_add: SeqPosBaseModProbs,
-) -> MkResult<()> {
+    resolvers: &[CollapseMethod],
+) -> MkResult<usize> {
     if agg.skip_mode != to_add.skip_mode {
         agg.skip_mode = SkipMode::ImplicitUnmodified;
     }
 
+    let mut n_dropped = 0usize;
     for (position, base_mod_probs) in to_add.pos_to_base_mod_probs.into_iter() {
-        if let Some(probs) = agg.pos_to_base_mod_probs.get_mut(&position) {
-            probs.combine_checked(base_mod_probs)?;
-        } else {
-            agg.pos_to_base_mod_probs.insert(position, base_mod_probs);
+        let drop_position =
+            if let Some(probs) = agg.pos_to_base_mod_probs.get_mut(&position) {
+                match probs.combine_checked(base_mod_probs) {
+                    Ok(()) => false,
+                    Err(MkError::Conflict(
+                        ConflictError::ProbaGreaterThanOne,
+                    )) => !probs.resolve_conflict(resolvers),
+                    Err(e) => return Err(e),
+                }
+            } else {
+                agg.pos_to_base_mod_probs.insert(position, base_mod_probs);
+                false
+            };
+        if drop_position {
+            agg.pos_to_base_mod_probs.remove(&position);
+            n_dropped += 1;
         }
     }
 
-    Ok(())
+    Ok(n_dropped)
 }
 
 // pub type SeqPosBaseModProbs = HashMap<usize, BaseModProbs>;
@@ -1233,6 +1403,7 @@ pub fn extract_mod_probs(
             combine_positions_to_probs(
                 &mut positions_to_probs,
                 seq_pos_base_mod_probs,
+                &[],
             )?;
         }
         pointer += mm_tag_info.delta_list.len() * mm_tag_info.stride();
@@ -1509,22 +1680,55 @@ pub struct ModBaseInfo {
     converters: HashMap<DnaBase, DeltaListConverter>,
     pub mm_style: &'static str,
     pub ml_style: &'static str,
+    /// Number of positions that were dropped because the base modification
+    /// probabilities from separate MM sub-tags summed to more than one.
+    pub n_conflict_positions: usize,
 }
 
 impl ModBaseInfo {
     pub fn new_from_record(record: &bam::Record) -> MkResult<Self> {
+        Self::new_from_record_with(record, &[])
+    }
+
+    /// Parse the base modification information from a record, using
+    /// `resolvers` (the collapse methods requested by the user, e.g.
+    /// `--ignore h`) to resolve positions where the probabilities from separate
+    /// MM sub-tags sum to more than one. Positions that cannot be resolved are
+    /// dropped and counted, the record is still returned.
+    pub fn new_from_record_with(
+        record: &bam::Record,
+        resolvers: &[CollapseMethod],
+    ) -> MkResult<Self> {
         let raw_mod_tags = parse_raw_mod_tags(record)?;
         let forward_sequence = get_forward_sequence(record);
         let mm_tag_infos = MmTagInfo::parse_mm_tag(&raw_mod_tags.raw_mm)?;
-        Self::new(&mm_tag_infos, &raw_mod_tags, &forward_sequence)
+        let mod_base_info = Self::new(
+            &mm_tag_infos,
+            &raw_mod_tags,
+            &forward_sequence,
+            resolvers,
+        )?;
+        if mod_base_info.n_conflict_positions > 0 {
+            note_conflict_positions(mod_base_info.n_conflict_positions);
+            let read_id = get_query_name_string(record)
+                .unwrap_or_else(|_| "'UTF-8 decode failure'".to_string());
+            debug!(
+                "{read_id}: dropped {} position(s) where base modification \
+                 probabilities summed to more than 1.0",
+                mod_base_info.n_conflict_positions
+            );
+        }
+        Ok(mod_base_info)
     }
 
     pub fn new(
         tag_infos: &[MmTagInfo],
         raw_mod_tags: &RawModTags,
         forward_seq: &[u8],
+        resolvers: &[CollapseMethod],
     ) -> MkResult<Self> {
         let raw_ml = &raw_mod_tags.raw_ml;
+        let mut n_conflict_positions = 0usize;
 
         // todo make these DnaBase keys..
         let mut pos_seq_base_mod_probs =
@@ -1562,7 +1766,8 @@ impl ModBaseInfo {
                 let agg = seq_base_mod_probs.entry(base).or_insert_with(|| {
                     SeqPosBaseModProbs::new_empty(mm_tag_info.mode)
                 });
-                combine_positions_to_probs(agg, to_add)?
+                n_conflict_positions +=
+                    combine_positions_to_probs(agg, to_add, resolvers)?
             }
 
             pointer += mm_tag_info.delta_list.len() * mm_tag_info.stride();
@@ -1607,6 +1812,7 @@ impl ModBaseInfo {
             converters,
             mm_style: raw_mod_tags.mm_style,
             ml_style: raw_mod_tags.ml_style,
+            n_conflict_positions,
         })
     }
 
@@ -2162,6 +2368,132 @@ mod mod_bam_tests {
     }
 
     #[test]
+    fn test_mod_base_info_conflicting_probs() {
+        // PacBio Jasmine-style tags: 5mC and 5hmC are called by independent
+        // models, so their probabilities can sum to more than one at a
+        // position. The C+h? track is sparse and only lists confident calls.
+        //           0123456789
+        let dna = "ACGTCGACGT";
+        // C positions 1, 4, 7; the h call is on the second C (delta 1)
+        let tag = "C+h?,1;C+m?,0,0,0;";
+        let quals = vec![178u16, 255, 255, 255];
+        let raw_mod_tags = RawModTags::new(tag, &quals, true);
+        let mm_tag_infos = MmTagInfo::parse_mm_tag(tag).unwrap();
+
+        // without a resolver the conflicting position is dropped, the record
+        // and the other positions are kept
+        let mbi =
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
+                .unwrap();
+        assert_eq!(mbi.n_conflict_positions, 1);
+        let c_probs = &mbi
+            .pos_seq_base_mod_probs
+            .get(&DnaBase::C)
+            .unwrap()
+            .pos_to_base_mod_probs;
+        assert_eq!(c_probs.len(), 2);
+        assert!(c_probs.contains_key(&1));
+        assert!(!c_probs.contains_key(&4));
+        assert!(c_probs.contains_key(&7));
+
+        // a resolver for a code that is not involved does not help
+        let resolvers = [CollapseMethod::ReDistribute('a'.into())];
+        let mbi = ModBaseInfo::new(
+            &mm_tag_infos,
+            &raw_mod_tags,
+            dna.as_bytes(),
+            &resolvers,
+        )
+        .unwrap();
+        assert_eq!(mbi.n_conflict_positions, 1);
+
+        // the expected probabilities when only the m calls are present
+        let m_tag = "C+m?,0,0,0;";
+        let m_quals = vec![255u16, 255, 255];
+        let m_raw_mod_tags = RawModTags::new(m_tag, &m_quals, true);
+        let m_mm_tag_infos = MmTagInfo::parse_mm_tag(m_tag).unwrap();
+        let expected = ModBaseInfo::new(
+            &m_mm_tag_infos,
+            &m_raw_mod_tags,
+            dna.as_bytes(),
+            &[],
+        )
+        .unwrap();
+        let expected_c_probs = &expected
+            .pos_seq_base_mod_probs
+            .get(&DnaBase::C)
+            .unwrap()
+            .pos_to_base_mod_probs;
+
+        // ignoring h (with either method) removes the h probability at the
+        // conflicting position and leaves the m call untouched
+        for resolver in [
+            CollapseMethod::ReDistribute('h'.into()),
+            CollapseMethod::ReNormalize('h'.into()),
+        ] {
+            let mbi = ModBaseInfo::new(
+                &mm_tag_infos,
+                &raw_mod_tags,
+                dna.as_bytes(),
+                &[resolver],
+            )
+            .unwrap();
+            assert_eq!(mbi.n_conflict_positions, 0);
+            let c_probs = &mbi
+                .pos_seq_base_mod_probs
+                .get(&DnaBase::C)
+                .unwrap()
+                .pos_to_base_mod_probs;
+            assert_eq!(c_probs.len(), 3);
+            assert_eq!(c_probs.get(&4), expected_c_probs.get(&4));
+            assert_eq!(c_probs.get(&1), expected_c_probs.get(&1));
+            assert_eq!(c_probs.get(&7), expected_c_probs.get(&7));
+        }
+
+        // converting h to m sums the probabilities, saturating at 1.0
+        let resolvers = [CollapseMethod::Convert {
+            from: HashSet::from(['h'.into()]),
+            to: 'm'.into(),
+        }];
+        let mbi = ModBaseInfo::new(
+            &mm_tag_infos,
+            &raw_mod_tags,
+            dna.as_bytes(),
+            &resolvers,
+        )
+        .unwrap();
+        assert_eq!(mbi.n_conflict_positions, 0);
+        let c_probs = &mbi
+            .pos_seq_base_mod_probs
+            .get(&DnaBase::C)
+            .unwrap()
+            .pos_to_base_mod_probs;
+        assert_eq!(c_probs.len(), 3);
+        assert_eq!(
+            c_probs.get(&4).unwrap(),
+            &BaseModProbs::new_init('m', 1.0f32)
+        );
+
+        // rounding: two probabilities that sum to slightly more than one
+        // (as happens with 8-bit encoding) are still accepted
+        let tag = "C+h.,0;C+m.,0;";
+        let quals = vec![1u16, 255];
+        let raw_mod_tags = RawModTags::new(tag, &quals, true);
+        let mm_tag_infos = MmTagInfo::parse_mm_tag(tag).unwrap();
+        let mbi =
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
+                .unwrap();
+        assert_eq!(mbi.n_conflict_positions, 0);
+        let c_probs = &mbi
+            .pos_seq_base_mod_probs
+            .get(&DnaBase::C)
+            .unwrap()
+            .pos_to_base_mod_probs;
+        assert_eq!(c_probs.len(), 3);
+        assert_eq!(c_probs.get(&1).unwrap().iter_probs().count(), 2);
+    }
+
+    #[test]
     fn test_format_mm_ml_tags() {
         let canonical_base = FundamentalBase::C;
         //_________________________-12-34--5--6
@@ -2441,7 +2773,7 @@ mod mod_bam_tests {
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
         let mm_tag_infos = MmTagInfo::parse_mm_tag(tag).unwrap();
         let obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         assert_eq!(
             obs_mod_base_info.pos_seq_base_mod_probs.get(&DnaBase::C).unwrap(),
@@ -2476,7 +2808,7 @@ mod mod_bam_tests {
         let quals = vec![1, 1, 1, 100, 100, 100, 200, 200, 200];
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
         let obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         assert_eq!(
             obs_mod_base_info.pos_seq_base_mod_probs.get(&DnaBase::C).unwrap(),
@@ -2512,7 +2844,7 @@ mod mod_bam_tests {
         let quals = vec![1, 100, 1, 100, 1, 100, 200, 200, 200];
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
         let obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         assert_eq!(
             obs_mod_base_info.pos_seq_base_mod_probs.get(&DnaBase::C).unwrap(),
@@ -2550,8 +2882,8 @@ mod mod_bam_tests {
         let mm_tag_infos = MmTagInfo::parse_mm_tag(tag).unwrap();
         let quals = vec![100, 100, 100, 1, 1, 1, 150, 150, 150, 2, 2, 2];
         let tags = RawModTags::new(tag, &quals, true);
-        let info =
-            ModBaseInfo::new(&mm_tag_infos, &tags, dna.as_bytes()).unwrap();
+        let info = ModBaseInfo::new(&mm_tag_infos, &tags, dna.as_bytes(), &[])
+            .unwrap();
         let inferred = false;
         let (_converters, iterator) = info.into_iter_base_mod_probs();
         for (c, strand, probs) in iterator {
@@ -2612,7 +2944,7 @@ mod mod_bam_tests {
         let quals = vec![100, 100, 100, 1, 1, 1, 150, 150, 150, 2, 2, 2];
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
         let obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
 
         let top_strand_mods =
@@ -2660,7 +2992,7 @@ mod mod_bam_tests {
         let quals = vec![1, 1, 1, 200, 200, 200, 100, 100, 100];
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
         let mut obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         let c_seq_base_mod_probs = obs_mod_base_info
             .pos_seq_base_mod_probs
@@ -2691,7 +3023,7 @@ mod mod_bam_tests {
         // trim larger than read
         let edge_filter = EdgeFilter::new(50, 50, false);
         let mut obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         let c_seq_base_mod_probs = obs_mod_base_info
             .pos_seq_base_mod_probs
@@ -2703,7 +3035,7 @@ mod mod_bam_tests {
 
         // trim with mod call _at_ the position to be trimmed
         let mut obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         let c_seq_base_mod_probs = obs_mod_base_info
             .pos_seq_base_mod_probs
@@ -2744,14 +3076,14 @@ mod mod_bam_tests {
         let mm_tag_infos = MmTagInfo::parse_mm_tag(tag).unwrap();
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
         let obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         assert!(obs_mod_base_info.is_empty());
         let tag = "C+h.;C+m.;";
         let mm_tag_infos = MmTagInfo::parse_mm_tag(tag).unwrap();
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
         let obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         assert!(!obs_mod_base_info.is_empty());
         //               g c CG c gg CG CG
@@ -2762,14 +3094,14 @@ mod mod_bam_tests {
         let mm_tag_infos = MmTagInfo::parse_mm_tag(tag).unwrap();
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
         let obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         assert!(obs_mod_base_info.is_empty());
         let tag = "C+h.;C+m.;G-h.;G-m.;";
         let mm_tag_infos = MmTagInfo::parse_mm_tag(tag).unwrap();
         let raw_mod_tags = RawModTags::new(tag, &quals, true);
         let obs_mod_base_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mod_tags, dna.as_bytes(), &[])
                 .unwrap();
         assert!(!obs_mod_base_info.is_empty());
         assert_eq!(obs_mod_base_info.pos_seq_base_mod_probs.len(), 1);
@@ -2828,7 +3160,7 @@ mod mod_bam_tests {
         record.set(b"test", None, dna.as_bytes(), &vec![255; dna.len()]);
         let raw_mm_tags = RawModTags::new(mm, &vec![255u16; 7], true);
         let modbase_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes(), &[])
                 .unwrap();
         let t_converter = modbase_info.converters.get(&DnaBase::T).unwrap();
         let expected = vec![0, 0, 0, 0, 0, 1, 2, 3, 3, 4, 4, 4, 4, 5, 6, 7, 7];
@@ -2847,7 +3179,7 @@ mod mod_bam_tests {
         record.set(b"test", None, dna.as_bytes(), &vec![255; dna.len()]);
         let raw_mm_tags = RawModTags::new(mm, &vec![255u16; 8], true);
         let modbase_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes(), &[])
                 .unwrap();
         let t_converter = modbase_info.converters.get(&DnaBase::T).unwrap();
         let expected = vec![0, 0, 0, 0, 0, 1, 2, 3, 3, 4, 4, 4, 4, 5, 6, 7, 7];
@@ -2867,14 +3199,31 @@ mod mod_bam_tests {
         let mut record = bam::Record::new();
         record.set(b"test", None, dna.as_bytes(), &vec![255; dna.len()]);
         let raw_mm_tags = RawModTags::new(mm, &vec![255u16; 9], true);
+        // the explicit probabilities at the first C sum to more than one, the
+        // position is dropped but the record is still valid
         let modbase_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes());
-        assert!(modbase_info.is_err());
+            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes(), &[])
+                .unwrap();
+        assert_eq!(modbase_info.n_conflict_positions, 1);
+        let c_probs = &modbase_info
+            .pos_seq_base_mod_probs
+            .get(&DnaBase::C)
+            .unwrap()
+            .pos_to_base_mod_probs;
+        // the only C with calls was the conflicting one
+        assert!(c_probs.is_empty());
+        // the calls on the other bases are kept
+        let t_probs = &modbase_info
+            .pos_seq_base_mod_probs
+            .get(&DnaBase::T)
+            .unwrap()
+            .pos_to_base_mod_probs;
+        assert!(t_probs.contains_key(&5));
         let mm = "C+m.;N+b?,1,3,0,0,1,3,0,0;";
         let mm_tag_infos = MmTagInfo::parse_mm_tag(mm).unwrap();
         let raw_mm_tags = RawModTags::new(mm, &vec![255u16; 8], true);
         let modbase_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes());
+            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes(), &[]);
         assert!(modbase_info.is_err());
         // todo add test for specific error
         // if let Err(e) = modbase_info {
@@ -2891,7 +3240,7 @@ mod mod_bam_tests {
         let mut record = bam::Record::new();
         record.set(b"test", None, dna.as_bytes(), &vec![255; dna.len()]);
         let _modbase_info =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes())
+            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes(), &[])
                 .unwrap();
         // let c_probs = modbase_info.pos_seq_base_mod_probs.get(&'C').unwrap();
         // dbg!(&c_probs.pos_to_base_mod_probs);
@@ -2906,7 +3255,7 @@ mod mod_bam_tests {
         let mut record = bam::Record::new();
         record.set(b"test", None, dna.as_bytes(), &vec![255; dna.len()]);
         let parse_result =
-            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes());
+            ModBaseInfo::new(&mm_tag_infos, &raw_mm_tags, dna.as_bytes(), &[]);
 
         match parse_result {
             Err(MkError::Conflict(ConflictError::ExplicitConflictInferred)) => {

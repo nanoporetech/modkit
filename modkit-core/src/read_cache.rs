@@ -110,7 +110,9 @@ impl<'a> ReadCache<'a> {
     fn add_record(&mut self, record: &bam::Record) -> MkResult<()> {
         let record_name = util::get_query_name_string(record)?;
 
-        let mod_base_info = ModBaseInfo::new_from_record(record)?;
+        let resolvers = self.method.map(std::slice::from_ref).unwrap_or(&[]);
+        let mod_base_info =
+            ModBaseInfo::new_from_record_with(record, resolvers)?;
         if mod_base_info.is_empty() {
             return Err(MkError::NoModifiedBaseInformation);
         }
