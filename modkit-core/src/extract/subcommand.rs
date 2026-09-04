@@ -354,6 +354,7 @@ impl EntryExtractFull {
         n_skipped.finish_and_clear();
         n_used.finish_and_clear();
         n_rows.finish_and_clear();
+        crate::mod_bam::report_conflict_summary();
         info!(
             "processed {} reads, {} rows, skipped ~{} reads, failed ~{} reads",
             writer.num_reads(),
@@ -864,6 +865,7 @@ impl EntryExtractCalls {
         n_skipped.finish_and_clear();
         n_used.finish_and_clear();
         n_rows.finish_and_clear();
+        crate::mod_bam::report_conflict_summary();
         info!(
             "processed {} reads, {} rows, skipped ~{} reads, failed ~{} reads",
             writer.num_reads(),

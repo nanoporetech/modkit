@@ -2181,6 +2181,7 @@ impl Update {
         spinner.finish_and_clear();
 
         info!("done, {} records processed", total);
+        crate::mod_bam::report_conflict_summary();
 
         if !error_counts.is_empty() {
             info!("error/skip counts:");

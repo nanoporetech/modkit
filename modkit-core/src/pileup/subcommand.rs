@@ -26,7 +26,7 @@ use crate::fasta::MotifLocationsLookup;
 use crate::interval_chunks::{
     ChromCoordinatesFeeder, ReferenceIntervalBatchesFeeder, TotalLength,
 };
-use crate::mod_bam::{CollapseMethod, EdgeFilter};
+use crate::mod_bam::{CollapseMethod, EdgeFilter, MmTagInfo};
 use crate::mod_base_code::{
     DnaBase, ModCodeRepr, ModifiedBasesOptions, ANY_ADENINE, ANY_CYTOSINE,
     ANY_GUANINE, ANY_THYMINE, METHYL_CYTOSINE, SIX_METHYL_ADENINE,
@@ -50,7 +50,8 @@ use crate::sample_probs::{
 use crate::util::{
     create_out_directory, filter_reference_records, get_master_progress_bar,
     get_master_progress_bar_fancy, get_subroutine_progress_bar, get_targets,
-    get_ticker, reader_is_bam, reader_is_cram, Region,
+    get_ticker, reader_is_bam, reader_is_cram, record_is_not_primary,
+    unindexed_reader_is_cram, Region, Strand,
 };
 use crate::writers::{
     BedMethylWriter, BedMethylWriter2, MultipleMotifBedmethylWriter,
@@ -538,6 +539,24 @@ impl ModBamPileup {
         Ok(())
     }
 
+    /// The modification codes requested with `--modified-bases`, used by the
+    /// general workers to restrict the output rows to these codes (the
+    /// optimized workers do this through their count matrices). `None` when
+    /// no codes were requested or when `--combine-mods` sums all codes
+    /// together anyway.
+    fn requested_mod_codes(&self) -> Option<Vec<(DnaBase, ModCodeRepr)>> {
+        if self.combine_mods {
+            return None;
+        }
+        self.modified_bases.as_ref().map(|modified_bases| {
+            modified_bases
+                .iter()
+                .map(|x| (x.primary_base, x.mod_code))
+                .sorted()
+                .collect()
+        })
+    }
+
     fn determine_preset(
         &self,
     ) -> anyhow::Result<(Option<Presets>, Option<Vec<RegexMotif>>)> {
@@ -1023,6 +1042,26 @@ impl ModBamPileup {
         };
 
         let (preset, regex_motifs) = self.determine_preset()?;
+        // The optimized workers do not support modification calls on the
+        // opposite strand of the primary sequence base (e.g. PacBio 6mA
+        // `T-a.` sub-tags), check the first records and fall back to the
+        // general workers when such calls are found.
+        let preset = if preset.is_some()
+            && bam_has_negative_strand_mods(
+                &self.in_bam,
+                self.reference_fasta.as_ref(),
+                1_000,
+            )? {
+            info!(
+                "found base modification calls on the opposite strand of the \
+                 primary sequence base (e.g. PacBio 6mA 'T-a.'), these are \
+                 not supported by the optimized pileup workers, using general \
+                 workers"
+            );
+            None
+        } else {
+            preset
+        };
 
         let (pileup_options, combine_strands) = match &preset {
             Some(preset) => match preset {
@@ -1513,6 +1552,8 @@ impl ModBamPileup {
                             pileup_options.clone(),
                             self.combine_strands,
                             self.max_depth,
+                            self.phased,
+                            self.requested_mod_codes(),
                         )
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;
@@ -1623,6 +1664,7 @@ impl ModBamPileup {
             drop(records_tx);
         });
 
+        let mut n_failed_intervals = 0usize;
         for result in records_rx.into_iter() {
             match result {
                 Ok(mod_base_pileup) => {
@@ -1633,7 +1675,10 @@ impl ModBamPileup {
                     write_progress.inc(rows_written);
                 }
                 Err(message) => {
-                    debug!("unexpected error {message}");
+                    n_failed_intervals += 1;
+                    master_progress.suspend(|| {
+                        error!("failed to process interval, {message}");
+                    });
                 }
             }
         }
@@ -1643,7 +1688,15 @@ impl ModBamPileup {
 
         if n_failed_reads > 0 {
             master_progress.suspend(|| {
-                error!("~{n_failed_reads} failed processing");
+                error!("~{n_failed_reads} records failed processing");
+            });
+        }
+        if n_failed_intervals > 0 {
+            master_progress.suspend(|| {
+                error!(
+                    "{n_failed_intervals} interval(s) failed processing, \
+                     output is incomplete"
+                );
             });
         }
 
@@ -1651,6 +1704,7 @@ impl ModBamPileup {
         erred_reads.finish_and_clear();
         master_progress.suspend(|| {
             info!("Done, processed {rows_processed} rows.");
+            crate::mod_bam::report_conflict_summary();
         });
         tid_progress.finish_and_clear();
 
@@ -1662,6 +1716,42 @@ impl ModBamPileup {
 
         Ok(())
     }
+}
+
+/// Check the first `n_records` primary records of a modBAM for base
+/// modification calls on the opposite strand of the primary sequence base
+/// (`-` in the MM tag, e.g. PacBio `T-a.`).
+fn bam_has_negative_strand_mods(
+    in_bam: &PathBuf,
+    reference_fasta: Option<&PathBuf>,
+    n_records: usize,
+) -> anyhow::Result<bool> {
+    let mut reader = bam::Reader::from_path(in_bam)?;
+    if unindexed_reader_is_cram(&reader) {
+        if let Some(reference_fp) = reference_fasta {
+            reader.set_reference(reference_fp)?;
+        } else {
+            bail!("CRAM input requires reference")
+        }
+    }
+    let mut record = bam::Record::new();
+    let mut n_checked = 0usize;
+    while let Some(result) = reader.read(&mut record) {
+        result?;
+        if record_is_not_primary(&record) {
+            continue;
+        }
+        if let Ok(mm_tag_infos) = MmTagInfo::from_record(&record) {
+            if mm_tag_infos.iter().any(|x| x.strand() == Strand::Negative) {
+                return Ok(true);
+            }
+        }
+        n_checked += 1;
+        if n_checked >= n_records {
+            break;
+        }
+    }
+    Ok(false)
 }
 
 #[derive(Clone, Debug)]
@@ -2372,6 +2462,7 @@ impl DuplexModBamPileup {
             "Done, processed {rows_processed} rows. Processed \
              ~{n_processed_reads} reads and skipped {n_skipped_message}."
         );
+        crate::mod_bam::report_conflict_summary();
         Ok(())
     }
 }

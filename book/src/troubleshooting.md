@@ -71,3 +71,30 @@ contains CG positions. However, it will not include positions for which the pass
 is zero (see [the column
 descriptions](./intro_pileup.md#description-of-bedmethyl-output)). This is to be
 expected.
+
+## PacBio (Jasmine) 5mC and 5hmC calls: "conflict-explicit-prob-greater-than-one"
+
+PacBio Jasmine (>= 26.1.3) calls 5mC and 5hmC with two independent models and writes them as
+separate `C+m?` and `C+h?` (and `G-h?`) sub-tags. Because the models are independent, the two
+probabilities at a single cytosine can sum to more than 1.0, which the SAM specification does not
+allow. Older versions of `modkit` discarded the entire record when this happened (visible as
+`conflict-explicit-prob-greater-than-one` in `modkit modbam check-tags` and in the debug log), which
+could remove more than half of the reads of a sample.
+
+`modkit` now keeps the record and only drops the positions where the probabilities cannot be
+reconciled; a summary of how many positions were dropped is logged at the end of the run. To keep
+the 5mC calls at those positions, pass `--ignore h` (the 5hmC probability is removed at the
+conflicting positions and the 5mC probability is left untouched) or `--convert h m` (the
+probabilities are summed, saturating at 1.0), for example:
+
+```bash
+modkit adjust-mods --ignore h ${pacbio_bam} ${out_bam}
+modkit pileup ${out_bam} ${out_bed} --cpg --ref ${ref}
+```
+
+`modkit modbam check-tags` still reports these records as invalid so that non-conformant tags can
+be detected.
+
+PacBio HiFi reads also carry 6mA calls on both strands (`A+a.` and `T-a.`). `modkit pileup` detects
+the opposite-strand calls and uses the general pileup workers for these files, which is slower than
+the optimized workers used for ONT data but produces the same output.

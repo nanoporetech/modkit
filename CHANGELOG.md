@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Fixes
+  - [all] Records where the base modification probabilities from separate MM sub-tags sum to more than one at a position (e.g. PacBio Jasmine 5mC and 5hmC calls, which are made by independent models) are no longer discarded. The offending positions are dropped (or resolved with `--ignore`/`--convert` when given, e.g. `--ignore h` keeps the 5mC call), the rest of the record is used, and the number of dropped positions is reported. `modbam check-tags` still reports these records as `conflict-explicit-prob-greater-than-one`.
+  - [pileup] A record without MM/ML tags no longer aborts the processing of the whole interval, which silently produced no output for that interval.
+  - [pileup] Base modification calls on the opposite strand of the primary sequence base (e.g. PacBio 6mA `T-a.` calls) no longer make every record fail in the optimized workers and the threshold estimation; the general workers are used automatically when such calls are found.
+  - [pileup] `--phased` now partitions the counts on the `HP` tag in the general workers as well (used with multiple motifs, `--duplex` and for modBAMs with opposite-strand calls). Previously the `hp1` and `hp2` outputs were empty and only `combined` was written.
+  - [pileup] `--modified-bases` restricts the output rows to the requested modification codes in the general workers as well, matching the optimized workers; calls with other codes on the same primary base are counted in `N_other`. Previously every modification code present in the modBAM produced a row.
+
 ## [v0.6.4]
 ### Adds
   - [bedmethyl] Adds `--min-samples` (an integer or `all`) and `--min-sample-coverage` to `bedmethyl merge` to require a position to be present in (and optionally covered to a minimum valid depth in) multiple inputs, enabling an inner join across replicates. Omitting them preserves the original outer-join behaviour.

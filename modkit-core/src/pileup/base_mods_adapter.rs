@@ -9,10 +9,15 @@ use rust_htslib::bam::{
 };
 
 use crate::{
-    errs::MkResult,
+    errs::{MkError, MkResult},
+    mod_bam::note_conflict_position,
     mod_base_code::{DnaBase, ModCodeRepr},
     util::qual_to_prob,
 };
+
+/// Maximum allowed sum of the ML values at a single position, slightly more
+/// than 256 to allow for rounding (see `crate::mod_bam::MAX_PROB`).
+const MAX_TOTAL_MOD_QUAL: u16 = 258;
 
 #[derive(Debug, Copy, Clone, new)]
 pub(crate) struct ModState {
@@ -20,6 +25,9 @@ pub(crate) struct ModState {
     pub modified: bool,
     pub filtered: bool,
     pub mod_code: ModCodeRepr,
+    /// The base the modification is called on. When the modification is on
+    /// the opposite strand of the primary sequence base (`neg_strand`), this
+    /// is the complement of the base in the read.
     pub primary_base: DnaBase,
     pub inferred: bool,
     pub mod_qual: u8,
@@ -34,7 +42,9 @@ pub(crate) struct BaseModsAdapter<'a, const SIZE: usize = 16> {
     canonical_bases: [u8; SIZE],
     mm_pos: [usize; SIZE],
     ml_pos: [usize; SIZE],
-    // strands: [u8; SIZE], // could be bitvec
+    /// true when the modification is on the opposite strand of the primary
+    /// sequence base (`-` in the MM tag)
+    neg_strands: [bool; SIZE],
     implicits: [bool; SIZE],
     ml_strides: [usize; SIZE],
     n_codes: usize,
@@ -90,7 +100,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
         let mut ml_start = 0usize;
         let mut mod_codes = [ModCodeRepr::Code('N'); SIZE];
         let mut canonical_bases = [0u8; SIZE];
-        // let mut strands = [0u8; SIZE];
+        let mut neg_strands = [false; SIZE];
         let mut ml_strides = [0usize; SIZE];
         let mut implicits = [false; SIZE];
         let mut mm_pos = [0usize; SIZE];
@@ -102,10 +112,11 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
             assert!(n_codes < SIZE);
             let base = mm[i];
             i += 1;
-            let strand = mm[i];
-            if strand != b'+' {
-                bail!("duplex data not currently supported")
-            }
+            let neg_strand = match mm[i] {
+                b'+' => false,
+                b'-' => true,
+                _ => bail!("invalid strand in MM tag"),
+            };
             i += 1;
             let (mods_in_rec, offset) =
                 parse_mod_code(&mm[i..], &mut mod_codes, n_codes);
@@ -175,7 +186,7 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
             for j in 0..mods_in_rec {
                 mm_pos[j + n_codes] = mm_idx;
                 canonical_bases[j + n_codes] = base;
-                // strands[j + n_codes] = strand;
+                neg_strands[j + n_codes] = neg_strand;
                 ml_strides[j + n_codes] = mods_in_rec;
                 implicits[j + n_codes] = implicit_mode;
                 mm_next[j + n_codes] = delta;
@@ -194,10 +205,10 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
             mod_codes,
             canonical_bases,
             n_codes,
+            neg_strands,
             implicits,
             mm_pos,
             ml_pos,
-            // strands,
             ml_strides,
             mm_next,
             num_explicit_positions,
@@ -264,34 +275,86 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
         }
         let mod_state = if let Some(mod_pos) = mod_pos {
             let mut mod_qual = 0u8;
-            let mut total_mod_qual = 0u8;
+            let mut total_mod_qual = 0u16;
             let base = if self.reverse {
                 base_complement(self.seq[mod_pos])
             } else {
                 self.seq[mod_pos]
             };
-            let mut mod_code = ModCodeRepr::Code(base as char);
+            let mut mod_code = None;
+            // strand of the calls at this position, None until a call (or
+            // implicit code) for this base is found
+            let mut neg_strand: Option<bool> = None;
             for i in 0..self.n_codes {
                 if self.canonical_bases[i] == base
                     && self.mm_next[i].map(|x| x == 0).unwrap_or(false)
                 {
                     let q = self.ml.get(self.ml_pos[i]).unwrap();
-                    if q > mod_qual {
-                        mod_code = self.mod_codes[i];
+                    if q > mod_qual || mod_code.is_none() {
+                        mod_code = Some(self.mod_codes[i]);
                         mod_qual = q;
                     }
-                    total_mod_qual = total_mod_qual.saturating_add(q);
+                    total_mod_qual += q as u16;
+                    match neg_strand {
+                        Some(s) if s != self.neg_strands[i] => {
+                            return Err(MkError::InvalidMm(
+                                "modification calls on both strands at the \
+                                 same position are not supported"
+                                    .to_string(),
+                            ))
+                        }
+                        _ => neg_strand = Some(self.neg_strands[i]),
+                    }
                 }
             }
-            let canonical_qual = 255u8.checked_sub(total_mod_qual).unwrap();
-            let primary_base = DnaBase::parse(base as char).unwrap();
+            if mod_code.is_none() {
+                // no explicit calls here, this is an inferred canonical
+                // position; take the strand from the implicit codes for this
+                // base.
+                for i in 0..self.n_codes {
+                    if self.canonical_bases[i] == base && self.implicits[i] {
+                        match neg_strand {
+                            Some(s) if s != self.neg_strands[i] => {
+                                return Err(MkError::InvalidMm(
+                                    "implicit modification calls on both \
+                                     strands for the same base are not \
+                                     supported"
+                                        .to_string(),
+                                ))
+                            }
+                            _ => neg_strand = Some(self.neg_strands[i]),
+                        }
+                    }
+                }
+            }
+            let neg_strand = neg_strand.unwrap_or(false);
+            if total_mod_qual > MAX_TOTAL_MOD_QUAL {
+                // the probabilities at this position (from separate sub-tags)
+                // sum to more than one, e.g. independent 5mC and 5hmC models.
+                // Skip the position and continue with the next one.
+                note_conflict_position();
+                self.move_forward(mod_pos, base);
+                return self
+                    .next_modified_position(filter_thresholds, mod_thresholds);
+            }
+            let canonical_qual = 255u16.saturating_sub(total_mod_qual) as u8;
+            let primary_base = {
+                let b = DnaBase::parse(base as char).unwrap();
+                if neg_strand {
+                    b.complement()
+                } else {
+                    b
+                }
+            };
+            let mod_code =
+                mod_code.unwrap_or(ModCodeRepr::Code(primary_base.char()));
             let threshold = filter_thresholds[primary_base as usize];
             let mod_state = if canonical_qual > mod_qual {
                 Some(ModState::new(
                     mod_pos,
                     false,
                     qual_to_prob(canonical_qual as i32) < threshold,
-                    ModCodeRepr::Code(base as char),
+                    ModCodeRepr::Code(primary_base.char()),
                     primary_base,
                     inferred,
                     canonical_qual,
@@ -329,9 +392,23 @@ impl<'a, const SIZE: usize> BaseModsAdapter<'a, SIZE> {
         Ok(mod_state)
     }
 
+    /// true when any of the modification codes are called on the opposite
+    /// strand of the primary sequence base (e.g. PacBio `T-a.` for 6mA).
+    pub fn has_negative_strand_mods(&self) -> bool {
+        self.neg_strands.iter().take(self.n_codes).any(|x| *x)
+    }
+
+    /// Bit set of the bases modifications are called on (A, C, G, T in the
+    /// low 4 bits). For modifications on the opposite strand, the base is
+    /// the complement of the primary sequence base.
     pub fn primary_bases_in_record(&self) -> u8 {
         let mut bs = 0u8;
-        for &raw_can_base in self.canonical_bases.iter().take(self.n_codes) {
+        for i in 0..self.n_codes {
+            let raw_can_base = if self.neg_strands[i] {
+                base_complement(self.canonical_bases[i])
+            } else {
+                self.canonical_bases[i]
+            };
             match raw_can_base {
                 b'A' => bs.view_bits_mut::<Lsb0>().set(0, true),
                 b'C' => bs.view_bits_mut::<Lsb0>().set(1, true),
