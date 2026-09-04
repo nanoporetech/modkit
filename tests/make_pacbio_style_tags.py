@@ -6,8 +6,12 @@ The records mimic PacBio HiFi reads processed with Jasmine >= 26.1.3:
 
   * the sparse `C+h?` track comes from a model that is independent of the
     `C+m?` model, so at a position the two probabilities can sum to more than
-    one (here the first C has m=255 and h=178),
-  * 6mA is called on both strands (`A+a.` and `T-a.`, implicit mode).
+    one (here the first C has m=255 and h=178; the second C has a regular
+    5hmC call, m=10 and h=230),
+  * 6mA is called on both strands (`A+a.` and `T-a.`, implicit mode),
+  * the records are haplotagged like Longphase/WhatsHap output: record i gets
+    `HP:i:1` when i % 3 == 0, `HP:i:2` when i % 3 == 1 and stays untagged
+    otherwise (all tagged records share `PS:i:1`).
 
 In `pacbio_style_tags.bam` the last record has its MM/ML tags removed,
 `pacbio_style_tags_no_untagged.bam` is the same file without that record.
@@ -37,15 +41,24 @@ def parse_mm(mm, ml):
     return parsed
 
 
-def transform(rec):
+def transform(i, rec):
+    if i % 3 == 0:
+        rec.set_tag("HP", 1, "i")
+        rec.set_tag("PS", 1, "i")
+    elif i % 3 == 1:
+        rec.set_tag("HP", 2, "i")
+        rec.set_tag("PS", 1, "i")
     parsed = parse_mm(rec.get_tag("MM"), rec.get_tag("ML"))
     h_deltas, _h_ml = parsed["C+h?"]
     m_deltas, m_ml = parsed["C+m?"]
     assert h_deltas == m_deltas
+    assert len(m_deltas) >= 2
     # confident 5mC call on the first C ...
     m_ml[0] = 255
-    # ... and an independent, confident 5hmC call at the same position
-    h_deltas, h_ml = [h_deltas[0]], [178]
+    # ... and an independent, confident 5hmC call at the same position, plus
+    # a non-conflicting confident 5hmC call on the second C (m low, h high)
+    m_ml[1] = 10
+    h_deltas, h_ml = h_deltas[:2], [178, 230]
     seq = rec.get_forward_sequence()
     tracks = []
     if "A" in seq:
@@ -63,7 +76,7 @@ def transform(rec):
 
 if __name__ == "__main__":
     src = pysam.AlignmentFile(SRC)
-    records = [transform(rec) for rec in src]
+    records = [transform(i, rec) for i, rec in enumerate(src)]
     n = len(records)
     with pysam.AlignmentFile(OUT_NO_UNTAGGED, "wb", template=src) as fh:
         for rec in records[:-1]:

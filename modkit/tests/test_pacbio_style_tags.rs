@@ -1,8 +1,9 @@
 //! Tests with PacBio Jasmine-style tags (`A+a.;C+h?;C+m?;T-a.`), see
 //! tests/make_pacbio_style_tags.py. The 5mC and 5hmC probabilities at the
-//! first C of each record sum to more than one, one record has no MM/ML tags
-//! and 6mA is called on both strands.
-use std::path::PathBuf;
+//! first C of each record sum to more than one, the second C carries a
+//! regular 5hmC call, one record has no MM/ML tags, 6mA is called on both
+//! strands and the records are haplotagged (HP=1, HP=2 or untagged).
+use std::{collections::HashMap, path::PathBuf};
 
 use common::run_modkit;
 use rust_htslib::{bam, bam::Read};
@@ -25,6 +26,21 @@ fn read_lines(fp: &PathBuf) -> Vec<String> {
         .lines()
         .map(|l| l.to_string())
         .collect()
+}
+
+/// bedMethyl rows split into columns: [3] mod code, [5] strand,
+/// [9] N_valid_cov, [11] N_mod, [12] N_canonical, [13] N_other_mod.
+fn parse_rows(lines: &[String]) -> Vec<Vec<String>> {
+    lines
+        .iter()
+        .map(|l| l.split('\t').map(|x| x.to_string()).collect())
+        .collect()
+}
+
+type RowKey = (String, String, String);
+
+fn row_key(row: &[String]) -> RowKey {
+    (row[0].clone(), row[1].clone(), row[5].clone())
 }
 
 #[test]
@@ -128,6 +144,14 @@ fn test_pileup_pacbio_style_tags() {
     .unwrap();
     let general_lines = read_lines(&out_general);
     assert!(!general_lines.is_empty());
+    // regression: identical to the output of the general workers before the
+    // --phased and --modified-bases changes (snapshot made with 697de7b)
+    assert_eq!(
+        general_lines,
+        read_lines(&PathBuf::from(
+            "../tests/resources/pacbio_style_tags_pileup_general.bed"
+        ))
+    );
 
     // Same input without the record lacking MM/ML tags gives the same output.
     let out_no_untagged =
@@ -219,4 +243,153 @@ fn test_extract_pacbio_style_tags() {
     read_ids.sort();
     read_ids.dedup();
     assert_eq!(read_ids.len(), 9);
+}
+
+#[test]
+fn test_pileup_pacbio_style_modified_bases_filters_rows() {
+    // The general workers (opposite-strand 6mA calls). Without
+    // --modified-bases every code in the BAM gets a row, with
+    // --modified-bases 5mC only the m rows are written and the h calls are
+    // counted in N_other of the m rows.
+    let run = |extra: &[&str], out_fn: &str| -> Vec<Vec<String>> {
+        let out = std::env::temp_dir().join(out_fn);
+        let mut args = vec![
+            "pileup",
+            INPUT,
+            out.to_str().unwrap(),
+            "--motif",
+            "CG",
+            "0",
+            "--ref",
+            REFERENCE,
+            "--no-filtering",
+        ];
+        args.extend_from_slice(extra);
+        run_modkit(&args).unwrap();
+        parse_rows(&read_lines(&out))
+    };
+    let all_rows = run(&[], "test_pacbio_style_pileup_all_codes.bed");
+    let m_rows = run(
+        &["--modified-bases", "5mC"],
+        "test_pacbio_style_pileup_5mc_only.bed",
+    );
+    assert!(all_rows.iter().any(|r| r[3] == "h"));
+    assert!(all_rows.iter().any(|r| r[3] == "m"));
+    assert!(!m_rows.is_empty());
+    assert!(m_rows.iter().all(|r| r[3] == "m"));
+    // the m rows themselves are not changed by the filter
+    let expected_m_rows = all_rows
+        .iter()
+        .filter(|r| r[3] == "m")
+        .cloned()
+        .collect::<Vec<Vec<String>>>();
+    assert_eq!(m_rows, expected_m_rows);
+    // N_other of every m row is N_mod of the h row at the same position
+    let h_n_mod = all_rows
+        .iter()
+        .filter(|r| r[3] == "h")
+        .map(|r| (row_key(r), r[11].parse::<usize>().unwrap()))
+        .collect::<HashMap<RowKey, usize>>();
+    let mut n_other_total = 0usize;
+    for row in &m_rows {
+        let n_other = row[13].parse::<usize>().unwrap();
+        assert_eq!(Some(&n_other), h_n_mod.get(&row_key(row)), "{row:?}");
+        n_other_total += n_other;
+    }
+    // the fixture has a regular 5hmC call on the second C of each record
+    assert!(n_other_total > 0);
+
+    // --combine-mods sums all codes into one row per position instead. (With
+    // --combine-mods a single-base `C` motif is added next to `CG`, so the
+    // rows carry multiple-motif labels; only the CG rows are compared.)
+    let combined_rows = run(
+        &["--modified-bases", "5mC", "--combine-mods"],
+        "test_pacbio_style_pileup_combine_mods.bed",
+    )
+    .into_iter()
+    .filter(|r| r[3] == "C,CG,0")
+    .collect::<Vec<Vec<String>>>();
+    assert_eq!(combined_rows.len(), m_rows.len());
+    for (combined, m) in combined_rows.iter().zip(m_rows.iter()) {
+        assert_eq!(row_key(combined), row_key(m));
+        let n_mod_combined = combined[11].parse::<usize>().unwrap();
+        let n_mod = m[11].parse::<usize>().unwrap();
+        let n_other = m[13].parse::<usize>().unwrap();
+        assert_eq!(n_mod_combined, n_mod + n_other);
+    }
+}
+
+#[test]
+fn test_pileup_pacbio_style_phased() {
+    // The general workers (opposite-strand 6mA calls) with --phased: the
+    // counts are partitioned on the HP tag, untagged records only count
+    // towards the combined output.
+    let out_dir = std::env::temp_dir().join("test_pacbio_style_pileup_phased");
+    run_modkit(&[
+        "pileup",
+        INPUT,
+        out_dir.to_str().unwrap(),
+        "--cpg",
+        "--ref",
+        REFERENCE,
+        "--modified-bases",
+        "5mC",
+        "--no-filtering",
+        "--phased",
+        "--prefix",
+        "pb",
+    ])
+    .unwrap();
+    let combined =
+        parse_rows(&read_lines(&out_dir.join("pb_combined.bedmethyl")));
+    let hp1 = parse_rows(&read_lines(&out_dir.join("pb_hp1.bedmethyl")));
+    let hp2 = parse_rows(&read_lines(&out_dir.join("pb_hp2.bedmethyl")));
+    assert!(!hp1.is_empty());
+    assert!(!hp2.is_empty());
+    assert_ne!(hp1, hp2);
+    for rows in [&combined, &hp1, &hp2] {
+        assert!(rows.iter().all(|r| r[3] == "m"));
+    }
+
+    // the combined output is the same as without --phased
+    let out_unphased =
+        std::env::temp_dir().join("test_pacbio_style_pileup_unphased.bed");
+    run_modkit(&[
+        "pileup",
+        INPUT,
+        out_unphased.to_str().unwrap(),
+        "--cpg",
+        "--ref",
+        REFERENCE,
+        "--modified-bases",
+        "5mC",
+        "--no-filtering",
+    ])
+    .unwrap();
+    assert_eq!(combined, parse_rows(&read_lines(&out_unphased)));
+
+    // per position the haplotype coverages sum to at most the combined
+    // coverage, and in total to less because of the untagged records
+    let coverage = |rows: &[Vec<String>]| -> HashMap<RowKey, usize> {
+        rows.iter()
+            .map(|r| (row_key(r), r[9].parse::<usize>().unwrap()))
+            .collect()
+    };
+    let combined_cov = coverage(&combined);
+    let hp1_cov = coverage(&hp1);
+    let hp2_cov = coverage(&hp2);
+    for key in hp1_cov.keys().chain(hp2_cov.keys()) {
+        assert!(combined_cov.contains_key(key), "{key:?}");
+    }
+    let mut total_haplotagged = 0usize;
+    let mut total_combined = 0usize;
+    for (key, cov) in &combined_cov {
+        let haplotagged = hp1_cov.get(key).copied().unwrap_or(0)
+            + hp2_cov.get(key).copied().unwrap_or(0);
+        assert!(haplotagged <= *cov, "{key:?}");
+        total_haplotagged += haplotagged;
+        total_combined += cov;
+    }
+    assert!(total_haplotagged > 0);
+    assert!(total_haplotagged < total_combined);
 }

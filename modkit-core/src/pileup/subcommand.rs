@@ -539,6 +539,24 @@ impl ModBamPileup {
         Ok(())
     }
 
+    /// The modification codes requested with `--modified-bases`, used by the
+    /// general workers to restrict the output rows to these codes (the
+    /// optimized workers do this through their count matrices). `None` when
+    /// no codes were requested or when `--combine-mods` sums all codes
+    /// together anyway.
+    fn requested_mod_codes(&self) -> Option<Vec<(DnaBase, ModCodeRepr)>> {
+        if self.combine_mods {
+            return None;
+        }
+        self.modified_bases.as_ref().map(|modified_bases| {
+            modified_bases
+                .iter()
+                .map(|x| (x.primary_base, x.mod_code))
+                .sorted()
+                .collect()
+        })
+    }
+
     fn determine_preset(
         &self,
     ) -> anyhow::Result<(Option<Presets>, Option<Vec<RegexMotif>>)> {
@@ -1534,6 +1552,8 @@ impl ModBamPileup {
                             pileup_options.clone(),
                             self.combine_strands,
                             self.max_depth,
+                            self.phased,
+                            self.requested_mod_codes(),
                         )
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;

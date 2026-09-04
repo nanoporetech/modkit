@@ -498,6 +498,13 @@ pub struct GenericPileupWorker {
     pileup_numeric_options: PileupNumericOptions,
     combine_strands: bool,
     max_depth: u16,
+    /// Partition the counts on the `HP` tag into hp1/hp2 in addition to the
+    /// combined counts.
+    phased: bool,
+    /// Modification codes requested with `--modified-bases`. When `Some`
+    /// only rows with these codes are emitted, calls with other codes on the
+    /// same primary base are still counted in `N_other`.
+    mod_codes: Option<FxHashSet<ModCodeRepr>>,
 }
 
 impl GenericPileupWorker {
@@ -511,6 +518,8 @@ impl GenericPileupWorker {
         pileup_numeric_options: PileupNumericOptions,
         combine_strands: bool,
         max_depth: u16,
+        phased: bool,
+        mod_codes: Option<Vec<(DnaBase, ModCodeRepr)>>,
     ) -> anyhow::Result<Self> {
         let mut reader = bam::IndexedReader::from_path(in_bam_fp)?;
         if reader_is_cram(&reader) {
@@ -546,6 +555,9 @@ impl GenericPileupWorker {
             per_mod_thresholds,
             default_threshold,
         );
+        let mod_codes = mod_codes.map(|codes| {
+            codes.into_iter().map(|(_, code)| code).collect::<FxHashSet<_>>()
+        });
         Ok(Self {
             reader,
             motif_bases,
@@ -553,6 +565,8 @@ impl GenericPileupWorker {
             pileup_numeric_options,
             combine_strands,
             max_depth,
+            phased,
+            mod_codes,
         })
     }
 }
@@ -581,20 +595,32 @@ impl PileupWorker for GenericPileupWorker {
             start_pos as i64,
             end_pos as i64,
         ))?;
+        let phased = self.phased;
         let records = self
             .reader
             .records()
             .filter_ok(|record| record.tid() >= 0i32)
             .filter_ok(|record| record_is_primary(record))
-            // TODO: Capture errors here. Also check for partition-tag
-            .filter_map(|res| res.ok());
+            // TODO: Capture errors here.
+            .filter_map(|res| res.ok())
+            .map(|record| {
+                // 0 means the record is not haplotagged
+                let hp = if phased {
+                    get_haplotype_tag(&record, &HPTAG).unwrap_or(0u8)
+                } else {
+                    0u8
+                };
+                (record, hp)
+            });
 
-        let mut chrom_features: FxHashMap<PositionStrand, Tally2> =
-            FxHashMap::default();
+        // [combined, hp1, hp2], hp1 and hp2 stay empty unless `phased`
+        let mut chrom_features: [FxHashMap<PositionStrand, Tally2>; 3] =
+            [FxHashMap::default(), FxHashMap::default(), FxHashMap::default()];
         let mut add_to_tally = |position_strand: PositionStrand,
                                 call: Call,
                                 motif_info: Option<&MotifInfo>,
-                                motif_idxs: u8| {
+                                motif_idxs: u8,
+                                hp: u8| {
             let call = match motif_info.map(|x| x.primary_base) {
                 Some(x) if call.matches_dna_base(&x) => call,
                 Some(_x) => match call {
@@ -627,7 +653,13 @@ impl PileupWorker for GenericPileupWorker {
                 _ => position_strand,
             };
 
-            chrom_features
+            if phased && (hp == 1 || hp == 2) {
+                chrom_features[hp as usize]
+                    .entry(position_strand)
+                    .or_insert_with(Tally2::default)
+                    .add_call(call.clone(), motif_idxs, self.max_depth);
+            }
+            chrom_features[0]
                 .entry(position_strand)
                 .or_insert_with(Tally2::default)
                 .add_call(call, motif_idxs, self.max_depth);
@@ -637,7 +669,7 @@ impl PileupWorker for GenericPileupWorker {
         let mut canonical_base = Option::<DnaBase>::None;
         let mut pos_base_mod_call = Option::<BaseModCall>::None;
         let mut mod_strand = Option::<Strand>::None;
-        'records: for record in records {
+        'records: for (record, hp) in records {
             let reverse = record.is_reverse();
             let record_strand = if record.is_reverse() {
                 Strand::Negative
@@ -749,6 +781,7 @@ impl PileupWorker for GenericPileupWorker {
                             call,
                             ref_base,
                             motif_idxs,
+                            hp,
                         );
 
                         let Ok(_) = update_mods_iter2(
@@ -790,6 +823,7 @@ impl PileupWorker for GenericPileupWorker {
                                 },
                                 ref_base,
                                 motif_idxs,
+                                hp,
                             );
                         } else {
                             add_to_tally(
@@ -797,6 +831,7 @@ impl PileupWorker for GenericPileupWorker {
                                 Call::NoCall(base),
                                 ref_base,
                                 motif_idxs,
+                                hp,
                             );
                         }
                     }
@@ -869,6 +904,7 @@ impl PileupWorker for GenericPileupWorker {
                                         ),
                                         ref_base,
                                         motif_idxs,
+                                        hp,
                                     );
                                     mod_pos = Some(pos);
                                     canonical_base = Some(can_base);
@@ -899,6 +935,7 @@ impl PileupWorker for GenericPileupWorker {
                                             },
                                             ref_base,
                                             motif_idxs,
+                                            hp,
                                         );
                                     } else {
                                         add_to_tally(
@@ -906,6 +943,7 @@ impl PileupWorker for GenericPileupWorker {
                                             Call::NoCall(base),
                                             ref_base,
                                             motif_idxs,
+                                            hp,
                                         );
                                     }
                                     mod_pos = Some(pos);
@@ -924,6 +962,7 @@ impl PileupWorker for GenericPileupWorker {
                             Call::Delete,
                             ref_base,
                             motif_idxs,
+                            hp,
                         );
                     }
                     (Some(q), None) => {
@@ -948,6 +987,7 @@ impl PileupWorker for GenericPileupWorker {
                                 },
                                 ref_base,
                                 motif_idxs,
+                                hp,
                             );
                         } else {
                             add_to_tally(
@@ -955,6 +995,7 @@ impl PileupWorker for GenericPileupWorker {
                                 Call::NoCall(base),
                                 ref_base,
                                 motif_idxs,
+                                hp,
                             );
                         }
                     }
@@ -967,22 +1008,43 @@ impl PileupWorker for GenericPileupWorker {
             PileupNumericOptions::Combine => true,
             _ => false,
         };
-        let position_feature_counts = chrom_features
-            .into_iter()
-            .sorted_by(|((x, a), _), ((y, b), _)| match x.cmp(y) {
-                Ordering::Equal => a.cmp(b),
-                o @ _ => o,
-            })
-            .flat_map(|((ref_pos, strand), tally)| {
-                tally.into_counts(
-                    start_pos,
-                    ref_pos,
-                    combine_mods,
-                    if self.combine_strands { '.' } else { strand.to_char() },
-                )
-            })
-            .filter(|x| x.is_valid())
-            .collect::<Vec<PileupFeatureCounts2>>();
+        // with --combine-mods all codes are summed into one row per primary
+        // base, so there is nothing to filter
+        let mod_codes =
+            if combine_mods { None } else { self.mod_codes.as_ref() };
+        let into_feature_counts =
+            |features: FxHashMap<PositionStrand, Tally2>| {
+                features
+                    .into_iter()
+                    .sorted_by(|((x, a), _), ((y, b), _)| match x.cmp(y) {
+                        Ordering::Equal => a.cmp(b),
+                        o @ _ => o,
+                    })
+                    .flat_map(|((ref_pos, strand), tally)| {
+                        tally.into_counts(
+                            start_pos,
+                            ref_pos,
+                            combine_mods,
+                            if self.combine_strands {
+                                '.'
+                            } else {
+                                strand.to_char()
+                            },
+                        )
+                    })
+                    .filter(|x| x.is_valid())
+                    .filter(|x| {
+                        mod_codes
+                            .map_or(true, |codes| codes.contains(&x.mod_code))
+                    })
+                    .collect::<Vec<PileupFeatureCounts2>>()
+            };
+        let [combined, hp1, hp2] = chrom_features;
+        let position_feature_counts = into_feature_counts(combined);
+        if phased {
+            pileup_space.phased_feature_counts =
+                [into_feature_counts(hp1), into_feature_counts(hp2)];
+        }
 
         pileup_space.chrom_name = chrom_name;
         pileup_space.interval_width = width;
