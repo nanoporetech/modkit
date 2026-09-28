@@ -1137,11 +1137,13 @@ pub(super) trait ACountsMatrix<T, const STRANDS: usize, const CHECK_DEPTH: bool>
                 let pos_end = pos_start + self.strand_width();
                 let neg_start = pos_end;
                 let neg_end = neg_start + self.strand_width();
+                // Keep empty rows until haplotype counts have been combined.
                 self.decode_inner(
                     start_pos,
                     mod_code_op,
                     pos_start..pos_end,
                     neg_start..neg_end,
+                    phased,
                 )
             })
             .collect()
@@ -1153,6 +1155,7 @@ pub(super) trait ACountsMatrix<T, const STRANDS: usize, const CHECK_DEPTH: bool>
         mod_code_op: DnaModOption,
         pos_range: Range<usize>,
         neg_range: Range<usize>,
+        keep_empty: bool,
     ) -> Vec<PileupFeatureCounts2>;
 }
 
@@ -1357,6 +1360,7 @@ impl ACountsMatrix<DnaAllContext, 2, false> for CountsMatrix {
         dna_mod_option: DnaModOption,
         pos_range: Range<usize>,
         neg_range: Range<usize>,
+        keep_empty: bool,
     ) -> Vec<PileupFeatureCounts2> {
         let pos_strand = &self.inner[pos_range];
         let neg_strand = &self.inner[neg_range];
@@ -1384,6 +1388,7 @@ impl ACountsMatrix<DnaAllContext, 2, false> for CountsMatrix {
             mod_code_op,
         ))
         .flat_map(|(pos, neg)| [pos, neg])
+        .filter(|counts| keep_empty || counts.is_valid())
         .collect()
     }
 }
@@ -1555,6 +1560,7 @@ impl ACountsMatrix<DnaCytosineCombine, 2, false> for CountsMatrix {
         _mod_code_op: DnaModOption,
         pos_range: Range<usize>,
         neg_range: Range<usize>,
+        keep_empty: bool,
     ) -> Vec<PileupFeatureCounts2> {
         let pos_strand = &self.inner[pos_range];
         let neg_strand = &self.inner[neg_range];
@@ -1563,6 +1569,7 @@ impl ACountsMatrix<DnaCytosineCombine, 2, false> for CountsMatrix {
         slice_to_counts_dna_c_combine(pos_strand, start_pos, '+')
             .zip(slice_to_counts_dna_c_combine(neg_strand, start_pos, '-'))
             .flat_map(|(pos, neg)| [pos, neg])
+            .filter(|counts| keep_empty || counts.is_valid())
             .collect()
     }
 }
@@ -1758,6 +1765,7 @@ impl ACountsMatrix<DnaCpGCombineStrands, 1, false> for CountsMatrix {
         mod_code_op: DnaModOption,
         pos_range: Range<usize>,
         _neg_range: Range<usize>,
+        keep_empty: bool,
     ) -> Vec<PileupFeatureCounts2> {
         let (mod_code_op, methyl_code) = match mod_code_op {
             DnaModOption::Other(mod_code_repr) => {
@@ -1773,6 +1781,7 @@ impl ACountsMatrix<DnaCpGCombineStrands, 1, false> for CountsMatrix {
             methyl_code,
             mod_code_op,
         )
+        .filter(|counts| keep_empty || counts.is_valid())
         .collect()
     }
 }
@@ -1979,6 +1988,7 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
         _mod_code_op: DnaModOption,
         pos_range: Range<usize>,
         neg_range: Range<usize>,
+        keep_empty: bool,
     ) -> Vec<PileupFeatureCounts2> {
         if STRANDS == 2 {
             let pos_strand = &self.inner[pos_range];
@@ -1992,10 +2002,12 @@ impl<const STRANDS: usize, const CHECK_DEPTH: bool>
                     &self.mod_codes,
                 ))
                 .flat_map(|(pos, neg)| [pos, neg])
+                .filter(|counts| keep_empty || counts.is_valid())
                 .collect()
         } else {
             let pos_strand = &self.inner[pos_range];
             slice_to_counts_dynamic(pos_strand, start_pos, '.', &self.mod_codes)
+                .filter(|counts| keep_empty || counts.is_valid())
                 .collect()
         }
     }
@@ -2108,8 +2120,8 @@ fn slice_to_counts_dna_all_context(
             chunk[NO_CALL_OFFSET],
             0u8,
         );
-        if let Some(code) = mod_code_op {
-            let third_mod_c_record = PileupFeatureCounts2::new(
+        let third_mod_c_record = mod_code_op.map(|code| {
+            PileupFeatureCounts2::new(
                 position,
                 strand,
                 filtered_coverage_c,
@@ -2122,11 +2134,11 @@ fn slice_to_counts_dna_all_context(
                 n_not_c,
                 chunk[NO_CALL_OFFSET],
                 0u8,
-            );
-            vec![a_rec, third_mod_c_record, meth_c_record]
-        } else {
-            vec![a_rec, meth_c_record]
-        }
+            )
+        });
+        [Some(a_rec), third_mod_c_record, Some(meth_c_record)]
+            .into_iter()
+            .flatten()
     })
 }
 
